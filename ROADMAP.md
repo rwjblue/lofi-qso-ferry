@@ -153,3 +153,11 @@ Keep unresolved items attached to their milestone: verified LoFi replay boundari
   exact observed revision and QSL metadata. Fourteen signing/query tests plus
   actual workerd experiment pass. Billed CPU/memory and scoped ARRL acceptance
   remain unverified. See [signing evidence](docs/evidence-signing.md).
+
+- 2026-10-22: Email-confirmed passkey accounts implemented with browser-bound
+  codes, atomic single-use ceremonies, required UV, fixed RP/origin, session/key
+  revocation, fresh verification and no last-key removal or inbox reset. Synthetic
+  ES256 cryptography passes in Node and real Worker HTTP endpoints, including two
+  isolated tenants. Native Chromium signup/signin/reauth also exercised with a
+  virtual authenticator. Physical/synced-provider matrix and real email delivery
+  remain rollout checks. See [auth evidence](docs/evidence-auth.md).

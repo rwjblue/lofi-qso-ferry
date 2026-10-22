@@ -55,3 +55,12 @@ Worker imports legacy/current P12 and matches OpenSSL signatures locally; no nat
 signer host. Strict WebCrypto verification rejects Forge advisory fixture. Query
 inventories accepted unconfirmed contacts; upload ack stays submission evidence.
 Production trust roots, real cert/status/readback and ARRL acceptance still needed.
+
+## Accounts checkpoint
+
+Seven focused auth checks and two bundled Worker HTTP E2E checks pass. Real
+Chromium UI created a synthetic local account, reauthenticated, saved settings,
+logged out and signed in via virtual passkey; 390px has no horizontal overflow.
+No real signup email sent. qso-auth found existing OS-keychain QRZ/LoTW read
+credentials; read-only protocol checks are in progress. No credentials copied to
+repo files or tool output. LoFi/signing material and deployment inputs still absent.

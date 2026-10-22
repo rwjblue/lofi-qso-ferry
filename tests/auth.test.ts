@@ -1,0 +1,560 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import { authRoute, normalizeEmail, session } from "../src/auth.ts";
+import { syntheticAuthenticator as authenticator } from "./auth-fixtures.ts";
+import { database, keys } from "./helpers.ts";
+
+async function setup() {
+  const { db, mf } = await database();
+  const sql = await readFile(
+    new URL("../migrations/0002_auth.sql", import.meta.url),
+    "utf8",
+  );
+  let current = "";
+  for (const line of sql.split("\n")) {
+    current += `${line}\n`;
+    const trigger = current.trimStart().startsWith("CREATE TRIGGER");
+    if (line.trimEnd().endsWith(";") && (!trigger || line.trim() === "END;")) {
+      await db.prepare(current).run();
+      current = "";
+    }
+  }
+  const env = {
+    DB: db,
+    ASSETS: {
+      fetch: async () => new Response(),
+      connect: () => {
+        throw new Error("unused test binding");
+      },
+    },
+    ENVIRONMENT: "local",
+    RP_ID: "localhost",
+    ORIGIN: "http://localhost:8787",
+    AUTH_SECRET: "a".repeat(64),
+    EMAIL_CODE_SECRET: "b".repeat(64),
+    ACTIVE_KEK_VERSION: "1",
+    KEK_V1: keys.keys["1"],
+    RESEND_API_KEY: "",
+    LOTW_TRUST_ROOTS_JSON: "[]",
+    MAIL_FROM: "LoFi QSO Ferry <ferry@example.invalid>",
+    EXPORTS_ENABLED: "false",
+    ROLLOUT_CHECKS_PASSED: "false",
+    SOURCE_BOUNDARY_VERIFIED: "false",
+    ROLLOUT_QSO_IDS_JSON: "[]",
+    LIVE_WRITE_AUTHORIZATION: "",
+  } as Env;
+  return { db, mf, env };
+}
+class Browser {
+  cookies = new Map<string, string>();
+  csrf = "";
+  constructor(readonly env: Env) {}
+  cookieHeader() {
+    return [...this.cookies]
+      .map(([key, value]) => `${key}=${value}`)
+      .join("; ");
+  }
+  async request(
+    path: string,
+    data?: unknown,
+    headers: Record<string, string> = {},
+  ) {
+    const request = new Request(`http://localhost:8787/api/auth/${path}`, {
+      method: data === undefined ? "GET" : "POST",
+      headers: {
+        Cookie: this.cookieHeader(),
+        ...(data === undefined
+          ? {}
+          : {
+              Origin: this.env.ORIGIN,
+              "Content-Type": "application/json",
+              "X-CSRF-Token": this.csrf,
+            }),
+        ...headers,
+      },
+      body: data === undefined ? undefined : JSON.stringify(data),
+    });
+    const response = await authRoute(request, this.env);
+    assert.ok(response);
+    const set = response.headers.get("Set-Cookie");
+    if (set) {
+      const [name, value] = set.split(";")[0].split("=");
+      this.cookies.set(name, value);
+    }
+    const body = (await response.json()) as Record<string, unknown>;
+    return { status: response.status, body, response };
+  }
+  async refresh() {
+    const response = await this.request("session");
+    this.csrf = String(response.body.csrf);
+    return response;
+  }
+}
+async function signup(browser: Browser, email = "Person+tag@Example.TEST") {
+  await browser.refresh();
+  const started = await browser.request("signup", { email });
+  assert.equal(started.status, 200);
+  const mailbox = await browser.request("local-mailbox");
+  const messages = mailbox.body.messages as { id: string; code: string }[];
+  const code = messages.find((item) => item.id === started.body.id)?.code;
+  assert.ok(code);
+  const confirmation = await browser.request("signup/verify", {
+    id: started.body.id,
+    code,
+  });
+  assert.equal(confirmation.status, 200);
+  assert.equal(
+    (await browser.refresh()).body.authenticated,
+    false,
+    "email proof is not a session",
+  );
+  const options = await browser.request("register/options", {
+    signupId: started.body.id,
+  });
+  assert.equal(options.status, 200);
+  return { started, code, options };
+}
+async function enrolled(browser: Browser, email?: string) {
+  const pending = await signup(browser, email);
+  const key = await authenticator();
+  const options = pending.options.body.options as Record<string, unknown>;
+  const response = await key.registration(options);
+  const finish = await browser.request("register/verify", {
+    ceremonyId: pending.options.body.ceremonyId,
+    response,
+    label: "Synthetic synced passkey",
+  });
+  assert.equal(finish.status, 200, JSON.stringify(finish.body));
+  assert.match(
+    finish.response.headers.get("Set-Cookie") ?? "",
+    /Secure; HttpOnly; SameSite=Lax/,
+  );
+  const account = await browser.refresh();
+  assert.equal(account.body.authenticated, true);
+  const user = (options.user as { id: string }).id;
+  return { key, user, pending, response };
+}
+
+test("email policy preserves local case, dots and plus tags and canonicalizes only domain", () => {
+  assert.equal(
+    normalizeEmail(" Ab.C+Tag@EXAMPLE.COM "),
+    "Ab.C+Tag@example.com",
+  );
+  assert.notEqual(
+    normalizeEmail("Me@example.com"),
+    normalizeEmail("me@example.com"),
+  );
+  for (const value of [
+    "bad",
+    "a@x",
+    "a\n@example.test",
+    "a@host.test/path",
+    "a@host.test:443",
+    "a@host..test",
+  ])
+    assert.throws(() => normalizeEmail(value));
+});
+
+test("email-confirmed discoverable registration, no email reset, single-use atomic activation", async () => {
+  const { env, mf, db } = await setup();
+  try {
+    const browser = new Browser(env);
+    const pending = await signup(browser);
+    const options = pending.options.body.options as {
+      challenge: string;
+      user: { id: string };
+      authenticatorSelection: { residentKey: string; userVerification: string };
+    };
+    assert.equal(options.authenticatorSelection.residentKey, "required");
+    assert.equal(options.authenticatorSelection.userVerification, "required");
+    const key = await authenticator();
+    const response = await key.registration(options);
+    const results = await Promise.all([
+      browser.request("register/verify", {
+        ceremonyId: pending.options.body.ceremonyId,
+        response,
+      }),
+      browser.request("register/verify", {
+        ceremonyId: pending.options.body.ceremonyId,
+        response,
+      }),
+    ]);
+    assert.deepEqual(results.map((item) => item.status).sort(), [200, 400]);
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT count(*) AS n FROM accounts")
+          .first<{ n: number }>()
+      )?.n,
+      1,
+    );
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT count(*) AS n FROM sessions")
+          .first<{ n: number }>()
+      )?.n,
+      1,
+    );
+    const reset = new Browser(env);
+    await reset.refresh();
+    const start = await reset.request("signup", {
+      email: "Person+tag@example.test",
+    });
+    const mail = (await reset.request("local-mailbox")).body.messages as {
+      id: string;
+      code: string;
+    }[];
+    const verify = await reset.request("signup/verify", {
+      id: start.body.id,
+      code: mail.find((item) => item.id === start.body.id)?.code,
+    });
+    assert.equal(verify.body.existingAccount, true);
+    assert.equal((await reset.refresh()).body.authenticated, false);
+    assert.equal(
+      (await reset.request("register/options", { signupId: start.body.id }))
+        .status,
+      400,
+    );
+    assert.equal(
+      (await reset.request("password", { password: "no" })).status,
+      404,
+    );
+  } finally {
+    await mf.dispose();
+  }
+});
+
+test("signup browser binding, code expiry/attempt limit, CSRF and replaced-code rejection", async () => {
+  const { env, mf, db } = await setup();
+  try {
+    const a = new Browser(env);
+    const b = new Browser(env);
+    await a.refresh();
+    await b.refresh();
+    const start = await a.request("signup", { email: "bound@example.test" });
+    const mail = (await a.request("local-mailbox")).body.messages as {
+      id: string;
+      code: string;
+    }[];
+    const code = mail.find((item) => item.id === start.body.id)?.code;
+    assert.equal(
+      (await b.request("local-mailbox")).body.messages instanceof Array,
+      true,
+    );
+    assert.equal(
+      ((await b.request("local-mailbox")).body.messages as unknown[]).length,
+      0,
+    );
+    assert.equal(
+      (await b.request("signup/verify", { id: start.body.id, code })).status,
+      400,
+    );
+    assert.equal(
+      (
+        await a.request(
+          "signup/verify",
+          { id: start.body.id, code },
+          { Origin: "https://evil.example" },
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await a.request(
+          "signup/verify",
+          { id: start.body.id, code },
+          { "X-CSRF-Token": "wrong" },
+        )
+      ).status,
+      403,
+    );
+    for (let i = 0; i < 5; i++)
+      assert.equal(
+        (await a.request("signup/verify", { id: start.body.id, code: "wrong" }))
+          .status,
+        400,
+      );
+    assert.equal(
+      (await a.request("signup/verify", { id: start.body.id, code })).status,
+      400,
+    );
+    const next = await a.request("signup", { email: "bound@example.test" });
+    await db
+      .prepare("UPDATE signups SET expires_at=0 WHERE id=?")
+      .bind(next.body.id)
+      .run();
+    assert.equal(
+      (await a.request("signup/verify", { id: next.body.id, code })).status,
+      400,
+    );
+    const dump = JSON.stringify(
+      await db.prepare("SELECT * FROM signups").all(),
+    );
+    assert.ok(!dump.includes(`\"code\":\"${code}\"`));
+  } finally {
+    await mf.dispose();
+  }
+});
+
+test("real cryptographic assertions reject wrong challenge/origin/RP/UV/handle and replay while zero counters work", async () => {
+  const { env, mf, db } = await setup();
+  try {
+    const browser = new Browser(env);
+    const { key, user } = await enrolled(browser);
+    const loggedOut = await browser.request("logout", {});
+    assert.equal(loggedOut.status, 200);
+    await browser.refresh();
+    for (const changes of [
+      { challenge: "invalid" },
+      { origin: "https://evil.example" },
+      { rp: "evil.example" },
+      { flags: 0x19 },
+    ]) {
+      const start = await browser.request("login/options", {});
+      const response = await key.assertion(
+        start.body.options as Record<string, unknown>,
+        user,
+        changes,
+      );
+      assert.equal(
+        (
+          await browser.request("login/verify", {
+            ceremonyId: start.body.ceremonyId,
+            response,
+          })
+        ).status,
+        400,
+      );
+    }
+    const mismatch = await browser.request("login/options", {});
+    assert.equal(
+      (
+        await browser.request("login/verify", {
+          ceremonyId: mismatch.body.ceremonyId,
+          response: await key.assertion(
+            mismatch.body.options as Record<string, unknown>,
+            "another-account",
+          ),
+        })
+      ).status,
+      400,
+    );
+    const start = await browser.request("login/options", {});
+    assert.equal(
+      (start.body.options as { allowCredentials?: unknown[] }).allowCredentials,
+      undefined,
+    );
+    const response = await key.assertion(
+      start.body.options as Record<string, unknown>,
+      user,
+    );
+    const finishes = await Promise.all([
+      browser.request("login/verify", {
+        ceremonyId: start.body.ceremonyId,
+        response,
+      }),
+      browser.request("login/verify", {
+        ceremonyId: start.body.ceremonyId,
+        response,
+      }),
+    ]);
+    assert.deepEqual(finishes.map((item) => item.status).sort(), [200, 400]);
+    assert.equal((await browser.refresh()).body.authenticated, true);
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT counter FROM passkeys WHERE id=?")
+          .bind(key.id)
+          .first<{ counter: number }>()
+      )?.counter,
+      0,
+    );
+    const req = new Request("http://localhost:8787", {
+      headers: { Cookie: browser.cookieHeader() },
+    });
+    assert.ok(await session(req, env));
+    await db.prepare("UPDATE sessions SET revoked_at=1").run();
+    assert.equal(await session(req, env), null);
+  } finally {
+    await mf.dispose();
+  }
+});
+
+test("wrong registration origin/RP/UV, expired and wrong-purpose ceremonies fail", async () => {
+  const { env, mf, db } = await setup();
+  try {
+    const browser = new Browser(env);
+    const pending = await signup(browser, "reg-errors@example.test");
+    const key = await authenticator();
+    for (const changes of [
+      { origin: "https://evil.example" },
+      { rp: "evil.example" },
+      { flags: 0x59 },
+    ]) {
+      const next = await browser.request("register/options", {
+        signupId: pending.started.body.id,
+      });
+      assert.equal(
+        (
+          await browser.request("register/verify", {
+            ceremonyId: next.body.ceremonyId,
+            response: await key.registration(
+              next.body.options as Record<string, unknown>,
+              changes,
+            ),
+          })
+        ).status,
+        400,
+      );
+    }
+    const wrong = await browser.request("login/options", {});
+    assert.equal(
+      (
+        await browser.request("register/verify", {
+          ceremonyId: wrong.body.ceremonyId,
+          response: await key.registration(
+            wrong.body.options as Record<string, unknown>,
+          ),
+        })
+      ).status,
+      400,
+    );
+    const expires = await browser.request("register/options", {
+      signupId: pending.started.body.id,
+    });
+    await db
+      .prepare("UPDATE ceremonies SET expires_at=0 WHERE id=?")
+      .bind(expires.body.ceremonyId)
+      .run();
+    assert.equal(
+      (
+        await browser.request("register/verify", {
+          ceremonyId: expires.body.ceremonyId,
+          response: await key.registration(
+            expires.body.options as Record<string, unknown>,
+          ),
+        })
+      ).status,
+      400,
+    );
+  } finally {
+    await mf.dispose();
+  }
+});
+
+test("additional keys and email changes require fresh passkeys; last key and other tenants are protected", async () => {
+  const { env, mf, db } = await setup();
+  try {
+    const a = new Browser(env);
+    const first = await enrolled(a, "owner@example.test");
+    const b = new Browser(env);
+    const other = await enrolled(b, "other@example.test");
+    assert.equal(
+      (await a.request("passkeys/revoke", { id: first.key.id })).status,
+      400,
+    );
+    const key = await authenticator();
+    const start = await a.request("passkeys/options", {});
+    const options = start.body.options as {
+      user: { id: string };
+      excludeCredentials: { id: string }[];
+    };
+    assert.equal(options.user.id, first.user);
+    assert.equal(options.excludeCredentials[0].id, first.key.id);
+    assert.equal(
+      (
+        await a.request("passkeys/verify", {
+          ceremonyId: start.body.ceremonyId,
+          response: await key.registration(options),
+          label: "Backup",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (await a.request("passkeys/revoke", { id: other.key.id })).status,
+      404,
+    );
+    assert.equal(
+      (await a.request("passkeys/revoke", { id: key.id })).status,
+      200,
+    );
+    await db
+      .prepare(
+        "UPDATE sessions SET verified_at=0 WHERE tenant=(SELECT tenant FROM passkeys WHERE id=?)",
+      )
+      .bind(first.key.id)
+      .run();
+    assert.equal((await a.request("passkeys/options", {})).status, 403);
+    assert.equal(
+      (await a.request("email", { email: "new@example.test" })).status,
+      403,
+    );
+    const reauth = await a.request("reauth/options", {});
+    assert.equal(
+      (
+        await a.request("reauth/verify", {
+          ceremonyId: reauth.body.ceremonyId,
+          response: await other.key.assertion(
+            reauth.body.options as Record<string, unknown>,
+            other.user,
+          ),
+        })
+      ).status,
+      400,
+    );
+    const fresh = await a.request("reauth/options", {});
+    assert.equal(
+      (
+        await a.request("reauth/verify", {
+          ceremonyId: fresh.body.ceremonyId,
+          response: await first.key.assertion(
+            fresh.body.options as Record<string, unknown>,
+            first.user,
+          ),
+        })
+      ).status,
+      200,
+    );
+    const email = await a.request("email", { email: "New+Tag@Example.TEST" });
+    assert.equal(email.status, 200);
+    const mail = (await a.request("local-mailbox")).body.messages as {
+      id: string;
+      code: string;
+    }[];
+    assert.equal(
+      (
+        await a.request("email/verify", {
+          id: email.body.id,
+          code: mail.find((item) => item.id === email.body.id)?.code,
+        })
+      ).status,
+      200,
+    );
+    const account = (await a.refresh()).body.account as {
+      email: string;
+      user_handle: string;
+    };
+    assert.equal(account.email, "New+Tag@example.test");
+    assert.equal(account.user_handle, first.user);
+  } finally {
+    await mf.dispose();
+  }
+});
+
+test("production has no local mailbox and refuses placeholder RP configuration", async () => {
+  const { env, mf } = await setup();
+  try {
+    const production = { ...env, ENVIRONMENT: "production" } as Env;
+    const response = await authRoute(
+      new Request("http://localhost:8787/api/auth/local-mailbox"),
+      production,
+    );
+    assert.equal(response?.status, 503);
+  } finally {
+    await mf.dispose();
+  }
+});

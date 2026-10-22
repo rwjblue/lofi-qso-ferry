@@ -15,16 +15,53 @@ export class QrzError extends Error {
   }
 }
 export type QrzResponse = Record<string, string>;
-/** QRZ form data is decoded exactly once; ADIF can contain literal &, + and =. */
+/** The live API uses a raw HTML-entity-encoded ADIF tail, not a form value. */
+function decodeHtmlOnce(value: string): string {
+  const named: Record<string, string> = {
+    amp: "&",
+    lt: "<",
+    gt: ">",
+    quot: '"',
+    apos: "'",
+  };
+  return value.replace(
+    /&(?:amp|lt|gt|quot|apos|#\d{1,7}|#x[0-9a-f]{1,6});/gi,
+    (entity) => {
+      if (entity[1] !== "#") return named[entity.slice(1, -1).toLowerCase()]!;
+      const hex = entity[2]?.toLowerCase() === "x";
+      const point = Number.parseInt(
+        entity.slice(hex ? 3 : 2, -1),
+        hex ? 16 : 10,
+      );
+      if (point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff))
+        throw new QrzError("protocol", "Invalid QRZ ADIF entity encoding");
+      return String.fromCodePoint(point);
+    },
+  );
+}
 export function parseQrzResponse(body: string): QrzResponse {
   if (body.length > 2 * 1024 * 1024 || /^\s*</.test(body))
     throw new QrzError("protocol", "Invalid QRZ response framing");
   const result: QrzResponse = Object.create(null);
-  for (const [key, value] of new URLSearchParams(body.trim())) {
+  const marker = /(?:^|&)ADIF=/i.exec(body);
+  const prefix = marker ? body.slice(0, marker.index) : body.trim();
+  for (const [key, value] of new URLSearchParams(prefix)) {
     const name = key.toUpperCase();
     if (Object.hasOwn(result, name))
       throw new QrzError("protocol", "Duplicate QRZ response parameter");
     result[name] = value;
+  }
+  if (marker) {
+    const tail = body.slice(marker.index + marker[0].length);
+    if (/&lt;(?:EOH|EOR|[a-z][a-z0-9_]*:\d)/i.test(tail))
+      result.ADIF = decodeHtmlOnce(tail);
+    else if (/%3c(?:EOH|EOR|[a-z][a-z0-9_]*(?::|%3a)\d)/i.test(tail)) {
+      try {
+        result.ADIF = decodeURIComponent(tail.replace(/\+/g, " "));
+      } catch {
+        throw new QrzError("protocol", "Invalid QRZ form encoding");
+      }
+    } else result.ADIF = tail;
   }
   if (!result.RESULT) throw new QrzError("protocol", "Missing QRZ result");
   return result;
@@ -173,8 +210,8 @@ export class QrzClient {
       normalized.BOOKID !== expected.bookId ||
       (normalized.CALLSIGN ?? normalized.CALL)?.toUpperCase() !==
         expected.stationCallsign.toUpperCase() ||
-      normalized.STARTDATE !== expected.startDate ||
-      normalized.ENDDATE !== expected.endDate
+      (normalized.START_DATE ?? normalized.STARTDATE) !== expected.startDate ||
+      (normalized.END_DATE ?? normalized.ENDDATE) !== expected.endDate
     )
       throw new QrzError(
         "blocked",
@@ -193,12 +230,7 @@ export class QrzClient {
       after < 0
     )
       throw new QrzError("protocol", "Invalid QRZ page bounds");
-    const filters = [
-      "TYPE:ADIF",
-      "STATUS:ALL",
-      `MAX:${max}`,
-      `AFTERLOGID:${after}`,
-    ];
+    const filters = ["TYPE:ADIF", `MAX:${max}`, `AFTERLOGID:${after}`];
     if (options.between)
       filters.push(
         `BETWEEN:${validDate(options.between[0])}+${validDate(options.between[1])}`,
@@ -454,7 +486,8 @@ export function mergeQrzCorrection(
   for (const [field, value] of Object.entries(remote)) {
     // Never re-submit IDs, confirmations, award credits, or server extension state.
     if (
-      field.startsWith("APP_QRZLOG_") || field.startsWith("APP_LOTW_") ||
+      field.startsWith("APP_QRZLOG_") ||
+      field.startsWith("APP_LOTW_") ||
       (/(?:QSL|LOTW|EQSL|CREDIT|AWARD)/.test(field) && field !== "QSLMSG")
     )
       continue;
@@ -481,6 +514,20 @@ export function matchQrzHistory(
   candidates: AdifRecord[],
 ): QrzMatch {
   if (!candidates.length) return { state: "missing_current_identity" };
+  if (
+    ![
+      "MY_GRIDSQUARE",
+      "MY_STATE",
+      "MY_CNTY",
+      "MY_DXCC",
+      "MY_LAT",
+      "MY_LON",
+    ].some((field) => source[field])
+  )
+    return {
+      state: "history_ambiguous",
+      reason: "Source operating location evidence is unavailable",
+    };
   const exact = candidates.filter((record) => sameQrzIdentity(source, record));
   if (exact.length !== 1)
     return {

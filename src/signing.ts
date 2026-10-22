@@ -503,11 +503,21 @@ function stationFields(station: LotwStation): Record<string, string> {
   }
   return fields;
 }
+/** ARRL SUBMODE lookup falls back to the parent MODE; USB/LSB are SSB. */
+export function lotwMode(mode: string, submode?: string): string {
+  const parent = value(mode);
+  const child = submode ? value(submode) : undefined;
+  const mapped =
+    parent === "SSB" && (child === "USB" || child === "LSB")
+      ? "SSB"
+      : child || parent;
+  if (!MODES.has(mapped)) fail("Mode needs an explicit supported LoTW mapping");
+  return mapped;
+}
 function normalizedContact(contact: LotwContact): Record<string, string> {
   if (!validCallsign(contact.call.toUpperCase()))
     fail("Invalid worked callsign");
-  const mode = value(contact.submode || contact.mode);
-  if (!MODES.has(mode)) fail("Mode needs an explicit supported LoTW mapping");
+  const mode = lotwMode(contact.mode, contact.submode);
   const band = value(contact.band);
   if (!BANDS.has(band)) fail("Unsupported LoTW band");
   date(contact.date);

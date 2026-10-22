@@ -1,5 +1,6 @@
 import { parseAdif, type AdifRecord } from "./adif.ts";
 import {
+  lotwMode,
   type CertificateStatus,
   type LotwContact,
   type LotwStation,
@@ -34,6 +35,7 @@ export type LotwObservation = {
   confirmed: boolean;
   record?: AdifRecord;
   differingFields: string[];
+  unverifiableFields?: string[];
 };
 function validDate(value: string): boolean {
   return (
@@ -243,7 +245,7 @@ export function observeLotwContact(
 ): LotwObservation {
   const date = contact.date.replaceAll("-", "");
   const time = contact.time.replaceAll(":", "").replace(/Z$/, "");
-  const mode = (contact.submode || contact.mode).toUpperCase();
+  const mode = lotwMode(contact.mode, contact.submode);
   const candidates = report.records.filter(
     (record) =>
       record.CALL?.toUpperCase() === contact.call.toUpperCase() &&
@@ -251,7 +253,7 @@ export function observeLotwContact(
         station.callsign.toUpperCase() &&
       record.QSO_DATE === date &&
       record.BAND?.toUpperCase() === contact.band.toUpperCase() &&
-      (record.SUBMODE || record.APP_LOTW_MODE || record.MODE)?.toUpperCase() ===
+      lotwMode(record.APP_LOTW_MODE || record.MODE || "", record.SUBMODE) ===
         mode &&
       (record.TIME_ON === time ||
         (record.TIME_ON?.length === 4 && record.TIME_ON === time.slice(0, 4))),
@@ -291,6 +293,17 @@ export function observeLotwContact(
     contact.bandRx.toUpperCase() !== contact.band.toUpperCase()
   )
     expected.BAND_RX = contact.bandRx;
+  const unverifiableFields = (
+    [
+      ["FREQ", contact.frequencyMHz],
+      ["FREQ_RX", contact.frequencyRxMHz],
+    ] as const
+  )
+    .filter(
+      ([, frequency]) =>
+        (frequency?.split(".")[1]?.replace(/0+$/, "").length ?? 0) > 5,
+    )
+    .map(([name]) => name);
   const differingFields = Object.entries(expected)
     .filter(
       ([name, input]) =>
@@ -299,7 +312,12 @@ export function observeLotwContact(
     .map(([name]) => name);
   if (record.MY_VUCC_GRIDS) differingFields.push("MY_VUCC_GRIDS");
   return {
-    state: differingFields.length ? "projection_mismatch" : "observed",
+    state: differingFields.length
+      ? "projection_mismatch"
+      : unverifiableFields.length
+        ? "insufficient_evidence"
+        : "observed",
+    unverifiableFields,
     confirmed: record.QSL_RCVD === "Y",
     record,
     differingFields,

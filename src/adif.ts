@@ -41,13 +41,10 @@ export function parseAdif(input: string): AdifDocument {
   let sawTag = false;
   while (pos < input.length) {
     const start = input.indexOf("<", pos);
-    if (start < 0) {
-      if (input.slice(pos).trim() && sawTag)
-        throw new Error("Trailing ADIF data");
-      break;
-    }
-    if (input.slice(pos, start).trim() && sawTag)
-      throw new Error("Unexpected text between ADIF fields");
+    if (start < 0) break;
+    // ADIF 3.1.6 IV.A.6 permits arbitrary text outside counted fields.
+    // Advance using each declared length first, so embedded tags in values
+    // remain data; malformed tags and missing record terminators still fail.
     const end = input.indexOf(">", start);
     if (end < 0 || end - start > 128) throw new Error("Malformed ADIF tag");
     const tag = input.slice(start + 1, end);

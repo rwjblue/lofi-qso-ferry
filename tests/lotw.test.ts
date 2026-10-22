@@ -239,3 +239,14 @@ test("large streamed reports fail with incomplete evidence rather than materiali
   );
   await assert.rejects(boundedResponse(response, 20), /bounded partition/);
 });
+
+test("readback precision cannot falsely acknowledge a one-Hz frequency correction", () => {
+  const parsed = parseLotwReport(report([{ ...record, FREQ: "14.07412" }]));
+  const observation = observeLotwContact(
+    vector.station,
+    { ...vector.contact, frequencyMHz: "14.074123" },
+    parsed,
+  );
+  assert.equal(observation.state, "insufficient_evidence");
+  assert.deepEqual(observation.unverifiableFields, ["FREQ"]);
+});

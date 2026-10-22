@@ -8,7 +8,7 @@ import {
   matchQrzHistory,
   mayCleanOldQrzIdentity,
 } from "../src/qrz.ts";
-import { serializeAdifRecord } from "../src/adif.ts";
+import { parseAdif, serializeAdifRecord } from "../src/adif.ts";
 const contact = {
   STATION_CALLSIGN: "N0TEST/P",
   CALL: "W1AW",
@@ -24,6 +24,7 @@ const remote = {
   APP_QRZLOG_LOGID: "40",
   QSL_RCVD: "Y",
   NAME: "Operator",
+  APP_OTHER_NARRATIVE: "retain application data",
   APP_QRZLOG_STATUS: "C",
   QSLMSG: "old qsl",
   NOTES: "old notes",
@@ -62,10 +63,7 @@ test("page completion depends on parsed records, not global COUNT", async () => 
   const page = await client.fetchPage();
   assert.equal(page.nextAfterLogId, null);
   assert.equal(page.count, 1000);
-  assert.equal(
-    requests[0]!.get("OPTION"),
-    "TYPE:ADIF,STATUS:ALL,MAX:250,AFTERLOGID:0",
-  );
+  assert.equal(requests[0]!.get("OPTION"), "TYPE:ADIF,MAX:250,AFTERLOGID:0");
 });
 test("full pages resume using highest logid plus one", async () => {
   const client = new QrzClient("secret", {
@@ -116,6 +114,7 @@ test("structured correction preserves adopted narrative and remote-owned fields"
   assert.equal(merged.QSLMSG, remote.QSLMSG);
   assert.equal(merged.NOTES, remote.NOTES);
   assert.equal(merged.NAME, "Operator");
+  assert.equal(merged.APP_OTHER_NARRATIVE, "retain application data");
   assert.equal(merged.MY_GRIDSQUARE, "FN32");
   assert.equal(merged.APP_QRZLOG_LOGID, undefined);
   assert.equal(merged.QSL_RCVD, undefined);
@@ -240,4 +239,45 @@ test("verified replacement fetches and merges a unique current mapped record", a
   assert.equal(result.logId, "41");
   assert.equal(result.replaced, true);
   assert.equal(bodies.length, 3);
+});
+test("verified live STATUS field spellings link book dates without changing endpoint behavior", async () => {
+  const book = {
+    bookId: "7",
+    stationCallsign: "N0TEST/P",
+    startDate: "2020-01-01",
+    endDate: "2030-01-01",
+  };
+  const client = new QrzClient("synthetic", {
+    fetch: async () =>
+      encode({
+        RESULT: "OK",
+        BOOKID: book.bookId,
+        CALLSIGN: book.stationCallsign,
+        START_DATE: book.startDate,
+        END_DATE: book.endDate,
+      }),
+  });
+  assert.deepEqual(await client.verifyBook(book), book);
+});
+test("live QRZ raw HTML-encoded ADIF tail preserves literal entities and plus/ampersand text", () => {
+  const original = {
+    ...remote,
+    COMMENT: "A & B + C = 100% &lt; literal",
+    NOTES: "Line 1\n<EOR> &amp; literal",
+  };
+  const adif = serializeAdifRecord(original);
+  const encoded = adif
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+  const parsed = parseQrzResponse(`RESULT=OK&COUNT=1&ADIF=${encoded}`);
+  assert.equal(parsed.ADIF, adif);
+  assert.equal(Object.keys(parsed).length, 3);
+  assert.equal(parseAdif(parsed.ADIF!).records[0]!.COMMENT, original.COMMENT);
+  assert.equal(
+    parseAdif(parsed.ADIF!).records[0]!.NOTES,
+    "Line 1\r\n<EOR> &amp; literal",
+  );
 });

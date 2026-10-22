@@ -64,3 +64,14 @@ logged out and signed in via virtual passkey; 390px has no horizontal overflow.
 No real signup email sent. qso-auth found existing OS-keychain QRZ/LoTW read
 credentials; read-only protocol checks are in progress. No credentials copied to
 repo files or tool output. LoFi/signing material and deployment inputs still absent.
+
+## Live readback checkpoint
+
+Bounded, authorized read-only probes used existing local credentials in memory.
+LoFi same-client renewal/account/sync cursor/operation reads succeeded; existing
+credential file unchanged. QRZ STATUS + bounded FETCH exposed actual date field
+names, raw HTML-entity ADIF framing and unsupported explicit STATUS:ALL; fixed
+against synthetic regressions. LoTW nonempty report parsed two unconfirmed QSOs;
+ADIF allows outside-field annotations. No contact writes or permission emails.
+Full source replay/snapshot semantics, complete owner reconciliation, real signing
+certificate, live mutations, deployment/email/hardware measurements remain open.

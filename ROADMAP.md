@@ -161,3 +161,10 @@ Keep unresolved items attached to their milestone: verified LoFi replay boundari
   isolated tenants. Native Chromium signup/signin/reauth also exercised with a
   virtual authenticator. Physical/synced-provider matrix and real email delivery
   remain rollout checks. See [auth evidence](docs/evidence-auth.md).
+
+- 2026-10-22: Bounded live read-only probes verified LoFi same-identity renewal,
+  account access, cursor issuance/empty-incomplete resumption and an operation
+  page; QRZ metadata and raw ADIF readback; and LoTW accepted/unconfirmed readback.
+  Corrected observed protocol differences with synthetic regression fixtures.
+  These reads do not prove snapshot/retention guarantees or mutation acceptance.
+  See [live read evidence](docs/evidence-live-readonly.md) and [LoFi evidence](docs/evidence-lofi.md).

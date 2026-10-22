@@ -7,6 +7,7 @@ import {
   buildSignedTq8,
   canonicalSigningData,
   importPkcs12,
+  lotwMode,
   signCanonical,
   verifyCertificateSignature,
   type LotwContact,
@@ -281,5 +282,19 @@ test("excessive PKCS12 MAC iterations fail before entering synchronous KDF", asy
       "ferry-fixture",
     ),
     /KDF iteration limit/,
+  );
+});
+
+test("ordinary USB and LSB use LoTW SSB parent mode without losing FT4 mapping", () => {
+  assert.equal(lotwMode("SSB", "USB"), "SSB");
+  assert.equal(lotwMode("SSB", "LSB"), "SSB");
+  assert.equal(lotwMode("MFSK", "FT4"), "FT4");
+  assert.match(
+    canonicalSigningData(vector.station, {
+      ...vector.contact,
+      mode: "SSB",
+      submode: "USB",
+    }),
+    /14\.074SSB2026/,
   );
 });

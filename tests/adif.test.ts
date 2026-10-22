@@ -33,3 +33,16 @@ test("malformed, truncated and unsupported ADI data fails clearly", () => {
   assert.throws(() => serializeAdifRecord({ NOTES: "Café" }), /ASCII/);
   assert.throws(() => serializeAdifRecord({ CALL: "bad\nline" }));
 });
+test("ADIF ignores documented outside-field annotations without scanning counted values as tags", () => {
+  const input =
+    "Synthetic vendor report\n<PROGRAMID:4>LoTW\nHeader annotation\n<EOH>\nRecord annotation\n<CALL:4>W1AW\nUncounted diagnostic line\n<NOTES:17>literal <EOR> tag\n<eor>\nEnd annotation";
+  const parsed = parseAdif(input);
+  assert.equal(parsed.header.PROGRAMID, "LoTW");
+  assert.equal(parsed.records.length, 1);
+  assert.equal(parsed.records[0]!.CALL, "W1AW");
+  assert.equal(parsed.records[0]!.NOTES, "literal <EOR> tag");
+  assert.throws(() =>
+    parseAdif("<CALL:4>W1AW\nAnnotation but missing record terminator"),
+  );
+  assert.throws(() => parseAdif("<CALL:4>W1AW\n<html>error</html><EOR>"));
+});

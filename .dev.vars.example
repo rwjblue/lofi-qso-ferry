@@ -1,0 +1,5 @@
+# Copy to .dev.vars; generate independent random 32-byte base64 values.
+KEK_V1=replace-with-base64-32-byte-key
+AUTH_SECRET=replace-with-independent-random-secret
+EMAIL_CODE_SECRET=replace-with-independent-random-secret
+RESEND_API_KEY=

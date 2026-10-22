@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-This roadmap is the handoff for implementation in this repository. All checkboxes begin unchecked: the initial documentation PR did not implement or validate the service. Work in small reviewable PRs, retaining the product decisions in [README](README.md). Each milestone should update its evidence and remaining questions here.
+This roadmap is the handoff for implementation in this repository. All checkboxes begin unchecked: the initial documentation PR did not implement or validate the service. The owner authorized small signed commits directly to `origin/main` for implementation; no implementation PRs are opened. Retain the product decisions in [README](README.md). Each milestone should update its evidence and remaining questions here.
 
 ## Delivery order
 
@@ -125,3 +125,12 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 ## Decisions to record during implementation
 
 Keep unresolved items attached to their milestone: verified LoFi replay boundaries and null-operation rereads; QRZ replacement/collision and field-preservation semantics; Worker PKCS#12/signature compatibility; LoTW station/mode configuration provenance; email provider and production hostname; concrete retention/batch limits and measured cost. These are implementation evidence requirements, not reasons to reopen the settled live-sync, forward-only-template, passkey-login, minimal-storage, or hosted-signer product choices.
+
+## Implementation checkpoints
+
+- 2026-10-22: Worker/D1 foundation implemented with AES-GCM envelope storage,
+  immutable template/attempt records, atomic cursor batches and fenced leases.
+  Focused tests execute against actual local D1/workerd and cover stale cursors,
+  overlapping claims, tenant boundaries, encryption rotation and crash recovery.
+  Adapter and account integration remain in progress. Production exports remain
+  disabled. See [PROGRESS.md](PROGRESS.md) for the resumable work log.

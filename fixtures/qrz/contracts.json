@@ -1,0 +1,11 @@
+{
+  "provenance": "Synthetic examples exercising documented QRZ framing; no live logbook was queried or modified.",
+  "inserted": "RESULT=OK&LOGID=41&COUNT=1",
+  "replaced": "RESULT=REPLACE&LOGID=42&COUNT=1",
+  "duplicate": "RESULT=FAIL&COUNT=0&REASON=duplicate",
+  "empty_fixture": "RESULT=OK&COUNT=0&ADIF=",
+  "empty_note": "This is a parser fixture, not proof of QRZ's actual empty-result response. Generic FAIL remains an error.",
+  "auth": "RESULT=AUTH&REASON=Subscription+required",
+  "malformed_mutation": "RESULT=OK&COUNT=1",
+  "http_error": "<html><body>Service unavailable</body></html>"
+}

@@ -141,3 +141,8 @@ Keep unresolved items attached to their milestone: verified LoFi replay boundari
   client behavior is verified against pinned primary sources. Server snapshot,
   retention and cutover guarantees remain live-verification blockers. See
   [LoFi evidence](docs/evidence-lofi.md).
+
+- 2026-10-22: QRZ adapter, bounded ADIF and `ferry-liquid-v1` template profile
+  implemented. Twenty focused checks cover pagination, exact matching, narrative
+  preservation, uncertain responses, resource budgets and forward rendering.
+  Replacement remains gated by scoped live evidence. See [QRZ evidence](docs/evidence-qrz.md).

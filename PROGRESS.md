@@ -41,3 +41,10 @@ exports without the separate rollout authorization.
 - QRZ agent: adapter/ADIF/bounded templates ready; reconciliation and review next.
 - Signer adapter/runtime vectors pass locally; implementing connection routes.
 - Review/integrate each slice, meaningful checks, commit and push; update this log.
+
+## QRZ adapter checkpoint
+
+QRZ/ADIF/template modules reviewed; twenty focused tests pass. Fixed vendor hosts,
+bounded bodies, strict empty/error handling, exact history matching and narrative
+merge are implemented. No API duplicate predicate or live mutation claim is made.
+Template profile supports the documented bounded subset and fails unsupported syntax.

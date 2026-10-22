@@ -146,3 +146,10 @@ Keep unresolved items attached to their milestone: verified LoFi replay boundari
   implemented. Twenty focused checks cover pagination, exact matching, narrative
   preservation, uncertain responses, resource budgets and forward rendering.
   Replacement remains gated by scoped live evidence. See [QRZ evidence](docs/evidence-qrz.md).
+
+- 2026-10-22: Direct Worker signing imports legacy/current synthetic PKCS#12,
+  validates strict platform certificate signatures, matches independent OpenSSL
+  RSA/SHA-1 vectors and emits gzip TQ8. LoTW adapters separate queue submission,
+  exact observed revision and QSL metadata. Fourteen signing/query tests plus
+  actual workerd experiment pass. Billed CPU/memory and scoped ARRL acceptance
+  remain unverified. See [signing evidence](docs/evidence-signing.md).

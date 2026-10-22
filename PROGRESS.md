@@ -48,3 +48,10 @@ QRZ/ADIF/template modules reviewed; twenty focused tests pass. Fixed vendor host
 bounded bodies, strict empty/error handling, exact history matching and narrative
 merge are implemented. No API duplicate predicate or live mutation claim is made.
 Template profile supports the documented bounded subset and fails unsupported syntax.
+
+## Signing checkpoint
+
+Worker imports legacy/current P12 and matches OpenSSL signatures locally; no native
+signer host. Strict WebCrypto verification rejects Forge advisory fixture. Query
+inventories accepted unconfirmed contacts; upload ack stays submission evidence.
+Production trust roots, real cert/status/readback and ARRL acceptance still needed.

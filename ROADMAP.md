@@ -134,3 +134,10 @@ Keep unresolved items attached to their milestone: verified LoFi replay boundari
   overlapping claims, tenant boundaries, encryption rotation and crash recovery.
   Adapter and account integration remain in progress. Production exports remain
   disabled. See [PROGRESS.md](PROGRESS.md) for the resumable work log.
+
+- 2026-10-22: Typed read-only LoFi sync and per-contact projection implemented;
+  17 fixtures cover restart cursor state, paging failures, segment boundaries,
+  explicit clears, tombstones, kHz/MHz and location-only invalidation. Public
+  client behavior is verified against pinned primary sources. Server snapshot,
+  retention and cutover guarantees remain live-verification blockers. See
+  [LoFi evidence](docs/evidence-lofi.md).

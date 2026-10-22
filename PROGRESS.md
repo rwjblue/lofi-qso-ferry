@@ -34,7 +34,10 @@ exports without the separate rollout authorization.
 ## Active work / next action
 
 - Coordinator: integrate adapters with source/reconciliation/scheduling and UI.
-- LoFi agent: adapter/projection ready; implementing passkey account flows.
+- LoFi adapter/projection reviewed: 17 fixtures pass; opaque independent cursors,
+  tombstones, explicit clearing, boundary locations and per-destination hashes.
+  Server replay guarantee remains unverified; missing-history exports stay blocked.
+- LoFi agent: implementing passkey account flows.
 - QRZ agent: adapter/ADIF/bounded templates ready; reconciliation and review next.
-- Signer agent: PKCS#12, canonical signing and LoTW adapter/runtime vectors.
+- Signer adapter/runtime vectors pass locally; implementing connection routes.
 - Review/integrate each slice, meaningful checks, commit and push; update this log.

@@ -1,6 +1,7 @@
 import { templateContext } from "./delivery.ts";
 import type { Work } from "./intake.ts";
 import type { SourceRecord } from "./lofi.ts";
+import { lotwVerification } from "./lotw-verification.ts";
 import {
   isEventRecord,
   isSourceDeleted,
@@ -407,7 +408,12 @@ async function recentContact(
 export async function reviewSource(
   store: Store,
   tenant: string,
-  options: { source?: string; destination?: string; limit?: number } = {},
+  options: {
+    source?: string;
+    destination?: string;
+    limit?: number;
+    trustRootsJson?: string;
+  } = {},
   now = Date.now(),
 ): Promise<ReviewResponse> {
   const selectedSource = identifier(options.source);
@@ -488,10 +494,10 @@ export async function reviewSource(
   const connections = (
     await store
       .statement(
-        "SELECT kind,status,count(*) AS count FROM connections WHERE tenant=? AND status!='revoked' GROUP BY kind,status",
+        "SELECT kind,status,config FROM connections WHERE tenant=? AND status!='revoked'",
         tenant,
       )
-      .all<{ kind: string; status: string; count: number }>()
+      .all<{ kind: string; status: string; config: string }>()
   ).results;
   const readiness: ReviewResponse["readiness"] = ["lofi", "qrz", "lotw"].map(
     (kind) => {
@@ -530,7 +536,7 @@ export async function reviewSource(
         owned.some((connection) => connection.status === "needs_verification")
       )
         status = active ? "ready" : "attention";
-      const message =
+      let message =
         kind === "lofi"
           ? status === "not_connected"
             ? "Connect and approve a LoFi account to begin read-only ingestion."
@@ -538,6 +544,36 @@ export async function reviewSource(
           : status === "not_connected"
             ? `No ${kind === "qrz" ? "QRZ" : "LoTW"} destination is connected. Delivery counts remain zero; source review is still available.`
             : "Connected destination metadata can be reviewed. Previewing never enables delivery or proves historical absence.";
+      if (kind === "lotw" && status !== "not_connected") {
+        const current = owned.filter(
+          (connection) =>
+            connection.status === "active" ||
+            connection.status === "needs_verification",
+        );
+        const warnings = new Set(
+          current.flatMap((connection) =>
+            lotwVerification(jsonObject(connection.config), {
+              trustRootsJson: options.trustRootsJson ?? "[]",
+              now,
+            })
+              .filter(
+                (check) =>
+                  check.status === "warning" || check.status === "error",
+              )
+              .map((check) => check.message),
+          ),
+        );
+        if (warnings.size) {
+          status = "attention";
+          message = [...warnings].join(" ");
+        } else if (status === "attention") {
+          message =
+            "LoTW needs certificate verification before signing. Review the connection checks.";
+        } else if (status === "paused") {
+          message =
+            "The LoTW connection is paused. Resume it before checking delivery readiness.";
+        }
+      }
       return { kind: kind as "lofi" | "qrz" | "lotw", status, message };
     },
   );
@@ -562,6 +598,7 @@ export async function reviewRoute(
   request: Request,
   store: Store,
   tenant: string,
+  options: { trustRootsJson?: string } = {},
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (url.pathname !== "/api/review") return null;
@@ -577,6 +614,7 @@ export async function reviewRoute(
       throw new ReviewError(400, "Review limit must be 1–20");
     return Response.json(
       await reviewSource(store, tenant, {
+        trustRootsJson: options.trustRootsJson,
         ...(url.searchParams.has("source")
           ? { source: url.searchParams.get("source") ?? "" }
           : {}),

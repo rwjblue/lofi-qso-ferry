@@ -203,6 +203,99 @@ test("retained review uses effective segment context and current production rend
   }
 });
 
+test("LoTW readiness explains saved verification evidence without vendor reads, private config exposure or paused and tenant regressions", async (t) => {
+  const h = await setup();
+  t.after(() => h.mf.dispose());
+  await seed(h.store, "b");
+  const certificate = {
+    validFrom: new Date(h.now - 86_400_000).toISOString(),
+    validTo: new Date(h.now + 86_400_000).toISOString(),
+    trusted: true,
+    status: "unrevoked",
+    statusCheckedAt: new Date(h.now - 1).toISOString(),
+  };
+  const config = {
+    readAccess: true,
+    loginVerification: {
+      status: "verified",
+      checkedAt: new Date(h.now - 1).toISOString(),
+    },
+    certificates: [certificate],
+    queryUsername: "private-account",
+    error: "private-vendor-error",
+  };
+  for (const tenant of ["a", "b"])
+    await h.store
+      .statement(
+        "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,config,created_at) VALUES(?,'lotw','lotw','lotw','LoTW','needs_verification',?,0)",
+        tenant,
+        JSON.stringify(config),
+      )
+      .run();
+  const readiness = async (trustRootsJson = "[]") => {
+    const before = await snapshot(h);
+    const result = await reviewSource(h.store, "a", { trustRootsJson }, h.now);
+    assert.deepEqual(await snapshot(h), before);
+    assert.doesNotMatch(
+      JSON.stringify(result),
+      /private-account|private-vendor-error/,
+    );
+    const lotw = result.readiness.find((item) => item.kind === "lotw");
+    assert(lotw);
+    return lotw;
+  };
+  const missingTrust = await readiness();
+  assert.equal(missingTrust.status, "attention");
+  assert.match(missingTrust.message, /trust is not configured on the server/);
+
+  await h.store
+    .statement(
+      "UPDATE connections SET status='active' WHERE tenant='a' AND id='lotw'",
+    )
+    .run();
+  assert.equal((await readiness('["synthetic-root"]')).status, "ready");
+
+  await h.store
+    .statement(
+      "UPDATE connections SET config=? WHERE tenant='a' AND id='lotw'",
+      JSON.stringify({
+        ...config,
+        loginVerification: {
+          status: "rejected",
+          checkedAt: new Date(h.now).toISOString(),
+        },
+        certificates: [
+          {
+            ...certificate,
+            statusCheckedAt: new Date(h.now - 86_400_000).toISOString(),
+          },
+        ],
+      }),
+    )
+    .run();
+  const failed = await readiness('["synthetic-root"]');
+  assert.equal(failed.status, "attention");
+  assert.match(failed.message, /LoTW rejected/);
+  assert.match(failed.message, /at least 24 hours old/);
+
+  await h.store
+    .statement(
+      "UPDATE connections SET status='disabled' WHERE tenant='a' AND id='lotw'",
+    )
+    .run();
+  const paused = await readiness();
+  assert.equal(paused.status, "paused");
+  assert.match(paused.message, /connection is paused/);
+  assert.doesNotMatch(paused.message, /rejected|trust is not configured/);
+
+  await h.store
+    .statement(
+      "UPDATE connections SET status='revoked' WHERE tenant='a' AND id='lotw'",
+    )
+    .run();
+  assert.equal((await readiness()).status, "not_connected");
+});
+
 test("an incomplete first import still explains counts and raw contacts but never guesses operation fields or comments", async () => {
   const h = await setup();
   try {

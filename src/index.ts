@@ -1,5 +1,6 @@
 import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
 import { connectionRoute } from "./connections.ts";
+import { lotwVerification } from "./lotw-verification.ts";
 import { reviewRoute } from "./review.ts";
 import { boundedJson, keyring } from "./security.ts";
 import { deliveryGates, exportsEffective, tick } from "./service.ts";
@@ -63,7 +64,9 @@ export default {
       const connection = await connectionRoute(request, env, identity);
       if (connection) return secured(connection);
       const store = new Store(env.DB, keyring(env));
-      const review = await reviewRoute(request, store, identity.tenant);
+      const review = await reviewRoute(request, store, identity.tenant, {
+        trustRootsJson: env.LOTW_TRUST_ROOTS_JSON,
+      });
       if (review) return secured(review);
       if (request.method === "GET" && url.pathname === "/api/dashboard") {
         const account = await store
@@ -98,11 +101,36 @@ export default {
         const connections = (
           await store
             .statement(
-              "SELECT id,kind,label,status,last_poll_at,json_extract(config,'$.lastError') AS last_error FROM connections WHERE tenant=? ORDER BY created_at",
+              "SELECT id,kind,label,status,last_poll_at,config,json_extract(config,'$.lastError') AS last_error FROM connections WHERE tenant=? ORDER BY created_at",
               identity.tenant,
             )
-            .all()
-        ).results;
+            .all<{
+              id: string;
+              kind: string;
+              label: string;
+              status: string;
+              last_poll_at: number | null;
+              config: string;
+              last_error: string | null;
+            }>()
+        ).results.map(({ config, ...connection }) => {
+          const parsed: unknown = JSON.parse(config);
+          return {
+            ...connection,
+            ...(connection.kind === "lotw"
+              ? {
+                  lotwVerification: lotwVerification(
+                    parsed &&
+                      typeof parsed === "object" &&
+                      !Array.isArray(parsed)
+                      ? (parsed as Record<string, unknown>)
+                      : {},
+                    { trustRootsJson: env.LOTW_TRUST_ROOTS_JSON },
+                  ),
+                }
+              : {}),
+          };
+        });
         const lotwDestinations = new Set(
           connections
             .filter((connection) => connection.kind === "lotw")

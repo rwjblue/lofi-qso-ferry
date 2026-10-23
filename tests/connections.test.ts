@@ -132,6 +132,105 @@ test("verified connection renewals retain logical destination and ledger, creden
       !dump.includes("renewed-secret"),
   );
 });
+test("credential renewal atomically retires only unsent artifacts using superseded credentials", async (t) => {
+  const { store, mf } = await setup();
+  t.after(() => mf.dispose());
+  const cases = [
+    { tenant: "a", id: "old-prepared", state: "prepared", version: "v1" },
+    { tenant: "a", id: "old-dispatching", state: "dispatching", version: "v1" },
+    { tenant: "a", id: "old-submitted", state: "submitted", version: "v1" },
+    { tenant: "a", id: "old-uncertain", state: "uncertain", version: "v1" },
+    { tenant: "a", id: "current-prepared", state: "prepared", version: "v2" },
+    { tenant: "b", id: "other-tenant", state: "prepared", version: "v1" },
+  ];
+  for (const entry of cases) {
+    await store.observe(
+      {
+        tenant: entry.tenant,
+        source: "source",
+        qso: entry.id,
+        destination: "destination",
+      },
+      "g1",
+      "h1",
+      30,
+    );
+    await store
+      .statement(
+        "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES(?,?,'source',?,'destination','g1',?,'h1',?,0,'h1')",
+        entry.tenant,
+        entry.id,
+        entry.id,
+        entry.id,
+        entry.version,
+      )
+      .run();
+    await store
+      .statement(
+        "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES(?,?,?,0,0)",
+        entry.tenant,
+        entry.id,
+        entry.state,
+      )
+      .run();
+    await (
+      await store.putPrivate(entry.tenant, "destination", entry.id, "outbox", {
+        artifact: entry.id,
+      })
+    ).run();
+  }
+  const renewal = {
+    kind: "qrz" as const,
+    remoteIdentity: "destination",
+    label: "Renewed QRZ",
+    credential: { apiKey: "renewed-synthetic" },
+    credentialVersion: "v2",
+    config: {},
+  };
+  await saveVerifiedConnection(store, "a", renewal, identity);
+  for (const entry of cases) {
+    const state = await store
+      .statement(
+        "SELECT state,reason FROM attempt_state WHERE tenant=? AND attempt=?",
+        entry.tenant,
+        entry.id,
+      )
+      .first<{ state: string; reason: string | null }>();
+    if (entry.id === "old-prepared") {
+      assert.equal(state?.state, "cancelled");
+      assert.equal(state?.reason, "credential changed before dispatch");
+      assert.equal(
+        await store.private(entry.tenant, "destination", entry.id, "outbox"),
+        null,
+      );
+    } else {
+      assert.equal(state?.state, entry.state);
+      assert.deepEqual(
+        await store.private(entry.tenant, "destination", entry.id, "outbox"),
+        { artifact: entry.id },
+      );
+    }
+  }
+  const events = (
+    await store
+      .statement("SELECT tenant,attempt,state,reason FROM attempt_events")
+      .all()
+  ).results;
+  assert.deepEqual(events, [
+    {
+      tenant: "a",
+      attempt: "old-prepared",
+      state: "cancelled",
+      reason: "credential changed before dispatch",
+    },
+  ]);
+  assert.equal(
+    (await store.connection("a", "destination"))?.credential_version,
+    "v2",
+  );
+  assert(await store.private("a", "destination", "v1", "credential"));
+});
+
 test("connection routes enforce passkey freshness, CSRF, tenant ownership and redacted listing", async (t) => {
   const { env, store, mf } = await setup();
   t.after(() => mf.dispose());
@@ -297,6 +396,40 @@ test("LoFi approval distinguishes preflight authentication from vendor403 and po
     "a vendor permission failure can follow a durable pending connection; it is not a preflight retry",
   );
 });
+test("connection verification exposes a safe retry delay and shares vendor cooldowns", async (t) => {
+  const { env, store, mf } = await setup();
+  t.after(() => mf.dispose());
+  await vacate(store, "qrz");
+  const book = {
+    bookId: "123",
+    stationCallsign: "W1AW",
+    startDate: "2020-01-01",
+    endDate: "2030-12-31",
+  };
+  let network = 0;
+  const fetcher: typeof fetch = async () => {
+    network++;
+    return new Response("sensitive vendor details", {
+      status: 429,
+      headers: { "Retry-After": "600" },
+    });
+  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await connectionRoute(
+      await request("/qrz", { apiKey: "synthetic-secret", book }, env),
+      env,
+      identity,
+      { fetcher },
+    );
+    assert.equal(response?.status, 503);
+    assert(Number(response?.headers.get("Retry-After")) > 0);
+    const body = await response!.text();
+    assert.match(body, /vendor_deferred/);
+    assert(!body.includes("sensitive") && !body.includes("synthetic-secret"));
+  }
+  assert.equal(network, 1);
+});
+
 test("QRZ linking uses STATUS proof, never INSERT, and preserves stable book on key renewal", async (t) => {
   const { env, store, mf } = await setup();
   t.after(() => mf.dispose());

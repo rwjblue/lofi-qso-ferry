@@ -22,6 +22,7 @@ import {
   type SigningCredential,
 } from "./signing.ts";
 import { type Connection, Store } from "./store.ts";
+import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
 
 class ConnectionError extends Error {
   constructor(
@@ -192,6 +193,31 @@ export async function saveVerifiedConnection(
       now,
     ),
     privateWrite,
+    // A saved unsent artifact cannot dispatch with a superseded credential.
+    // Retire only prepared work; dispatched outcomes still require readback.
+    store.statement(
+      "INSERT INTO attempt_events(tenant,attempt,state,at,reason) SELECT s.tenant,s.attempt,'cancelled',?,'credential changed before dispatch' FROM attempt_state s JOIN attempts a ON a.tenant=s.tenant AND a.id=s.attempt WHERE s.state='prepared' AND a.tenant=? AND a.destination=? AND a.credential_version!=?",
+      now,
+      tenant,
+      id,
+      version,
+    ),
+    store.statement(
+      "DELETE FROM private_data WHERE tenant=? AND connection=? AND kind='outbox' AND id IN(SELECT a.payload_id FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.destination=? AND a.credential_version!=? AND s.state='prepared')",
+      tenant,
+      id,
+      tenant,
+      id,
+      version,
+    ),
+    store.statement(
+      "UPDATE attempt_state SET state='cancelled',reason='credential changed before dispatch',lease_token=NULL,fence=NULL,updated_at=? WHERE tenant=? AND state='prepared' AND attempt IN(SELECT id FROM attempts WHERE tenant=? AND destination=? AND credential_version!=?)",
+      now,
+      tenant,
+      tenant,
+      id,
+      version,
+    ),
     ...(slot?.replacing
       ? [
           store.statement(
@@ -327,7 +353,10 @@ export async function connectionRoute(
           "Wait before requesting another LoFi approval email",
         );
       const credentials = { key: randomToken(), secret: randomToken() };
-      const client = new LoFiClient(credentials, services.fetcher);
+      const client = new LoFiClient(
+        credentials,
+        vendorFetch(store, "lofi", services.fetcher, { priority: "live" }),
+      );
       await client.register();
       const pendingId = randomToken();
       const saved = await saveVerifiedConnection(
@@ -381,7 +410,10 @@ export async function connectionRoute(
       );
       if (!credentials)
         throw new ConnectionError(409, "Approval expired; start linking again");
-      const client = new LoFiClient(credentials, services.fetcher);
+      const client = new LoFiClient(
+        credentials,
+        vendorFetch(store, "lofi", services.fetcher, { priority: "live" }),
+      );
       const account = await client.accounts();
       const accountId = text(account.uuid, "verified LoFi account ID", 100);
       await assertConnectionSlot(store, identity.tenant, "lofi", accountId, id);
@@ -419,9 +451,11 @@ export async function connectionRoute(
         "qrz",
         expected.bookId,
       );
-      await new QrzClient(apiKey, { fetch: services.fetcher }).verifyBook(
-        expected,
-      );
+      await new QrzClient(apiKey, {
+        fetch: vendorFetch(store, "qrz", services.fetcher, {
+          priority: "live",
+        }),
+      }).verifyBook(expected);
       const saved = await saveVerifiedConnection(
         store,
         identity.tenant,
@@ -462,7 +496,10 @@ export async function connectionRoute(
       )
         throw new ConnectionError(503, "LoTW trust configuration is invalid");
       const roots = rootsInput as string[];
-      const statusClient = new LotwClient(null, { fetcher: services.fetcher });
+      const lotwFetch = vendorFetch(store, "lotw", services.fetcher, {
+        priority: "live",
+      });
+      const statusClient = new LotwClient(null, { fetcher: lotwFetch });
       const signing = await importPkcs12(
         new Uint8Array(Buffer.from(encoded, "base64")),
         input.password,
@@ -488,7 +525,7 @@ export async function connectionRoute(
           })(),
         };
         const today = new Date().toISOString().slice(0, 10);
-        await new LotwClient(query, { fetcher: services.fetcher }).query({
+        await new LotwClient(query, { fetcher: lotwFetch }).query({
           startDate: today,
           endDate: today,
         });
@@ -690,6 +727,23 @@ export async function connectionRoute(
     }
     return json({ error: "Unknown connection endpoint" }, 404);
   } catch (error) {
+    if (error instanceof VendorDeferredError)
+      return Response.json(
+        {
+          code: "vendor_deferred",
+          error:
+            "Vendor requests are paused. Please retry after the indicated delay.",
+        },
+        {
+          status: 503,
+          headers: {
+            "Cache-Control": "no-store",
+            "Retry-After": String(
+              Math.max(1, Math.ceil((error.retryAt - Date.now()) / 1000)),
+            ),
+          },
+        },
+      );
     if (error instanceof AuthError)
       return json(
         { error: error.message, ...(error.code ? { code: error.code } : {}) },

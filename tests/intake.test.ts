@@ -1,17 +1,22 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import type { Work } from "../src/intake.ts";
 import {
+  contactPriority,
   expireSource,
   observeContact,
   pendingContacts,
   pollSource,
   rereadOperation,
 } from "../src/intake.ts";
-import type { Work } from "../src/intake.ts";
 import { LoFiError, type SourceRecord } from "../src/lofi.ts";
+import { purgeResolvedSource } from "../src/maintenance.ts";
 import { sourceFingerprint } from "../src/projection.ts";
+import { adoptHistory } from "../src/reconcile.ts";
+import { VendorDeferredError } from "../src/vendor-requests.ts";
 import { database, seed } from "./helpers.ts";
+
 const at = 1792684800000;
 const op: SourceRecord = {
   uuid: "op-1",
@@ -82,7 +87,12 @@ async function setup() {
   const state = await database();
   const sql = (
     await Promise.all(
-      ["0004_intake.sql", "0005_cutover.sql"].map((file) =>
+      [
+        "0004_intake.sql",
+        "0005_cutover.sql",
+        "0009_vendor_requests.sql",
+        "0010_source_priority.sql",
+      ].map((file) =>
         readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8"),
       ),
     )
@@ -132,6 +142,406 @@ async function work(
     )
     .first<Work>();
 }
+
+test("historical pages stay small while forward arrivals and edits retain live priority", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const limits: number[] = [];
+  const page = (qsos: SourceRecord[]) =>
+    fetcher(async (_url, init) => {
+      limits.push(JSON.parse(String(init?.body)).meta.sync.qsos.limit);
+      return response([], qsos);
+    });
+  const historical = { ...loose, uuid: "a-history" };
+  const edited = { ...loose, uuid: "z-edited", startAtMillis: at - 86400_000 };
+  await pollSource(store, source, page([historical, edited]), now);
+  assert.equal(await contactPriority(store, source, edited.uuid), "background");
+
+  // A timestamp-only replay has no meaningful source change to promote.
+  await pollSource(
+    store,
+    source,
+    page([{ ...edited, syncedAtMillis: 103 }]),
+    now + 1,
+  );
+  assert.equal(await contactPriority(store, source, edited.uuid), "background");
+  const correction = { ...edited, notes: "corrected", syncedAtMillis: 104 };
+  const newlyArrived = { ...loose, uuid: "new-arrival", syncedAtMillis: 105 };
+  await pollSource(store, source, page([correction, newlyArrived]), now + 2);
+  assert.equal(await contactPriority(store, source, edited.uuid), "live");
+  assert.equal(await contactPriority(store, source, newlyArrived.uuid), "live");
+  assert.equal((await work(state, edited.uuid))?.priority, "live");
+
+  const rescanned = { ...loose, uuid: "older-rescan", syncedAtMillis: 50 };
+  await pollSource(
+    store,
+    source,
+    page([correction, rescanned]),
+    now + 3,
+    "rescan:new-destination",
+  );
+  assert.equal((await work(state, edited.uuid))?.priority, "live");
+  assert.equal(
+    await contactPriority(store, source, rescanned.uuid),
+    "background",
+  );
+  assert.deepEqual(limits, [25, 100, 100, 25]);
+  assert.deepEqual(
+    (await pendingContacts(store, source, 2, now + 4)).map((c) => c.id),
+    [newlyArrived.uuid, edited.uuid],
+  );
+  assert.deepEqual(
+    (await pendingContacts(store, source, 20, now + 4, "background")).map(
+      (c) => c.id,
+    ),
+    [historical.uuid, rescanned.uuid],
+  );
+  assert.deepEqual(
+    (await pendingContacts(store, source, 20, now + 4, "live")).map(
+      (c) => c.id,
+    ),
+    [newlyArrived.uuid, edited.uuid],
+  );
+  assert.deepEqual(
+    (
+      await pendingContacts(
+        store,
+        source,
+        1,
+        now + 4,
+        undefined,
+        historical.uuid,
+      )
+    ).map((c) => c.id),
+    [historical.uuid],
+    "an exact saved attempt can refresh its context ahead of the queue limit",
+  );
+  assert.deepEqual(
+    await pendingContacts(store, source, 1, now + 4, "live", historical.uuid),
+    [],
+    "an exact filter still observes the priority and source-context guards",
+  );
+  await store
+    .statement("DELETE FROM source_work WHERE id=?", newlyArrived.uuid)
+    .run();
+  assert.equal(
+    await contactPriority(store, source, newlyArrived.uuid),
+    "live",
+    "forward birth retains priority after source payload metadata is purged",
+  );
+});
+
+test("historical inventory baselines stay background until a forward correction arrives", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const absent = { ...loose, uuid: "absent" };
+  const unverified = { ...loose, uuid: "unverified" };
+  await pollSource(
+    store,
+    source,
+    fetcher(async () => response([], [absent, unverified])),
+    now,
+  );
+  for (const contact of await pendingContacts(store, source, 20, now + 1)) {
+    await observeContact(store, source, contact, now + 1);
+    const missing = contact.id === absent.uuid;
+    const result = await adoptHistory(
+      store,
+      {
+        tenant: source.tenant,
+        source: source.id,
+        qso: contact.id,
+        destination: "destination",
+      },
+      contact.generation,
+      {
+        state: missing ? "missing_current_identity" : "historical_unverified",
+        reason: null,
+        evidence: {
+          destination: "qrz",
+          capturedGeneration: contact.generation,
+          currentGeneration: contact.generation,
+          readAccess: missing,
+          inventoryComplete: missing,
+          catchupComplete: missing,
+          freshCheckComplete: missing,
+        },
+      },
+      now + 1,
+    );
+    assert.equal(result.applied, true);
+    const ledger = await store.ledger({
+      tenant: source.tenant,
+      source: source.id,
+      qso: contact.id,
+      destination: "destination",
+    });
+    assert.ok(ledger?.baseline_hash);
+    assert.equal(
+      await contactPriority(store, source, contact.id),
+      "background",
+    );
+  }
+  assert.deepEqual(
+    await pendingContacts(store, source, 20, now + 2, "live"),
+    [],
+  );
+  assert.equal(
+    (await pendingContacts(store, source, 20, now + 2, "background")).length,
+    2,
+  );
+  await pollSource(
+    store,
+    source,
+    fetcher(async () =>
+      response([], [{ ...absent, notes: "corrected", syncedAtMillis: 103 }]),
+    ),
+    now + 3,
+  );
+  assert.equal(await contactPriority(store, source, absent.uuid), "live");
+  assert.equal(
+    await contactPriority(store, source, unverified.uuid),
+    "background",
+  );
+});
+
+test("expired general-log history gets a resumable repair without resetting forward coverage", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const archived = { ...loose, uuid: "already-resolved" };
+  const absent = { ...loose, uuid: "not-returned" };
+  await pollSource(
+    store,
+    source,
+    fetcher(async () => response([], [loose, archived, absent])),
+    now,
+  );
+  for (const contact of await pendingContacts(store, source, 20, now + 1))
+    await observeContact(store, source, contact, now + 1);
+  await store
+    .statement(
+      "UPDATE ledger SET state='observed',baseline_hash=source_hash,remote_id='7' WHERE qso=?",
+      archived.uuid,
+    )
+    .run();
+  await purgeResolvedSource(store);
+  assert.equal((await work(state, archived.uuid))?.state, "archived");
+  const canonical = await store
+    .statement("SELECT cursor,generation FROM cursors WHERE stream='sync'")
+    .first();
+  const context = await store
+    .statement("SELECT cursor,generation FROM cursors WHERE stream='context'")
+    .first();
+  await store
+    .statement(
+      "UPDATE source_work SET expires_at=? WHERE id IN(?,?)",
+      now - 1,
+      String(loose.uuid),
+      absent.uuid,
+    )
+    .run();
+  await expireSource(store, now + 2);
+  const repair = () =>
+    store
+      .statement(
+        "SELECT cursor,generation,updated_at FROM cursors WHERE stream='repair'",
+      )
+      .first<{ cursor: string; generation: number; updated_at: number }>();
+  const started = await repair();
+  assert.ok(started);
+  assert.equal(JSON.parse(started.cursor).mode, "backfill");
+  assert.deepEqual(
+    await store
+      .statement("SELECT cursor,generation FROM cursors WHERE stream='sync'")
+      .first(),
+    canonical,
+  );
+  assert.deepEqual(
+    await store
+      .statement("SELECT cursor,generation FROM cursors WHERE stream='context'")
+      .first(),
+    context,
+  );
+  await expireSource(store, now + 3);
+  assert.deepEqual(await repair(), started);
+  await pollSource(
+    store,
+    source,
+    fetcher(async () => response([], [archived], 1)),
+    now + 4,
+    "repair",
+  );
+  const partial = await repair();
+  assert.equal(JSON.parse(partial!.cursor).qsos.cursor, "qso-page-2");
+  assert.equal((await work(state, archived.uuid))?.state, "archived");
+  assert.equal(
+    await store.private(
+      "a",
+      "source",
+      (await work(state, archived.uuid))!.private_id,
+      "source",
+    ),
+    null,
+  );
+  await expireSource(store, now + 5);
+  assert.deepEqual(await repair(), partial);
+  await pollSource(
+    store,
+    source,
+    fetcher(async (_url, init) => {
+      assert.equal(
+        JSON.parse(String(init?.body)).meta.sync.qsos.cursor,
+        "qso-page-2",
+      );
+      return response([], [loose]);
+    }),
+    now + 6,
+    "repair",
+  );
+  const completed = await repair();
+  assert.equal(JSON.parse(completed!.cursor).rescanComplete, true);
+  assert.equal((await work(state, String(loose.uuid)))?.state, "pending");
+  assert.ok(
+    (await pendingContacts(store, source, 20, now + 7)).some(
+      (contact) => contact.id === loose.uuid,
+    ),
+  );
+  assert.equal((await work(state, absent.uuid))?.state, "expired");
+  await expireSource(store, now + 8);
+  assert.deepEqual(
+    await repair(),
+    completed,
+    "an old absent row cannot restart completed repair every tick",
+  );
+  assert.deepEqual(
+    await store
+      .statement("SELECT cursor,generation FROM cursors WHERE stream='sync'")
+      .first(),
+    canonical,
+  );
+  await store
+    .statement(
+      "UPDATE source_work SET expires_at=? WHERE id=?",
+      now + 9,
+      String(loose.uuid),
+    )
+    .run();
+  await expireSource(store, now + 10);
+  assert.equal(JSON.parse((await repair())!.cursor).rescanComplete, false);
+});
+
+test("real-clock LoFi cooldown starts when the vendor response arrives", async (t) => {
+  const { store, source, now, mf } = await setup();
+  t.after(() => mf.dispose());
+  let actual = now + 30_000;
+  t.mock.method(Date, "now", () => actual);
+  await assert.rejects(
+    pollSource(
+      store,
+      source,
+      fetcher(async () => {
+        actual += 60_000;
+        return new Response(null, {
+          status: 429,
+          headers: { "Retry-After": "600" },
+        });
+      }),
+      now,
+      "sync",
+      null,
+    ),
+    (error: unknown) =>
+      error instanceof VendorDeferredError &&
+      error.retryAt === actual + 600_000,
+  );
+});
+
+test("operation context for live work runs first and vendor deferrals preserve progress", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  await pollSource(
+    store,
+    source,
+    fetcher(async () =>
+      response(
+        [
+          { ...op, uuid: "a-history" },
+          { ...op, uuid: "z-live" },
+        ],
+        [{ ...qso, operation: "z-live" }],
+      ),
+    ),
+    now,
+  );
+  await pollSource(
+    store,
+    source,
+    fetcher(async () =>
+      response(
+        [{ ...op, uuid: "z-live", grid: "FN32BB", syncedAtMillis: 200 }],
+        [],
+      ),
+    ),
+    now + 1,
+  );
+  assert.equal(await contactPriority(store, source, String(qso.uuid)), "live");
+  const paths: string[] = [];
+  const pages = fetcher(async (url) => {
+    paths.push(url.pathname);
+    if (url.pathname.includes("z-live")) {
+      assert.equal(url.searchParams.get("limit"), "100");
+      return operationResponse([{ ...qso, operation: "z-live" }]);
+    }
+    assert.equal(url.searchParams.get("limit"), "25");
+    return operationResponse([], 1);
+  });
+  await rereadOperation(store, source, pages, now + 2);
+  await rereadOperation(store, source, pages, now + 3);
+  assert.deepEqual(paths, [
+    "/v1/operations/z-live/qsos",
+    "/v1/operations/a-history/qsos",
+  ]);
+  const before = await work(state, "a-history", "operation");
+  const cursorBefore = await store
+    .statement(
+      "SELECT cursor,generation FROM cursors WHERE stream='reread:a-history'",
+    )
+    .first();
+  let dispatched = 0;
+  const throttled = fetcher(async () => {
+    dispatched++;
+    return new Response(null, {
+      status: 429,
+      headers: { "Retry-After": "600" },
+    });
+  });
+  await assert.rejects(
+    rereadOperation(store, source, throttled, now + 4),
+    (error: unknown) =>
+      error instanceof VendorDeferredError &&
+      error.requestSent &&
+      error.retryAt === now + 600_004,
+  );
+  assert.deepEqual(await work(state, "a-history", "operation"), before);
+  assert.deepEqual(
+    await store
+      .statement(
+        "SELECT cursor,generation FROM cursors WHERE stream='reread:a-history'",
+      )
+      .first(),
+    cursorBefore,
+  );
+  await assert.rejects(
+    pollSource(store, source, throttled, now + 5),
+    (error: unknown) =>
+      error instanceof VendorDeferredError && !error.requestSent,
+  );
+  assert.equal(dispatched, 1);
+});
 
 test("operation rereads skip tombstones and failed or partial pages yield fairly without inventing coverage", async (t) => {
   const state = await setup();
@@ -196,7 +606,7 @@ test("operation rereads skip tombstones and failed or partial pages yield fairly
     "/v1/operations/d-healthy/qsos",
   ]);
   await assert.rejects(
-    rereadOperation(store, source, pages, now + 4),
+    rereadOperation(store, source, pages, now + 300_004),
     /synthetic outage/,
   );
   assert.equal(
@@ -610,10 +1020,10 @@ test("event expiry and missing membership never erase a segment or block an unre
     });
     await rereadOperation(store, source, pages, now + 8);
     assert.equal((await work(state, "op-1", "operation"))?.state, "pending");
-    await rereadOperation(store, source, pages, now + 9);
+    await rereadOperation(store, source, pages, now + 300_009);
     assert.equal((await work(state, "op-1", "operation"))?.state, "context");
     assert.equal(
-      (await pendingContacts(store, source, 40, now + 10)).find(
+      (await pendingContacts(store, source, 40, now + 300_010)).find(
         (c) => c.id === "qso-1",
       )?.grid,
       "FN32BB",
@@ -700,10 +1110,10 @@ test("expired operation recovery preserves backfill progress across scheduler cy
             url.pathname === "/v1/operations/op-1/qsos" ? [qso] : [],
           ),
         ),
-        now + 10 + operation,
+        now + 300_010 + operation,
       );
     assert.ok(
-      (await pendingContacts(store, source, 40, now + 13)).some(
+      (await pendingContacts(store, source, 40, now + 300_013)).some(
         (contact) => contact.id === "qso-1",
       ),
       "the operation on the final recovery page becomes usable again",

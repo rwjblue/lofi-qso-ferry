@@ -4,6 +4,7 @@ import { tick } from "../src/service.ts";
 import { seed } from "./helpers.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import { schedulerFixture, FIXTURE_NOW } from "./runtime-fixtures.ts";
+import { VendorDeferredError } from "../src/vendor-requests.ts";
 const key = (destination: string) => ({
   tenant: "a",
   source: "source",
@@ -384,7 +385,7 @@ test("unresolved attempts yield bounded outbox slots without becoming retryable"
       // yield its scheduler slot to the next durable unresolved attempt.
       await h.store
         .statement(
-          "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a',?,'submitted',0,0)",
+          "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at,priority) VALUES('a',?,'submitted',0,0,'live')",
           id,
         )
         .run();
@@ -392,7 +393,7 @@ test("unresolved attempts yield bounded outbox slots without becoming retryable"
     await tick(h.env, h.fetcher, FIXTURE_NOW);
     assert.equal(
       await count(h, "attempt_state", `updated_at=${FIXTURE_NOW}`),
-      8,
+      6,
     );
     await tick(h.env, h.fetcher, FIXTURE_NOW + 1);
     const row = await h.store
@@ -404,6 +405,283 @@ test("unresolved attempts yield bounded outbox slots without becoming retryable"
     assert.equal(row?.updated_at, FIXTURE_NOW + 1);
     assert.equal(h.calls.qrzWrites + h.calls.lotwUploads, 0);
     assert.equal(await count(h, "attempts"), 9);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("new forward arrivals precede historical reconciliation, even with old QSO dates", async () => {
+  const h = await schedulerFixture();
+  try {
+    for (let i = 0; i < 10; i++)
+      h.changes.qsos.push({
+        ...h.qso,
+        uuid: `history-${i}`,
+        operation: null,
+        their: { call: `K1OLD${i}` },
+        our: { stationCall: "W1AW", grid: "FN31AA", dxccCode: 291 },
+        syncedAtMillis: 110 + i,
+      });
+    const first = await tick(h.env, h.fetcher, FIXTURE_NOW);
+    assert.equal(first.errors, 0);
+    assert.equal(first.contacts, 4);
+    h.changes.qsos.push({
+      ...h.qso,
+      uuid: "offline-new",
+      operation: null,
+      their: { call: "N9LIVE" },
+      our: { stationCall: "W1AW", grid: "FN31AA", dxccCode: 291 },
+      startAtMillis: Date.parse("2021-01-01T12:00:01Z"),
+      syncedAtMillis: 200,
+    });
+    const lookups: string[] = [];
+    const observed: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).hostname === "logbook.qrz.com") {
+        const form = new URLSearchParams(String(init?.body));
+        if (form.get("ACTION") === "FETCH")
+          lookups.push(form.get("OPTION") ?? "");
+      }
+      return h.fetcher(input, init);
+    };
+    const second = await tick(h.env, observed, FIXTURE_NOW + 300000);
+    assert.equal(second.errors, 0);
+    assert.equal(second.contacts, 5);
+    assert.match(lookups[0]!, /CALL:N9LIVE/);
+    assert(await h.store.ledger({ ...key("destination"), qso: "offline-new" }));
+    assert.equal(
+      await count(
+        h,
+        "source_work",
+        "id LIKE 'history-%' AND priority='background'",
+      ),
+      10,
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("historical attempts receive two turns while six live turns stay reserved", async () => {
+  const h = await schedulerFixture();
+  try {
+    for (const priority of ["background", "live"] as const)
+      for (let i = 0; i < 9; i++) {
+        const id = `${priority}-${i}`;
+        await h.store.observe(
+          { ...key("lotw"), qso: id },
+          "g1",
+          "h1",
+          30,
+          false,
+          FIXTURE_NOW - 3600000,
+        );
+        await h.store
+          .statement(
+            "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a',?,'source',?,'lotw','g1',?,'h1','fixture-lotw',0,'h1')",
+            id,
+            id,
+            id,
+          )
+          .run();
+        await h.store
+          .statement(
+            "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at,priority) VALUES('a',?,'submitted',0,?,?)",
+            id,
+            priority === "background" ? 0 : 1,
+            priority,
+          )
+          .run();
+      }
+    const result = await tick(h.env, h.fetcher, FIXTURE_NOW);
+    assert.equal(result.errors, 0);
+    assert.equal(result.attempts, 8);
+    assert.equal(
+      await count(
+        h,
+        "attempt_state",
+        `priority='live' AND updated_at=${FIXTURE_NOW}`,
+      ),
+      6,
+    );
+    assert.equal(
+      await count(
+        h,
+        "attempt_state",
+        `priority='background' AND updated_at=${FIXTURE_NOW}`,
+      ),
+      2,
+    );
+    assert.equal(h.calls.lotwUploads, 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("vendor cooldown pauses all of its work while other vendors continue", async () => {
+  const h = await schedulerFixture();
+  try {
+    let requests = 0;
+    const throttled: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).hostname === "logbook.qrz.com") {
+        requests++;
+        return new Response("throttled", {
+          status: 429,
+          headers: { "Retry-After": "900" },
+        });
+      }
+      return h.fetcher(input, init);
+    };
+    const first = await tick(h.env, throttled, FIXTURE_NOW);
+    assert.equal(first.errors, 0);
+    assert(first.deferred > 0);
+    assert.equal(requests, 1);
+    assert.equal(
+      (await h.store.ledger(key("lotw")))!.state,
+      "adopted_existing",
+    );
+    assert.equal(
+      (await h.store.ledger(key("destination")))!.state,
+      "inventory_pending",
+    );
+    const second = await tick(h.env, throttled, FIXTURE_NOW + 300000);
+    assert.equal(second.errors, 0);
+    assert(second.deferred > 0);
+    assert.equal(requests, 1);
+    assert.equal(
+      JSON.parse((await h.store.connection("a", "source"))!.config).lastError,
+      undefined,
+    );
+    const resumed = await tick(h.env, h.fetcher, FIXTURE_NOW + 900000);
+    assert.equal(resumed.errors, 0);
+    assert.equal(
+      (await h.store.ledger(key("destination")))!.state,
+      "adopted_existing",
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("saved historical uploads progress before inventory can exhaust the next background budget", async () => {
+  const h = await schedulerFixture();
+  try {
+    h.enable();
+    h.env.ROLLOUT_QSO_IDS_JSON = '["*"]';
+    await h.store
+      .statement(
+        "UPDATE connections SET status='disabled' WHERE id='destination'",
+      )
+      .run();
+    h.lotwRecords.splice(0);
+    for (let i = 1; i < 4; i++)
+      h.changes.qsos.push({
+        ...h.qso,
+        uuid: `history-upload-${i}`,
+        operation: null,
+        startAtMillis: Number(h.qso.startAtMillis) + i * 86400000,
+        our: {
+          stationCall: "W1AW",
+          grid: "FN31AA",
+          state: "CT",
+          county: "Tolland",
+          dxccCode: 291,
+          cqZone: 5,
+          ituZone: 8,
+        },
+        syncedAtMillis: 110 + i,
+      });
+    assert.equal((await tick(h.env, h.fetcher, FIXTURE_NOW)).errors, 0);
+    const deferUploads: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).pathname === "/lotw/upload")
+        throw new VendorDeferredError(FIXTURE_NOW + 41 * 60000);
+      return h.fetcher(input, init);
+    };
+    const due = await tick(h.env, deferUploads, FIXTURE_NOW + 36 * 60000);
+    assert.equal(due.errors, 0);
+    assert(
+      await count(
+        h,
+        "attempt_state",
+        "state='prepared' AND priority='background'",
+      ),
+    );
+    const order: string[] = [];
+    const observed: typeof fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (
+        path === "/lotw/crl" ||
+        path === "/lotw/upload" ||
+        path === "/lotwuser/lotwreport.adi"
+      )
+        order.push(path);
+      return h.fetcher(input, init);
+    };
+    const next = await tick(h.env, observed, FIXTURE_NOW + 41 * 60000);
+    assert.equal(next.errors, 0);
+    assert.deepEqual(order.slice(0, 2), ["/lotw/crl", "/lotw/upload"]);
+    assert(h.calls.lotwUploads > 0);
+    assert.equal(await count(h, "attempt_state", "priority='live'"), 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("expired history resumes through background repair without resetting forward sync", async () => {
+  const h = await schedulerFixture();
+  try {
+    h.changes.operations.splice(0);
+    h.qso.operation = null;
+    h.qso.our = {
+      stationCall: "W1AW",
+      grid: "FN31AA",
+      state: "CT",
+      county: "Tolland",
+      dxccCode: 291,
+      cqZone: 5,
+      ituZone: 8,
+    };
+    await h.store
+      .statement("UPDATE connections SET status='disabled' WHERE kind!='lofi'")
+      .run();
+    await tick(h.env, h.fetcher, FIXTURE_NOW);
+    await h.store
+      .statement("UPDATE connections SET status='active' WHERE kind!='lofi'")
+      .run();
+    let repairs = 0;
+    const restored: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).pathname === "/v1/sync") {
+        const body = JSON.parse(String(init?.body));
+        if (body.meta.sync.qsos.anyClient) {
+          repairs++;
+          assert.equal(body.meta.sync.qsos.limit, 25);
+          return Response.json({
+            account: { uuid: "account-fixture" },
+            operations: [],
+            qsos: [h.qso],
+            meta: {
+              operations: { records_left: 0 },
+              qsos: { records_left: 0 },
+            },
+          });
+        }
+      }
+      return h.fetcher(input, init);
+    };
+    const result = await tick(h.env, restored, FIXTURE_NOW + 8 * 86400000);
+    assert.equal(result.errors, 0);
+    assert.equal(repairs, 1);
+    assert.equal(
+      (await h.store.ledger(key("destination")))!.state,
+      "adopted_existing",
+    );
+    const sync = await h.store
+      .statement("SELECT cursor FROM cursors WHERE stream='sync'")
+      .first<{ cursor: string }>();
+    assert.equal(JSON.parse(sync!.cursor).mode, "forward");
+    const repair = await h.store
+      .statement("SELECT cursor FROM cursors WHERE stream='repair'")
+      .first<{ cursor: string }>();
+    assert.equal(JSON.parse(repair!.cursor).rescanComplete, true);
   } finally {
     await h.mf.dispose();
   }

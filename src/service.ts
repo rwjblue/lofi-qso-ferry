@@ -25,6 +25,8 @@ import type { ReconciliationEvidence } from "./reconcile.ts";
 import { keyring } from "./security.ts";
 import { Store } from "./store.ts";
 import type { Connection, LedgerKey } from "./store.ts";
+import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
+import type { VendorPriority } from "./vendor-requests.ts";
 export function deliveryGates(env: Env): DeliveryGates {
   const scope: unknown = JSON.parse(env.ROLLOUT_QSO_IDS_JSON || "[]");
   if (!Array.isArray(scope) || scope.some((v) => typeof v !== "string"))
@@ -80,6 +82,8 @@ async function reconcileContact(
   gates: DeliveryGates,
   fetcher: typeof fetch,
   now: number,
+  priority: VendorPriority,
+  vendorNow: number | undefined,
 ) {
   const key: LedgerKey = {
     tenant: source.tenant,
@@ -89,6 +93,18 @@ async function reconcileContact(
   };
   const ledger = await store.ledger(key);
   if (!ledger || ledger.remote_id || ledger.state === "changed") return;
+  if (
+    await store
+      .statement(
+        "SELECT 1 n FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled') LIMIT 1",
+        key.tenant,
+        key.source,
+        key.qso,
+        key.destination,
+      )
+      .first()
+  )
+    return;
   const raw = destination.credential_version
     ? await store.private<{
         apiKey?: string;
@@ -105,13 +121,18 @@ async function reconcileContact(
   let readAccess = false;
   if (destination.kind === "qrz" && raw?.apiKey) {
     remote = await new QrzClient(raw.apiKey, {
-      fetch: fetcher,
+      fetch: vendorFetch(store, "qrz", fetcher, { priority, now: vendorNow }),
     }).findNeighborhood(record);
     readAccess = true;
   } else if (destination.kind === "lotw" && raw?.query) {
     const date = new Date(contact.startAtMillis).toISOString().slice(0, 10);
     remote = (
-      await new LotwClient(raw.query, { fetcher }).query({
+      await new LotwClient(raw.query, {
+        fetcher: vendorFetch(store, "lotw", fetcher, {
+          priority,
+          now: vendorNow,
+        }),
+      }).query({
         startDate: date,
         endDate: date,
         stationCallsign: contact.stationCall,
@@ -171,49 +192,87 @@ export async function tick(
   const sources = (
     await store
       .statement(
-        "SELECT * FROM connections WHERE kind='lofi' AND status='active' ORDER BY COALESCE(last_poll_at,0) LIMIT 2",
+        "SELECT c.*,COALESCE(json_extract(p.cursor,'$.mode'),'backfill') AS sync_mode FROM connections c LEFT JOIN cursors p ON p.tenant=c.tenant AND p.connection=c.id AND p.stream='sync' WHERE c.kind='lofi' AND c.status='active' ORDER BY ROW_NUMBER() OVER(PARTITION BY COALESCE(json_extract(p.cursor,'$.mode'),'backfill') ORDER BY COALESCE(c.last_poll_at,0),c.tenant,c.id),CASE WHEN json_extract(p.cursor,'$.mode')='forward' THEN 0 ELSE 1 END,c.tenant,c.id LIMIT 2",
       )
-      .all<Connection>()
+      .all<Connection & { sync_mode: "backfill" | "forward" }>()
   ).results;
   const result = {
     sources: 0,
     contacts: 0,
     attempts: 0,
     errors: 0,
+    deferred: 0,
     exportsEnabled: exportsEffective(gates),
   };
-  for (const source of sources) {
-    if (Date.now() >= deadline) break;
+  const processSource = async (
+    source: (typeof sources)[number],
+    priority: VendorPriority,
+  ) => {
+    if (Date.now() >= deadline) return;
     const lease = await store.claim(
       source.tenant,
       `cycle:${source.id}`,
       now,
       5 * 60_000,
     );
-    if (!lease) continue;
+    if (!lease) return;
+    const canonicalTurn =
+      (source.sync_mode === "forward" ? "live" : "background") === priority;
     try {
-      await pollSource(store, source, fetcher, now);
-      const rescan = await store
-        .statement(
-          "SELECT stream FROM cursors WHERE tenant=? AND connection=? AND stream LIKE 'rescan:%' AND EXISTS(SELECT 1 FROM connections d WHERE d.tenant=cursors.tenant AND d.id=substr(cursors.stream,8) AND d.status='active') AND COALESCE(json_extract(cursor,'$.rescanComplete'),0)=0 ORDER BY updated_at LIMIT 1",
-          source.tenant,
-          source.id,
-        )
-        .first<{ stream: string }>();
+      if (canonicalTurn) {
+        try {
+          await pollSource(store, source, fetcher, now, "sync", clock ?? null);
+          result.sources++;
+        } catch (error) {
+          if (!(error instanceof VendorDeferredError)) throw error;
+          result.deferred++;
+        }
+      }
+      const rescan =
+        priority === "background"
+          ? await store
+              .statement(
+                "SELECT stream FROM cursors WHERE tenant=? AND connection=? AND (stream='repair' OR stream LIKE 'rescan:%' AND EXISTS(SELECT 1 FROM connections d WHERE d.tenant=cursors.tenant AND d.id=substr(cursors.stream,8) AND d.status='active')) AND COALESCE(json_extract(cursor,'$.rescanComplete'),0)=0 ORDER BY updated_at LIMIT 1",
+                source.tenant,
+                source.id,
+              )
+              .first<{ stream: string }>()
+          : null;
       if (rescan)
         try {
-          await pollSource(store, source, fetcher, now, rescan.stream);
-        } catch {
-          result.errors++;
+          await pollSource(
+            store,
+            source,
+            fetcher,
+            now,
+            rescan.stream,
+            clock ?? null,
+          );
+        } catch (error) {
+          if (error instanceof VendorDeferredError) result.deferred++;
+          else result.errors++;
         }
       try {
-        await rereadOperation(store, source, fetcher, now);
-      } catch {
-        result.errors++;
+        await rereadOperation(
+          store,
+          source,
+          fetcher,
+          now,
+          priority,
+          clock ?? null,
+        );
+      } catch (error) {
+        if (error instanceof VendorDeferredError) result.deferred++;
+        else result.errors++;
       }
       await establishCutovers(store, source, gates, now);
-      result.sources++;
-      for (const contact of await pendingContacts(store, source, 20, now)) {
+      for (const contact of await pendingContacts(
+        store,
+        source,
+        priority === "live" ? 20 : 4,
+        now,
+        priority,
+      )) {
         if (Date.now() >= deadline) break;
         try {
           result.contacts++;
@@ -268,6 +327,8 @@ export async function tick(
                 gates,
                 fetcher,
                 now,
+                priority,
+                clock,
               );
               const key = {
                 tenant: source.tenant,
@@ -275,13 +336,10 @@ export async function tick(
                 qso: contact.id,
                 destination: destination.id,
               };
-              const prepared = await prepareDue(
-                store,
-                key,
-                contact,
-                gates,
-                deps,
-              );
+              const prepared = await prepareDue(store, key, contact, gates, {
+                ...deps,
+                priority,
+              });
               if (prepared.state === "blocked")
                 await store
                   .statement(
@@ -293,7 +351,11 @@ export async function tick(
                     key.destination,
                   )
                   .run();
-            } catch {
+            } catch (error) {
+              if (error instanceof VendorDeferredError) {
+                result.deferred++;
+                continue;
+              }
               result.errors++;
               await store
                 .statement(
@@ -316,74 +378,137 @@ export async function tick(
               contact.id,
             )
             .run();
-        } catch {
-          result.errors++;
+        } catch (error) {
+          if (error instanceof VendorDeferredError) result.deferred++;
+          else result.errors++;
         }
       }
-    } catch {
-      result.errors++;
-      await store
-        .statement(
-          "UPDATE connections SET config=json_set(config,'$.lastError','Source sync requires attention','$.lastSyncFailureAt',?) WHERE tenant=? AND id=?",
-          now,
-          source.tenant,
-          source.id,
-        )
-        .run();
-    } finally {
-      try {
-        // A failed source still consumes its scheduling turn. Otherwise two
-        // unavailable accounts can permanently starve every other tenant.
+    } catch (error) {
+      if (error instanceof VendorDeferredError) result.deferred++;
+      else {
+        result.errors++;
         await store
           .statement(
-            "UPDATE connections SET last_poll_at=MAX(COALESCE(last_poll_at,0),?) WHERE tenant=? AND id=? AND status='active'",
+            "UPDATE connections SET config=json_set(config,'$.lastError','Source sync requires attention','$.lastSyncFailureAt',?) WHERE tenant=? AND id=?",
             now,
             source.tenant,
             source.id,
           )
           .run();
+      }
+    } finally {
+      try {
+        // A failed source still consumes its scheduling turn. Otherwise two
+        // unavailable accounts can permanently starve every other tenant.
+        if (canonicalTurn)
+          await store
+            .statement(
+              "UPDATE connections SET last_poll_at=MAX(COALESCE(last_poll_at,0),?) WHERE tenant=? AND id=? AND status='active'",
+              now,
+              source.tenant,
+              source.id,
+            )
+            .run();
       } finally {
         await store.release(lease);
       }
     }
-  }
-  const attempts = (
-    await store
-      .statement(
-        "SELECT tenant,attempt,state FROM attempt_state WHERE state IN('prepared','uncertain','submitted') AND due_at<=? ORDER BY updated_at LIMIT 8",
-        now,
-      )
-      .all<{ tenant: string; attempt: string; state: string }>()
-  ).results;
-  for (const attempt of attempts) {
-    if (Date.now() >= deadline) break;
-    try {
-      if (attempt.state === "prepared")
-        await dispatchAttempt(
-          store,
-          attempt.tenant,
-          attempt.attempt,
-          gates,
-          deps,
-        );
-      else await reconcileAttempt(store, attempt.tenant, attempt.attempt, deps);
-      result.attempts++;
-    } catch {
-      result.errors++;
-    } finally {
-      // Reconciliation with missing credentials or an unavailable vendor must
-      // yield its bounded slot while retaining the same immutable attempt.
+  };
+  const processAttempts = async (priority: VendorPriority, limit: number) => {
+    if (limit === 0) return 0;
+    const attempts = (
       await store
         .statement(
-          "UPDATE attempt_state SET updated_at=MAX(updated_at,?),due_at=MAX(due_at,?) WHERE tenant=? AND attempt=? AND state IN('prepared','uncertain','submitted')",
+          "SELECT s.tenant,s.attempt,s.state,a.source,a.qso FROM attempt_state s JOIN attempts a ON a.tenant=s.tenant AND a.id=s.attempt WHERE s.state IN('prepared','uncertain','submitted') AND s.due_at<=? AND s.priority=? ORDER BY s.updated_at LIMIT ?",
           now,
-          now + 5 * 60000,
-          attempt.tenant,
-          attempt.attempt,
+          priority,
+          limit,
         )
-        .run();
+        .all<{
+          tenant: string;
+          attempt: string;
+          state: string;
+          source: string;
+          qso: string;
+        }>()
+    ).results;
+    let turns = 0;
+    for (const attempt of attempts) {
+      if (Date.now() >= deadline) break;
+      turns++;
+      try {
+        if (attempt.state === "prepared") {
+          const source = await store.connection(attempt.tenant, attempt.source);
+          if (source?.status !== "active") continue;
+          const [contact] = await pendingContacts(
+            store,
+            source,
+            1,
+            now,
+            undefined,
+            attempt.qso,
+          );
+          if (!contact) continue;
+          // Polling advances the context fence even without source changes.
+          // Refresh from retained inputs before the dispatch guard; an actual
+          // edit cancels the saved unsent artifact through observeContact.
+          const destinations = (await store.connections(source.tenant)).filter(
+            (c) => c.kind !== "lofi" && c.status === "active",
+          );
+          const routed = (["qrz", "lotw"] as const).flatMap((kind) => {
+            const matches = destinations.filter(
+              (c) => c.kind === kind && routeMatches(c, contact),
+            );
+            return matches.length === 1 ? matches : [];
+          });
+          await observeContact(store, source, contact, now, routed);
+          await dispatchAttempt(store, attempt.tenant, attempt.attempt, gates, {
+            ...deps,
+            priority,
+          });
+        } else
+          await reconcileAttempt(store, attempt.tenant, attempt.attempt, {
+            ...deps,
+            priority,
+          });
+        result.attempts++;
+      } catch (error) {
+        if (error instanceof VendorDeferredError) {
+          result.deferred++;
+          await store
+            .statement(
+              "UPDATE attempt_state SET due_at=MAX(due_at,?) WHERE tenant=? AND attempt=?",
+              error.retryAt,
+              attempt.tenant,
+              attempt.attempt,
+            )
+            .run();
+        } else result.errors++;
+      } finally {
+        // Reconciliation with missing credentials or an unavailable vendor must
+        // yield its bounded slot while retaining the same immutable attempt.
+        await store
+          .statement(
+            "UPDATE attempt_state SET updated_at=MAX(updated_at,?),due_at=MAX(due_at,?) WHERE tenant=? AND attempt=? AND state IN('prepared','uncertain','submitted')",
+            now,
+            now + 5 * 60000,
+            attempt.tenant,
+            attempt.attempt,
+          )
+          .run();
+      }
     }
-  }
+    return turns;
+  };
+  // Reserve the first phase for forward changes and their prepared deliveries.
+  // Historical imports cannot spend these contact/attempt or request budgets.
+  for (const source of sources) await processSource(source, "live");
+  await processAttempts("live", 6);
+  // Finish saved imports before inventory reads can spend the next window's
+  // background allowance. Newly prepared imports may use any remaining turns.
+  const backgroundTurns = await processAttempts("background", 2);
+  for (const source of sources) await processSource(source, "background");
+  await processAttempts("background", 2 - backgroundTurns);
   const tenants = (
     await store
       .statement(
@@ -396,8 +521,9 @@ export async function tick(
     try {
       if (Date.now() >= deadline) break;
       await refreshConfirmations(store, tenant, deps);
-    } catch {
-      result.errors++;
+    } catch (error) {
+      if (error instanceof VendorDeferredError) result.deferred++;
+      else result.errors++;
     }
   await purgeResolvedSource(store);
   return result;

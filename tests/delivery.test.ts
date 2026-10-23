@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   parseAdif,
@@ -20,6 +21,10 @@ import {
 } from "../src/projection.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import { LOTW_PRIOR_IDENTITY_NOTICE } from "../src/store.ts";
+import {
+  VendorDeferredError,
+  VENDOR_POLICIES,
+} from "../src/vendor-requests.ts";
 import { database, seed } from "./helpers.ts";
 const gates: DeliveryGates = {
   exportsEnabled: true,
@@ -28,6 +33,16 @@ const gates: DeliveryGates = {
 };
 const at = Date.parse("2026-10-22T12:00:01Z");
 const now = at + 31 * 60000;
+async function deliveryDatabase() {
+  const harness = await database();
+  const sql = await readFile(
+    new URL("../migrations/0009_vendor_requests.sql", import.meta.url),
+    "utf8",
+  );
+  for (const statement of sql.split(";"))
+    if (statement.trim()) await harness.db.prepare(statement).run();
+  return harness;
+}
 async function contact(notes = "source note"): Promise<Contact> {
   return projectContact(
     {
@@ -51,7 +66,7 @@ async function contact(notes = "source note"): Promise<Contact> {
   );
 }
 async function setup() {
-  const harness = await database();
+  const harness = await deliveryDatabase();
   const key = await seed(harness.store);
   const item = await contact();
   await harness.store
@@ -338,7 +353,7 @@ test("fresh identity collision after preparation blocks a later first insert", a
   }
 });
 test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted then separately observed", async () => {
-  const h = await database();
+  const h = await deliveryDatabase();
   try {
     const key = await seed(h.store);
     const { readFile } = await import("node:fs/promises");
@@ -462,11 +477,37 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       { id: "q1", generation: item.generation },
     ]);
     assert.equal(payload!.certificateVersion, "fixture-v1");
+    await h.store
+      .statement(
+        "UPDATE vendor_requests SET requests=? WHERE vendor='lotw'",
+        VENDOR_POLICIES.lotw.total - 1,
+      )
+      .run();
     assert.equal(
       (
         await dispatchAttempt(h.store, "a", prepared.attemptId, gates, {
           fetcher,
           now: signingNow + 1,
+        })
+      ).state,
+      "retry_scheduled",
+    );
+    assert.equal(submissions, 0);
+    assert.deepEqual(
+      await h.store.private("a", "destination", prepared.attemptId, "outbox"),
+      payload,
+    );
+    const retry = await h.store
+      .statement(
+        "SELECT due_at FROM attempt_state WHERE attempt=?",
+        prepared.attemptId,
+      )
+      .first<{ due_at: number }>();
+    assert.equal(
+      (
+        await dispatchAttempt(h.store, "a", prepared.attemptId, gates, {
+          fetcher,
+          now: retry!.due_at + 1,
         })
       ).state,
       "submitted",
@@ -479,7 +520,7 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       (
         await reconcileAttempt(h.store, "a", prepared.attemptId, {
           fetcher,
-          now: signingNow + 2,
+          now: retry!.due_at + 2,
         })
       ).state,
       "observed",
@@ -675,6 +716,379 @@ test("readback failure before a mutation retries the same immutable attempt with
     await h.mf.dispose();
   }
 });
+test("an unresolved immutable attempt skips repeated preparation before vendor reads", async () => {
+  const h = await setup();
+  try {
+    const prepared = await prepareDue(h.store, h.key, h.item, gates, {
+      fetcher: h.fetcher,
+      now,
+    });
+    assert(prepared.attemptId);
+    const original = await h.store.private(
+      "a",
+      "destination",
+      prepared.attemptId,
+      "outbox",
+    );
+    for (const state of [
+      "prepared",
+      "uncertain",
+      "submitted",
+      "reconciliation_required",
+    ]) {
+      await h.store
+        .statement(
+          "UPDATE attempt_state SET state=? WHERE attempt=?",
+          state,
+          prepared.attemptId,
+        )
+        .run();
+      assert.deepEqual(
+        await prepareDue(h.store, h.key, h.item, gates, {
+          now: now + 1,
+          fetcher: async () => {
+            throw new Error(
+              "Unresolved work must not consume another vendor read",
+            );
+          },
+        }),
+        { state: "skipped", reason: "unresolved_attempt" },
+      );
+    }
+    assert.equal(
+      (await h.store
+        .statement("SELECT COUNT(*) n FROM attempts")
+        .first<{ n: number }>())!.n,
+      1,
+    );
+    assert.deepEqual(
+      await h.store.private("a", "destination", prepared.attemptId, "outbox"),
+      original,
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("a full background outbox stops new vendor reads while live preparation remains available", async () => {
+  const h = await setup();
+  try {
+    for (const id of ["q1", "q2"]) {
+      const key = { ...h.key, qso: id };
+      const item = { ...h.item, id };
+      if (id !== "q1") {
+        await h.store.observe(
+          key,
+          item.generation,
+          await sourceFingerprint(item, "qrz"),
+          30,
+          false,
+          at,
+        );
+        await h.store
+          .statement(
+            "UPDATE ledger SET state='missing_current_identity' WHERE qso=?",
+            id,
+          )
+          .run();
+      }
+      assert.equal(
+        (
+          await prepareDue(h.store, key, item, gates, {
+            fetcher: h.fetcher,
+            now,
+            priority: "background",
+          })
+        ).state,
+        "prepared",
+      );
+    }
+    const key = { ...h.key, qso: "q3" };
+    const item = { ...h.item, id: "q3" };
+    await h.store.observe(
+      key,
+      item.generation,
+      await sourceFingerprint(item, "qrz"),
+      30,
+      false,
+      at,
+    );
+    await h.store
+      .statement(
+        "UPDATE ledger SET state='missing_current_identity' WHERE qso='q3'",
+      )
+      .run();
+    let reads = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      reads++;
+      return h.fetcher(input, init);
+    };
+    assert.deepEqual(
+      await prepareDue(h.store, key, item, gates, {
+        fetcher,
+        now,
+        priority: "background",
+      }),
+      { state: "skipped", reason: "background_outbox_full" },
+    );
+    assert.equal(reads, 0);
+    assert.equal(
+      (
+        await prepareDue(h.store, key, item, gates, {
+          fetcher,
+          now,
+          priority: "live",
+        })
+      ).state,
+      "prepared",
+    );
+    assert.equal(reads, 1);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("inactive routes and superseded credentials do not hold other background outboxes full", async () => {
+  const h = await setup();
+  try {
+    const prepare = async (
+      qso: string,
+      source = "source",
+      destination = "destination",
+    ) => {
+      const key = { tenant: "a", source, qso, destination };
+      const item = { ...h.item, id: qso };
+      await h.store.observe(
+        key,
+        item.generation,
+        await sourceFingerprint(item, "qrz"),
+        30,
+        false,
+        at,
+      );
+      await h.store
+        .statement(
+          "UPDATE ledger SET state='missing_current_identity' WHERE source=? AND qso=? AND destination=?",
+          source,
+          qso,
+          destination,
+        )
+        .run();
+      return prepareDue(h.store, key, item, gates, {
+        fetcher: h.fetcher,
+        now,
+        priority: "background",
+      });
+    };
+    assert.equal((await prepare("q1")).state, "prepared");
+    assert.equal((await prepare("q2")).state, "prepared");
+    for (const [original, id] of [
+      ["source", "available-source"],
+      ["destination", "available-destination"],
+    ]) {
+      const connection = (await h.store.connection("a", original))!;
+      await h.store
+        .statement(
+          "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,config,created_at) VALUES('a',?,?,?,?,'active','v1',?,0)",
+          id,
+          connection.kind,
+          id,
+          id,
+          connection.config,
+        )
+        .run();
+    }
+    await (
+      await h.store.putPrivate(
+        "a",
+        "available-destination",
+        "v1",
+        "credential",
+        { apiKey: "synthetic-key" },
+      )
+    ).run();
+    await h.store.saveTemplate("a", "available-destination", {
+      profile: TEMPLATE_PROFILE,
+      fields: { COMMENT: "fixture" },
+      fallbackNotes: false,
+    });
+    // Model stale prepared rows that outlast an inactive connection.
+    await h.store
+      .statement(
+        "UPDATE connections SET status='disabled' WHERE id='destination'",
+      )
+      .run();
+    assert.equal(
+      (await prepare("q3", "source", "available-destination")).state,
+      "prepared",
+    );
+    await h.store
+      .statement("UPDATE connections SET status='disabled' WHERE id='source'")
+      .run();
+    assert.equal(
+      (await prepare("q4", "available-source", "available-destination")).state,
+      "prepared",
+    );
+    await h.store
+      .statement("UPDATE connections SET status='active' WHERE id='source'")
+      .run();
+    await h.store
+      .statement(
+        "UPDATE connections SET credential_version='v2' WHERE id='available-destination'",
+      )
+      .run();
+    await (
+      await h.store.putPrivate(
+        "a",
+        "available-destination",
+        "v2",
+        "credential",
+        { apiKey: "renewed-synthetic" },
+      )
+    ).run();
+    assert.equal(
+      (await prepare("q5", "available-source", "available-destination")).state,
+      "prepared",
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("request budget denial immediately before upload retains the prepared immutable artifact", async () => {
+  const h = await setup();
+  try {
+    const prepared = await prepareDue(h.store, h.key, h.item, gates, {
+      fetcher: h.fetcher,
+      now,
+    });
+    assert(prepared.attemptId);
+    const original = await h.store.private(
+      "a",
+      "destination",
+      prepared.attemptId,
+      "outbox",
+    );
+    // Leave enough budget for the fresh read, but none for the following INSERT.
+    await h.store
+      .statement(
+        "UPDATE vendor_requests SET requests=? WHERE vendor='qrz'",
+        VENDOR_POLICIES.qrz.total - 1,
+      )
+      .run();
+    let network = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      network++;
+      return h.fetcher(input, init);
+    };
+    const result = await dispatchAttempt(
+      h.store,
+      "a",
+      prepared.attemptId,
+      gates,
+      {
+        fetcher,
+        now: now + 1,
+      },
+    );
+    assert.equal(result.state, "retry_scheduled");
+    assert.equal(network, 1);
+    assert.equal(h.mutations.length, 0);
+    const state = await h.store
+      .statement(
+        "SELECT state,due_at FROM attempt_state WHERE attempt=?",
+        prepared.attemptId,
+      )
+      .first<{ state: string; due_at: number }>();
+    assert.equal(state!.state, "prepared");
+    assert(state!.due_at >= Math.floor(now / 300000) * 300000 + 300000);
+    assert.deepEqual(
+      await h.store.private("a", "destination", prepared.attemptId, "outbox"),
+      original,
+    );
+    assert.equal(
+      (
+        await dispatchAttempt(h.store, "a", prepared.attemptId, gates, {
+          fetcher,
+          now: state!.due_at + 1,
+        })
+      ).state,
+      "delivered",
+    );
+    assert.equal(h.mutations.length, 1);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("an explicit upload throttle remains uncertain and the shared cooldown prevents more network calls", async () => {
+  const h = await setup();
+  try {
+    const prepared = await prepareDue(h.store, h.key, h.item, gates, {
+      fetcher: h.fetcher,
+      now,
+    });
+    assert(prepared.attemptId);
+    let uploads = 0;
+    let network = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      network++;
+      if (new URLSearchParams(String(init?.body)).get("ACTION") === "INSERT") {
+        uploads++;
+        return new Response("private vendor error", {
+          status: 429,
+          headers: { "Retry-After": "600" },
+        });
+      }
+      return h.fetcher(input, init);
+    };
+    assert.equal(
+      (
+        await dispatchAttempt(h.store, "a", prepared.attemptId, gates, {
+          fetcher,
+          now: now + 1,
+        })
+      ).state,
+      "uncertain",
+    );
+    assert.equal(uploads, 1);
+    assert.equal(network, 2);
+    assert(
+      await h.store.private("a", "destination", prepared.attemptId, "outbox"),
+    );
+    await assert.rejects(
+      reconcileAttempt(h.store, "a", prepared.attemptId, {
+        fetcher,
+        now: now + 2,
+      }),
+      VendorDeferredError,
+    );
+    assert.equal(network, 2);
+    assert.equal(
+      (
+        await dispatchAttempt(h.store, "a", prepared.attemptId, gates, {
+          fetcher,
+          now: now + 600001,
+        })
+      ).state,
+      "skipped",
+    );
+    assert.equal(
+      (
+        await reconcileAttempt(h.store, "a", prepared.attemptId, {
+          fetcher,
+          now: now + 600001,
+        })
+      ).state,
+      "unresolved",
+    );
+    assert.equal(network, 3);
+    assert.equal(uploads, 1);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
 test("rollout allowlist bounds first preparation and dispatch to the selected source UUID", async () => {
   const h = await setup();
   try {

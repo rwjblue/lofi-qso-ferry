@@ -1,20 +1,22 @@
 import { recordBirth } from "./cutover.ts";
-import { LoFiClient, LoFiError } from "./lofi.ts";
 import type {
   LoFiCredentials,
   SourceRecord,
   SyncPage,
   SyncState,
 } from "./lofi.ts";
+import { LoFiClient, LoFiError } from "./lofi.ts";
+import type { Contact } from "./projection.ts";
 import {
   isEventRecord,
   isSourceDeleted,
   projectContact,
   sourceFingerprint,
 } from "./projection.ts";
-import type { Contact } from "./projection.ts";
 import { canonical, randomToken, sha256 } from "./security.ts";
 import type { Connection, Store } from "./store.ts";
+import type { VendorPriority } from "./vendor-requests.ts";
+import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
 export interface IntakeContact extends Contact {
   contextGeneration: number;
 }
@@ -33,6 +35,34 @@ export interface Work {
   is_event: number;
   seen_epoch: string | null;
   deleted: number;
+  priority: VendorPriority;
+}
+
+/** Arrival provenance drives scheduling; the QSO's date does not. */
+function liveWorkSql(alias: string): string {
+  return `(${alias}.priority='live' OR EXISTS(SELECT 1 FROM source_births b WHERE b.tenant=${alias}.tenant AND b.source=${alias}.source AND b.qso=${alias}.id AND b.phase='forward_new') OR EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=${alias}.tenant AND l.source=${alias}.source AND l.qso=${alias}.id AND l.state='changed'))`;
+}
+
+export async function contactPriority(
+  store: Store,
+  source: Pick<Connection, "tenant" | "id">,
+  qso: string,
+): Promise<VendorPriority> {
+  const row = await store
+    .statement(
+      `SELECT CASE WHEN EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=? AND w.source=? AND w.id=? AND w.kind='qso' AND ${liveWorkSql("w")}) OR EXISTS(SELECT 1 FROM source_births b WHERE b.tenant=? AND b.source=? AND b.qso=? AND b.phase='forward_new') OR EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=? AND l.source=? AND l.qso=? AND l.state='changed') THEN 'live' ELSE 'background' END AS priority`,
+      source.tenant,
+      source.id,
+      qso,
+      source.tenant,
+      source.id,
+      qso,
+      source.tenant,
+      source.id,
+      qso,
+    )
+    .first<{ priority: VendorPriority }>();
+  return row?.priority ?? "background";
 }
 export interface PollResult {
   pages: number;
@@ -47,6 +77,7 @@ export async function pollSource(
   fetcher: typeof fetch = fetch,
   now = Date.now(),
   stream = "sync",
+  vendorNow: number | null = now,
 ): Promise<PollResult> {
   const lease = await store.claim(
     connection.tenant,
@@ -72,7 +103,6 @@ export async function pollSource(
       : null;
     if (!credentials || connection.status !== "active")
       throw new Error("source_connection_unavailable");
-    const client = new LoFiClient(credentials, fetcher);
     const cursor = await store
       .statement(
         "SELECT cursor,generation FROM cursors WHERE tenant=? AND connection=? AND stream=?",
@@ -100,9 +130,18 @@ export async function pollSource(
         complete: true,
         coverage: "client-contract-only",
       };
+    const priority: VendorPriority =
+      stream === "sync" && state.mode === "forward" ? "live" : "background";
+    const client = new LoFiClient(
+      credentials,
+      vendorFetch(store, "lofi", fetcher, {
+        priority,
+        ...(vendorNow === null ? {} : { now: vendorNow }),
+      }),
+    );
     let page: SyncPage;
     try {
-      page = await client.syncPage(state, now);
+      page = await client.syncPage(state, now, priority === "live" ? 100 : 25);
     } catch (error) {
       await recoverSourceGap(store, connection, error, now, stream);
       throw error;
@@ -130,7 +169,20 @@ export async function pollSource(
             ),
           );
         work.push(
-          ...(await sourceStatements(store, connection, kind, raw, now)),
+          ...(await sourceStatements(
+            store,
+            connection,
+            kind,
+            raw,
+            now,
+            undefined,
+            priority,
+            stream === "repair"
+              ? null
+              : stream.startsWith("rescan:")
+                ? stream.slice(7)
+                : undefined,
+          )),
         );
       }
     work.push(
@@ -199,6 +251,8 @@ export async function pendingContacts(
   source: Connection,
   limit = 40,
   now = Date.now(),
+  priority?: VendorPriority,
+  qso?: string,
 ): Promise<IntakeContact[]> {
   const context = await store
     .statement(
@@ -215,10 +269,11 @@ export async function pendingContacts(
   const rows = (
     await store
       .statement(
-        "SELECT * FROM source_work WHERE tenant=? AND source=? AND kind='qso' AND state IN('pending','waiting') AND expires_at>? ORDER BY processed_at LIMIT ?",
+        `SELECT w.* FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='qso' AND w.state IN('pending','waiting') AND w.expires_at>? ${priority ? `AND ${liveWorkSql("w")}=${priority === "live" ? 1 : 0}` : ""} ${qso === undefined ? "" : "AND w.id=?"} ORDER BY ${liveWorkSql("w")} DESC,w.processed_at,w.id LIMIT ?`,
         source.tenant,
         source.id,
         now,
+        ...(qso === undefined ? [] : [qso]),
         limit,
       )
       .all<Work>()
@@ -517,6 +572,13 @@ export async function expireSource(store: Store, now = Date.now()) {
       "DELETE FROM cursors WHERE stream LIKE 'gap:%' AND updated_at<=?",
       now - 30 * 86400_000,
     ),
+    // Recovery uses its own historical cursor; forward coverage and cutovers
+    // stay intact. An incomplete repair is never restarted by older expiries.
+    store.statement(
+      "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) SELECT c.tenant,c.id,'repair',json_object('mode','backfill','operations',json('{}'),'qsos',json('{}'),'accountId',json_extract(c.config,'$.accountId'),'rescanComplete',json('false')),0,? FROM connections c LEFT JOIN cursors r ON r.tenant=c.tenant AND r.connection=c.id AND r.stream='repair' WHERE c.kind='lofi' AND c.status='active' AND EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=c.tenant AND w.source=c.id AND w.kind='qso' AND w.is_event=0 AND w.state!='archived' AND w.expires_at<=? AND (r.cursor IS NULL OR w.state!='expired' OR w.expires_at>r.updated_at)) ON CONFLICT(tenant,connection,stream) DO UPDATE SET cursor=excluded.cursor,generation=cursors.generation+1,updated_at=excluded.updated_at WHERE COALESCE(json_extract(cursors.cursor,'$.rescanComplete'),0)=1",
+      now,
+      now,
+    ),
     // Keep dependency metadata until a complete operation reread classifies it.
     store.statement(
       "UPDATE source_work SET state='pending',reason='operation_context_expired' WHERE kind='operation' AND EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=source_work.tenant AND w.source=source_work.source AND w.operation_id=source_work.id AND w.expires_at<=? AND (w.kind='operation' OR w.is_event=1))",
@@ -540,7 +602,7 @@ export async function expireSource(store: Store, now = Date.now()) {
       now,
     ),
     store.statement(
-      "UPDATE source_work SET state='expired',reason='source payload expired; current reread required' WHERE expires_at<=? AND kind='qso' AND is_event=0",
+      "UPDATE source_work SET state='expired',reason='source payload expired; current reread required' WHERE expires_at<=? AND kind='qso' AND is_event=0 AND state!='archived'",
       now,
     ),
   ]);
@@ -576,6 +638,8 @@ async function sourceStatements(
   raw: SourceRecord,
   now: number,
   epoch?: string,
+  incomingPriority: VendorPriority = "background",
+  replayDestination?: string | null,
 ): Promise<D1PreparedStatement[]> {
   const id = String(raw.uuid);
   const syncedAt = Number(raw.syncedAtMillis);
@@ -624,6 +688,23 @@ async function sourceStatements(
     return statements;
   };
   if (previous && previous.synced_at > syncedAt) return seen();
+  if (
+    replayDestination !== undefined &&
+    kind === "qso" &&
+    !isEventRecord(raw) &&
+    previous?.revision === revision
+  ) {
+    const resolved = await store
+      .statement(
+        "SELECT 1 resolved WHERE EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND (?4 IS NULL OR l.destination=?4)) AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND (?4 IS NULL OR l.destination=?4) AND (l.state NOT IN('adopted_existing','delivered','observed','source_deleted') OR l.source_hash IS NOT l.baseline_hash)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=?1 AND a.source=?2 AND a.qso=?3 AND (?4 IS NULL OR a.destination=?4) AND s.state NOT IN('delivered','observed','rejected','cancelled'))",
+        connection.tenant,
+        connection.id,
+        id,
+        replayDestination,
+      )
+      .first();
+    if (resolved) return seen();
+  }
   if (previous && previous.revision === revision && previous.expires_at > now) {
     if (syncedAt > previous.synced_at)
       statements.push(
@@ -638,6 +719,11 @@ async function sourceStatements(
       );
     return seen();
   }
+  const priority: VendorPriority =
+    previous?.priority === "live" ||
+    (incomingPriority === "live" && previous?.revision !== revision)
+      ? "live"
+      : "background";
   const privateId = randomToken();
   const deleted = isSourceDeleted(raw);
   const event =
@@ -675,7 +761,7 @@ async function sourceStatements(
   );
   statements.push(
     store.statement(
-      "INSERT INTO source_work(tenant,source,id,kind,operation_id,private_id,revision,expires_at,synced_at,is_event,deleted,seen_epoch) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,source,id,kind) DO UPDATE SET operation_id=excluded.operation_id,private_id=excluded.private_id,state='pending',reason=NULL,revision=excluded.revision,expires_at=excluded.expires_at,synced_at=excluded.synced_at,is_event=excluded.is_event,deleted=excluded.deleted,seen_epoch=COALESCE(excluded.seen_epoch,source_work.seen_epoch)",
+      "INSERT INTO source_work(tenant,source,id,kind,operation_id,private_id,revision,expires_at,synced_at,is_event,deleted,seen_epoch,priority) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,source,id,kind) DO UPDATE SET operation_id=excluded.operation_id,private_id=excluded.private_id,state='pending',reason=NULL,revision=excluded.revision,expires_at=excluded.expires_at,synced_at=excluded.synced_at,is_event=excluded.is_event,deleted=excluded.deleted,seen_epoch=COALESCE(excluded.seen_epoch,source_work.seen_epoch),priority=CASE WHEN source_work.priority='live' THEN 'live' ELSE excluded.priority END",
       connection.tenant,
       connection.id,
       id,
@@ -688,12 +774,14 @@ async function sourceStatements(
       event ? 1 : 0,
       deleted ? 1 : 0,
       epoch ?? null,
+      priority,
     ),
   );
   if (kind === "operation" || event) {
     statements.push(
       store.statement(
-        "UPDATE source_work SET state='pending',reason='operation_context_changed' WHERE tenant=? AND source=? AND operation_id=?",
+        "UPDATE source_work SET state='pending',reason='operation_context_changed',priority=CASE WHEN ?='live' THEN 'live' ELSE priority END WHERE tenant=? AND source=? AND operation_id=?",
+        priority,
         connection.tenant,
         connection.id,
         op,
@@ -721,16 +809,19 @@ export async function rereadOperation(
   connection: Connection,
   fetcher: typeof fetch = fetch,
   now = Date.now(),
+  priority?: VendorPriority,
+  vendorNow: number | null = now,
 ) {
   const startedAt = Date.now();
+  const liveOperation = `(w.priority='live' OR EXISTS(SELECT 1 FROM source_work q WHERE q.tenant=w.tenant AND q.source=w.source AND q.operation_id=w.id AND q.kind='qso' AND ${liveWorkSql("q")}))`;
   const operation = await store
     .statement(
-      "SELECT * FROM source_work WHERE tenant=? AND source=? AND kind='operation' AND state='pending' AND deleted=0 AND expires_at>? ORDER BY processed_at,id LIMIT 1",
+      `SELECT w.*,CASE WHEN ${liveOperation} THEN 'live' ELSE 'background' END AS request_priority FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='operation' AND w.state='pending' AND w.deleted=0 AND w.expires_at>? ${priority ? `AND ${liveOperation}=${priority === "live" ? 1 : 0}` : ""} ORDER BY ${liveOperation} DESC,w.processed_at,w.id LIMIT 1`,
       connection.tenant,
       connection.id,
       now,
     )
-    .first<Work>();
+    .first<Work & { request_priority: VendorPriority }>();
   if (!operation) return { complete: true, records: 0 };
   const lease = await store.claim(
     connection.tenant,
@@ -784,9 +875,16 @@ export async function rereadOperation(
       previous.epoch
         ? previous
         : { revision: operation.revision, epoch: randomToken() };
-    const page = await new LoFiClient(credentials, fetcher).operationQsosPage(
+    const page = await new LoFiClient(
+      credentials,
+      vendorFetch(store, "lofi", fetcher, {
+        priority: operation.request_priority,
+        ...(vendorNow === null ? {} : { now: vendorNow }),
+      }),
+    ).operationQsosPage(
       operation.id,
       state,
+      operation.request_priority === "live" ? 100 : 25,
     );
     const guard = sourceGuard(store, connection, operation);
     const work: D1PreparedStatement[] = [guard.sql];
@@ -921,6 +1019,7 @@ export async function rereadOperation(
     );
     return { complete: page.complete, records: page.qsos.length };
   } catch (error) {
+    if (error instanceof VendorDeferredError) throw error;
     // A failed read must consume its scheduling turn without asserting any
     // coverage. Guard the diagnostic so an old request cannot mark a newer
     // source revision, renewed connection or another tenant.

@@ -410,6 +410,7 @@ export class Store {
     now = Date.now(),
     transmittedHash?: string,
     lotwIdentityId?: string,
+    priority?: "live" | "background",
   ) {
     const id = randomToken();
     const payloadHash = transmittedHash ?? (await sha256(canonical(payload)));
@@ -454,11 +455,14 @@ export class Store {
         key.destination,
       ),
       this.statement(
-        "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES(?,?,'prepared',?,?)",
+        priority === undefined
+          ? "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES(?,?,'prepared',?,?)"
+          : "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at,priority) VALUES(?,?,'prepared',?,?,?)",
         key.tenant,
         id,
         now,
         now,
+        ...(priority === undefined ? [] : [priority]),
       ),
       this.statement(
         "INSERT INTO attempt_events(tenant,attempt,state,at) VALUES(?,?,'prepared',?)",
@@ -617,6 +621,7 @@ export class Store {
     lease: Lease,
     reason: string,
     now = Date.now(),
+    minimumDueAt = 0,
   ): Promise<number> {
     if (tenant !== lease.tenant) throw new Error("tenant lease mismatch");
     const count =
@@ -628,8 +633,10 @@ export class Store {
         ).first<{ n: number }>()
       )?.n ?? 0;
     const jitter = crypto.getRandomValues(new Uint32Array(1))[0] % 1000;
-    const due =
-      now + Math.min(6 * 3600000, 30000 * 2 ** Math.min(count, 10)) + jitter;
+    const due = Math.max(
+      minimumDueAt,
+      now + Math.min(6 * 3600000, 30000 * 2 ** Math.min(count, 10)) + jitter,
+    );
     const guard = randomToken();
     await this.db.batch([
       this.statement(

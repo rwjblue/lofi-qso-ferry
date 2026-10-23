@@ -37,6 +37,11 @@ import {
   type TemplateValue,
   type TemplateVersion,
 } from "./templates.ts";
+import {
+  VendorDeferredError,
+  vendorFetch,
+  type VendorPriority,
+} from "./vendor-requests.ts";
 export interface DeliveryGates {
   exportsEnabled: boolean;
   liveWriteAuthorized: boolean;
@@ -47,6 +52,7 @@ export interface DeliveryDependencies {
   fetcher?: typeof fetch;
   now?: number;
   sign?: typeof buildSignedTq8;
+  priority?: VendorPriority;
 }
 interface QrzCredential {
   apiKey: string;
@@ -290,6 +296,7 @@ export function templateContext(
   };
 }
 function qrzClient(
+  store: Store,
   credential: QrzCredential,
   config: QrzConfig,
   gates: DeliveryGates,
@@ -298,7 +305,10 @@ function qrzClient(
 ): QrzClient {
   if (!credential.apiKey) throw new Error("QRZ credential is unavailable");
   return new QrzClient(credential.apiKey, {
-    fetch: deps.fetcher,
+    fetch: vendorFetch(store, "qrz", deps.fetcher, {
+      priority: deps.priority,
+      now: deps.now,
+    }),
     writesEnabled: enabled(gates),
     replacementContractVerified: config.replacementContractVerified === true,
     beforeWrite,
@@ -377,6 +387,16 @@ export async function prepareDue(
     !["missing_current_identity", "changed", "live_new"].includes(row.state)
   )
     return { state: "skipped", reason: "not_due_or_current" };
+  const unresolved = await store
+    .statement(
+      "SELECT 1 n FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled') LIMIT 1",
+      key.tenant,
+      key.source,
+      key.qso,
+      key.destination,
+    )
+    .first();
+  if (unresolved) return { state: "skipped", reason: "unresolved_attempt" };
   const connection = await store.connection(key.tenant, key.destination);
   const source = await store.connection(key.tenant, key.source);
   if (
@@ -385,6 +405,17 @@ export async function prepareDue(
     !connection.credential_version
   )
     return { state: "blocked", reason: "connection_inactive" };
+  if (deps.priority === "background") {
+    const backlog = await store
+      .statement(
+        "SELECT COUNT(*) n FROM (SELECT 1 FROM attempt_state s JOIN attempts a ON a.tenant=s.tenant AND a.id=s.attempt JOIN connections c ON c.tenant=a.tenant AND c.id=a.destination AND c.status='active' JOIN connections src ON src.tenant=a.tenant AND src.id=a.source AND src.status='active' WHERE s.state='prepared' AND s.priority='background' AND c.kind=? AND a.credential_version=c.credential_version AND EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=a.tenant AND p.connection=a.destination AND p.id=a.credential_version AND p.kind='credential' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)) LIMIT 2)",
+        connection.kind,
+        now,
+      )
+      .first<{ n: number }>();
+    if ((backlog?.n ?? 0) >= 2)
+      return { state: "skipped", reason: "background_outbox_full" };
+  }
   if (!gates.sourceBoundaryVerified && !row.remote_id)
     return { state: "blocked", reason: "source_replay_boundary_unverified" };
   const member = { id: contact.id, generation: contact.generation };
@@ -403,7 +434,7 @@ export async function prepareDue(
     );
     if (!credential)
       return { state: "blocked", reason: "credential_unavailable" };
-    const client = qrzClient(credential, config, gates, deps);
+    const client = qrzClient(store, credential, config, gates, deps);
     const structured = contactAdif(contact);
     let record = structured;
     if (row.narrative !== "remote_preserved") {
@@ -612,7 +643,10 @@ export async function prepareDue(
     )
       return { state: "skipped", reason: "transmitted_projection_unchanged" };
     const client = new LotwClient(credential.query ?? null, {
-      fetcher: deps.fetcher,
+      fetcher: vendorFetch(store, "lotw", deps.fetcher, {
+        priority: deps.priority,
+        now: deps.now,
+      }),
       exportsEnabled: enabled(gates),
     });
     if (credential.query) {
@@ -721,6 +755,7 @@ export async function prepareDue(
     now,
     payload.projectionHash,
     lotwIdentityId,
+    deps.priority ?? "live",
   );
   return { state: "prepared", attemptId };
 }
@@ -785,6 +820,7 @@ export async function dispatchAttempt(
     120000,
   );
   if (!lease) return { state: "skipped", reason: "delivery_lease_busy" };
+  let mutationStarted = false;
   try {
     if (
       !(await store.claimAttempt(
@@ -804,7 +840,6 @@ export async function dispatchAttempt(
     let state: "delivered" | "submitted" | "uncertain" | "rejected" =
       "uncertain";
     let remoteId: string | null = null;
-    let mutationStarted = false;
     if (data.payload.kind === "qrz") {
       const credential = await store.private<QrzCredential>(
         tenant,
@@ -824,6 +859,7 @@ export async function dispatchAttempt(
         return { state: "rejected", reason: "credential_revoked" };
       }
       const client = qrzClient(
+        store,
         credential,
         JSON.parse(data.connection.config) as QrzConfig,
         gates,
@@ -885,6 +921,7 @@ export async function dispatchAttempt(
         remoteId = receipt.logId;
         state = "delivered";
       } catch (error) {
+        if (error instanceof VendorDeferredError) throw error;
         if (
           !mutationStarted &&
           error instanceof QrzError &&
@@ -928,7 +965,10 @@ export async function dispatchAttempt(
         return { state: "rejected", reason: "credential_revoked" };
       }
       const client = new LotwClient(credential.query ?? null, {
-        fetcher: deps.fetcher,
+        fetcher: vendorFetch(store, "lotw", deps.fetcher, {
+          priority: deps.priority,
+          now: deps.now,
+        }),
         exportsEnabled: true,
       });
       const certificateVersion = data.payload.certificateVersion;
@@ -1011,6 +1051,7 @@ export async function dispatchAttempt(
           reason: "connection_revoked_before_submit",
         };
       }
+      mutationStarted = true;
       const result = await client.submit(unb64(data.payload.tq8), {
         liveWriteAuthorized: true,
       });
@@ -1043,6 +1084,37 @@ export async function dispatchAttempt(
         )
         .run();
     return { state, attemptId: id };
+  } catch (error) {
+    if (!(error instanceof VendorDeferredError)) throw error;
+    // Authorization runs before transport admission. A denied budget has sent
+    // no mutation even if the authorization callback has already succeeded.
+    if (!mutationStarted || !error.requestSent) {
+      await store.retryUnsent(
+        tenant,
+        id,
+        lease,
+        "vendor_request_deferred",
+        deps.now ?? Date.now(),
+        error.retryAt,
+      );
+      return {
+        state: "retry_scheduled",
+        attemptId: id,
+        reason: "vendor_request_deferred",
+      };
+    }
+    await store.resolve(
+      tenant,
+      id,
+      lease,
+      "uncertain",
+      null,
+      deps.now ?? Date.now(),
+      data.payload.kind === "lotw"
+        ? await lotwAttemptIdentity(data.payload.station, data.payload.contact)
+        : undefined,
+    );
+    return { state: "uncertain", attemptId: id };
   } finally {
     await store.release(lease);
   }
@@ -1082,6 +1154,7 @@ export async function reconcileAttempt(
       if (!credential)
         return { state: "unresolved", reason: "credential_unavailable" };
       const client = qrzClient(
+        store,
         credential,
         JSON.parse(data.connection.config) as QrzConfig,
         {
@@ -1111,7 +1184,10 @@ export async function reconcileAttempt(
           reason: "lotw_query_unavailable_submission_only",
         };
       const report = await new LotwClient(credential.query, {
-        fetcher: deps.fetcher,
+        fetcher: vendorFetch(store, "lotw", deps.fetcher, {
+          priority: deps.priority,
+          now: deps.now,
+        }),
       }).query({
         startDate: data.payload.contact.date,
         endDate: data.payload.contact.date,
@@ -1189,6 +1265,7 @@ export async function refreshConfirmations(
     ).results;
     const totals = { checked: 0, confirmed: 0, unresolved: 0 };
     for (const row of rows) {
+      let deferred = false;
       try {
         const evidence = await store.private<{
           station: LotwStation;
@@ -1209,7 +1286,10 @@ export async function refreshConfirmations(
           continue;
         }
         const report = await new LotwClient(credential.query, {
-          fetcher: deps.fetcher,
+          fetcher: vendorFetch(store, "lotw", deps.fetcher, {
+            priority: "background",
+            now: deps.now,
+          }),
         }).query({
           startDate: evidence.contact.date,
           endDate: evidence.contact.date,
@@ -1244,19 +1324,24 @@ export async function refreshConfirmations(
           )
           .run();
         if (updated.meta.changes && result.confirmed) totals.confirmed++;
-      } catch {
+      } catch (error) {
+        if (error instanceof VendorDeferredError) {
+          deferred = true;
+          throw error;
+        }
         totals.unresolved++;
       } finally {
-        await store
-          .statement(
-            "UPDATE private_data SET created_at=? WHERE tenant=? AND connection=? AND id=? AND kind='lotw_observation' AND created_at=?",
-            now,
-            tenant,
-            row.connection,
-            row.id,
-            row.created_at,
-          )
-          .run();
+        if (!deferred)
+          await store
+            .statement(
+              "UPDATE private_data SET created_at=? WHERE tenant=? AND connection=? AND id=? AND kind='lotw_observation' AND created_at=?",
+              now,
+              tenant,
+              row.connection,
+              row.id,
+              row.created_at,
+            )
+            .run();
       }
     }
     return totals;

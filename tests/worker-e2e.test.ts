@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import { build } from "esbuild";
-import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { syntheticAuthenticator } from "./auth-fixtures.ts";
 
-async function runtime(environment = "local") {
+async function runtime(environment = "local", emailFixture = false) {
   const [bundle, browser, html] = await Promise.all([
     build({
       entryPoints: ["src/index.ts"],
@@ -27,6 +27,7 @@ async function runtime(environment = "local") {
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
   ]);
   let outbound = 0;
+  const messages: { text: string; html: string }[] = [];
   const mf = new Miniflare(
     convertV4MiniflareOptions({
       modules: true,
@@ -49,6 +50,14 @@ async function runtime(environment = "local") {
         ROLLOUT_CHECKS_PASSED: "false",
         SOURCE_BOUNDARY_VERIFIED: "false",
         LIVE_WRITE_AUTHORIZATION: "",
+        ...(emailFixture
+          ? {
+              RP_ID: "ferry.example.test",
+              ORIGIN: "https://ferry.example.test",
+              RESEND_API_KEY: "synthetic-email-fixture",
+              MAIL_FROM: "signup@ferry.example.test",
+            }
+          : {}),
       },
       serviceBindings: {
         ASSETS: async (request) =>
@@ -66,8 +75,14 @@ async function runtime(environment = "local") {
             },
           ),
       },
-      outboundService: async () => {
+      outboundService: async (request) => {
         outbound++;
+        if (emailFixture && request.url === "https://api.resend.com/emails") {
+          messages.push(
+            (await request.json()) as { text: string; html: string },
+          );
+          return Response.json({ id: "synthetic-email-acceptance" });
+        }
         return new Response("No live vendor requests permitted in E2E", {
           status: 503,
         });
@@ -104,37 +119,38 @@ async function runtime(environment = "local") {
     db,
     outbound: () => outbound,
     bundleBytes: Buffer.byteLength(bundle.outputFiles[0].text),
+    messages,
   };
 }
 class Client {
   cookies = new Map<string, string>();
   csrf = "";
-  constructor(readonly mf: Miniflare) {}
+  constructor(
+    readonly mf: Miniflare,
+    readonly origin = "http://localhost:8787",
+  ) {}
   async request(
     path: string,
     body?: unknown,
     extra: Record<string, string> = {},
   ) {
-    const response = await this.mf.dispatchFetch(
-      `http://localhost:8787${path}`,
-      {
-        method: body === undefined ? "GET" : "POST",
-        headers: {
-          Cookie: [...this.cookies]
-            .map(([key, value]) => `${key}=${value}`)
-            .join("; "),
-          ...(body === undefined
-            ? {}
-            : {
-                Origin: "http://localhost:8787",
-                "Content-Type": "application/json",
-                "X-CSRF-Token": this.csrf,
-              }),
-          ...extra,
-        },
-        body: body === undefined ? undefined : JSON.stringify(body),
+    const response = await this.mf.dispatchFetch(`${this.origin}${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        Cookie: [...this.cookies]
+          .map(([key, value]) => `${key}=${value}`)
+          .join("; "),
+        ...(body === undefined
+          ? {}
+          : {
+              Origin: this.origin,
+              "Content-Type": "application/json",
+              "X-CSRF-Token": this.csrf,
+            }),
+        ...extra,
       },
-    );
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
     const header = response.headers.get("Set-Cookie");
     if (header) {
       const [name, value] = header.split(";")[0].split("=");
@@ -361,5 +377,111 @@ test("production Worker does not expose fixture mailbox or enroll under local RP
   assert.equal(
     ((await health.json()) as { exportsEnabled: boolean }).exportsEnabled,
     false,
+  );
+});
+
+test("actual hosted Worker requires an invitation and saves preferences with no services", async (context) => {
+  const { mf, db, outbound, messages } = await runtime("production", true);
+  context.after(() => mf.dispose());
+  const origin = "https://ferry.example.test";
+  const client = new Client(mf, origin);
+  assert.equal((await client.refresh()).signupAllowed, false);
+  assert.equal(
+    (
+      await client.request("/api/auth/signup", {
+        email: "Uninvited@example.test",
+      })
+    ).status,
+    403,
+  );
+  assert.equal(outbound(), 0);
+  const join = await mf.dispatchFetch(`${origin}/join`);
+  assert.equal(join.status, 200);
+  assert.match(await join.text(), /LoFi QSO Ferry/);
+  await db
+    .prepare(
+      "INSERT INTO invitations(email,invited_at,expires_at) VALUES('Invited@example.test',?,?)",
+    )
+    .bind(Date.now(), Date.now() + 86_400_000)
+    .run();
+  const begun = await client.request("/api/auth/signup", {
+    email: "Invited@example.test",
+  });
+  assert.equal(begun.status, 200);
+  assert.equal(messages.length, 1);
+  assert.match(messages[0].html, /<!doctype html>/);
+  const code = /^@ferry\.example\.test #(\d{6})$/m.exec(messages[0].text)?.[1];
+  assert.ok(code);
+  assert.equal(
+    (
+      await client.request("/api/auth/signup/verify", {
+        id: begun.body.id,
+        code,
+      })
+    ).status,
+    200,
+  );
+  const options = await client.request("/api/auth/register/options", {
+    signupId: begun.body.id,
+  });
+  assert.equal(options.status, 200);
+  const key = await syntheticAuthenticator();
+  assert.equal(
+    (
+      await client.request("/api/auth/register/verify", {
+        ceremonyId: options.body.ceremonyId,
+        response: await key.registration(
+          options.body.options as Record<string, unknown>,
+          { origin, rp: "ferry.example.test" },
+        ),
+      })
+    ).status,
+    200,
+  );
+  assert.ok(
+    (
+      await db
+        .prepare(
+          "SELECT claimed_at FROM invitations WHERE email='Invited@example.test'",
+        )
+        .first<{ claimed_at: number }>()
+    )?.claimed_at,
+  );
+  assert.equal((await client.refresh()).authenticated, true);
+  const before = await client.request("/api/dashboard");
+  assert.deepEqual(before.body.connections, []);
+  assert.equal(
+    (await client.request("/api/settings", { quietMinutes: 40 })).status,
+    200,
+  );
+  const fields = {
+    COMMENT: "Saved before connecting any service: {{ qso.notes }}",
+  };
+  const saved = await client.request("/api/templates", {
+    fields,
+    fallbackNotes: false,
+  });
+  assert.equal(saved.status, 200);
+  const after = await client.request("/api/dashboard");
+  assert.equal(after.body.quietMinutes, 40);
+  assert.deepEqual(
+    (after.body.defaultTemplate as { fields: unknown }).fields,
+    fields,
+  );
+  assert.equal(after.body.exportsEnabled, false);
+  for (const table of ["connections", "ledger", "attempts", "local_mailbox"]) {
+    assert.equal(
+      (
+        await db
+          .prepare(`SELECT count(*) n FROM ${table}`)
+          .first<{ n: number }>()
+      )?.n,
+      0,
+    );
+  }
+  assert.equal(
+    outbound(),
+    1,
+    "only the fixture email provider was contacted; no vendor writes",
   );
 });

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Invite an email address to production Ferry for seven days"
+#USAGE arg "<email>" help="Exact email address the invitee will confirm"
+#USAGE flag "--dry-run" help="Render a local preview without granting access or sending email"
+set -euo pipefail
+npx tsx scripts/invite.ts

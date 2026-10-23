@@ -83,6 +83,44 @@ h2 {
   padding: 2rem 0;
   margin: auto;
 }
+.invite-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  margin: 1.8rem 0;
+  padding: 1.3rem;
+  background: #e5f0e9;
+  border: 1px solid #ccdfd1;
+  border-radius: 14px;
+}
+.invite-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 2.7rem;
+  height: 2.7rem;
+  border-radius: 50%;
+  background: #c9e2d1;
+  color: var(--teal);
+  font-size: 2rem;
+  line-height: 1;
+}
+.invite-notice h2 {
+  margin: 0.4rem 0;
+  font-size: 1.25rem;
+}
+.invite-notice p {
+  margin: 0.5rem 0 0.8rem;
+  font-size: 0.93rem;
+  color: #47645b;
+}
+.invite-notice a {
+  display: inline-block;
+  padding: 0.35rem 0;
+  color: var(--teal);
+  font-size: 0.9rem;
+  font-weight: 700;
+  text-underline-offset: 0.2em;
+}
 button {
   font: inherit;
   background: var(--teal);
@@ -101,6 +139,9 @@ button:disabled {
   opacity: 0.55;
   cursor: wait;
 }
+.auth-panel > button {
+  width: 100%;
+}
 .secondary {
   color: var(--teal);
   background: #f0f7f3;
@@ -117,6 +158,25 @@ textarea {
   background: #fcfdfc;
   color: inherit;
   min-height: 44px;
+  font-size: 1rem;
+}
+.otp-input {
+  display: block;
+  max-width: 15rem;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 1.45rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.32em;
+  padding: 0.7rem 0.85rem;
+}
+.otp-input::placeholder {
+  color: #9aaba4;
+}
+#verify,
+#email-verify {
+  margin-top: 1.3rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
 }
 label {
   display: block;
@@ -306,6 +366,13 @@ select:focus-visible {
   }
   #welcome {
     padding: 0.5rem 0;
+  }
+  .invite-notice {
+    margin: 1.2rem 0;
+    padding: 1rem;
+  }
+  .invite-mark {
+    display: none;
   }
   .row {
     flex-direction: column;

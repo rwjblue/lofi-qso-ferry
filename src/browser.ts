@@ -21,6 +21,19 @@ let lofiId = "";
 let emailId = "";
 let messageSequence = 0;
 let authIntent = 0;
+const joining = location.pathname.replace(/\/+$/, "") === "/join";
+let focusJoinEmail = joining;
+const DEFAULT_COMMENT_TEMPLATE =
+  '{% assign refs = op.refs | refLabels | join: ", " %}{{ refs }}{% if qso.notes != blank %}{% if refs != blank %} | {% endif %}{{ qso.notes }}{% endif %}';
+interface NarrativeTemplate {
+  fields: { COMMENT?: string; NOTES?: string; QSLMSG?: string };
+  fallbackNotes: boolean;
+}
+const builtInTemplate: NarrativeTemplate = {
+  fields: { COMMENT: DEFAULT_COMMENT_TEMPLATE },
+  fallbackNotes: false,
+};
+let availableTemplates = new Map<string, NarrativeTemplate>();
 function message(value: string, error = false) {
   const node = element("message");
   node.textContent = value;
@@ -79,6 +92,44 @@ function form(id: string, callback: (data: FormData) => Promise<void>) {
   });
 }
 const text = (data: FormData, key: string) => String(data.get(key) ?? "");
+function confirmationInput(id: string) {
+  const input = element<HTMLInputElement>(id);
+  input.addEventListener("input", () => {
+    input.value = input.value.replace(/\D/g, "").slice(0, 6);
+  });
+  input.addEventListener("paste", (event) => {
+    const pasted = event.clipboardData?.getData("text");
+    if (pasted && /^[\d\s-]+$/.test(pasted)) {
+      event.preventDefault();
+      input.value = pasted.replace(/\D/g, "").slice(0, 6);
+    }
+  });
+}
+function focusConfirmation(id: string) {
+  const input = element<HTMLInputElement>(id);
+  input.value = "";
+  input.focus();
+}
+function showSelectedTemplate() {
+  const form = element<HTMLFormElement>("template");
+  const destination = element<HTMLSelectElement>("template-destination").value;
+  const version = availableTemplates.get(destination) ?? builtInTemplate;
+  for (const [name, field] of [
+    ["comment", "COMMENT"],
+    ["notes", "NOTES"],
+    ["qslmsg", "QSLMSG"],
+  ] as const) {
+    const input = form.elements.namedItem(name);
+    if (input instanceof HTMLTextAreaElement)
+      input.value = version.fields[field] ?? "";
+  }
+  const fallback = form.elements.namedItem("fallbackNotes");
+  if (fallback instanceof HTMLInputElement)
+    fallback.checked = version.fallbackNotes;
+  element("template-scope").textContent = destination
+    ? "New template bindings for this logbook use this version. Existing contacts keep their version; adopted QRZ text stays preserved."
+    : "New QRZ connections inherit this default. Existing logbooks and contacts keep their versions.";
+}
 async function ceremony(path: string, label?: string) {
   ++authIntent;
   WebAuthnAbortService.cancelCeremony();
@@ -108,6 +159,8 @@ interface Dashboard {
   email: string;
   quietMinutes: number;
   exportsEnabled: boolean;
+  defaultTemplate?: NarrativeTemplate;
+  destinationTemplates?: (NarrativeTemplate & { destination: string })[];
   counts: Record<string, number>;
   connections: {
     id: string;
@@ -150,13 +203,28 @@ async function load() {
     authenticated: boolean;
     csrf: string;
     email?: string;
+    signupAllowed?: boolean;
   }>("/api/auth/session");
   csrf = session.csrf;
   element("welcome").hidden = session.authenticated;
   element("dashboard").hidden = !session.authenticated;
   if (!session.authenticated) {
     element("account").textContent = "";
-    void autofill().catch(() => {});
+    const openSignup = session.signupAllowed === true;
+    const joinPanel = element<HTMLDetailsElement>("join-panel");
+    joinPanel.hidden = !openSignup && !joining;
+    joinPanel.open = joining || joinPanel.open;
+    element("invite-only").hidden = openSignup;
+    element("join-link").hidden = joining;
+    element("join-explainer").hidden = openSignup;
+    element("join-summary").textContent = openSignup
+      ? "Create your account"
+      : "Accept your invitation";
+    if (focusJoinEmail) {
+      focusJoinEmail = false;
+      element<HTMLInputElement>("signup-email").focus();
+    }
+    if (!joining) void autofill().catch(() => {});
     return;
   }
   const data = await api<Dashboard>("/api/dashboard");
@@ -165,11 +233,6 @@ async function load() {
     ? "Automatic delivery is enabled. Existing history is adopted before any eligible backfill."
     : "Read-only rollout: production exports are disabled. Connections and history can be reviewed safely.";
   if (entering) window.scrollTo({ top: 0 });
-  const comment =
-    element<HTMLFormElement>("template").elements.namedItem("comment");
-  if (comment instanceof HTMLTextAreaElement && !comment.value)
-    comment.value =
-      (data as Dashboard & { potaExample?: string }).potaExample ?? "";
   const counts = data.counts;
   const metrics = element("metrics");
   metrics.replaceChildren();
@@ -204,7 +267,19 @@ async function load() {
   }
   const connections = element("connections");
   connections.replaceChildren();
-  element("template-destination").replaceChildren();
+  const templateDestination = element<HTMLSelectElement>(
+    "template-destination",
+  );
+  const selectedDestination = templateDestination.value;
+  const defaultOption = node("option", "Account default · new QRZ connections");
+  defaultOption.value = "";
+  templateDestination.replaceChildren(defaultOption);
+  availableTemplates = new Map([
+    ["", data.defaultTemplate ?? builtInTemplate],
+    ...(data.destinationTemplates ?? []).map(
+      (template) => [template.destination, template] as const,
+    ),
+  ]);
   for (const connection of data.connections) {
     const item = node("div", "", "connection");
     item.append(
@@ -252,11 +327,17 @@ async function load() {
       const option = document.createElement("option");
       option.value = connection.id;
       option.textContent = connection.label;
-      element("template-destination").append(option);
+      templateDestination.append(option);
     }
   }
   if (!data.connections.length)
     connections.append(node("p", "No services connected yet.", "small"));
+  templateDestination.value = [...templateDestination.options].some(
+    (option) => option.value === selectedDestination,
+  )
+    ? selectedDestination
+    : "";
+  showSelectedTemplate();
   const activity = element("activity");
   activity.replaceChildren();
   for (const row of data.activity) {
@@ -288,11 +369,17 @@ async function load() {
     activity.append(tr);
   }
   element("empty").hidden = data.activity.length > 0;
-  (
-    element<HTMLFormElement>("settings").elements.namedItem(
-      "quietMinutes",
-    ) as HTMLSelectElement
-  ).value = String(data.quietMinutes);
+  const quietPeriod =
+    element<HTMLFormElement>("settings").elements.namedItem("quietMinutes");
+  if (quietPeriod instanceof HTMLSelectElement) {
+    const saved = String(data.quietMinutes);
+    if (![...quietPeriod.options].some((option) => option.value === saved)) {
+      const option = node("option", saved);
+      option.value = saved;
+      quietPeriod.append(option);
+    }
+    quietPeriod.value = saved;
+  }
   const keys = element("keys");
   keys.replaceChildren();
   for (const key of data.passkeys) {
@@ -325,11 +412,16 @@ bind("login", async () => {
   await load();
 });
 form("signup", async (data) => {
+  ++authIntent;
+  WebAuthnAbortService.cancelCeremony();
   const result = await api<{ id: string }>("/api/auth/signup", {
     email: text(data, "email"),
   });
   signupId = result.id;
   element("verify").hidden = false;
+  element("signup-code-help").textContent =
+    `Enter the six-digit code sent to ${text(data, "email")}. You can paste it or use email autofill.`;
+  focusConfirmation("signup-code");
   message("Enter the confirmation code from your email in this tab.");
 });
 form("verify", async (data) => {
@@ -415,8 +507,9 @@ form("settings", async (data) => {
   message("Quiet period saved.");
 });
 form("template", async (data) => {
+  const destination = text(data, "destination");
   await api("/api/templates", {
-    destination: text(data, "destination"),
+    ...(destination ? { destination } : {}),
     fields: {
       COMMENT: text(data, "comment"),
       ...(text(data, "notes") ? { NOTES: text(data, "notes") } : {}),
@@ -424,7 +517,12 @@ form("template", async (data) => {
     },
     fallbackNotes: data.has("fallbackNotes"),
   });
-  message("New template version saved. Existing contacts keep their bindings.");
+  await load();
+  message(
+    destination
+      ? "New template version saved. Existing contacts keep their bindings."
+      : "Account default saved. New QRZ connections will use it.",
+  );
 });
 form("email", async (data) => {
   const result = await api<{ id: string }>("/api/auth/email", {
@@ -432,6 +530,7 @@ form("email", async (data) => {
   });
   emailId = result.id;
   element("email-verify").hidden = false;
+  focusConfirmation("email-code");
   message("Enter the code sent to the new address.");
 });
 form("email-verify", async (data) => {
@@ -439,6 +538,7 @@ form("email-verify", async (data) => {
     id: emailId,
     code: text(data, "code"),
   });
+  element("email-verify").hidden = true;
   await load();
 });
 bind("other-sessions", async () => {
@@ -446,6 +546,12 @@ bind("other-sessions", async () => {
   await load();
   message("Other sessions signed out.");
 });
+confirmationInput("signup-code");
+confirmationInput("email-code");
+element("template-destination").addEventListener(
+  "change",
+  showSelectedTemplate,
+);
 void run(load);
 
 if (location.hostname === "localhost") {

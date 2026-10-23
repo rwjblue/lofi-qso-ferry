@@ -27,9 +27,24 @@ mise run deploy-readonly
 
 For a new target, provision each required application secret with `npx wrangler secret put SECRET_NAME --env production`, which prompts securely, before deployment. Only the optional Resend path needs its API key. The guarded task builds assets, checks all export gates are closed, applies outstanding migrations to the dedicated database and deploys production. It refuses an open gate or an unconfigured production origin/database. The resource record above and [deployment evidence](deployment.md) identify the completed deployment. Confirm `/health` reports exports disabled, and test production email delivery and passkey ceremonies at the permanent origin. Record deployed revision, database IDs, RP/origin, dependency versions and evidence dates without secrets.
 
+## Invite a user
+
+Hosted enrollment is invite only; existing accounts keep passkey-only sign-in. Use the authenticated Cloudflare CLI and the project task:
+
+```sh
+mise run invite -- person@example.com
+mise run invite -- --dry-run person@example.com
+```
+
+The normal command grants a seven-day, exact-email invitation in `ferry-production` and sends a branded invitation through the configured native Cloudflare sender. It uses the project production account/database/sender, shell-free query arguments and an exact returned-grant check; no application secret, admin web endpoint or bearer invite token is needed. The preview command renders `.wrangler/invite-preview/invitation.html` without any remote operation, access grant or email send.
+
+The ordinary `/join` link opens the enrollment form. The recipient must enter the exact invited address, confirm its six-digit email code and enroll a passkey. Local-part case and plus tags are preserved; only the email domain is normalized. Expired or claimed invitations cannot enroll, and account/key/session creation claims the invitation atomically. No connected vendor is required. The task refuses existing accounts and claimed invitations. To renew an unused invitation, intentionally rerun the command; this also sends a new message.
+
+CLI acceptance does not prove inbox delivery. If submission fails or its result is uncertain, the granted invitation remains usable at `/join`; the task reports that boundary and never retries automatically. Inspect provider delivery metadata or confirm receipt before deciding to rerun. A permanent-bounce warning is treated as failure even though the current Wrangler CLI exits zero. Do not automate repeated invitations. Expired metadata is removed by scheduled auth cleanup, and restore quarantine removes all restored invitations.
+
 ## Connect and adopt read-only
 
-Signup confirms email and enrolls the first passkey atomically. Register a second key in an independent provider/security key. Losing every usable passkey has no email reset. Existing-account email confirmation cannot replace a passkey. Sensitive changes require a fresh passkey assertion within five minutes; session and key revocation take effect on subsequent requests.
+Invited signup confirms email and enrolls the first passkey atomically. Register a second key in an independent provider/security key. Losing every usable passkey has no email reset. Existing-account email confirmation cannot replace a passkey. Sensitive changes require a fresh passkey assertion within five minutes; session and key revocation take effect on subsequent requests. Settings and account-default templates can be saved before connecting any service; LoFi, QRZ and LoTW are individually optional.
 
 Link LoFi through its approval email, then finish the connection so Ferry verifies the vendor account UUID. Link QRZ using its book API key plus exact book ID, station callsign and date range; incomplete STATUS evidence blocks linking. Import a LoTW `.p12` with its matching private key and original password; `.tq6` alone cannot sign. Optional LoTW website credentials enable accepted/unconfirmed history readback. The original import password and PKCS#12 bytes are discarded after normalized encrypted import; optional query passwords remain encrypted for unattended readback. Renewal must use the same verified query username (and read credentials) as the original account connection; omitting optional readback fields creates a distinct station-only destination. Renewal retains the verified logical destination and ledger; a different QRZ book or verified LoTW account starts separate reconciliation.
 

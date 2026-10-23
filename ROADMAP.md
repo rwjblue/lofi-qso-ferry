@@ -218,3 +218,13 @@ connection, ledger row or attempt was created. The updated full check passes
 See [deployment evidence](docs/deployment.md) for the version and safe redeploy path.
 Owner enrollment, history review, source-boundary proof and scoped live-write
 contracts remain distinct acceptance checks.
+
+## Invite-only onboarding and independent settings (2026-10-22)
+
+- [x] Save account template defaults and quiet periods without any service; use the requested reference-labels/contact-notes COMMENT default and preserve immutable prior versions.
+- [x] Add branded HTML/plain-text mail, six-digit code hints, focus and paste support; retain the explicit device/mail-client autofill verification boundary.
+- [x] Enforce hosted invite-only enrollment in the server and UI; add the operator `mise run invite` task with seven-day exact-email grants and atomic claim guards.
+- [x] Exercise actual hosted Worker HTTP invitation/passkey flow and actual local Wrangler/Chromium signup, zero-connection saves, reload, sign-out/sign-in and mobile rendering.
+- [ ] Complete the integrated checks, fix vendor-adapter runtime defects found by global-fetch experiments, and redeploy/read back every export gate closed.
+
+The initial read-only deployment evidence above is historical. Existing users keep their passkeys and sessions; invitations do not reset accounts. No live invitations were sent during implementation. See [authentication](docs/authentication.md) and [operations](docs/operations.md).

@@ -8,6 +8,7 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from "@simplewebauthn/server";
+import { verificationEmail } from "./mail.ts";
 import {
   b64,
   boundedJson,
@@ -74,6 +75,25 @@ class AuthError extends Error {
   ) {
     super(message);
   }
+}
+// Public enrollment is available only in the isolated local development path.
+// Hosted signup always requires a still-valid invitation to the exact address.
+function signupAllowed(env: Env): boolean {
+  return env.ENVIRONMENT === "local";
+}
+async function requireInvitation(env: Env, email: string): Promise<void> {
+  if (signupAllowed(env)) return;
+  const invitation = await statement(
+    env,
+    "SELECT email FROM invitations WHERE email=? AND claimed_at IS NULL AND expires_at>?",
+    email,
+    Date.now(),
+  ).first();
+  if (!invitation)
+    throw new AuthError(
+      403,
+      "Ferry is invite only for now. Use your invited email address, or sign in with an existing passkey.",
+    );
 }
 const statement = (
   env: Env,
@@ -169,6 +189,7 @@ export async function purgeAuth(env: Env, now = Date.now()): Promise<void> {
     statement(env, "DELETE FROM signups WHERE expires_at<=?", now),
     statement(env, "DELETE FROM rate_limits WHERE reset_at<=?", now),
     statement(env, "DELETE FROM sessions WHERE expires_at<=?", now),
+    statement(env, "DELETE FROM invitations WHERE expires_at<=?", now),
   ]);
 }
 export async function checkCsrf(request: Request, env: Env): Promise<void> {
@@ -245,7 +266,7 @@ function verificationCode(): string {
   do {
     crypto.getRandomValues(value);
   } while (value[0] >= 4_200_000_000);
-  return String(value[0] % 100_000_000).padStart(8, "0");
+  return String(value[0] % 1_000_000).padStart(6, "0");
 }
 async function sendCode(
   request: Request,
@@ -279,8 +300,11 @@ async function sendCode(
     throw new AuthError(503, "Email delivery is not configured");
   const content = {
     to: [pending.email],
-    subject: "Confirm your LoFi QSO Ferry email",
-    text: `Your verification code is ${code}. Enter it in the original Ferry tab within 10 minutes. This code cannot sign into or recover an existing account.`,
+    ...verificationEmail({
+      origin: env.ORIGIN,
+      code,
+      purpose: pending.purpose === "email" ? "email" : "signup",
+    }),
   };
   if (env.EMAIL) {
     try {
@@ -301,20 +325,25 @@ async function sendCode(
   }
   if (!env.RESEND_API_KEY)
     throw new AuthError(503, "Email delivery is not configured");
-  const response = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${env.RESEND_API_KEY}`,
-      "Content-Type": "application/json",
-      "Idempotency-Key": `ferry-${pending.id}`,
-    },
-    body: JSON.stringify({
-      ...content,
-      from: env.MAIL_FROM,
-    }),
-    signal: AbortSignal.timeout(15_000),
-    redirect: "error",
-  });
+  let response: Response;
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${env.RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": `ferry-${pending.id}`,
+      },
+      body: JSON.stringify({
+        ...content,
+        from: env.MAIL_FROM,
+      }),
+      signal: AbortSignal.timeout(15_000),
+      redirect: "manual",
+    });
+  } catch {
+    throw new AuthError(503, "Email delivery is temporarily unavailable");
+  }
   await response.body?.cancel();
   if (!response.ok)
     throw new AuthError(503, "Email delivery is temporarily unavailable");
@@ -328,6 +357,7 @@ async function beginEmail(
 ) {
   if (purpose === "email") requireRecent(identity);
   const email = normalizeEmail(data.email);
+  if (purpose === "signup") await requireInvitation(env, email);
   const binding = await browserHash(request);
   await requestLimit(request, env, "email");
   await rate(
@@ -518,6 +548,7 @@ function guardStatement(
     sessionHash?: string;
     credential?: Passkey;
     signup?: string;
+    invitedEmail?: string;
   },
 ) {
   const id = randomToken();
@@ -525,7 +556,9 @@ function guardStatement(
     id,
     sql: statement(
       env,
-      "INSERT INTO auth_guards(id,ceremony,browser_hash,purpose,tenant,now,session_hash,credential,expected_counter,signup) VALUES(?,?,?,?,?,?,?,?,?,?)",
+      input.invitedEmail
+        ? "INSERT INTO auth_guards(id,ceremony,browser_hash,purpose,tenant,now,session_hash,credential,expected_counter,signup,invited_email) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
+        : "INSERT INTO auth_guards(id,ceremony,browser_hash,purpose,tenant,now,session_hash,credential,expected_counter,signup) VALUES(?,?,?,?,?,?,?,?,?,?)",
       id,
       input.ceremonyId ?? null,
       input.binding,
@@ -536,6 +569,7 @@ function guardStatement(
       input.credential?.id ?? null,
       input.credential?.counter ?? null,
       input.signup ?? null,
+      ...(input.invitedEmail ? [input.invitedEmail] : []),
     ),
   };
 }
@@ -582,6 +616,7 @@ async function registrationOptions(
       email: pending.email,
       user_handle: pending.user_handle,
     };
+    await requireInvitation(env, pending.email);
   }
   await requestLimit(request, env, "registration");
   const existing = additional
@@ -661,6 +696,7 @@ async function registrationVerify(
       binding,
     ).first<Pending>();
     if (!pending) throw new AuthError(400);
+    await requireInvitation(env, pending.email);
     tenant = randomToken();
   }
   const now = Date.now();
@@ -673,6 +709,7 @@ async function registrationVerify(
     ceremonyId: challenge.id,
     sessionHash: additional ? identity?.tokenHash : undefined,
     signup: pending?.id,
+    invitedEmail: pending && !signupAllowed(env) ? pending.email : undefined,
   });
   const steps = [guard.sql];
   if (pending)
@@ -945,6 +982,7 @@ export async function authRoute(
       return json(
         {
           authenticated: Boolean(identity),
+          signupAllowed: signupAllowed(env),
           csrf: await csrf(request, env, browser),
           account,
           recent: Boolean(

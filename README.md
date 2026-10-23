@@ -11,7 +11,7 @@ Log in PoLo or HaLo, let the contact settle, and Ferry handles delivery and subs
 - **Live exports:** poll every five minutes, with a default 30-minute quiet period per changed contact and destination. No operation-complete button is required. Continued logging does not hold earlier stable contacts back.
 - **Existing history:** first inventory and adopt contacts already at each destination without rewriting them. Separately backfill contacts whose current identity is absent after complete readback and a fresh check. Ambiguous or unavailable history stays visible and unsent.
 - **Templates go forward only:** a contact pins its QRZ template version when its first validated export is durably prepared. Later template changes do not revisit history. Existing contacts adopted from QRZ retain their remote narrative.
-- **Email-confirmed signup; passkey-only login:** email ownership allows initial registration, then all sign-ins use a passkey. Register a second passkey or use a recoverable synced provider; v1 has no email account-reset path.
+- **Invited, email-confirmed signup; passkey-only login:** hosted enrollment requires an invitation and email ownership, then all sign-ins use a passkey. Register a second passkey or use a recoverable synced provider; v1 has no email account-reset path.
 - **Correct operating location:** resolve the station callsign, activation references, and location for each contact, including operation segments. Route QRZ to the appropriate logbook and LoTW to the appropriate certificate and station data.
 - **Hosted signing:** import and encrypt the user's LoTW certificate/private key and sign inside the Worker. Synthetic signing vectors and actual local workerd execution pass. Scoped ARRL acceptance and deployed resource measurements remain rollout checks.
 - **Small retained state:** store source IDs, destination associations, versioned hashes, immutable template bindings, encrypted credentials, and bounded temporary delivery/reconciliation data.
@@ -31,7 +31,17 @@ LoTW has no supported narrative destination for QRZ-style comments or POTA text.
 
 ## Use the read-only deployment
 
-Open [Ferry](https://ferry.n1rwj.com), create your account in your own browser, and enroll a passkey after confirming email. Register an independent backup passkey, then connect LoFi and QRZ to review history adoption. The permanent passkey RP is `ferry.n1rwj.com`. Signup uses a dedicated Cloudflare email sender; there is no email login or reset. No account was created on the owner's behalf during deployment verification.
+Open [Ferry](https://ferry.n1rwj.com) and sign in with your passkey. Hosted enrollment is invite only: invited users follow `/join`, confirm the exact invited email address and create a passkey in their own browser. Register an independent backup passkey, then connect only the services you use. No individual service is required to save account settings or template preferences. The permanent passkey RP is `ferry.n1rwj.com`; there is no email login or reset.
+
+The operator can invite someone using the existing Cloudflare CLI login:
+
+```sh
+mise run invite -- person@example.com
+# Preview the email without sending or granting access:
+mise run invite -- --dry-run person@example.com
+```
+
+Invitations expire after seven days and are claimed atomically when the passkey account is created. Use the exact address, including local-part case and plus tags. The task refuses existing accounts and claimed invitations; an intentional rerun renews an unused invitation and sends another message. See [operations](docs/operations.md) for delivery uncertainty and access boundaries.
 
 All vendor export gates remain closed. See [deployment evidence](docs/deployment.md) for resources, live checks and the redeploy command.
 

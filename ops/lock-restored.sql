@@ -10,4 +10,5 @@ UPDATE partitions SET state='inventory_pending',evidence='{}';
 UPDATE cursors SET cursor=CASE WHEN json_valid(cursor) THEN json_set(cursor,'$.complete',0) ELSE '{"complete":false}' END,generation=generation+1 WHERE stream='context';
 DELETE FROM ceremonies;
 DELETE FROM signups;
+DELETE FROM invitations;
 DELETE FROM local_mailbox;

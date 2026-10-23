@@ -1,16 +1,19 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { authRoute, normalizeEmail, session } from "../src/auth.ts";
+import { authRoute, normalizeEmail, purgeAuth, session } from "../src/auth.ts";
 import { syntheticAuthenticator as authenticator } from "./auth-fixtures.ts";
 import { database, keys } from "./helpers.ts";
 
 async function setup() {
   const { db, mf } = await database();
-  const sql = await readFile(
-    new URL("../migrations/0002_auth.sql", import.meta.url),
-    "utf8",
-  );
+  const sql = (
+    await Promise.all(
+      ["0002_auth.sql", "0007_invitations.sql"].map((file) =>
+        readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8"),
+      ),
+    )
+  ).join("\n");
   let current = "";
   for (const line of sql.split("\n")) {
     current += `${line}\n`;
@@ -90,6 +93,18 @@ class Browser {
     this.csrf = String(response.body.csrf);
     return response;
   }
+}
+async function allowInvite(
+  db: D1Database,
+  email: string,
+  expiresAt = Date.now() + 86_400_000,
+) {
+  await db
+    .prepare(
+      "INSERT INTO invitations(email,invited_at,expires_at) VALUES(?,?,?)",
+    )
+    .bind(normalizeEmail(email), Date.now(), expiresAt)
+    .run();
 }
 async function signup(browser: Browser, email = "Person+tag@Example.TEST") {
   await browser.refresh();
@@ -175,7 +190,7 @@ test("native email confirms browser-bound signup and email changes while passkey
       throw new Error("No real email provider may be contacted by this test");
     });
     const code = (index: number) => {
-      const value = /verification code is (\d{8})\./.exec(
+      const value = /^@ferry\.example\.test #(\d{6})$/m.exec(
         messages[index].text ?? "",
       )?.[1];
       assert.ok(value);
@@ -185,6 +200,7 @@ test("native email confirms browser-bound signup and email changes while passkey
     const b = new Browser(env);
     await a.refresh();
     await b.refresh();
+    await allowInvite(db, "Native+Tag@example.test");
     const begun = await a.request("signup", {
       email: "Native+Tag@Example.TEST",
     });
@@ -239,6 +255,14 @@ test("native email confirms browser-bound signup and email changes while passkey
       200,
     );
     assert.equal((await a.refresh()).body.authenticated, true);
+    assert.ok(
+      (
+        await db
+          .prepare("SELECT claimed_at FROM invitations WHERE email=?")
+          .bind("Native+Tag@example.test")
+          .first<{ claimed_at: number }>()
+      )?.claimed_at,
+    );
     assert.equal((await a.request("local-mailbox")).status, 404);
     await a.request("logout", {});
     await a.refresh();
@@ -308,6 +332,222 @@ test("native email confirms browser-bound signup and email changes while passkey
   }
 });
 
+test("hosted signup rejects uninvited, expired and claimed addresses without sending or retaining proofs", async () => {
+  const { env, mf, db } = await setup();
+  try {
+    env.ENVIRONMENT = "production";
+    env.ORIGIN = "https://ferry.example.test";
+    env.RP_ID = "ferry.example.test";
+    let sent = 0;
+    env.EMAIL = {
+      send: async () => {
+        sent++;
+        return { messageId: "fixture" };
+      },
+    };
+    const browser = new Browser(env);
+    assert.equal((await browser.refresh()).body.signupAllowed, false);
+    await allowInvite(db, "Expired@example.test", Date.now() - 1);
+    await allowInvite(db, "Claimed@example.test");
+    await db
+      .prepare("UPDATE invitations SET claimed_at=? WHERE email=?")
+      .bind(Date.now(), "Claimed@example.test")
+      .run();
+    await allowInvite(db, "Exact+tag@example.test");
+    for (const email of [
+      "Unknown@example.test",
+      "Expired@example.test",
+      "Claimed@example.test",
+      "exact+tag@example.test",
+    ]) {
+      const denied = await browser.request("signup", { email });
+      assert.equal(denied.status, 403);
+      assert.match(String(denied.body.error), /invite only/);
+    }
+    assert.equal(sent, 0);
+    for (const table of [
+      "accounts",
+      "signups",
+      "local_mailbox",
+      "passkeys",
+      "sessions",
+    ]) {
+      assert.equal(
+        (
+          await db
+            .prepare(`SELECT count(*) n FROM ${table}`)
+            .first<{ n: number }>()
+        )?.n,
+        0,
+      );
+    }
+    assert.equal(
+      (await browser.request("login/options", {})).status,
+      200,
+      "existing-account passkey login stays available",
+    );
+  } finally {
+    await mf.dispose();
+  }
+});
+
+test("invitation is rechecked and claimed atomically with passkey enrollment", async () => {
+  const { env, mf, db } = await setup();
+  try {
+    env.ENVIRONMENT = "production";
+    env.ORIGIN = "https://ferry.example.test";
+    env.RP_ID = "ferry.example.test";
+    env.MAIL_FROM = "signup@ferry.example.test";
+    const email = "Invited@example.test";
+    await allowInvite(db, email);
+    let code = "";
+    env.EMAIL = {
+      send: async (message) => {
+        assert.ok("text" in message);
+        code =
+          /^@ferry\.example\.test #(\d{6})$/m.exec(message.text ?? "")?.[1] ??
+          "";
+        return { messageId: "fixture" };
+      },
+    };
+    const browser = new Browser(env);
+    await browser.refresh();
+    const started = await browser.request("signup", { email });
+    assert.equal(started.status, 200);
+    assert.match(code, /^\d{6}$/);
+    assert.equal(
+      (await browser.request("signup/verify", { id: started.body.id, code }))
+        .status,
+      200,
+    );
+    await db
+      .prepare("UPDATE invitations SET expires_at=0 WHERE email=?")
+      .bind(email)
+      .run();
+    assert.equal(
+      (await browser.request("register/options", { signupId: started.body.id }))
+        .status,
+      403,
+    );
+    await db
+      .prepare("UPDATE invitations SET expires_at=? WHERE email=?")
+      .bind(Date.now() + 86_400_000, email)
+      .run();
+    const options = await browser.request("register/options", {
+      signupId: started.body.id,
+    });
+    assert.equal(options.status, 200);
+    const key = await authenticator();
+    const response = await key.registration(
+      options.body.options as Record<string, unknown>,
+      { origin: env.ORIGIN, rp: env.RP_ID },
+    );
+    // Expire the invitation after the application read but before its batch.
+    // The real SQLite trigger must reject and roll back proof/account/key state.
+    env.DB = {
+      prepare: db.prepare.bind(db),
+      batch: async (steps: D1PreparedStatement[]) => {
+        await db
+          .prepare("UPDATE invitations SET expires_at=0 WHERE email=?")
+          .bind(email)
+          .run();
+        return db.batch(steps);
+      },
+    } as D1Database;
+    const raced = await browser.request("register/verify", {
+      ceremonyId: options.body.ceremonyId,
+      response,
+    });
+    assert.equal(raced.status, 400);
+    env.DB = db;
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT claimed_at FROM invitations WHERE email=?")
+          .bind(email)
+          .first<{ claimed_at: number | null }>()
+      )?.claimed_at,
+      null,
+    );
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT consumed_at FROM signups WHERE id=?")
+          .bind(started.body.id)
+          .first<{ consumed_at: number | null }>()
+      )?.consumed_at,
+      null,
+    );
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT count(*) n FROM accounts")
+          .first<{ n: number }>()
+      )?.n,
+      0,
+    );
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT count(*) n FROM passkeys")
+          .first<{ n: number }>()
+      )?.n,
+      0,
+    );
+    await db
+      .prepare("UPDATE invitations SET expires_at=? WHERE email=?")
+      .bind(Date.now() + 86_400_000, email)
+      .run();
+    const retry = await browser.request("register/options", {
+      signupId: started.body.id,
+    });
+    assert.equal(retry.status, 200);
+    const retryResponse = await key.registration(
+      retry.body.options as Record<string, unknown>,
+      { origin: env.ORIGIN, rp: env.RP_ID },
+    );
+    assert.equal(
+      (
+        await browser.request("register/verify", {
+          ceremonyId: retry.body.ceremonyId,
+          response: retryResponse,
+        })
+      ).status,
+      200,
+    );
+    assert.ok(
+      (
+        await db
+          .prepare("SELECT claimed_at FROM invitations WHERE email=?")
+          .bind(email)
+          .first<{ claimed_at: number }>()
+      )?.claimed_at,
+    );
+    const another = new Browser(env);
+    await another.refresh();
+    assert.equal((await another.request("signup", { email })).status, 403);
+    await purgeAuth(env, Date.now() + 2 * 86_400_000);
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT count(*) n FROM invitations")
+          .first<{ n: number }>()
+      )?.n,
+      0,
+    );
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT count(*) n FROM accounts")
+          .first<{ n: number }>()
+      )?.n,
+      1,
+    );
+  } finally {
+    await mf.dispose();
+  }
+});
+
 test("uncertain native email failure invalidates its proof and never falls back to Resend", async (context) => {
   const { env, mf, db } = await setup();
   try {
@@ -333,6 +573,7 @@ test("uncertain native email failure invalidates its proof and never falls back 
     });
     const browser = new Browser(env);
     await browser.refresh();
+    await allowInvite(db, "Failure@example.test");
     const failed = await browser.request("signup", {
       email: "Failure@example.test",
     });
@@ -357,7 +598,7 @@ test("uncertain native email failure invalidates its proof and never falls back 
     assert.ok(pending?.consumed_at);
     assert.equal(pending.verified_at, null);
     assert.equal(pending.purpose, "signup");
-    const code = /verification code is (\d{8})\./.exec(sent.text ?? "")?.[1];
+    const code = /^@ferry\.example\.test #(\d{6})$/m.exec(sent.text ?? "")?.[1];
     assert.ok(code);
     assert.equal(
       (await browser.request("signup/verify", { id: pending.id, code })).status,
@@ -388,7 +629,7 @@ test("uncertain native email failure invalidates its proof and never falls back 
 });
 
 test("local email stays local when a native binding exists and absent bindings retain Resend delivery", async (context) => {
-  const { env, mf } = await setup();
+  const { env, mf, db } = await setup();
   try {
     let native = 0;
     env.EMAIL = {
@@ -413,7 +654,7 @@ test("local email stays local when a native binding exists and absent bindings r
       async (input: RequestInfo | URL, init?: RequestInit) => {
         assert.equal(String(input), "https://api.resend.com/emails");
         assert.equal(init?.method, "POST");
-        assert.equal(init?.redirect, "error");
+        assert.equal(init?.redirect, "manual");
         const headers = new Headers(init?.headers);
         assert.equal(
           headers.get("Authorization"),
@@ -426,6 +667,7 @@ test("local email stays local when a native binding exists and absent bindings r
     );
     const browser = new Browser(env);
     await browser.refresh();
+    await allowInvite(db, "Resend@example.test");
     assert.equal(
       (await browser.request("signup", { email: "Resend@example.test" }))
         .status,
@@ -434,7 +676,8 @@ test("local email stays local when a native binding exists and absent bindings r
     assert.equal(external.mock.callCount(), 1);
     assert.equal(body?.from, env.MAIL_FROM);
     assert.deepEqual(body?.to, ["Resend@example.test"]);
-    assert.equal(body?.subject, "Confirm your LoFi QSO Ferry email");
+    assert.match(String(body?.subject), /\d{6}/);
+    assert.match(String(body?.html), /<!doctype html>/);
   } finally {
     await mf.dispose();
   }

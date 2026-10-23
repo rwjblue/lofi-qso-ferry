@@ -45,6 +45,10 @@ export default {
             exportsEnabled: exportsEffective(deliveryGates(env)),
           }),
         );
+      if (request.method === "GET" && url.pathname === "/join") {
+        const asset = new URL("/", request.url);
+        return secured(await env.ASSETS.fetch(new Request(asset, request)));
+      }
       if (!url.pathname.startsWith("/api/"))
         return secured(await env.ASSETS.fetch(request));
       const authentication = await authRoute(request, env);

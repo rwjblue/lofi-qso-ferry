@@ -11,10 +11,11 @@ import { database, seed } from "./helpers.ts";
 async function restoredFixture() {
   const context = await database();
   // Restore lock targets the complete v1 schema; base helper intentionally isolates foundation tests.
-  const schema = readFileSync(
-    new URL("../migrations/0002_auth.sql", import.meta.url),
-    "utf8",
-  );
+  const schema = ["0002_auth.sql", "0007_invitations.sql"]
+    .map((file) =>
+      readFileSync(new URL(`../migrations/${file}`, import.meta.url), "utf8"),
+    )
+    .join("\n");
   let sql = "";
   for (const line of schema.split("\n")) {
     sql += `${line}\n`;
@@ -28,6 +29,13 @@ async function restoredFixture() {
   await seed(context.store, "b");
   const store = context.store;
   const now = Date.now();
+  await store
+    .statement(
+      "INSERT INTO invitations(email,invited_at,expires_at) VALUES('restored-invite@example.test',?,?)",
+      now,
+      now + 86_400_000,
+    )
+    .run();
   await store
     .statement("UPDATE accounts SET status='revoked' WHERE id='b'")
     .run();
@@ -157,6 +165,14 @@ test("restored D1 is locked without reviving revoked access, replaying attempts 
   const result = await lockRestoredDatabase(db);
   assert.equal(result.lockedAccounts, 1);
   assert.equal(result.blockedAttempts, 4);
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT count(*) n FROM invitations")
+        .first<{ n: number }>()
+    )?.n,
+    0,
+  );
   assert.deepEqual(
     (await store.statement("SELECT id,status FROM accounts ORDER BY id").all())
       .results,

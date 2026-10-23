@@ -108,6 +108,10 @@ Expired and revoked invitations remain visible for 90 days after expiry.
 
 ## Follow-ups, in order
 
+The current reconciliation capacity and exception-review work is a rollout
+blocker and precedes these broader operator improvements. Follow the measured
+[reconciliation plan](reconciliation-investigation.md); two processing turns per
+five-minute run is not an acceptable baseline for large logs.
 1. **Queue age and alerts.** Add durable local first-seen timestamps and oldest
    eligible age. Build on the backlog and delivery history to alert on stale
    cron, stalled live work, expiring credentials, and sustained throttling after

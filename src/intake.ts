@@ -340,6 +340,7 @@ export async function pendingContactBatch(
   priority?: VendorPriority,
   qso?: string,
   processedBefore?: number,
+  readyContextOnly = false,
 ): Promise<{ contacts: IntakeContact[]; selected: number }> {
   const context = await store
     .statement(
@@ -353,15 +354,22 @@ export async function pendingContactBatch(
     !(JSON.parse(context.cursor) as { complete: boolean }).complete
   )
     return { contacts: [], selected: 0 };
+  // Prefer usable retained context to known operation holds; an optional early
+  // pass leaves held rows untouched until rereads get their turn. This is only
+  // a scheduling hint: projection still validates every payload and event.
+  const readyContext = `(w.deleted=1 OR w.is_event=1 OR w.operation_id IS NULL OR EXISTS(SELECT 1 FROM source_work o JOIN private_data p ON p.tenant=o.tenant AND p.connection=o.source AND p.id=o.private_id AND p.kind='source' WHERE o.tenant=w.tenant AND o.source=w.source AND o.id=w.operation_id AND o.kind='operation' AND o.state='context' AND o.deleted=0 AND o.expires_at>? AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)))`;
   const rows = (
     await store
       .statement(
-        `SELECT w.* FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='qso' AND w.state IN('pending','waiting') AND w.expires_at>? ${priority ? `AND ${liveWorkSql("w")}=${priority === "live" ? 1 : 0}` : ""} ${qso === undefined ? "" : "AND w.id=?"} ${processedBefore === undefined ? "" : "AND w.processed_at<?"} ORDER BY ${liveWorkSql("w")} DESC,w.processed_at,w.id LIMIT ?`,
+        `SELECT w.* FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='qso' AND w.state IN('pending','waiting') AND w.expires_at>? ${priority ? `AND ${liveWorkSql("w")}=${priority === "live" ? 1 : 0}` : ""} ${qso === undefined ? "" : "AND w.id=?"} ${processedBefore === undefined ? "" : "AND w.processed_at<?"} ${readyContextOnly ? `AND ${readyContext}` : ""} ORDER BY ${liveWorkSql("w")} DESC,${readyContext} DESC,w.processed_at,w.id LIMIT ?`,
         source.tenant,
         source.id,
         now,
         ...(qso === undefined ? [] : [qso]),
         ...(processedBefore === undefined ? [] : [processedBefore]),
+        ...(readyContextOnly ? [now, now] : []),
+        now,
+        now,
         limit,
       )
       .all<Work>()

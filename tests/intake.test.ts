@@ -459,6 +459,203 @@ test("contact batches count invalid selections and exclude work already handled 
   assert.equal((await work(state, "b-valid"))?.processed_at, now + 1);
 });
 
+test("contact turns prefer ready retained context over older operation holds within each priority", async (t) => {
+  for (const priority of ["live", "background"] as const) {
+    await t.test(priority, async (t) => {
+      const state = await setup();
+      const { store, source, now, mf } = state;
+      t.after(() => mf.dispose());
+      const ready = { ...qso, uuid: "z-ready", operation: "a-ready" };
+      const missing = {
+        ...qso,
+        uuid: "a-missing-base",
+        operation: "z-missing",
+      };
+      const held = { ...qso, uuid: "b-held", operation: "z-pending" };
+      const general = { ...loose, uuid: "zz-general" };
+      await pollSource(
+        store,
+        source,
+        async () =>
+          response(
+            [
+              { ...op, uuid: "a-ready" },
+              { ...op, uuid: "z-missing" },
+              { ...op, uuid: "z-pending" },
+            ],
+            [missing, held, ready, general],
+          ),
+        now,
+      );
+      await rereadOperation(
+        store,
+        source,
+        async () => operationResponse([ready]),
+        now + 1,
+      );
+      await store
+        .statement(
+          "UPDATE source_work SET state='context' WHERE kind='operation' AND id='z-missing'",
+        )
+        .run();
+      await store
+        .statement(
+          "DELETE FROM private_data WHERE kind='source' AND id=(SELECT private_id FROM source_work WHERE kind='operation' AND id='z-missing')",
+        )
+        .run();
+      await store
+        .statement(
+          "UPDATE source_work SET priority=? WHERE kind='qso'",
+          priority,
+        )
+        .run();
+      await store
+        .statement(
+          "UPDATE source_work SET processed_at=? WHERE kind='qso' AND id IN('z-ready','zz-general')",
+          now - 1,
+        )
+        .run();
+
+      const take = (time: number) =>
+        pendingContactBatch(store, source, 1, time, priority, undefined, now);
+      assert.deepEqual(
+        (await take(now + 2)).contacts.map((contact) => contact.id),
+        [ready.uuid],
+      );
+      assert.deepEqual(
+        (await take(now + 3)).contacts.map((contact) => contact.id),
+        [general.uuid],
+      );
+      assert.deepEqual(
+        await pendingContactBatch(
+          store,
+          source,
+          1,
+          now + 4,
+          priority,
+          undefined,
+          now,
+          true,
+        ),
+        { contacts: [], selected: 0 },
+      );
+      for (const waiting of [missing, held]) {
+        const retained = await work(state, String(waiting.uuid));
+        assert.equal(
+          retained?.state,
+          "pending",
+          "prioritization does not discard held contacts",
+        );
+        assert.equal(retained?.processed_at, 0);
+        assert(
+          await store.private("a", "source", retained!.private_id, "source"),
+        );
+      }
+      assert.deepEqual(await take(now + 4), { contacts: [], selected: 1 });
+      assert.deepEqual(await take(now + 5), { contacts: [], selected: 1 });
+      for (const waiting of [missing, held]) {
+        const retained = await work(state, String(waiting.uuid));
+        assert.equal(retained?.state, "blocked");
+        assert.equal(retained?.reason, "operation_context_unavailable");
+      }
+      assert.deepEqual(await take(now + 6), { contacts: [], selected: 0 });
+    });
+  }
+});
+
+test("ready-context ordering preserves live precedence, explicit selection and incomplete-source blocking", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const held = { ...qso, uuid: "a-live-held" };
+  await pollSource(
+    store,
+    source,
+    async () => response([op], [held, loose]),
+    now,
+  );
+  await store
+    .statement("UPDATE source_work SET priority='live' WHERE id='a-live-held'")
+    .run();
+  assert.deepEqual(await pendingContactBatch(store, source, 1, now + 1), {
+    contacts: [],
+    selected: 1,
+  });
+  assert.equal(
+    (await work(state, held.uuid))?.reason,
+    "operation_context_unavailable",
+  );
+  assert.equal((await work(state, String(loose.uuid)))?.state, "pending");
+  await store
+    .statement(
+      "UPDATE source_work SET state='pending',priority='background' WHERE id='a-live-held'",
+    )
+    .run();
+  assert.deepEqual(
+    await pendingContactBatch(
+      store,
+      source,
+      1,
+      now + 2,
+      "background",
+      held.uuid,
+    ),
+    { contacts: [], selected: 1 },
+  );
+  await store
+    .statement(
+      "UPDATE cursors SET cursor=json_set(cursor,'$.complete',json('false')) WHERE stream='context'",
+    )
+    .run();
+  assert.deepEqual(
+    await pendingContactBatch(store, source, 1, now + 3, "background"),
+    { contacts: [], selected: 0 },
+  );
+  assert.equal((await work(state, String(loose.uuid)))?.state, "pending");
+});
+
+test("ready-only contact selection leaves operation holds available for same-drain reread recovery", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  await pollSource(store, source, async () => response([op], [qso]), now);
+  assert.deepEqual(
+    await pendingContactBatch(
+      store,
+      source,
+      1,
+      now + 1,
+      "background",
+      undefined,
+      now,
+      true,
+    ),
+    { contacts: [], selected: 0 },
+  );
+  assert.equal((await work(state, String(qso.uuid)))?.state, "pending");
+  assert.equal((await work(state, String(qso.uuid)))?.processed_at, 0);
+  await rereadOperation(
+    store,
+    source,
+    async () => operationResponse([qso]),
+    now + 2,
+  );
+  const recovered = await pendingContactBatch(
+    store,
+    source,
+    1,
+    now + 3,
+    "background",
+    undefined,
+    now,
+  );
+  assert.equal(recovered.selected, 1);
+  assert.deepEqual(
+    recovered.contacts.map((contact) => contact.id),
+    [qso.uuid],
+  );
+});
+
 test("finishing an operation reread releases context-blocked contacts from every page", async (t) => {
   const state = await setup();
   const { store, source, now, mf } = state;

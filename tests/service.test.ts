@@ -330,6 +330,79 @@ test("the wall-time deadline stops a drain before starting more vendor work", as
     await h.mf.dispose();
   }
 });
+test("retained background history reconciles after source polling and before a slow rescan exhausts the deadline", async (t) => {
+  const h = await schedulerFixture();
+  let wall = FIXTURE_NOW;
+  const wallClock = t.mock.method(Date, "now", () => wall);
+  try {
+    // Retain an unresolved contact with complete operation context from a
+    // previous cycle, as happens when readback temporarily fails.
+    h.errors.qrz = true;
+    h.errors.lotw = true;
+    const initial = await tick(h.env, h.fetcher, FIXTURE_NOW);
+    assert.equal(initial.errors, 2);
+    assert.equal(initial.contacts, 1);
+    h.errors.qrz = false;
+    h.errors.lotw = false;
+    await h.store
+      .statement(
+        "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) VALUES('a','source','rescan:destination',?,0,?)",
+        JSON.stringify({
+          mode: "backfill",
+          operations: {},
+          qsos: {},
+          accountId: "account-fixture",
+          rescanComplete: false,
+        }),
+        FIXTURE_NOW,
+      )
+      .run();
+    wall += 5 * 60_000;
+    const phases: string[] = [];
+    let syncs = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/v1/sync") {
+        phases.push(++syncs === 1 ? "source-poll" : "background-rescan");
+        if (syncs === 2) {
+          for (const destination of ["destination", "lotw"])
+            assert.equal(
+              (await h.store.ledger(key(destination)))!.state,
+              "adopted_existing",
+            );
+          wall += 90_001;
+        }
+      } else if (url.hostname === "logbook.qrz.com") {
+        assert.equal(
+          new URLSearchParams(String(init?.body)).get("ACTION"),
+          "FETCH",
+        );
+        phases.push("qrz-readback");
+      } else if (url.pathname === "/lotwuser/lotwreport.adi")
+        phases.push("lotw-readback");
+      return h.fetcher(input, init);
+    };
+    const result = await tick(h.env, fetcher, wall);
+    assert.deepEqual(phases, [
+      "source-poll",
+      "qrz-readback",
+      "lotw-readback",
+      "background-rescan",
+    ]);
+    assert.equal(result.stopReason, "deadline");
+    assert.equal(result.elapsedMs, 90_001);
+    assert.equal(result.errors, 0);
+    assert.equal(result.contacts, 1);
+    assert.equal(result.attempts, 0);
+    assert.equal(h.calls.reread, 1);
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+    assert.equal(h.calls.lotwUploads, 0);
+  } finally {
+    wallClock.mock.restore();
+    await h.mf.dispose();
+  }
+});
 test("full scheduler adopts both vendors read-only, purges raw source and ignores template-only changes", async () => {
   const h = await schedulerFixture();
   try {

@@ -276,81 +276,10 @@ export async function tick(
     const canonicalTurn =
       (source.sync_mode === "forward" ? "live" : "background") === priority;
     const pollTurn = canonicalTurn && !completedPolls.has(sourceKey);
-    try {
-      if (pollTurn) {
-        try {
-          const page = await pollSource(
-            store,
-            source,
-            fetcher,
-            currentTime(),
-            "sync",
-            clock ?? null,
-          );
-          result.sources += page.pages;
-          progress += page.pages;
-          if (page.complete || page.pages === 0 || page.records === 0)
-            completedPolls.add(sourceKey);
-        } catch (error) {
-          completedPolls.add(sourceKey);
-          if (!(error instanceof VendorDeferredError)) throw error;
-          result.deferred++;
-        }
-      }
-      if (expired()) return progress;
-      const rescans = completedRescans.get(sourceKey) ?? new Set<string>();
-      completedRescans.set(sourceKey, rescans);
-      const rescan =
-        priority === "background"
-          ? await store
-              .statement(
-                "SELECT stream FROM cursors WHERE tenant=? AND connection=? AND (stream='repair' OR stream LIKE 'rescan:%' AND EXISTS(SELECT 1 FROM connections d WHERE d.tenant=cursors.tenant AND d.id=substr(cursors.stream,8) AND d.status='active')) AND COALESCE(json_extract(cursor,'$.rescanComplete'),0)=0 AND stream NOT IN(SELECT value FROM json_each(?)) ORDER BY updated_at,stream LIMIT 1",
-                source.tenant,
-                source.id,
-                JSON.stringify([...rescans]),
-              )
-              .first<{ stream: string }>()
-          : null;
-      if (rescan)
-        try {
-          const page = await pollSource(
-            store,
-            source,
-            fetcher,
-            currentTime(),
-            rescan.stream,
-            clock ?? null,
-          );
-          progress += page.pages;
-          if (page.complete || page.pages === 0 || page.records === 0)
-            rescans.add(rescan.stream);
-        } catch (error) {
-          rescans.add(rescan.stream);
-          if (error instanceof VendorDeferredError) result.deferred++;
-          else result.errors++;
-        }
-      if (expired()) return progress;
-      if (!stoppedRereads.has(rereadKey)) {
-        try {
-          const reread = await rereadOperation(
-            store,
-            source,
-            fetcher,
-            currentTime(),
-            priority,
-            clock ?? null,
-            nowAtStart,
-          );
-          progress += reread.pages;
-        } catch (error) {
-          stoppedRereads.add(rereadKey);
-          if (error instanceof VendorDeferredError) result.deferred++;
-          else result.errors++;
-        }
-      }
-      if (expired()) return progress;
+    const processRetainedContacts = async (readyContextOnly = false) => {
+      if (expired()) return 0;
       await establishCutovers(store, source, gates, currentTime());
-      if (expired()) return progress;
+      if (expired()) return 0;
       const batch = await pendingContactBatch(
         store,
         source,
@@ -359,6 +288,7 @@ export async function tick(
         priority,
         undefined,
         nowAtStart,
+        readyContextOnly,
       );
       progress += batch.selected;
       for (const contact of batch.contacts) {
@@ -480,6 +410,90 @@ export async function tick(
           else result.errors++;
         }
       }
+      return batch.selected;
+    };
+    let retainedSelected = 0;
+    try {
+      if (pollTurn) {
+        try {
+          const page = await pollSource(
+            store,
+            source,
+            fetcher,
+            currentTime(),
+            "sync",
+            clock ?? null,
+          );
+          result.sources += page.pages;
+          progress += page.pages;
+          if (page.complete || page.pages === 0 || page.records === 0)
+            completedPolls.add(sourceKey);
+        } catch (error) {
+          completedPolls.add(sourceKey);
+          if (!(error instanceof VendorDeferredError)) throw error;
+          result.deferred++;
+        }
+      }
+      if (expired()) return progress;
+      if (priority === "background") {
+        // Retained contacts with complete context get a bounded turn before
+        // historical ingestion can consume the remaining wall-time budget.
+        retainedSelected = await processRetainedContacts(true);
+        if (expired()) return progress;
+      }
+      const rescans = completedRescans.get(sourceKey) ?? new Set<string>();
+      completedRescans.set(sourceKey, rescans);
+      const rescan =
+        priority === "background"
+          ? await store
+              .statement(
+                "SELECT stream FROM cursors WHERE tenant=? AND connection=? AND (stream='repair' OR stream LIKE 'rescan:%' AND EXISTS(SELECT 1 FROM connections d WHERE d.tenant=cursors.tenant AND d.id=substr(cursors.stream,8) AND d.status='active')) AND COALESCE(json_extract(cursor,'$.rescanComplete'),0)=0 AND stream NOT IN(SELECT value FROM json_each(?)) ORDER BY updated_at,stream LIMIT 1",
+                source.tenant,
+                source.id,
+                JSON.stringify([...rescans]),
+              )
+              .first<{ stream: string }>()
+          : null;
+      if (rescan)
+        try {
+          const page = await pollSource(
+            store,
+            source,
+            fetcher,
+            currentTime(),
+            rescan.stream,
+            clock ?? null,
+          );
+          progress += page.pages;
+          if (page.complete || page.pages === 0 || page.records === 0)
+            rescans.add(rescan.stream);
+        } catch (error) {
+          rescans.add(rescan.stream);
+          if (error instanceof VendorDeferredError) result.deferred++;
+          else result.errors++;
+        }
+      if (expired()) return progress;
+      if (!stoppedRereads.has(rereadKey)) {
+        try {
+          const reread = await rereadOperation(
+            store,
+            source,
+            fetcher,
+            currentTime(),
+            priority,
+            clock ?? null,
+            nowAtStart,
+          );
+          progress += reread.pages;
+        } catch (error) {
+          stoppedRereads.add(rereadKey);
+          if (error instanceof VendorDeferredError) result.deferred++;
+          else result.errors++;
+        }
+      }
+      if (expired()) return progress;
+      if (priority === "live" || retainedSelected === 0)
+        await processRetainedContacts();
     } catch (error) {
       if (error instanceof VendorDeferredError) result.deferred++;
       else {

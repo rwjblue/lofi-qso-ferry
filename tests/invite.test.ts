@@ -40,8 +40,32 @@ test("operator invitations use the dedicated D1, preserve exact addresses and se
     const message = await invite(" O'Neil+tag@EXAMPLE.TEST ", false, runner);
     assert.match(message, /inbox delivery is not confirmed/);
     assert.equal(sends, 1);
+    await assert.rejects(
+      invite("O'Neil+tag@example.test", false, runner),
+      /within 60 seconds/,
+    );
+    await db
+      .prepare(
+        "UPDATE invitations SET expires_at=0,revoked_at=1,last_sent_at=?",
+      )
+      .bind(Date.now() - 61_000)
+      .run();
     await invite("O'Neil+tag@example.test", false, runner);
-    assert.equal(sends, 2, "an intentional rerun may renew and resend");
+    assert.equal(
+      sends,
+      2,
+      "an intentional rerun may renew a revoked invitation after cooldown",
+    );
+    const renewed = await db
+      .prepare("SELECT revoked_at,mail_status,last_sent_at FROM invitations")
+      .first<{
+        revoked_at: number | null;
+        mail_status: string;
+        last_sent_at: number;
+      }>();
+    assert.equal(renewed?.revoked_at, null);
+    assert.equal(renewed?.mail_status, "accepted");
+    assert.ok(renewed?.last_sent_at);
     await db.prepare("UPDATE invitations SET claimed_at=1").run();
     await assert.rejects(
       invite("O'Neil+tag@example.test", false, runner),
@@ -88,7 +112,7 @@ test("invitation preview does no remote work and uncertain sends do not automati
       }),
       /invitation is active.*uncertain/,
     );
-    assert.equal(operations, 2);
+    assert.equal(operations, 3);
     assert.equal(
       (
         await db
@@ -96,6 +120,27 @@ test("invitation preview does no remote work and uncertain sends do not automati
           .first<{ email: string }>()
       )?.email,
       "Pending@example.test",
+    );
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT mail_status FROM invitations")
+          .first<{ mail_status: string }>()
+      )?.mail_status,
+      "uncertain",
+    );
+    await db
+      .prepare("UPDATE invitations SET last_sent_at=?")
+      .bind(Date.now() - 61_000)
+      .run();
+    assert.equal(
+      (
+        await db
+          .prepare(invitationSql("Pending@example.test", Date.now()))
+          .all()
+      ).results.length,
+      0,
+      "CLI cannot bypass the admin ambiguity guard",
     );
     assert.throws(() => invitationSql("bad\naddress@example.test", Date.now()));
     assert.throws(() => invitationSql("valid@example.test", NaN));

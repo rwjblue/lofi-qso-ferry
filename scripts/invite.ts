@@ -6,14 +6,21 @@ import { normalizeEmail } from "../src/auth.ts";
 import { invitationEmail } from "../src/mail.ts";
 
 const sevenDays = 7 * 86_400_000;
-export function invitationSql(address: string, now: number): string {
+export function invitationSql(
+  address: string,
+  now: number,
+  sendId = crypto.randomUUID(),
+): string {
   const email = normalizeEmail(address).replaceAll("'", "''");
   if (!Number.isSafeInteger(now) || now < 0) throw new Error("Invalid time");
-  return `INSERT INTO invitations(email,invited_at,expires_at)
-SELECT '${email}',${now},${now + sevenDays}
+  if (!/^[a-f0-9-]{36}$/.test(sendId)) throw new Error("Invalid send ID");
+  return `INSERT INTO invitations(email,invited_at,expires_at,last_sent_at,mail_status,send_id,action_id)
+SELECT '${email}',${now},${now + sevenDays},${now},'sending','${sendId}','${sendId}'
 WHERE NOT EXISTS(SELECT 1 FROM accounts WHERE email='${email}')
-ON CONFLICT(email) DO UPDATE SET invited_at=excluded.invited_at,expires_at=excluded.expires_at
+ON CONFLICT(email) DO UPDATE SET invited_at=excluded.invited_at,expires_at=excluded.expires_at,revoked_at=NULL,last_sent_at=excluded.last_sent_at,mail_status='sending',send_id=excluded.send_id,action_id=excluded.action_id
 WHERE invitations.claimed_at IS NULL
+AND (invitations.last_sent_at IS NULL OR invitations.last_sent_at<=${now - 60_000})
+AND (invitations.mail_status NOT IN ('sending','uncertain') OR invitations.expires_at<=${now})
 RETURNING email,expires_at;`;
 }
 type Runner = (args: string[]) => string | Promise<string>;
@@ -65,6 +72,7 @@ export async function invite(
   )
     throw new Error("Configure the restricted production email sender first");
   const now = Date.now();
+  const sendId = crypto.randomUUID();
   const message = invitationEmail({
     origin: origin.origin,
     expiresAt: now + sevenDays,
@@ -88,7 +96,7 @@ export async function invite(
     "--yes",
     "--json",
     "--command",
-    invitationSql(email, now),
+    invitationSql(email, now, sendId),
   ]);
   const results = JSON.parse(output) as {
     success?: boolean;
@@ -103,8 +111,9 @@ export async function invite(
     results[0].results[0].expires_at !== now + sevenDays
   )
     throw new Error(
-      "No invitation created: the address already has an account or a claimed invitation.",
+      "No invitation created: the address already has an account or a claimed invitation, was sent an invitation within 60 seconds, or has an uncertain send. Review the admin invitation list; revoke an uncertain invitation before intentionally sending another.",
     );
+  let accepted = false;
   try {
     await run([
       "email",
@@ -119,11 +128,56 @@ export async function invite(
       `--text=${message.text}`,
       `--html=${message.html}`,
     ]);
+    accepted = true;
+  } catch {
+    // Persist ambiguity below; neither a rerun nor the admin UI should blindly
+    // retry a grant whose provider acknowledgement may have been lost.
+  }
+  const status = accepted ? "accepted" : "uncertain";
+  let recorded: {
+    success?: boolean;
+    results?: {
+      mail_status: string;
+      revoked_at: number | null;
+      claimed_at: number | null;
+    }[];
+  }[];
+  try {
+    recorded = JSON.parse(
+      await run([
+        "d1",
+        "execute",
+        database.database_name,
+        "--env",
+        "production",
+        "--remote",
+        "--yes",
+        "--json",
+        "--command",
+        `UPDATE invitations SET mail_status='${status}' WHERE send_id='${sendId}' RETURNING mail_status,revoked_at,claimed_at;`,
+      ]),
+    );
   } catch {
     throw new Error(
-      "The invitation is active, but email was rejected or delivery is uncertain. Do not resend automatically. The invitee can use /join with this exact address; an intentional rerun renews the seven-day invitation and sends another email.",
+      "The email attempt finished, but its status could not be recorded. Do not resend automatically; check the admin invitation list and the recipient first.",
     );
   }
+  const saved = recorded?.[0]?.results?.[0];
+  if (
+    recorded?.length !== 1 ||
+    !recorded[0].success ||
+    recorded[0].results?.length !== 1 ||
+    saved?.mail_status !== status
+  )
+    throw new Error(
+      "Invitation changed while sending. Review the admin invitation list; do not resend automatically.",
+    );
+  if (!accepted)
+    throw new Error(
+      `${saved.revoked_at !== null ? "The invitation was revoked" : saved.claimed_at !== null ? "The invitation was claimed" : "The invitation is active"}, but email was rejected or delivery is uncertain. Do not resend automatically. Check the recipient, or revoke a pending invitation in admin before intentionally sending another after the 60-second cooldown.`,
+    );
+  if (saved.revoked_at !== null)
+    return "Email accepted by Cloudflare, but the invitation was revoked while sending and can no longer be used. Inbox delivery is not confirmed.";
   return `Invited ${email}. Valid for seven days at ${origin.origin}/join. Email accepted by Cloudflare; inbox delivery is not confirmed.`;
 }
 if (

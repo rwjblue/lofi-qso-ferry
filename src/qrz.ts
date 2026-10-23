@@ -145,7 +145,7 @@ export class QrzClient {
       );
     let response: Response;
     try {
-      response = await this.transport(QRZ_ENDPOINT, {
+      response = await this.transport.call(globalThis, QRZ_ENDPOINT, {
         method: "POST",
         headers: {
           "User-Agent": `LoFiQSOFerry/${this.options.version ?? "0.1.0"}`,
@@ -157,7 +157,7 @@ export class QrzClient {
           ...values,
         }),
         signal: AbortSignal.timeout(20000),
-        redirect: "error",
+        redirect: "manual",
       });
     } catch {
       throw new QrzError(
@@ -165,7 +165,20 @@ export class QrzClient {
         "QRZ request failed; mutation outcome must be reconciled",
       );
     }
-    if (!response.ok)
+    if (
+      response.redirected ||
+      response.type === "opaque" ||
+      response.type === "opaqueredirect" ||
+      (response.status >= 300 && response.status < 400)
+    ) {
+      await response.body?.cancel();
+      throw new QrzError(
+        mutating ? "uncertain" : "protocol",
+        "QRZ redirect or opaque response; mutation outcome must be reconciled",
+      );
+    }
+    if (!response.ok) {
+      await response.body?.cancel();
       throw new QrzError(
         mutating
           ? "uncertain"
@@ -174,6 +187,7 @@ export class QrzClient {
             : "transient",
         "QRZ HTTP error",
       );
+    }
     let data: QrzResponse;
     try {
       data = parseQrzResponse(await boundedBody(response));

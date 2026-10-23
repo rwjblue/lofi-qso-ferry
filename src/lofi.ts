@@ -84,7 +84,14 @@ function count(value: unknown): number | undefined {
 }
 
 async function boundedJson(response: Response): Promise<SourceRecord> {
-  if (!response.ok) throw new LoFiError("vendor_http_error", response.status);
+  if (untrustedResponse(response)) {
+    await response.body?.cancel();
+    throw new LoFiError("vendor_redirect_or_opaque_response", response.status);
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new LoFiError("vendor_http_error", response.status);
+  }
   if (!response.body) throw new LoFiError("empty_response");
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -118,6 +125,15 @@ async function boundedJson(response: Response): Promise<SourceRecord> {
   }
 }
 
+function untrustedResponse(response: Response): boolean {
+  return (
+    response.redirected ||
+    response.type === "opaque" ||
+    response.type === "opaqueredirect" ||
+    (response.status >= 300 && response.status < 400)
+  );
+}
+
 /** No user-controlled hostname; injected fetch is for tests/service bindings. */
 export class LoFiClient {
   private credentials: LoFiCredentials;
@@ -137,23 +153,27 @@ export class LoFiClient {
   }
 
   async register(): Promise<SourceRecord> {
-    const response = await this.fetcher("https://lofi.ham2k.net/v1/client", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": "LoFiQSOFerry/0.1.0",
-      },
-      body: JSON.stringify({
-        client: {
-          name: "LoFi QSO Ferry",
-          type: "browser",
-          key: this.credentials.key,
-          secret: this.credentials.secret,
+    const response = await this.fetcher.call(
+      globalThis,
+      "https://lofi.ham2k.net/v1/client",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "LoFiQSOFerry/0.1.0",
         },
-      }),
-      signal: AbortSignal.timeout(15_000),
-      redirect: "error",
-    });
+        body: JSON.stringify({
+          client: {
+            name: "LoFi QSO Ferry",
+            type: "browser",
+            key: this.credentials.key,
+            secret: this.credentials.secret,
+          },
+        }),
+        signal: AbortSignal.timeout(15_000),
+        redirect: "manual",
+      },
+    );
     const result = await boundedJson(response);
     if (typeof result.token !== "string" || !result.token) {
       throw new LoFiError("missing_token");
@@ -168,18 +188,26 @@ export class LoFiClient {
   ): Promise<SourceRecord> {
     for (let attempt = 0; attempt < 2; attempt++) {
       if (!this.credentials.token) await this.register();
-      const response = await this.fetcher(`https://lofi.ham2k.net${path}`, {
-        method: body ? "POST" : "GET",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.credentials.token}`,
-          "User-Agent": "LoFiQSOFerry/0.1.0",
+      const response = await this.fetcher.call(
+        globalThis,
+        `https://lofi.ham2k.net${path}`,
+        {
+          method: body ? "POST" : "GET",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${this.credentials.token}`,
+            "User-Agent": "LoFiQSOFerry/0.1.0",
+          },
+          body: body ? JSON.stringify(body) : undefined,
+          signal: AbortSignal.timeout(15_000),
+          redirect: "manual",
         },
-        body: body ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(15_000),
-        redirect: "error",
-      });
-      if (response.status === 401 && attempt === 0) {
+      );
+      if (
+        response.status === 401 &&
+        attempt === 0 &&
+        !untrustedResponse(response)
+      ) {
         await response.body?.cancel();
         this.credentials.token = undefined;
         continue;

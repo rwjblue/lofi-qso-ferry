@@ -132,7 +132,7 @@ test("query requests all accepted records, own detail and explicit replay bounda
         assert.equal(url.searchParams.get("qso_qsorxsince"), "1900-01-01");
         assert.equal(url.searchParams.get("qso_mydetail"), "yes");
         assert.equal(url.searchParams.get("qso_withown"), "yes");
-        assert.equal(init?.redirect, "error");
+        assert.equal(init?.redirect, "manual");
         return new Response(report());
       },
     },

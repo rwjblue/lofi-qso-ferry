@@ -174,7 +174,7 @@ test("401 renews the original device identity once and never sends a bearer to r
     credentials,
     fake(async (input, init) => {
       calls.push(String(input));
-      assert.equal(init?.redirect, "error");
+      assert.equal(init?.redirect, "manual");
       if (calls.length === 1) return json({}, 401);
       if (String(input).endsWith("/client")) {
         const body = JSON.parse(String(init?.body));

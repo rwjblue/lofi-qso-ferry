@@ -9,6 +9,14 @@ import {
 const QUERY_ENDPOINT = "https://lotw.arrl.org/lotwuser/lotwreport.adi";
 const UPLOAD_ENDPOINT = "https://lotw.arrl.org/lotw/upload";
 const MAX_RESPONSE = 2 * 1024 * 1024;
+function untrustedResponse(response: Response): boolean {
+  return (
+    response.redirected ||
+    response.type === "opaque" ||
+    response.type === "opaqueredirect" ||
+    (response.status >= 300 && response.status < 400)
+  );
+}
 export interface LotwReport {
   records: AdifRecord[];
   receivedThrough: string | null;
@@ -159,17 +167,21 @@ export class LotwClient {
       parameters.set("qso_callsign", partition.workedCallsign);
     let response: Response;
     try {
-      response = await this.request(`${QUERY_ENDPOINT}?${parameters}`, {
-        redirect: "error",
-        signal: AbortSignal.timeout(30_000),
-        headers: { "User-Agent": "LoFiQSOFerry/0.1" },
-      });
+      response = await this.request.call(
+        globalThis,
+        `${QUERY_ENDPOINT}?${parameters}`,
+        {
+          redirect: "manual",
+          signal: AbortSignal.timeout(30_000),
+          headers: { "User-Agent": "LoFiQSOFerry/0.1" },
+        },
+      );
     } catch {
       throw new Error(
         "LoTW query transport failed; coverage remains incomplete",
       );
     }
-    if (!response.ok) {
+    if (untrustedResponse(response) || !response.ok) {
       await response.body?.cancel();
       throw new Error("LoTW query unavailable; coverage remains incomplete");
     }
@@ -178,11 +190,12 @@ export class LotwClient {
   async certificateStatus(serial: string): Promise<CertificateStatus> {
     if (!/^\d{1,50}$/.test(serial)) return "unknown";
     try {
-      const response = await this.request(
+      const response = await this.request.call(
+        globalThis,
         `https://lotw.arrl.org/lotw/crl?serial=${serial}`,
-        { redirect: "error", signal: AbortSignal.timeout(15_000) },
+        { redirect: "manual", signal: AbortSignal.timeout(15_000) },
       );
-      if (!response.ok) {
+      if (untrustedResponse(response) || !response.ok) {
         await response.body?.cancel();
         return "unknown";
       }
@@ -220,14 +233,14 @@ export class LotwClient {
       "lofi-qso-ferry.tq8",
     );
     try {
-      const response = await this.request(UPLOAD_ENDPOINT, {
+      const response = await this.request.call(globalThis, UPLOAD_ENDPOINT, {
         method: "POST",
         body: form,
-        redirect: "error",
+        redirect: "manual",
         signal: AbortSignal.timeout(30_000),
         headers: { "User-Agent": "LoFiQSOFerry/0.1" },
       });
-      if (!response.ok) {
+      if (untrustedResponse(response) || !response.ok) {
         await response.body?.cancel();
         return { state: "uncertain", code: "http_after_dispatch" };
       }

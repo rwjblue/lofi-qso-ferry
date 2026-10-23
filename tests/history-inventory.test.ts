@@ -1596,3 +1596,85 @@ test("cold batch yields before starting another partition after the caller budge
     await h.mf.dispose();
   }
 });
+
+test("a failed split leaf does not hide healthy cached siblings or expose partial evidence", async () => {
+  const h = await inventoryCohort("lotw", 2);
+  try {
+    const inputs = [
+      h.inputs[0],
+      {
+        ...h.inputs[1],
+        record: { ...h.inputs[1].record, QSO_DATE: "20261023" },
+      },
+    ];
+    const prime = {
+      ...h.options,
+      fetcher: async (input: RequestInfo | URL) => {
+        const query = new URL(String(input)).searchParams;
+        return query.get("qso_startdate") === query.get("qso_enddate")
+          ? lotwResponse([inputs[0].record])
+          : new Response("x".repeat(2 * 1024 * 1024 + 1));
+      },
+    };
+    for (let turn = 0; turn < 4; turn++)
+      await historyCandidates(h.store, inputs[0], prime);
+    let calls = 0;
+    const unavailable = new VendorDeferredError(h.now + 300000);
+    const results = await historyCandidatesBatch(h.store, inputs, {
+      ...h.options,
+      fetcher: async (input: RequestInfo | URL) => {
+        calls++;
+        const query = new URL(String(input)).searchParams;
+        assert.equal(query.get("qso_startdate"), "2026-10-23");
+        assert.equal(query.get("qso_enddate"), "2026-10-23");
+        throw unavailable;
+      },
+    });
+    assert.equal(calls, 1);
+    assert.equal(results[0].state, "ready");
+    assert.equal(results[0].failure, undefined);
+    assert.equal(results[0].records[0].CALL, inputs[0].record.CALL);
+    assert.equal(results[1].failure, unavailable);
+    assert.equal(results[1].state, "pending");
+    assert.equal(results[1].fence, undefined);
+    assert.deepEqual(results[1].records, []);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("batch read isolation preserves thrown configuration and save-guard failures", async () => {
+  const h = await inventoryCohort("lotw", 2);
+  try {
+    await assert.rejects(
+      historyCandidatesBatch(
+        h.store,
+        [
+          {
+            ...h.inputs[0],
+            destination: { ...h.inputs[0].destination, config: "invalid-json" },
+          },
+        ],
+        h.options,
+      ),
+      SyntaxError,
+    );
+    await assert.rejects(
+      historyCandidatesBatch(h.store, h.inputs, {
+        ...h.options,
+        fetcher: async () => {
+          await h.store
+            .statement(
+              "UPDATE ledger SET generation='replaced' WHERE qso=?",
+              h.inputs[0].qso,
+            )
+            .run();
+          return lotwResponse([h.inputs[0].record]);
+        },
+      }),
+      /history source changed/,
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});

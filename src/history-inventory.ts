@@ -92,6 +92,8 @@ export interface HistoryInventoryResult {
   capturedAt?: number;
   fence?: HistoryInventoryFence;
   reason?: string;
+  /** Internal batch diagnostic only. Callers must never log or persist the raw error. */
+  failure?: unknown;
 }
 export interface HistoryInventoryFence {
   tenant: string;
@@ -665,6 +667,7 @@ async function advance(
   input: HistoryInventoryInput,
   row: Partition,
   options: HistoryInventoryOptions,
+  isolateReadFailures = false,
 ): Promise<{
   fetched: boolean;
   progressed: boolean;
@@ -744,7 +747,7 @@ async function advance(
           !(error instanceof QrzError) ||
           error.kind !== "rejected"
         )
-          throw error;
+          throw isolateReadFailures ? new HistoryReadFailure(error) : error;
         // QRZ can reject an empty MODSINCE selection without explaining why.
         // That response proves nothing. Discard the incomplete first pass and
         // require a new, successful full scan before returning any evidence.
@@ -768,7 +771,11 @@ async function advance(
         );
         return { fetched: true, progressed: true, complete: false };
       }
-      records = compact(page.records, input, prior);
+      try {
+        records = compact(page.records, input, prior);
+      } catch (error) {
+        throw isolateReadFailures ? new HistoryReadFailure(error) : error;
+      }
       if (page.nextAfterLogId !== null) next.cursor = page.nextAfterLogId;
       else if (prior.phase === "base") {
         next.phase = "catchup";
@@ -810,7 +817,7 @@ async function advance(
           error.message !==
             "Vendor response exceeds bounded partition; split the date range"
         )
-          throw error;
+          throw isolateReadFailures ? new HistoryReadFailure(error) : error;
         const start = Date.parse(prior.startDate);
         const end = Date.parse(prior.endDate);
         if (start === end)
@@ -879,6 +886,20 @@ export async function historyCandidates(
   store: Store,
   input: HistoryInventoryInput,
   options: HistoryInventoryOptions = {},
+): Promise<HistoryInventoryResult> {
+  return readHistoryCandidates(store, input, options);
+}
+/** Only failures inside vendor read/validation boundaries are isolated by a batch. */
+class HistoryReadFailure extends Error {
+  constructor(readonly failure: unknown) {
+    super("Destination history read failed");
+  }
+}
+async function readHistoryCandidates(
+  store: Store,
+  input: HistoryInventoryInput,
+  options: HistoryInventoryOptions,
+  isolateReadFailures = false,
 ): Promise<HistoryInventoryResult> {
   const now = () => options.now ?? Date.now();
   const result: HistoryInventoryResult = {
@@ -955,7 +976,13 @@ export async function historyCandidates(
       return { ...result, state: "unavailable", reason: state.reason };
     if (state.phase !== "done" || row.state !== "complete") {
       if (!result.fetched) {
-        const progress = await advance(store, input, row, options);
+        const progress = await advance(
+          store,
+          input,
+          row,
+          options,
+          isolateReadFailures,
+        );
         if (progress.noReadAccess)
           return {
             ...result,
@@ -1341,12 +1368,18 @@ async function readHistoryBatch(
   }
   if (allowAdvance && advances.size) {
     const progressed = new Map<number, HistoryInventoryResult>();
-    for (const member of advances.values()) {
+    const failures = new Map<string, unknown>();
+    for (const [partition, member] of advances) {
       if (options.shouldContinue?.() === false) break;
-      progressed.set(
-        member.ordinal,
-        await historyCandidates(store, member.input, options),
-      );
+      try {
+        progressed.set(
+          member.ordinal,
+          await readHistoryCandidates(store, member.input, options, true),
+        );
+      } catch (error) {
+        if (!(error instanceof HistoryReadFailure)) throw error;
+        failures.set(partition, error.failure);
+      }
     }
     // A cold advance can replace an epoch, split a range, or evict another row.
     // Never reuse any metadata or plaintext captured before those mutations.
@@ -1372,6 +1405,21 @@ async function readHistoryBatch(
               fence: undefined,
               reason: result.reason,
             };
+    }
+    for (const member of active) {
+      const failed = [
+        ...member.wanted.map((row) => row.id),
+        ...member.required.map((row) => row.id),
+      ].find((id) => failures.has(id));
+      if (failed)
+        refreshed[member.ordinal] = {
+          ...refreshed[member.ordinal],
+          state: "pending",
+          records: [],
+          fence: undefined,
+          failure: failures.get(failed),
+          reason: "Destination history read failed; retry automatically",
+        };
     }
     return refreshed;
   }

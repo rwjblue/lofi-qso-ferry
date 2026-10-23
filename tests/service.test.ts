@@ -1297,6 +1297,24 @@ test("twenty historical contacts share inventory and unchanged review holds stay
     const next = await tick(h.env, h.fetcher, FIXTURE_NOW + 300000);
     assert.equal(next.contacts, 0);
     assert.deepEqual([h.calls.qrzReads, h.calls.lotwQueries], reads);
+    await h.store.db.batch([
+      h.store.statement("UPDATE reconciliation_checks SET next_due_at=0"),
+      h.store.statement("UPDATE reconciliation_work SET next_due_at=0"),
+    ]);
+    // Source verification must not add per-contact proof reads for readable history.
+    h.env.SOURCE_BOUNDARY_VERIFIED = "true";
+    const warm = await tick(h.env, h.fetcher, FIXTURE_NOW + 600000);
+    assert.equal(warm.contacts, 20);
+    assert.equal(warm.errors, 0);
+    assert.equal(warm.throughput?.classifiedDestinations, 40);
+    assert.equal(warm.throughput?.inventoryCacheHits, 40);
+    assert.equal(warm.throughput?.inventoryFetches, 0);
+    assert(
+      warm.throughput!.reconciliationBatchCalls <= 30,
+      `warm cohort made ${warm.throughput!.reconciliationBatchCalls} database RPCs`,
+    );
+    assert.deepEqual([h.calls.qrzReads, h.calls.lotwQueries], reads);
+    assert.equal(await count(h, "ledger", "state='history_ambiguous'"), 40);
     assert.equal(await count(h, "attempts"), 0);
     assert.equal(h.calls.qrzWrites, 0);
     assert.equal(h.calls.lotwUploads, 0);
@@ -1363,6 +1381,73 @@ test("source changes during shared history cannot commit a stale association", a
     } finally {
       await h.mf.dispose();
     }
+  }
+});
+
+test("a stale source in a reconciliation cohort cannot overwrite or delay its newer work", async () => {
+  const h = await schedulerFixture();
+  try {
+    h.changes.operations.length = 0;
+    h.changes.qsos[0] = {
+      ...h.qso,
+      operation: null,
+      our: { stationCall: "W1AW", grid: "FN31AA", dxccCode: 291 },
+    };
+    for (let index = 1; index < 4; index++) {
+      const call = `K1COHORT${index}`;
+      h.changes.qsos.push({
+        ...h.qso,
+        uuid: `cohort-${index}`,
+        operation: null,
+        their: { call },
+        our: { stationCall: "W1AW", grid: "FN31AA", dxccCode: 291 },
+        syncedAtMillis: 110 + index,
+      });
+      h.qrzRecords.push({
+        ...h.qrzRecords[0],
+        CALL: call,
+        APP_QRZLOG_LOGID: String(700 + index),
+      });
+      h.lotwRecords.push({ ...h.lotwRecords[0], CALL: call });
+    }
+    let changed = false;
+    const concurrent: typeof fetch = async (input, init) => {
+      if (!changed && new URL(String(input)).hostname === "logbook.qrz.com") {
+        changed = true;
+        await h.store
+          .statement(
+            "UPDATE source_work SET revision='newer-cohort-revision' WHERE tenant='a' AND source='source' AND id='q1' AND kind='qso'",
+          )
+          .run();
+      }
+      return h.fetcher(input, init);
+    };
+    const result = await tick(h.env, concurrent, FIXTURE_NOW);
+    assert(changed);
+    assert.equal(result.errors, 0);
+    assert.equal(result.contacts, 4);
+    assert(result.throughput!.reconciliationBatchCalls > 0);
+    assert.equal(
+      await count(h, "ledger", "qso='q1' AND remote_id IS NOT NULL"),
+      0,
+    );
+    assert.equal(
+      await count(h, "ledger", "qso!='q1' AND state='adopted_existing'"),
+      6,
+    );
+    const newer = await h.store
+      .statement(
+        "SELECT next_due_at FROM reconciliation_work WHERE tenant='a' AND source='source' AND qso='q1'",
+      )
+      .first<{ next_due_at: number }>();
+    assert.equal(newer?.next_due_at, 0);
+    assert.equal(await count(h, "reconciliation_checks", "qso='q1'"), 0);
+    assert.equal(await count(h, "history_adoption_guards"), 0);
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+    assert.equal(h.calls.lotwUploads, 0);
+  } finally {
+    await h.mf.dispose();
   }
 });
 
@@ -1438,7 +1523,7 @@ test("a failed contact finalizer retains the source lease until delayed workers 
             return (...bound: unknown[]) =>
               wrap(target.bind(...bound), sql, bound);
           const member = Reflect.get(target, property, target);
-          if (property === "run")
+          if (property === "run" || property === "all")
             return async () => {
               if (
                 sql.startsWith(
@@ -1711,5 +1796,84 @@ test("background rotation cannot advance after the source cycle lease is lost", 
     } finally {
       await h.mf.dispose();
     }
+  }
+});
+
+test("one failed QRZ boundary partition does not hold healthy contacts in the same week", async () => {
+  const h = await schedulerFixture();
+  try {
+    h.changes.operations.length = 0;
+    h.changes.qsos[0] = {
+      ...h.qso,
+      operation: null,
+      startAtMillis: Date.parse("2026-10-22T00:30:30Z"),
+      our: { stationCall: "W1AW", grid: "FN31AA", dxccCode: 291 },
+    };
+    for (let index = 1; index < 4; index++) {
+      const call = `K1EDGE${index}`;
+      h.changes.qsos.push({
+        ...h.qso,
+        uuid: `edge-${index}`,
+        operation: null,
+        their: { call },
+        our: { stationCall: "W1AW", grid: "FN31AA", dxccCode: 291 },
+        syncedAtMillis: 110 + index,
+      });
+      h.qrzRecords.push({
+        ...h.qrzRecords[0],
+        CALL: call,
+        APP_QRZLOG_LOGID: String(700 + index),
+      });
+      h.lotwRecords.push({ ...h.lotwRecords[0], CALL: call });
+    }
+    let failedReads = 0;
+    const transport: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).hostname === "logbook.qrz.com") {
+        const filters =
+          new URLSearchParams(String(init?.body)).get("OPTION") ?? "";
+        if (filters.includes("BETWEEN:2026-10-15+2026-10-21")) {
+          failedReads++;
+          throw new Error(
+            "synthetic prior-week outage contains private marker",
+          );
+        }
+      }
+      return h.fetcher(input, init);
+    };
+    const result = await tick(h.env, transport, FIXTURE_NOW);
+    assert.equal(result.errors, 1);
+    assert.equal(
+      failedReads,
+      1,
+      "failed evidence is not retried by a healthy sibling's second pass",
+    );
+    assert.equal(result.throughput?.classifiedDestinations, 7);
+    assert.equal(
+      await count(
+        h,
+        "ledger",
+        "destination='destination' AND qso!='q1' AND state='adopted_existing'",
+      ),
+      3,
+    );
+    const held = await h.store.ledger(key("destination"));
+    assert.equal(held?.remote_id, null);
+    assert.equal(
+      held?.reason,
+      "Destination reconciliation failed; retry automatically",
+    );
+    assert.equal(
+      await count(
+        h,
+        "reconciliation_checks",
+        "destination='destination' AND qso='q1'",
+      ),
+      0,
+    );
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+    assert.equal(h.calls.lotwUploads, 0);
+  } finally {
+    await h.mf.dispose();
   }
 });

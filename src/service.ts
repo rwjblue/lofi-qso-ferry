@@ -13,6 +13,7 @@ import type { DeliveryGates } from "./delivery.ts";
 import {
   expireSource,
   observeContact,
+  observeContacts,
   pendingContactBatch,
   pendingContacts,
   pollSource,
@@ -20,11 +21,15 @@ import {
 } from "./intake.ts";
 import {
   historyCandidates,
+  historyCandidatesBatch,
   historyInventoryGuard,
   pruneHistoryInventory,
 } from "./history-inventory.ts";
 import {
   finishReconciliationWork,
+  finishReconciliationWorkStatement,
+  reconciliationCheckStatement,
+  reconciliationPreflightBatch,
   reconciliationPreflight,
   recordReconciliationCheck,
   syncReconciliationPolicy,
@@ -35,7 +40,16 @@ import { refreshLotwCertificates } from "./lotw-maintenance.ts";
 import type { Contact } from "./projection.ts";
 import { sourceFingerprint } from "./projection.ts";
 import { QrzClient, QrzError } from "./qrz.ts";
-import { adoptHistory, classifyHistory } from "./reconcile.ts";
+import {
+  adoptHistory,
+  adoptHistoryBatch,
+  classifyHistory,
+} from "./reconcile.ts";
+import type { HistoryAdoptionInput } from "./reconcile.ts";
+import type {
+  HistoryInventoryInput,
+  HistoryInventoryResult,
+} from "./history-inventory.ts";
 import type { ReconciliationEvidence } from "./reconcile.ts";
 import { keyring } from "./security.ts";
 import { Store } from "./store.ts";
@@ -105,6 +119,35 @@ function reconciliationFailure(error: unknown, preparing: boolean): string {
   return preparing
     ? "Delivery preparation failed; review contact and connection"
     : "Destination reconciliation failed; retry automatically";
+}
+function reconciliationCommitGuard(
+  key: LedgerKey,
+  contact: IntakeContact,
+  inventory: HistoryInventoryResult,
+  commitTime: number,
+) {
+  const inventoryFence = inventory.fence
+    ? historyInventoryGuard(key, inventory.fence, commitTime)
+    : { sql: inventory.state === "ready" ? "0" : "1", params: [] };
+  return {
+    sql: `${inventoryFence.sql} AND EXISTS(SELECT 1 FROM reconciliation_work r JOIN source_work w ON w.tenant=r.tenant AND w.source=r.source AND w.id=r.qso AND w.kind='qso' JOIN private_data p ON p.tenant=w.tenant AND p.connection=w.source AND p.id=w.private_id AND p.kind='source' JOIN cursors c ON c.tenant=r.tenant AND c.connection=r.source AND c.stream='context' WHERE r.tenant=? AND r.source=? AND r.qso=? AND r.version=? AND w.state IN('pending','waiting') AND w.expires_at>? AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) AND c.generation=? AND json_extract(c.cursor,'$.complete')=1 AND (? IS NULL OR EXISTS(SELECT 1 FROM source_work o JOIN private_data op ON op.tenant=o.tenant AND op.connection=o.source AND op.id=o.private_id AND op.kind='source' WHERE o.tenant=w.tenant AND o.source=w.source AND o.id=? AND o.kind='operation' AND o.state='context' AND o.expires_at>? AND op.revoked_at IS NULL AND (op.expires_at IS NULL OR op.expires_at>?) AND NOT EXISTS(SELECT 1 FROM source_work e LEFT JOIN private_data ep ON ep.tenant=e.tenant AND ep.connection=e.source AND ep.id=e.private_id AND ep.kind='source' WHERE e.tenant=o.tenant AND e.source=o.source AND e.operation_id=o.id AND e.kind='qso' AND e.is_event=1 AND e.deleted=0 AND (e.expires_at<=? OR ep.id IS NULL OR ep.revoked_at IS NOT NULL OR (ep.expires_at IS NOT NULL AND ep.expires_at<=?))))))`,
+    params: [
+      ...inventoryFence.params,
+      key.tenant,
+      key.source,
+      key.qso,
+      contact.reconciliationVersion ?? -1,
+      commitTime,
+      commitTime,
+      contact.contextGeneration,
+      contact.operationId,
+      contact.operationId,
+      commitTime,
+      commitTime,
+      commitTime,
+      commitTime,
+    ],
+  };
 }
 async function reconcileContact(
   store: Store,
@@ -213,7 +256,10 @@ async function reconcileContact(
     freshCheckComplete,
     inventoryPositiveOnly: true,
     provenNewAfterCutover:
-      gates.sourceBoundaryVerified && (await proveNewAfterCutover(store, key)),
+      gates.sourceBoundaryVerified &&
+      destination.kind === "lotw" &&
+      !readAccess &&
+      (await proveNewAfterCutover(store, key)),
   };
   let outcome = classifyHistory(record, remote, evidence);
   if (inventory.state === "pending")
@@ -234,28 +280,12 @@ async function reconcileContact(
         "Source replay/cutover evidence is not yet verified; absence cannot authorize backfill",
     };
   const commitTime = vendorNow ?? Date.now();
-  const inventoryFence = inventory.fence
-    ? historyInventoryGuard(key, inventory.fence, commitTime)
-    : { sql: inventory.state === "ready" ? "0" : "1", params: [] };
-  const commitGuard = {
-    sql: `${inventoryFence.sql} AND EXISTS(SELECT 1 FROM reconciliation_work r JOIN source_work w ON w.tenant=r.tenant AND w.source=r.source AND w.id=r.qso AND w.kind='qso' JOIN private_data p ON p.tenant=w.tenant AND p.connection=w.source AND p.id=w.private_id AND p.kind='source' JOIN cursors c ON c.tenant=r.tenant AND c.connection=r.source AND c.stream='context' WHERE r.tenant=? AND r.source=? AND r.qso=? AND r.version=? AND w.state IN('pending','waiting') AND w.expires_at>? AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) AND c.generation=? AND json_extract(c.cursor,'$.complete')=1 AND (? IS NULL OR EXISTS(SELECT 1 FROM source_work o JOIN private_data op ON op.tenant=o.tenant AND op.connection=o.source AND op.id=o.private_id AND op.kind='source' WHERE o.tenant=w.tenant AND o.source=w.source AND o.id=? AND o.kind='operation' AND o.state='context' AND o.expires_at>? AND op.revoked_at IS NULL AND (op.expires_at IS NULL OR op.expires_at>?) AND NOT EXISTS(SELECT 1 FROM source_work e LEFT JOIN private_data ep ON ep.tenant=e.tenant AND ep.connection=e.source AND ep.id=e.private_id AND ep.kind='source' WHERE e.tenant=o.tenant AND e.source=o.source AND e.operation_id=o.id AND e.kind='qso' AND e.is_event=1 AND e.deleted=0 AND (e.expires_at<=? OR ep.id IS NULL OR ep.revoked_at IS NOT NULL OR (ep.expires_at IS NOT NULL AND ep.expires_at<=?))))))`,
-    params: [
-      ...inventoryFence.params,
-      key.tenant,
-      key.source,
-      key.qso,
-      contact.reconciliationVersion ?? -1,
-      commitTime,
-      commitTime,
-      contact.contextGeneration,
-      contact.operationId,
-      contact.operationId,
-      commitTime,
-      commitTime,
-      commitTime,
-      commitTime,
-    ],
-  };
+  const commitGuard = reconciliationCommitGuard(
+    key,
+    contact,
+    inventory,
+    commitTime,
+  );
   const adopted = await adoptHistory(
     store,
     key,
@@ -280,6 +310,352 @@ async function reconcileContact(
     );
   }
 }
+/** Bounded read-only cohorts share evidence, while each mutation keeps its own fence. */
+async function reconcileReadOnlyBatch(
+  store: Store,
+  source: Connection,
+  destinations: Connection[],
+  contacts: IntakeContact[],
+  gates: DeliveryGates,
+  fetcher: typeof fetch,
+  priority: VendorPriority,
+  currentTime: () => number,
+  vendorNow: number | undefined,
+  expired: () => boolean,
+  metrics: ThroughputMetrics,
+) {
+  const result = { contacts: contacts.length, errors: 0, deferred: 0 };
+  const statements: D1PreparedStatement[] = [];
+  const observations = contacts.map((contact) => ({
+    contact,
+    routedDestinations: (["qrz", "lotw"] as const).flatMap((kind) => {
+      const matches = destinations.filter(
+        (destination) =>
+          destination.kind === kind && routeMatches(destination, contact),
+      );
+      return matches.length === 1 ? matches : [];
+    }),
+  }));
+  const observed = await observeContacts(
+    store,
+    source,
+    observations,
+    currentTime(),
+  );
+  const ready = observations.filter((_, index) => {
+    const observation = observed[index];
+    if (observation.status === "fulfilled") return true;
+    if (observation.reason instanceof VendorDeferredError) result.deferred++;
+    else result.errors++;
+    return false;
+  });
+  const diagnose = (
+    contact: IntakeContact,
+    destination: Connection,
+    reason: string,
+  ) => {
+    statements.push(
+      store.statement(
+        "UPDATE ledger SET reason=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND EXISTS(SELECT 1 FROM reconciliation_work r WHERE r.tenant=ledger.tenant AND r.source=ledger.source AND r.qso=ledger.qso AND r.version=?)",
+        reason,
+        source.tenant,
+        source.id,
+        contact.id,
+        destination.id,
+        contact.generation,
+        contact.reconciliationVersion ?? -1,
+      ),
+    );
+  };
+  type Route = {
+    contact: IntakeContact;
+    destination: Connection;
+    input: HistoryInventoryInput;
+  };
+  const routes: Route[] = [];
+  const routingIssues = new Map<string, string[]>();
+  for (const { contact, routedDestinations } of ready) {
+    const issues: string[] = [];
+    routingIssues.set(contact.id, issues);
+    for (const kind of ["qrz", "lotw"] as const) {
+      if (routedDestinations.some((destination) => destination.kind === kind))
+        continue;
+      const candidates = destinations.filter(
+        (destination) => destination.kind === kind,
+      );
+      if (!candidates.length) continue;
+      const multiple = candidates.some((destination) =>
+        routeMatches(destination, contact),
+      );
+      issues.push(
+        multiple
+          ? `Multiple ${kind.toUpperCase()} routes match; resolve routing`
+          : `No ${kind.toUpperCase()} route matches station and date`,
+      );
+      for (const destination of candidates)
+        diagnose(
+          contact,
+          destination,
+          multiple
+            ? "Multiple connections match this station; resolve routing"
+            : "No connection matches this station and date",
+        );
+    }
+    for (const destination of routedDestinations) {
+      try {
+        routes.push({
+          contact,
+          destination,
+          input: {
+            source,
+            destination,
+            qso: contact.id,
+            generation: contact.generation,
+            record: contactReconciliationAdif(contact),
+          },
+        });
+      } catch {
+        result.errors++;
+        diagnose(
+          contact,
+          destination,
+          "Source fields cannot be represented in ADIF; review contact",
+        );
+      }
+    }
+  }
+  try {
+    const ledgers = await reconciliationPreflightBatch(
+      store,
+      source,
+      routes.map(({ contact, destination }) => ({
+        qso: contact.id,
+        destination: destination.id,
+        generation: contact.generation,
+      })),
+      currentTime(),
+    );
+    const ledgerByRoute = new Map(
+      ledgers.map((ledger) => [
+        JSON.stringify([ledger.qso, ledger.destination]),
+        ledger,
+      ]),
+    );
+    const groups = new Map<string, Route[]>();
+    for (const route of routes) {
+      if (
+        !ledgerByRoute.has(
+          JSON.stringify([route.contact.id, route.destination.id]),
+        )
+      )
+        continue;
+      const scope = JSON.stringify([
+        route.destination.id,
+        route.contact.stationCall,
+        Math.floor(route.contact.startAtMillis / (7 * 86_400_000)),
+      ]);
+      const group = groups.get(scope) ?? [];
+      group.push(route);
+      groups.set(scope, group);
+    }
+    const pending = [...groups.values()];
+    const planned: { route: Route; adoption: HistoryAdoptionInput }[] = [];
+    let nextGroup = 0;
+    // Await every started cohort before commits/finalization and cycle release.
+    const workers = await Promise.allSettled(
+      Array.from({ length: Math.min(4, pending.length) }, async () => {
+        while (!expired()) {
+          const group = pending[nextGroup++];
+          if (!group) return;
+          try {
+            const options = {
+              fetcher,
+              now: vendorNow,
+              vendorNow,
+              priority,
+              shouldContinue: () => !expired(),
+            };
+            const inventory = await historyCandidatesBatch(
+              store,
+              group.map((route) => route.input),
+              options,
+            );
+            for (const evidence of inventory)
+              if (evidence.fetched) metrics.inventoryFetches++;
+            // Preserve the small QRZ base/catch-up allowance without repeating it per contact.
+            if (
+              !expired() &&
+              inventory.some(
+                (evidence) =>
+                  evidence.state === "pending" &&
+                  evidence.progressed &&
+                  !("failure" in evidence),
+              )
+            ) {
+              const retry = group.flatMap((route, index) =>
+                inventory[index].state === "pending" &&
+                !("failure" in inventory[index])
+                  ? [{ route, index }]
+                  : [],
+              );
+              const refreshed = await historyCandidatesBatch(
+                store,
+                retry.map(({ route }) => route.input),
+                options,
+              );
+              for (const [index, evidence] of refreshed.entries()) {
+                if (evidence.fetched) metrics.inventoryFetches++;
+                inventory[retry[index].index] = evidence;
+              }
+            }
+            for (const [index, route] of group.entries()) {
+              const ledger = ledgerByRoute.get(
+                JSON.stringify([route.contact.id, route.destination.id]),
+              );
+              if (!ledger) continue;
+              const evidence = inventory[index];
+              if ("failure" in evidence) {
+                if (evidence.failure instanceof VendorDeferredError)
+                  result.deferred++;
+                else {
+                  result.errors++;
+                  diagnose(
+                    route.contact,
+                    route.destination,
+                    reconciliationFailure(evidence.failure, false),
+                  );
+                }
+                continue;
+              }
+              if (evidence.state === "ready" && !evidence.fetched)
+                metrics.inventoryCacheHits++;
+              const key: LedgerKey = {
+                tenant: source.tenant,
+                source: source.id,
+                qso: route.contact.id,
+                destination: route.destination.id,
+              };
+              let outcome = classifyHistory(
+                route.input.record,
+                evidence.records,
+                {
+                  destination: route.destination.kind as "qrz" | "lotw",
+                  capturedGeneration: route.contact.generation,
+                  currentGeneration: route.contact.generation,
+                  readAccess: evidence.readAccess,
+                  inventoryComplete: evidence.state === "ready",
+                  catchupComplete: evidence.state === "ready",
+                  freshCheckComplete: false,
+                  inventoryPositiveOnly: true,
+                  provenNewAfterCutover:
+                    gates.sourceBoundaryVerified &&
+                    route.destination.kind === "lotw" &&
+                    !evidence.readAccess &&
+                    (await proveNewAfterCutover(store, key)),
+                },
+              );
+              if (evidence.state === "pending")
+                outcome = {
+                  ...outcome,
+                  state: "inventory_pending",
+                  reason:
+                    evidence.reason ??
+                    "Shared destination inventory is still loading",
+                };
+              if (
+                outcome.state === "missing_current_identity" &&
+                !gates.sourceBoundaryVerified
+              )
+                outcome = {
+                  ...outcome,
+                  state: "inventory_pending",
+                  reason:
+                    "Source replay/cutover evidence is not yet verified; absence cannot authorize backfill",
+                };
+              planned.push({
+                route,
+                adoption: {
+                  key,
+                  generation: route.contact.generation,
+                  outcome,
+                  ledger,
+                  adoptedSourceHash:
+                    outcome.state === "adopted_existing" &&
+                    route.destination.kind === "qrz"
+                      ? await sourceFingerprint(route.contact, "qrz", true)
+                      : undefined,
+                  commitGuard: (at) =>
+                    reconciliationCommitGuard(key, route.contact, evidence, at),
+                },
+              });
+            }
+          } catch (error) {
+            for (const { contact, destination } of group) {
+              if (error instanceof VendorDeferredError) result.deferred++;
+              else {
+                result.errors++;
+                diagnose(
+                  contact,
+                  destination,
+                  reconciliationFailure(error, false),
+                );
+              }
+            }
+          }
+        }
+      }),
+    );
+    const failed = workers.find((worker) => worker.status === "rejected");
+    if (failed?.status === "rejected") throw failed.reason;
+    const applied = await adoptHistoryBatch(
+      store,
+      source,
+      planned.map((item) => item.adoption),
+      currentTime,
+    );
+    for (const [index, item] of planned.entries()) {
+      if (!applied[index].applied) continue;
+      metrics.classifiedDestinations++;
+      if (item.adoption.outcome.state === "adopted_existing")
+        metrics.adoptedDestinations++;
+      const check = reconciliationCheckStatement(
+        store,
+        item.adoption.key,
+        item.adoption.generation,
+        item.adoption.outcome,
+        currentTime(),
+        item.route.contact.reconciliationVersion,
+      );
+      if (check) statements.push(check);
+    }
+  } finally {
+    for (const { contact } of ready)
+      statements.push(
+        store.statement(
+          "UPDATE source_work SET state='waiting',processed_at=?,reason=? WHERE tenant=? AND source=? AND id=? AND kind='qso' AND state IN('pending','waiting') AND EXISTS(SELECT 1 FROM reconciliation_work r WHERE r.tenant=source_work.tenant AND r.source=source_work.source AND r.qso=source_work.id AND r.version=?)",
+          currentTime(),
+          routingIssues.get(contact.id)?.join("; ") || null,
+          source.tenant,
+          source.id,
+          contact.id,
+          contact.reconciliationVersion ?? -1,
+        ),
+      );
+    for (const contact of contacts) {
+      const finish = finishReconciliationWorkStatement(
+        store,
+        source,
+        contact.id,
+        contact.reconciliationVersion,
+        currentTime(),
+      );
+      if (finish) statements.push(finish);
+    }
+    for (let offset = 0; offset < statements.length; offset += 80)
+      await store.db.batch(statements.slice(offset, offset + 80));
+  }
+  return result;
+}
 export interface ThroughputMetrics {
   sourceRecords: number;
   rescanPages: number;
@@ -288,6 +664,7 @@ export interface ThroughputMetrics {
   adoptedDestinations: number;
   inventoryFetches: number;
   inventoryCacheHits: number;
+  reconciliationBatchCalls: number;
   stageMs: Record<string, number>;
   database: DatabaseMetrics;
 }
@@ -314,6 +691,7 @@ export async function tick(
     adoptedDestinations: 0,
     inventoryFetches: 0,
     inventoryCacheHits: 0,
+    reconciliationBatchCalls: 0,
     stageMs: {},
     database: metered.metrics,
   };
@@ -412,6 +790,34 @@ export async function tick(
             (c) => c.kind !== "lofi" && c.status === "active",
           )
         : [];
+      if (
+        priority === "background" &&
+        !exportsEffective(gates) &&
+        batch.contacts.length >= 4
+      ) {
+        const before = metered.metrics.calls;
+        result.contacts += batch.contacts.length;
+        const processed = await measure("history", () =>
+          reconcileReadOnlyBatch(
+            store,
+            source,
+            destinations,
+            batch.contacts,
+            gates,
+            fetcher,
+            priority,
+            currentTime,
+            clock,
+            expired,
+            throughput,
+          ),
+        ).finally(() => {
+          throughput.reconciliationBatchCalls += metered.metrics.calls - before;
+        });
+        result.errors += processed.errors;
+        result.deferred += processed.deferred;
+        return batch.selected;
+      }
       const historyTurns = new Map<string, Promise<void>>();
       const historyTurn = async (
         destination: Connection,

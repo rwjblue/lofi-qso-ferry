@@ -1,6 +1,7 @@
 # Capacity plan
 
-Status: implementation started 2026-10-23. Production exports remain disabled.
+Status: first reconciliation slice implemented and under release verification
+2026-10-23. Production exports remain disabled.
 This plan extends the [reconciliation investigation](reconciliation-investigation.md)
 to ongoing delivery across accounts. Targets below are engineering acceptance
 criteria, not demonstrated service guarantees.
@@ -58,7 +59,7 @@ traffic also cannot assume every account fills a 100-contact upload quickly.
 
 ## Ordered implementation
 
-### 1. Reduce repeated reconciliation database work — in progress
+### 1. Reduce repeated reconciliation database work — implemented, rollout pending
 
 Share complete encrypted history reads and decryption within a bounded source/
 destination/station cohort. Keep per-contact generation checks, current account
@@ -78,6 +79,24 @@ most 30, excluding source selection and housekeeping. Record SQL counts and
 database time as well as RPCs. Add integration/race regressions; keep live
 dispatch sequential in this first release. Deploy read-only and compare actual
 classification rate and database wall time before increasing cohort size.
+
+The local warm fixture now uses **19 RPCs** for cohort work, down from 400;
+whole-tick calls fall **467→86** and SQL statements **939→556**. All 40
+classifications remain, with 40 cache hits, zero vendor history calls and zero
+exports. Cold whole-tick calls fall **519→170**, still using three history fetches.
+These are fixture-specific amplification measurements, not a service-rate SLA.
+
+Reproduce without production access:
+
+```sh
+mise exec -- npx tsx scripts/benchmark-reconciliation-cohort.ts
+```
+
+The scheduler uses this path for read-only background cohorts of at least four
+contacts, with at most four history cohorts active. Small batches and live
+preparation retain their existing path. New `reconciliationBatchCalls` telemetry
+separates cohort RPC cost from selection and housekeeping. A failed date leaf
+holds only dependent contacts; healthy history can still be classified.
 
 ### 2. Wake eligible work and schedule accounts fairly
 

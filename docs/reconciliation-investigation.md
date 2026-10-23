@@ -7,6 +7,17 @@ logbook writes or treat a partial inventory as absence.
 
 ## Implementation status
 
+The next shared-history cohort slice is implemented and under release validation.
+For 20 contacts with warm history at both destinations, cohort work falls from
+400 to **19 D1 RPCs**; complete-tick calls fall **467→86**, with SQL statements
+**939→556**. All 40 classifications are retained, with zero vendor history calls
+and zero exports. Observation snapshots, individual evidence commits, identity
+collisions, failed date leaves and stale queue completion are covered by focused
+regressions. The [capacity plan](capacity-plan.md) records the reproducible
+benchmark, workload targets and the separate live-delivery work still needed.
+Production results for this slice must be recorded after deployment; the older
+release evidence below remains historical.
+
 The larger throughput implementation is deployed in signed revision `bbc2346c`
 as Worker `c592733f-171f-406e-bb8d-827b7ffd7fd9` at 16:12 UTC. Batched
 intake/context access, indexed due-work selection, durable exception retries,

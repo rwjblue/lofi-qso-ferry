@@ -61,7 +61,7 @@ export async function adoptHistoryBatch(
     seen.add(key);
   }
   const results: AdoptionResult[] = [];
-  // At most nine statements per item, including claim and collision quarantine.
+  // At most ten statements per item, including claim and collision quarantine.
   for (let offset = 0; offset < items.length; offset += 8) {
     const commitTime = now();
     const plans = await Promise.all(
@@ -554,6 +554,26 @@ async function prepareHistoryAdoption(
               ...currentInventory.params,
             ],
           }),
+        ]
+      : []),
+    ...(outboundIdentity?.vendor === "qrz"
+      ? [
+          store.statement(
+            `DELETE FROM legacy_qrz_identity_reservations WHERE tenant=? AND destination=? AND source=? AND qso=? AND remote_id=? AND EXISTS(SELECT 1 FROM ledger l JOIN destination_identity_claims c ON c.tenant=l.tenant AND c.destination=l.destination AND c.source=l.source AND c.qso=l.qso AND c.vendor='qrz' AND c.identity_hash=? WHERE l.tenant=? AND l.source=? AND l.qso=? AND l.destination=? AND l.generation=? AND l.state='adopted_existing' AND l.remote_id=? AND l.provenance='adopted') AND (${currentInventory.sql})`,
+            key.tenant,
+            key.destination,
+            key.source,
+            key.qso,
+            remoteId,
+            outboundIdentity.hash,
+            key.tenant,
+            key.source,
+            key.qso,
+            key.destination,
+            generation,
+            remoteId,
+            ...currentInventory.params,
+          ),
         ]
       : []),
   ];

@@ -103,6 +103,7 @@ async function setup() {
         "0010_source_priority.sql",
         "0018_reconciliation_work.sql",
         "0023_outbound_identity_claims.sql",
+        "0024_identity_mapping_overlap.sql",
       ].map((file) =>
         readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8"),
       ),

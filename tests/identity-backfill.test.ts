@@ -48,16 +48,17 @@ async function addReservation(
       remoteId,
     )
     .run();
-  await store
+  const reservation = await store
     .statement(
-      "INSERT INTO legacy_qrz_identity_reservations(tenant,destination,source,qso,remote_id,next_check_at,checked_at) VALUES(?,'destination','source',?,?,?,?)",
+      "UPDATE legacy_qrz_identity_reservations SET next_check_at=?,checked_at=? WHERE tenant=? AND destination='destination' AND source='source' AND qso=? AND remote_id=? RETURNING qso",
+      nextCheck,
+      checked,
       tenant,
       qso,
       remoteId,
-      nextCheck,
-      checked,
     )
     .run();
+  assert.deepEqual(reservation.results, [{ qso }]);
 }
 async function setup() {
   const h = await database();

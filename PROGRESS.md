@@ -1,51 +1,38 @@
 # Implementation progress
 
-Last checkpoint: 2026-10-22, read-only production deployment. Work is coordinated on `main`; the owner authorized signed logical commits directly to `origin/main`. No PRs. Live vendor writes require separate explicit authorization and the documented rollout checks.
+Last checkpoint: 2026-10-22, invite-only onboarding deployed read-only. The owner authorizes signed logical commits directly to `origin/main`; no PRs. Every vendor export gate remains closed. This deployment does not authorize real logbook writes.
 
-## Implemented
+## Current production
 
-- Worker/D1 service, encrypted per-tenant credentials/payloads, versioned templates, immutable attempts, leases/fencing, atomic intake checkpoints, conservative adoption, per-contact quiet periods and real vendor adapters.
-- Email-confirmed signup and passkey-only sessions; recent assertion guards for connections/account changes; no inbox reset or alternate login.
-- LoFi cursor restart/gap recovery, operation/segment rereads, null-operation contacts, tombstones, bounded buffers and source-birth/cutover proofs. Expired context recovery preserves in-progress pagination.
-- QRZ narrative preservation and first-prepared template pinning; LoTW in-Worker signing, separate submitted/observed/confirmed states, retained prior identities and confirmation scoping.
-- Mobile dashboard, connection approval/import/renewal/disable/revoke, template/settings/passkey management, encrypted KEK rotation, resolved-source purge and executable restore quarantine.
-- Reproducible setup/demo/check tasks, CI configuration, operational and rollout runbooks. Every checked-in environment disables exports; no real logbook entries changed.
+- Host/RP: `https://ferry.n1rwj.com` / `ferry.n1rwj.com`. App revision `58a965d7c54d6acf3ecc24ad289433f7b62fb733`, Worker version `0bf32d19-13c7-43da-b179-702ab49ad3d6`; five-minute cron, workers.dev/previews disabled.
+- Existing Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2`; dedicated D1 `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) has all six migrations applied. No unrelated resources were changed.
+- Remote settings read back `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, empty `LIVE_WRITE_AUTHORIZATION`, `ROLLOUT_QSO_IDS_JSON=[]`, and `LOTW_TRUST_ROOTS_JSON=[]`.
+- Native `EMAIL` sender restricted to `signup@ferry.n1rwj.com`; sending DNS verified, existing Fastmail MX preserved, email-content previews disabled. Existing Wrangler OAuth includes Email Sending write access; no new credentials are needed for invites.
+- Independent Worker secrets are preserved. Backup: `~/.config/lofi-qso-ferry/production.secrets.json`, mode 0600 inside 0700, outside Git. It was created while 1Password CLI was signed out; archive it securely before removing it. Never print or casually regenerate the keys.
 
-## Verification and decisions
+## Implemented and committed
 
-- Actual local workerd/D1 tests cover isolation, passkeys, zero-write adoption, template versions, segments/location changes, cursor gaps, crashes, retries, uncertain readback, signing vectors, revocations and restore. Final `mise run check` passes formatting, recommended lint with warnings as errors, server/browser TypeScript, all **149 tests**, and the Worker build. `mise run demo` passes **24 tests**.
-- Fresh `mise run setup` installed pinned Node 24.21.0 dependencies and applied all four migrations. Chromium virtual resident/UV passkey completed signup, settings 40, connection disable/revoke, reauth and explicit login. At 390×844: no horizontal overflow and dashboard scroll starts at 0. Local health and scheduled endpoint passed with exports disabled.
-- Bounded live read-only LoFi, QRZ and LoTW probes passed; evidence and exact limits are in `docs/evidence-*.md`. They do not establish complete history or safe writes.
-- Pre-deployment local profiling checkpoint: **1,534.84 KiB raw / 290.24 KiB gzip**; startup profile 80.4 ms window, 49.1 ms active samples. Workerd cold dispatch plus two imports/signatures: 362 ms wall; two 1,526-byte synthetic TQ8 artifacts. These are not deployed billed CPU/peak-memory or ARRL acceptance.
-- `ferry-liquid-v1` is an explicit bounded compatibility profile. One-contact immutable TQ8 artifacts are the v1 batch size. Local signing matches independent OpenSSL vectors; no native production signer.
-- node-forge 1.4.0 has GHSA-86w9-cpqp-85rv with no patched published release. Never use its RSA certificate verifier: strict platform verification and an exploit regression are required and implemented. Package audit is not clean.
-- Inspected the initially clean tree at 0c2ed55; all changes are from this run. Read product docs and inherited AGENTS/RTK instructions; applied commit-message, PR-description, jj/jj-commit, task, Cloudflare/Workers/Wrangler and browser skills.
+- Worker/D1 service with encrypted tenant credentials/bounded payloads, durable immutable outbox/leases, atomic intake checkpoints, conservative read-only adoption, per-contact quiet periods and real LoFi/QRZ/LoTW adapters.
+- Effective operation/segment location handling, cursor gap/restart recovery, tombstones, source-birth/cutover proofs and forward-only templates pinned at first durable preparation; adopted QRZ narrative is preserved.
+- In-Worker LoTW signing, separate submitted/observed/confirmed states, retained prior identities, encrypted KEK rotation and tested restore quarantine. One-contact immutable TQ8 artifacts are the v1 batch size.
+- Email-confirmed, passkey-only accounts with tenant/session/recent-assertion guards; no inbox reset. Hosted signup now requires an exact-email seven-day invitation claimed atomically with the first passkey. Local signup retains its encrypted fixture mailbox.
+- Styled HTML/plain-text verification and invitation messages; six-digit code subject, configured-host final line, one-time-code/numeric/paste/focus hints. Operator command: `mise run invite -- person@example.com`; `--dry-run` previews without granting access or sending.
+- Mobile dashboard, optional independent connections and settings. Requested reference-labels/contact-notes COMMENT default, immutable account preferences saved without QRZ, new-book-only inheritance and existing-book version selection.
+- Follow-up signed commits: settings `0f4a8c1a33bf`, adapter runtime fixes `d44e74f9cd3f`, invite/mail/UI `58a965d7c54d`. The runtime fixes use manual redirects and the global fetch receiver; Node-only mocks had hidden both failures.
 
-## Read-only production checkpoint
+## Verification and evidence
 
-- User selected `https://ferry.n1rwj.com`; RP matches that exact hostname. Reused Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` and native Email Service conventions. Dedicated D1 `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) has all four migrations applied.
-- Deployed code `f9856fdefa47`, Worker version `00466132-9db4-467a-ae4d-caa5d13abfda`; custom domain + five-minute cron active. workers.dev and preview URLs disabled. All five gates read back closed; LoTW trust roots remain empty.
-- Three independent secrets provisioned; backup `~/.config/lofi-qso-ferry/production.secrets.json` has mode 0600 inside a 0700 directory, outside Git. 1Password CLI was signed out; retain this backup and securely archive it in the operator’s secret manager before removing it. Never regenerate keys casually or print contents.
-- Native Cloudflare EMAIL binding is restricted to `signup@ferry.n1rwj.com`. Dedicated sending DNS resolves via independent DoH providers; existing Fastmail MX preserved; content previews explicitly false.
-- Full local check now passes **149 tests**, recommended lint/types/format/build; deployed code [CI passed](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39880597020). Bundle 290.41 KiB gzip; Cloudflare-reported startup 41 ms, not a billed-CPU/peak-memory measurement.
-- Live health/session, exact RP + required UV/discoverable options, production mailbox 404, mobile 390px/no overflow and real signup email delivery to the owner’s inbox passed. Only fixed email metadata was inspected. Remote DB has zero accounts/connections/ledger rows/attempts/local mailbox rows. No real logs changed.
+- Full `mise run check`: **168 tests**, formatting, recommended lint with warnings as errors, server/browser/script TypeScript and Worker build pass. [Deployed-code CI passed](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39884975858). Bundle 1545.31 KiB raw / 292.65 KiB gzip; deployment-reported startup 29 ms. These are not billed CPU/peak-memory/monthly-cost measurements.
+- Actual workerd/D1 tests cover isolation, passkey cryptography, invitation expiry/atomic races, zero-write adoption, immutable templates, segment changes, retries/crashes, uncertain readback, signing vectors, revocation and restore. Native global-fetch adapter tests exercise successful requests plus redirect/opaque rejection through contained fixtures; no live vendors are contacted.
+- Actual isolated Wrangler/D1 + Chromium virtual resident/UV passkey signup, sign-out/sign-in and zero-connection saves pass. Quiet period 40 and COMMENT preference persisted after reload. `/join` asset canonicalization was found and fixed. Mobile 375×812 has no horizontal overflow.
+- Deployed Chromium confirms invite-only home, uninvited signup 403, `/join` retained/focused, code hints and no console errors. Health reports exports=false; local mailbox/alternate workers.dev return 404. All gates/RP/D1/sender/preview restrictions were independently checked through Cloudflare settings.
+- Read-only remote D1 experiments show `--file` returns bulk-import summaries, while `--command --json` returns query rows. The invite task uses query results and validates the exact granted email/deadline before sending. Local D1 fixtures cover quoting, existing/claimed rejection and uncertain-send behavior. No live invitations were granted or sent during this follow-up.
+- Initial deployment delivered a real verification email through the native provider; only fixed receipt metadata was inspected. New branded HTML was visually checked locally, not in real mail clients. Domain-bound formatting is documented by Apple for SMS; email-client/device autofill remains unverified.
+- Earlier bounded live read-only LoFi/QRZ/LoTW probes passed; limits remain in `docs/evidence-*.md`. They do not prove complete history or safe writes. Signing matches independent OpenSSL vectors in workerd; no ARRL acceptance claim.
+- node-forge 1.4.0 still has GHSA-86w9-cpqp-85rv without a patched release. Strict platform certificate verification and exploit regression avoid the affected verifier; dependency audit is not clean.
 
-## Remaining acceptance and next action
+## Next action and rollout boundaries
 
-Owner: open Ferry in their own browser, start a fresh signup, enroll a real passkey and independent backup key, then link LoFi/QRZ for read-only adoption. The verification smoke test created no account and its code belongs to the test browser. Do not enroll virtual authenticators in production or bypass recent-passkey guards to preload credentials.
+Reload Ferry and use an existing passkey, or invite a new address with the task. Add an independent backup passkey; connect only desired services and review read-only adoption. No implementation/deployment blocker remains for this follow-up.
 
-Keep all vendor exports disabled. Remaining rollout evidence: exhaustive LoFi UUID/tombstone replay contract, full owner-history review, authorized LoTW P12/password/trust/status/station inputs, physical/synced-browser matrix, scoped QRZ/LoTW live-write authorization/tests, deployed resource/cost measurements and restore drill. See [deployment evidence](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md). Staging remains intentionally undeployed. This read-only deployment does not authorize export enablement.
-
-## Follow-up: independent settings and template defaults
-
-- Account template preferences now save without any connected service. Dashboard returns saved defaults and per-logbook versions; only genuinely new QRZ books inherit the current preference. Existing active and durably pinned versions stay intact.
-- Built-in COMMENT now uses the requested effective-reference labels plus contact notes, with no empty separator or duplicate NOTES fallback. Each service remains optional.
-- Focused settings/template/connection checks and actual Worker HTTP/service integration pass; server/browser types pass. Next: finish invite-only enrollment, operator invite task, styled verification mail/OTP hints and dashboard browser checks; then run the complete checks and redeploy with every export gate closed.
-
-## Follow-up integration checkpoint
-
-- Signed/pushed `0f4a8c1a33bf` fixes service-independent settings/account defaults; its CI passed. Uncommitted coordinated work adds invite-only hosted enrollment, CLI invites, styled HTML/plain-text mail and six-digit OTP input hints; no real invites or vendor writes sent.
-- New auth/CLI/actual hosted Worker tests pass, including exact-address denial, expired/claimed invitations, atomic claim race rollback, no reset path and zero-connection preferences. A real isolated Wrangler+D1/Chromium virtual-passkey flow saved quiet40 and comment defaults with no connections and retained both across reload and sign-in. `/join` asset canonicalization was found and fixed.
-- Actual workerd uncovered unsupported `redirect:error` in email/vendor requests and wrong receivers when adapter classes call stored global fetch. Auth fixed to manual/non-success rejection; vendor agent owns corresponding adapter fixes plus a real global-fetch runtime harness. Node mocks had not exposed either issue.
-- Full `mise run check` passes **168 tests**, strict lint, both typechecks, formatting and Worker build (292.65 KiB gzip). Actual read-only remote D1 probes established that Wrangler `--file` returns a bulk-import summary, whereas `--command --json` returns query rows; the invite task uses the latter and verifies the exact granted email/deadline before sending. The existing OAuth login already has `email_sending:write`; no new credentials are needed.
-- Next coordinator action: finish committing/pushing reviewed slices, deploy with `mise run deploy-readonly`, live-check invite-only/session/join/gates without sending real invites, then record exact revision/version and final CI. All prior secrets, databases, RP hostname and closed export gates remain unchanged.
+Keep exports disabled. Remaining acceptance inputs: exhaustive LoFi UUID/tombstone replay evidence, complete owner-history review, authorized LoTW P12/password/trust/status/station inputs, physical/synced-passkey and mail-client autofill checks, separately authorized scoped QRZ/LoTW writes, deployed resource/cost measurements and restore drill. Staging remains intentionally undeployed. See [deployment](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md).

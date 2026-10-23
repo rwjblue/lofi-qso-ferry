@@ -5,13 +5,21 @@ This roadmap is the handoff for implementation in this repository. Checked items
 ## Next milestones (2026-10-23)
 
 The [capacity plan](docs/capacity-plan.md) defines the next implementation sequence
-for 100 accounts creating 10,000 contacts daily alongside large imports. Shared reconciliation reads and guarded batch updates are implemented locally;
-all 512 tests and required checks pass, with production rollout pending. Fair account
-scheduling, multi-contact delivery, durable continuations and full workload
-verification remain planned; none is implied by the existing throughput release.
+for 100 accounts creating 10,000 contacts daily alongside large imports. Shared
+reconciliation reads and guarded batch updates are deployed read-only in
+`bca137b1` (application code `b23e563a`). All 512 tests and required checks pass
+locally and in release CI. The first completed run processed 80 contact
+turns and 121 destination classifications, with 39 errors; sustained progress
+and cold-inventory behavior still need measurement. Fair
+account admission, targeted wakeups, larger verified source pages, multi-contact
+delivery, durable continuations and full workload verification remain open.
+
+The second production sample processed 137 contact turns and 249 destination
+classifications in 86.646 seconds, with 13 errors. Both samples improve on the
+preceding 40-turn run; sustained capacity and exception resolution remain open.
 
 Core feature paths, owner enrollment and service linking are implemented. Production remains read-only. The immediate work is to resolve the reconciliation backlog and prove rollout readiness; linking credentials and waiting for cron do not establish that readiness. Fractional-timestamp exports also need durable outbound identity claims before they can be enabled safely.
-1. **Finish read-only reconciliation and improve capacity.** Batched intake, indexed retries, shared encrypted history, four-way background processing and fair source scheduling are deployed (`bbc2346c`, `471e8620`, `cb9ea362`). All 467 tests and required checks pass locally and in CI. The first two fairness runs processed 23 and 15 contacts and advanced source context, with every export gate closed. The next cohort implementation passes 512 tests locally and reduces the warm 20-contact fixture from 467 to 86 total database calls (400 to 19 for cohort work); it is not yet deployed. Next: finish its rollout and production measurement, add targeted wakeups, verify larger source pages, then add durable continuations and run full 4,000/200,000-contact capacity tests. Complete context/rescans and review exceptions before considering first writes. See the [measurements and ordered capacity plan](docs/reconciliation-investigation.md). Waiting for cron alone does not complete these steps.
+1. **Finish read-only reconciliation and improve capacity.** Batched intake, indexed retries, shared encrypted history, four-way background processing, rotating source lanes and guarded reconciliation cohorts are deployed. The new cohort path reduces the warm 20-contact fixture from 467 to 86 total database calls (400 to 19 for cohort work), with zero exports. Continue measuring sustained classification rate, error outcomes, source-context progress and database time. The first new run processed 80 contact turns and 121 destination classifications, with 384 RPCs and 39 errors; this mixed-work sample does not establish the release's sustained capacity. Then implement fair account admission and targeted wakeups, validate larger source pages, add durable continuations and run the full 100-account/10,000-contact daily workload alongside 4,000/200,000-contact imports. Complete context/rescans and review exceptions before considering first writes. See the [measurements and ordered capacity plan](docs/capacity-plan.md). Waiting for cron alone does not complete these steps.
 2. **Establish the source contract and remaining personal checks.** Complete exhaustive LoFi UUID/tombstone inventory and replay/cutover evidence; verify an independent backup passkey, secret backup and representative deployed signing/resource behavior. Preserve `SOURCE_BOUNDARY_VERIFIED=false` until supported by that evidence.
 3. **Complete outbound identity collision protection.** Implement durable identity claims for both QRZ and LoTW before fractional-timestamp exports can enter the canary. Establish a separate precision-aware historical-association policy and the outbound policy for eight-character source grids; diagnostic review holds do not authorize truncation or adoption. Adoption reservations and quarantine now protect competing source contacts in local tests; that protection does not provide outbound claims or make a later edit exportable through a collision.
 4. **Run explicitly authorized first writes.** Select exact new source UUIDs and destinations, prove QRZ mutation/narrative/location behavior and Worker-signed LoTW acceptance through readback, and record the deployed revision and results. Keep prior QRZ identities retained until cleanup is separately proven safe.
@@ -188,21 +196,24 @@ dashboard has been exercised in Chromium at desktop and 390px mobile widths with
 a virtual passkey. Production exports remain disabled. No live INSERT, REPLACE,
 DELETE or LoTW upload occurred.
 
-The scheduling correction `cb9ea362e2a03e29b7d53793bae95276de7d7341` deployed as
-Worker `aea20af6-c08d-4718-bc41-2e450d8cc2e4` at `2026-10-23T16:53:28.594528Z`.
-All 467 tests and required checks passed locally and in
-[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39991118470) after a
-documentation-format correction; that CI revision has identical application code.
-Live version and health checks confirm 100% traffic and all five gates closed.
-The 16:53 UTC D1 snapshot confirms nineteen migrations, zero attempts and zero
-cutovers. The preceding throughput release processed 15–21 contacts per run
-across three observed runs; the first made 29 destination classifications in
-95.3 seconds. Context progress was inconsistent because retained batches could
-exhaust the deadline. The deployed correction rotates which background lane
-runs first; its first run processed 23 contacts, made 31 destination
-classifications and advanced two rescan plus two context pages. Owner enrollment and LoFi/QRZ/LoTW
-linking are complete. Sustained production progress, complete inventory/source
-capacity, precision policy and owner-history acceptance remain outstanding.
+The shared-history cohort release `bca137b1a38ceb7ab0601e1db53136d69cce9c9c`
+(application code `b23e563a4104bd16b8bb9ce0cd6d356ddfad9d3f`) deployed as Worker
+`1f481a97-7e78-443a-a180-ea488822f78b` at `2026-10-23T19:45:29.359227Z`.
+All 512 tests and required checks passed locally; [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40013802909)
+passed all 512 tests and required checks. Live version and health checks confirm 100% traffic and all five
+gates closed. The 19:45:46 UTC D1 snapshot confirms nineteen migrations, zero
+attempts, zero cutovers and no temporary guard residue. The first new run,
+19:45:43–19:47:15 UTC, processed 80 contact turns and 121 destination
+classifications in 92.209 seconds, including five adoptions, 39 errors and three
+deferrals. It used 384 RPCs (4.8 per turn), compared with 862 RPCs for 40 turns
+in the preceding run. This is one mixed-work observation, not unique completion
+counts or sustained capacity. It recorded 121 inventory cache hits and zero
+successful inventory advances; that counter does not exclude failed vendor requests.
+Earlier source-lane fairness runs processed 23 and 15 contact turns while
+advancing context; they remain evidence for that earlier release. Owner
+enrollment and LoFi/QRZ/LoTW linking are complete. Sustained production progress,
+complete inventory/source capacity, precision policy and owner-history acceptance
+remain outstanding.
 No 200,000-contact SLA has been demonstrated.
 See [deployment evidence](docs/deployment.md).
 

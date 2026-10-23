@@ -7,7 +7,13 @@ logbook writes or treat a partial inventory as absence.
 
 ## Implementation status
 
-The next shared-history cohort slice is implemented and under release validation.
+The shared-history cohort slice deployed read-only at 19:45 UTC in signed
+revision `bca137b1` (application code `b23e563a`) as Worker
+`1f481a97-7e78-443a-a180-ea488822f78b`. All 512 tests and required checks pass
+locally; [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40013802909)
+passed all 512 tests and required checks. Independent version, health and asset checks confirm 100% traffic
+and all five gates closed. D1 at 19:45:46 UTC confirms nineteen migrations and
+zero attempts, cutovers or temporary guard residue.
 For 20 contacts with warm history at both destinations, cohort work falls from
 400 to **19 D1 RPCs**; complete-tick calls fall **467→86**, with SQL statements
 **939→556**. All 40 classifications are retained, with zero vendor history calls
@@ -15,8 +21,28 @@ and zero exports. Observation snapshots, individual evidence commits, identity
 collisions, failed date leaves and stale queue completion are covered by focused
 regressions. The [capacity plan](capacity-plan.md) records the reproducible
 benchmark, workload targets and the separate live-delivery work still needed.
-Production results for this slice must be recorded after deployment; the older
-release evidence below remains historical.
+The first new run, 19:45:43–19:47:15 UTC, processed 80 contact turns and made
+121 destination classifications, including five adoptions, with 39 errors and
+three deferrals. It recorded 121 inventory cache hits and zero successful
+inventory advances; failed vendor requests are not included in `inventoryFetches`. Whole-run
+cost was 384 RPCs, 2,643 SQL statements and 83.49 seconds of database wall time;
+`reconciliationBatchCalls` was 208. The run reached its deadline in 92.209 seconds.
+The preceding run processed 40 turns and 60 classifications using 862 RPCs and
+1,900 statements in 64.118 seconds, stopping at its database budget. The new
+sample doubled contact turns with approximately 78% fewer RPCs per turn
+(4.8 versus 21.55), but its mixed work, longer elapsed time and warm inventory do
+not establish unique completion rate, cold-inventory behavior or a capacity SLA.
+At 19:49:24 UTC, nineteen migrations and zero attempts, cutovers or temporary
+guards remained verified. Older release evidence below remains historical.
+
+The second new run processed 137 contact turns and 249 classifications,
+including 29 adoptions, with 13 errors and three deferrals in 86.646 seconds.
+It recorded five successful inventory advances and 244 cache hits, using
+861 RPCs / 4,842 statements (569 cohort RPCs) and 85.067 seconds of database
+wall time before stopping at the soft database budget. At 19:52:36 UTC,
+attempts, cutovers and temporary guards remained zero. This strengthens the
+initial efficiency evidence; errors, sustained progress and full cold-inventory
+capacity remain open. See [deployment evidence](deployment.md#guarded-reconciliation-cohorts-2026-10-23).
 
 The larger throughput implementation is deployed in signed revision `bbc2346c`
 as Worker `c592733f-171f-406e-bb8d-827b7ffd7fd9` at 16:12 UTC. Batched
@@ -94,8 +120,8 @@ zero additional history reads. Both ticks create zero attempts and perform zero
 vendor writes. This proves reuse and suppression of unchanged work for that
 fixture, without approving any exception.
 
-A separate local 20-contact, same-week measurement isolates the remaining
-database cost. The cold pass made 40 classifications using three history
+A separate local 20-contact, same-week baseline measurement isolated the
+pre-cohort database cost. The cold pass made 40 classifications using three history
 requests, 519 metered D1 RPCs and 1,147 statements in 4,979 ms. Forcing those
 synthetic contacts due again while retaining valid inventory made the same 40
 classifications with 40 cache hits and zero vendor reads, but still required
@@ -103,9 +129,12 @@ classifications with 40 cache hits and zero vendor reads, but still required
 work: observation 40, preflight 40, inventory 160, adoption metadata/commit 80,
 remembered checks 40, source status 20 and queue completion 20. The other 67
 were scheduler/source/selection overhead. One auth-cleanup request precedes
-the meter in each run. These local synthetic results identify why shared
-partition comparison and guarded bulk result commits are the next throughput
-step; the timings are not production capacity measurements.
+the meter in each run. The now-deployed shared comparison and guarded outcome
+path reduces warm costs to 19 cohort RPCs, 86 whole-tick RPCs and 556 statements;
+cold whole-tick calls fall from 519 to 170 with the same three history fetches.
+The timings are not production capacity measurements. `reconciliationBatchCalls`
+measures all cohort work, including observations, evidence reads, guarded outcomes
+and completion; it is not an inventory-only counter.
 
 Background processing selects batches of 20; live processing remains one
 contact at a time to reserve write capacity. The scheduler yields at a
@@ -385,34 +414,34 @@ be claimed from destination batching alone.
    migrations, release checks and production samples separately from earlier
    evidence. Track unique completed outcomes rather than counting repeated
    contact turns as progress.
-3. **Remove the remaining source-capacity floor.** Validate larger LoFi pages
-   against the live contract and share source coverage across destinations where
-   safe. Background pages remain 25 contacts; batching alone does not remove the
-   6.9-day lower bound for one 200,000-contact source pass. Preserve generation
-   checks, fences, canonical freshness polling and live reservations.
-4. **Batch classification for contacts sharing inventory.** After source-lane
-   fairness, reduce the remaining per-contact D1 round trips by comparing a
-   bounded group against one validated partition and batching guarded result
-   commits. Preserve individual source generations, collision reservations,
-   account/credential checks and commit-time evidence fences. Increasing
-   concurrency or enqueueing the current per-contact function does not remove
-   those round trips. Measure both cold and warm inventories before expanding
-   parallelism. An initial local acceptance target is no more than 30 database
-   RPCs for 20 cached contacts across two destinations, excluding scheduler
-   housekeeping, versus the measured 400. This is a target, not an implemented
-   result.
-5. **Add durable continuations and targeted inventory wakeups.** Shared
-   partitions and durable indexed due-work metadata are implemented, but
-   Cloudflare Queue jobs are not. Move bounded page/partition continuations to a
-   durable queue with idempotent, fenced commits and fair live reserves; retain
-   cron as a watchdog. Wake only contacts covered by newly completed inventory
-   rather than clearing every stable hold for a destination. The current
-   24-hour retry remains the backstop. Queue redelivery must not duplicate vendor
-   work, as [Cloudflare delivery guarantees](https://developers.cloudflare.com/queues/reference/delivery-guarantees/)
+3. **Schedule accounts fairly, wake dependencies and remove the source floor.**
+   Source-lane rotation is deployed; fair account admission is still needed so
+   a large import cannot exhaust other accounts' allowances. Wake only contacts
+   covered by newly completed inventory; the current 24-hour retry remains the
+   backstop. Validate larger LoFi pages against the live contract and share
+   source coverage across destinations where safe. Background pages remain 25
+   contacts; batching alone does not remove the 6.9-day lower bound for one
+   200,000-contact source pass. Preserve generation checks, fences, canonical
+   freshness polling and live reservations.
+4. **Make delivery fit vendor budgets.** Shared-history classification and
+   guarded result batches are deployed, meeting the local 30-RPC cohort target
+   with 19 RPCs. Delivery remains separate work: implement durable outbound
+   identity claims for both vendors and immutable per-member LoTW attempt
+   tracking before grouping signed uploads. Bound coalescing delay for sparse
+   accounts and preserve final write-adjacent checks, uncertain-submission
+   reconciliation and individual source validation. See the [capacity plan](capacity-plan.md)
+   for the daily request model and acceptance criteria.
+5. **Add durable continuations.** Shared partitions and durable indexed due-work
+   metadata are implemented, but Cloudflare Queue jobs are not. Persist runnable
+   work and an outbox before publishing bounded page/partition continuations;
+   use idempotent, fenced commits and fair account/vendor admission, retaining
+   cron as a watchdog. Queue redelivery must not duplicate vendor work, as
+   [Cloudflare delivery guarantees](https://developers.cloudflare.com/queues/reference/delivery-guarantees/)
    specify at-least-once delivery.
 6. **Prove complete capacity before broader rollout.** The indexed-selection
    benchmark and 20-contact integration fixture are complete; full 4,000 and
-   200,000-contact end-to-end benchmarks remain open. Exercise
+   200,000-contact end-to-end benchmarks remain open, as does the 100-account,
+   10,000-contact daily workload alongside a large import. Exercise
    synthetic contacts with realistic operation/event density, repeated calls,
    precision differences, edits, tombstones, failures and multiple tenants.
    Measure first-pass completion, unique classifications per minute, live-work

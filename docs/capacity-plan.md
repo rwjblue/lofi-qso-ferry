@@ -1,7 +1,10 @@
 # Capacity plan
 
-Status: first reconciliation slice implemented and under release verification
-2026-10-23. Production exports remain disabled.
+Status: first reconciliation slice deployed read-only at 19:45 UTC on
+2026-10-23, revision `bca137b1` (application code `b23e563a`). All 512 tests
+and required checks pass locally and in release CI; the first completed
+production run is recorded below. Sustained capacity remains unverified.
+Production exports remain disabled.
 This plan extends the [reconciliation investigation](reconciliation-investigation.md)
 to ongoing delivery across accounts. Targets below are engineering acceptance
 criteria, not demonstrated service guarantees.
@@ -33,14 +36,29 @@ for 100 accounts.
 ## Current limits and measurements
 
 The deployed worker uses a five-minute cron, a 90-second soft execution budget,
-850 D1 RPC budget, background batches of 20 and a live batch of one. Recent
-read-only runs processed 15–23 contact turns. This is not live delivery capacity.
+850 D1 RPC budget, background batches of 20 and a live batch of one. The first
+cohort-release run processed 80 contact turns and 121 destination classifications
+in 92.209 seconds with 384 RPCs, 39 errors and three deferrals. Its 4.8 RPCs per
+turn compare with 21.55 in the preceding 40-turn run (862 RPCs, 64.118 seconds).
+That is approximately 78% fewer RPCs per turn for this mixed workload. It recorded
+121 inventory cache hits and zero successful inventory advances; failed vendor
+requests do not increment that latter counter. Contact turns are not unique
+completed classifications or live delivery capacity. Cold-inventory behavior,
+sustained progress and error outcomes still need measurement.
 
-A local 20-contact, same-week, two-destination fixture made 467 D1 RPCs and
+The second run processed 137 contact turns and 249 classifications in 86.646
+seconds, using 861 RPCs and 4,842 statements, with 13 errors and three deferrals.
+It stopped at the database budget and recorded five successful inventory
+advances plus 244 cache hits. These two runs support initial improvement across
+different work mixes; neither is a sustained or fully cold-inventory benchmark.
+
+A local 20-contact, same-week, two-destination baseline fixture made 467 D1 RPCs and
 939 SQL statements with fully cached history, zero vendor reads and 40 review
 classifications. Of those RPCs, 160 reread the same history, 40 observed contacts,
 40 checked eligibility, 80 applied outcomes, and 80 saved checks/source status/
-queue completion. Local elapsed time does not predict remote D1 latency.
+queue completion. The deployed cohort implementation reduces this fixture to
+86 whole-tick RPCs and 556 SQL statements, of which 19 RPCs are cohort work.
+Local elapsed time does not predict remote D1 latency.
 
 Current vendor limits are application policy shared across all accounts, not
 verified vendor quotas. They reserve capacity for live work and enforce shared
@@ -59,7 +77,7 @@ traffic also cannot assume every account fills a 100-contact upload quickly.
 
 ## Ordered implementation
 
-### 1. Reduce repeated reconciliation database work — implemented, rollout pending
+### 1. Reduce repeated reconciliation database work — deployed, sustained production measurement pending
 
 Share complete encrypted history reads and decryption within a bounded source/
 destination/station cohort. Keep per-contact generation checks, current account
@@ -74,10 +92,10 @@ when competing contacts occur in the same batch. Queue completion and review
 memos must reflect the final ledger state, including collisions discovered later
 in the batch.
 
-Acceptance: reduce the warm fixture's per-contact portion from 400 RPCs to at
-most 30, excluding source selection and housekeeping. Record SQL counts and
-database time as well as RPCs. Add integration/race regressions; keep live
-dispatch sequential in this first release. Deploy read-only and compare actual
+The local acceptance target was to reduce the warm fixture's per-contact portion
+from 400 RPCs to at most 30, excluding source selection and housekeeping. That
+target is met. Integration/race regressions pass and live dispatch remains
+sequential. Production acceptance still requires comparison of actual
 classification rate and database wall time before increasing cohort size.
 
 The local warm fixture now uses **19 RPCs** for cohort work, down from 400;

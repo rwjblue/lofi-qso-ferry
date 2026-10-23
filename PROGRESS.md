@@ -1,19 +1,38 @@
 # Implementation progress
 
-Local follow-up, 2026-10-23: the next reconciliation cohort slice is implemented
-in separate logical commits and passes **512 tests**, formatting, lint, types and
+Release checkpoint, 2026-10-23 19:45 UTC: the reconciliation cohort slice is deployed
+in six signed logical commits and passes **512 tests**, formatting, lint, types and
 the Worker build. It shares observation/history reads and guarded outcomes while
 preserving per-contact source/evidence fences, collision quarantine and failed
 partition isolation. The warm 20-contact fixture uses **19 cohort RPCs** instead
 of 400 and **86 complete-tick RPCs** instead of 467; SQL falls from 939 to 556.
 Reproduce with `mise exec -- npx tsx scripts/benchmark-reconciliation-cohort.ts`.
-Push and deployment are pending; the latest attempt to sign the push failed in
-1Password before remote publication. Production still runs the fairness release
-below with exports disabled. See the [capacity plan](docs/capacity-plan.md) for
+Signed revision `bca137b1a38ceb7ab0601e1db53136d69cce9c9c` (application code
+`b23e563a4104bd16b8bb9ce0cd6d356ddfad9d3f`) is deployed as Worker
+`1f481a97-7e78-443a-a180-ea488822f78b` at 100% traffic. Independent live checks
+confirm all five gates closed, healthy read-only service, matching browser assets,
+nineteen migrations and zero attempts, cutovers or temporary guard residue.
+[Release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40013802909)
+passed all 512 tests and required checks. The first new run processed 80 contact turns and 121
+destination classifications in 92.209 seconds, including five adoptions,
+39 errors and three deferrals. It used 384 whole-run RPCs (4.8 per turn),
+compared with 862 RPCs for 40 turns (21.55 per turn) in the preceding run.
+This approximately 78% lower RPC cost per turn comes from one mixed-work
+observation with warm inventory; it is not unique completed reconciliation
+or sustained capacity. The 19:49:24 UTC snapshot still confirms nineteen
+migrations and zero attempts, cutovers or temporary guards. See the [capacity plan](docs/capacity-plan.md) for
 remaining work, including fair account admission, economical live delivery and
 full workload acceptance.
 
-Last checkpoint: 2026-10-23 17:05 UTC. The source-lane fairness correction is deployed as signed revision `cb9ea362e2a03e29b7d53793bae95276de7d7341`, Worker `aea20af6-c08d-4718-bc41-2e450d8cc2e4`, at 100% traffic. It rotates contact processing, historical scans and context recovery so a slow batch cannot repeatedly starve other background work. The initial batching/shared-history release and QRZ/concurrency follow-up are also deployed. All **467 tests** and required checks passed locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39991118470), after correcting a documentation-format error. That CI revision changes only documentation from the deployed code. Nineteen migrations are applied. Independent deployed settings and health confirm all five export gates closed; zero attempts and cutovers were verified again at 17:03:59 UTC. The first two fairness runs processed 23 and 15 contacts, respectively, while advancing source context; all three rotation positions were exercised. Full reconciliation and end-to-end capacity remain unfinished. The owner authorizes signed logical commits directly to `origin/main`; no PRs. Backlog repair and deployment do not authorize real logbook writes.
+The second run, 19:50:42–19:52:09 UTC, processed 137 contact turns and 249
+destination classifications, including 29 adoptions, with 13 errors and three
+deferrals. It used 861 RPCs and 4,842 statements in 86.646 seconds, stopping at
+the database budget; five inventory advances and 244 cache hits were recorded.
+These two samples establish initial improvement, not sustained capacity or a
+cleared backlog. At 19:52:36 UTC, attempts, cutovers and temporary guards remained
+zero. See [deployment evidence](docs/deployment.md#guarded-reconciliation-cohorts-2026-10-23).
+
+Previous checkpoint: 2026-10-23 17:05 UTC. The source-lane fairness correction deployed as signed revision `cb9ea362e2a03e29b7d53793bae95276de7d7341`, Worker `aea20af6-c08d-4718-bc41-2e450d8cc2e4`, at 100% traffic. It rotates contact processing, historical scans and context recovery so a slow batch cannot repeatedly starve other background work. The initial batching/shared-history release and QRZ/concurrency follow-up are also deployed. All **467 tests** and required checks passed locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39991118470), after correcting a documentation-format error. That CI revision changes only documentation from the deployed code. Nineteen migrations are applied. Independent deployed settings and health confirm all five export gates closed; zero attempts and cutovers were verified again at 17:03:59 UTC. The first two fairness runs processed 23 and 15 contacts, respectively, while advancing source context; all three rotation positions were exercised. Full reconciliation and end-to-end capacity remain unfinished. The owner authorizes signed logical commits directly to `origin/main`; no PRs. Backlog repair and deployment do not authorize real logbook writes.
 
 Current follow-up: measure sustained production classification/context progress and remaining bottlenecks before planning exact-contact first writes. The owner has enrolled and linked LoFi, QRZ and LoTW. The pre-repair production snapshot found **4,134 source contacts**, including **3,106 pending** and **767 context-unavailable** contacts. Separately, each destination had **255 ledger rows**: **253 generic readback errors**, one pending row, and one QRZ-ambiguous or LoTW-mismatched row. There were **zero export attempts**. These are the historical diagnostic baseline; the dated snapshots below show limited recovery before the throughput work, not a cleared backlog.
 
@@ -34,7 +53,7 @@ pass; canonical freshness polling and all export gates remain unchanged.
 
 The first new production run processed only four contacts in 93.7 seconds, with four QRZ errors and 73.4 seconds of cumulative database wait. That observation exposed a rejected QRZ modification query and excessive sequential round trips. A follow-up now adds a full verification fallback, further batched reads and at most four concurrent read-only background contacts; all 465 tests and required local checks pass, and the follow-up deployed at 16:37 UTC. The first follow-up run processed **20 contacts and 29 destination classifications in 95.3 seconds**, with three errors, eight deferrals and zero attempts. Historical rescan/context pages did not advance: background lane starvation is corrected in the 16:53 release, with its first run advancing two rescan pages, two context pages and 23 contacts. This is a first-run improvement, not sustained capacity acceptance. See the [measured bottleneck and follow-up](docs/reconciliation-investigation.md#first-throughput-release-production-bottlenecks-and-follow-up).
 
-Remaining capacity work: verify production progress and resource use, batch comparisons and guarded results for contacts sharing inventory, add targeted completion wakeups, validate larger LoFi source pages, share source coverage where safe, add durable queue continuations and run full 4,000/200,000-contact interruption/fairness/capacity scenarios. Source pages remain **25 contacts** under the existing vendor budgets. Neither a full 200,000-contact benchmark nor the proposed one-day target is complete. See the [measurement details and acceptance plan](docs/reconciliation-investigation.md).
+Remaining capacity work: measure the deployed cohort path and resource use, implement fair account admission and targeted completion wakeups, validate larger LoFi source pages, share source coverage where safe, implement outbound identity claims and safe multi-member delivery, add durable queue continuations and run the full 100-account/10,000-contact daily workload alongside 4,000/200,000-contact interruption/fairness/import scenarios. Source pages remain **25 contacts** under the existing vendor budgets. Neither a full 200,000-contact benchmark nor the proposed one-day target is complete. See the [measurement details and acceptance plan](docs/reconciliation-investigation.md).
 
 The separate [workload investigation](docs/admin-workload-investigation.md) shows the context backlog is held work awaiting pending operation rereads, not 767 malformed contacts. At 13:23 UTC, the new read-only classification found **1,423 ready for processing**, **2,704 held for operation context**, **five held for routing**, **one held for history review** and **one blocked by callsign validation**. All were background work. LoFi history and context reads share four background requests per five-minute window. A completed operation-list scan does not finish every operation's contacts/events; normal bounded reads must continue, and the historical callsign hold was traced to canonical `our.call` parsing and corrected in deployed revision `32758f5`, without changing owner data. These counts are time-specific and do not establish upload eligibility or a completion estimate.
 
@@ -83,10 +102,10 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 - The follow-up keeps canonical source sync first, processes a retained background contact before historical rescan/reread work, and prefers contacts with available base operation context over known context holds. Complete context, routing, history, source-proof and export checks remain enforced. A pre-deployment read-only selection experiment found available base context for only two of the first ten contacts under the old ordering versus all ten under the new ordering; it wrote zero rows. This does not establish complete event coverage for every selected contact.
 - Follow-up `634517d0` passed **377 tests**, formatting, lint, types and build locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39965786804). Concurrent upstream documentation revision `854259b` was integrated and preserved. The first observed production run confirms contact processing and specific readback outcomes; sustained draining and complete history acceptance remain outstanding.
 
-## Current production deployment (16:53 UTC)
+## Current production deployment (19:45 UTC)
 
-- Latest deployment: revision `cb9ea362e2a03e29b7d53793bae95276de7d7341`, Worker `aea20af6-c08d-4718-bc41-2e450d8cc2e4`, created at `2026-10-23T16:53:26.165896Z` and confirmed at 100% traffic. Host/RP remains `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, with five-minute cron. Independent version readback confirms all gates closed and health `status=ok`, `exportsEnabled=false`; root HTML and both browser bundles match the local build. See [deployment evidence](docs/deployment.md).
-- Dedicated D1 `ferry-production` has all nineteen migrations independently verified at 16:53:42 UTC. The initial throughput deployment applied migrations 0017–0020; the follow-up needed no migrations. Attempts, cutovers and temporary inventory/adoption guard rows remain zero. No application secrets changed.
+- Latest deployment: revision `bca137b1a38ceb7ab0601e1db53136d69cce9c9c` (application code `b23e563a4104bd16b8bb9ce0cd6d356ddfad9d3f`), Worker `1f481a97-7e78-443a-a180-ea488822f78b`, created at `2026-10-23T19:45:28.295064Z` and confirmed at 100% traffic. Host/RP remains `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, with five-minute cron. Independent version readback confirms all gates closed and health `status=ok`, `exportsEnabled=false`; root HTML and both browser bundles match the local build. See [deployment evidence](docs/deployment.md).
+- Dedicated D1 `ferry-production` has all nineteen migrations independently verified at 19:45:46 UTC. The initial throughput deployment applied migrations 0017–0020; this cohort release needed no migrations. Attempts, cutovers and temporary inventory/adoption guard rows remain zero. No application secrets changed.
 - Every export gate is closed: `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, empty `LIVE_WRITE_AUTHORIZATION` and `ROLLOUT_QSO_IDS_JSON=[]`. There is no LoTW root-policy binding or root updater; LoTW validates certificate authority during upload processing.
 - The saved LoTW connection is active with unrevoked serial status. Existing encrypted credentials do not need reimport because local trust flags were removed. Successful preflight and login are not signed-upload acceptance evidence.
 - Native `EMAIL` sender restricted to `signup@ferry.n1rwj.com`; sending DNS verified, existing Fastmail MX preserved, email-content previews disabled. Existing Wrangler OAuth includes Email Sending write access; no new credentials are needed for invites.

@@ -143,3 +143,174 @@ test("expired unresolved source metadata stays available for background repair",
     await mf.dispose();
   }
 });
+
+test("source cleanup requires every destination and attempt to be resolved", async () => {
+  const { mf, store, db } = await database();
+  try {
+    await intakeSchema(db);
+    await seed(store);
+    await store
+      .statement(
+        "INSERT INTO connections(tenant,id,kind,remote_identity,label,created_at) VALUES('a','other-destination','qrz','other','other',0),('a','other-source','lofi','other','other',0)",
+      )
+      .run();
+    const cases = [
+      { id: "adopted", state: "adopted_existing", purge: true },
+      { id: "delivered", state: "delivered", purge: true },
+      { id: "observed", state: "observed", purge: true },
+      { id: "deleted", state: "source_deleted", purge: true },
+      { id: "pending", state: "inventory_pending", purge: false },
+      { id: "mixed", state: "adopted_existing", purge: false },
+      { id: "edited", state: "delivered", purge: false },
+      { id: "missing-baseline", state: "observed", purge: false },
+      { id: "no-ledger", purge: false },
+      { id: "operation", state: "adopted_existing", purge: false },
+      { id: "event", state: "adopted_existing", purge: false },
+      ...[
+        "prepared",
+        "dispatching",
+        "uncertain",
+        "submitted",
+        "reconciliation_required",
+        "cancelled",
+      ].map((attempt) => ({
+        id: `attempt-${attempt}`,
+        state: "adopted_existing",
+        attempt,
+        purge: attempt === "cancelled",
+      })),
+    ];
+    for (const item of cases) {
+      await db.batch([
+        store.statement(
+          "INSERT INTO private_data(tenant,connection,id,kind,envelope,created_at) VALUES('a','source',?,'source','{}',0)",
+          item.id,
+        ),
+        store.statement(
+          "INSERT INTO source_work(tenant,source,id,kind,private_id,revision,expires_at,is_event) VALUES('a','source',?,?,?,'g',?,?)",
+          item.id,
+          item.id === "operation" ? "operation" : "qso",
+          item.id,
+          Date.now() + 60_000,
+          Number(item.id === "event"),
+        ),
+      ]);
+      if (item.state)
+        await store
+          .statement(
+            "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,baseline_hash,state,due_at,updated_at) VALUES('a','source',?,'destination','g','current',?,?,0,0)",
+            item.id,
+            item.id === "edited"
+              ? "old"
+              : item.id === "missing-baseline"
+                ? null
+                : "current",
+            item.state,
+          )
+          .run();
+      if ("attempt" in item)
+        await db.batch([
+          store.statement(
+            "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a',?,'source',?,'destination','g','payload','hash','v1',0,'current')",
+            item.id,
+            item.id,
+          ),
+          store.statement(
+            "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a',?,?,0,0)",
+            item.id,
+            item.attempt,
+          ),
+        ]);
+    }
+    await db.batch([
+      store.statement(
+        "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,state,due_at,updated_at) VALUES('a','source','mixed','other-destination','g','current','history_mismatch',0,0)",
+      ),
+      // Matching IDs in another source or private-data kind are independent.
+      store.statement(
+        "INSERT INTO private_data(tenant,connection,id,kind,envelope,created_at) VALUES('a','other-source','adopted','source','{}',0),('a','source','adopted','credential','{}',0)",
+      ),
+    ]);
+    await purgeResolvedSource(store);
+    for (const item of cases) {
+      const payload = await store
+        .statement(
+          "SELECT 1 found FROM private_data WHERE tenant='a' AND connection='source' AND id=? AND kind='source'",
+          item.id,
+        )
+        .first();
+      assert.equal(payload === null, item.purge, item.id);
+      const work = await store
+        .statement("SELECT state FROM source_work WHERE id=?", item.id)
+        .first<{ state: string }>();
+      assert.equal(work?.state, item.purge ? "archived" : "pending", item.id);
+    }
+    assert.equal(
+      (
+        await store
+          .statement(
+            "SELECT COUNT(*) n FROM private_data WHERE id='adopted' AND (connection='other-source' OR kind='credential')",
+          )
+          .first<{ n: number }>()
+      )?.n,
+      2,
+    );
+  } finally {
+    await mf.dispose();
+  }
+});
+
+test("unresolved backlog cleanup reads a bounded multiple of its rows", async () => {
+  const { mf, store, db } = await database();
+  try {
+    await intakeSchema(db);
+    await seed(store);
+    const contacts = 4_000;
+    await db.batch([
+      store.statement(
+        "WITH RECURSIVE sequence(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM sequence WHERE n<?) INSERT INTO source_work(tenant,source,id,kind,private_id,revision,expires_at) SELECT 'a','source','q'||n,'qso','p'||n,'g',1 FROM sequence",
+        contacts,
+      ),
+      store.statement(
+        "INSERT INTO private_data(tenant,connection,id,kind,envelope,created_at) SELECT tenant,source,private_id,'source','{}',0 FROM source_work",
+      ),
+      store.statement(
+        "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,due_at,updated_at) SELECT tenant,source,id,'destination','g','h',0,0 FROM source_work",
+      ),
+    ]);
+    let results: D1Result[] | undefined;
+    const measured = new Proxy(db, {
+      get(target, property) {
+        if (property === "batch")
+          return async (statements: D1PreparedStatement[]) => {
+            results = await target.batch(statements);
+            return results;
+          };
+        const value = Reflect.get(target, property);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    await purgeResolvedSource(new Store(measured, keys));
+    assert(results);
+    assert.equal(results.length, 2);
+    for (const result of results) {
+      assert.equal(result.meta.changes, 0);
+      // A correlated scan once per retained body makes this quadratic. Row
+      // counts catch that regression without a machine-dependent time limit.
+      assert(
+        result.meta.rows_read < contacts * 20,
+        JSON.stringify(result.meta),
+      );
+    }
+    assert.equal(
+      (
+        await store
+          .statement("SELECT COUNT(*) n FROM source_work")
+          .first<{ n: number }>()
+      )?.n,
+      contacts,
+    );
+  } finally {
+    await mf.dispose();
+  }
+});

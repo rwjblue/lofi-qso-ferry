@@ -1,7 +1,20 @@
 import type { AdminOverview, AdminPriority } from "./admin-types.ts";
+import { destinationKinds, providerName } from "./providers.ts";
 
 type Trend = AdminOverview["workload"]["trend"];
 export type WorkloadCounts = { ready: number; held: number; blocked: number };
+
+export function deliveryBreakdown(
+  deliveries: AdminOverview["workload"]["deliveries"],
+) {
+  const hours = deliveries.windowMs / 3_600_000;
+  return destinationKinds.map((kind) => ({
+    kind,
+    label: providerName(kind),
+    completed: deliveries[kind],
+    perHour: deliveries[kind] / hours,
+  }));
+}
 
 export function workloadChange(trend: Trend, priority: AdminPriority) {
   const samples = trend.points.flatMap((point) =>

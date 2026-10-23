@@ -25,7 +25,7 @@ mise run check
 mise run deploy-readonly
 ```
 
-For a new target, provision each required application secret with `npx wrangler secret put SECRET_NAME --env production`, which prompts securely, before deployment. Only the optional Resend path needs its API key. The guarded task builds assets, checks all export gates are closed, applies outstanding migrations to the dedicated database and deploys production. It refuses an open gate or an unconfigured production origin/database. The resource record above and [deployment evidence](deployment.md) identify the completed deployment. Confirm `/health` reports exports disabled, and test production email delivery and passkey ceremonies at the permanent origin. Record deployed revision, database IDs, RP/origin, dependency versions and evidence dates without secrets.
+For a new target, provision each required application secret with `npx wrangler secret put SECRET_NAME --env production`, which prompts securely, before deployment. The optional Resend path and Club Log integration each need their own application API key. The guarded task builds assets, checks all export gates are closed, applies outstanding migrations to the dedicated database and deploys production. It refuses an open gate or an unconfigured production origin/database. The resource record above and [deployment evidence](deployment.md) identify the completed deployment. Confirm `/health` reports exports disabled, and test production email delivery and passkey ceremonies at the permanent origin. Record deployed revision, database IDs, RP/origin, dependency versions and evidence dates without secrets.
 
 ## Invite a user
 
@@ -58,7 +58,7 @@ Provider acceptance does not prove inbox delivery. If submission fails or its re
 
 ## Connect and adopt read-only
 
-Invited signup confirms email and enrolls the first passkey atomically. Register a second key in an independent provider/security key. Losing every usable passkey has no email reset. Existing-account email confirmation cannot replace a passkey. Sensitive changes require a fresh passkey assertion within five minutes; session and key revocation take effect on subsequent requests. Settings and account-default templates can be saved before connecting any service; LoFi, QRZ and LoTW are individually optional.
+Invited signup confirms email and enrolls the first passkey atomically. Register a second key in an independent provider/security key. Losing every usable passkey has no email reset. Existing-account email confirmation cannot replace a passkey. Sensitive changes require a fresh passkey assertion within five minutes; session and key revocation take effect on subsequent requests. Settings and account-default templates can be saved before connecting any service; LoFi, QRZ, LoTW and Club Log are individually optional.
 
 Connection buttons now prompt for a passkey automatically when that verification has expired, then continue without clearing the form. The separate Verify passkey button is also available. Canceling sends no connection request. A vendor or same-origin failure is reported separately and never triggers an automatic replay of an approval email or credential operation.
 
@@ -90,13 +90,14 @@ A prepared attempt owns immutable encrypted bytes, members and versions. Repeate
 
 Transient failures proven to occur before dispatch may retry with bounded exponential delay and jitter, capped at six hours with a five-minute scheduler floor. Authentication, certificate, ambiguous history and unsupported-field errors require attention on that connection/contact. Never log credential-bearing LoTW URLs or raw vendor payloads. Routine `ferry_tick` logs contain aggregate source/contact/attempt counters, deferred work separately from errors, `rounds`, `elapsedMs` and `stopReason` (`idle` or `deadline`).
 
-Every hosted LoFi, QRZ and LoTW request passes through a persistent D1 budget, including connection checks, token refreshes, pagination, certificate checks, inventory reads and uploads. These are conservative application defaults, not claims about vendor quotas. The limits apply across all tenants and overlapping Worker invocations in fixed five-minute UTC-aligned windows:
+Every hosted LoFi, QRZ, LoTW and Club Log request passes through a persistent D1 budget, including connection checks, token refreshes, pagination, certificate checks, inventory reads and uploads. These are conservative application defaults, not claims about vendor quotas. The limits apply across all tenants and overlapping Worker invocations in fixed five-minute UTC-aligned windows:
 
-| Vendor | Total requests | Background requests, included in total |
-| ------ | -------------- | -------------------------------------- |
-| LoFi   | 24             | 4                                      |
-| QRZ    | 120            | 24                                     |
-| LoTW   | 40             | 8                                      |
+| Vendor   | Total requests | Background requests, included in total |
+| -------- | -------------- | -------------------------------------- |
+| LoFi     | 24             | 4                                      |
+| QRZ      | 120            | 24                                     |
+| LoTW     | 40             | 8                                      |
+| Club Log | 40             | 8                                      |
 
 The policy constants are in `src/vendor-requests.ts`. Background requests consume both counters; they cannot spend the capacity reserved for live work. Admission is atomic and happens before network dispatch. Exhaustion defers work until another window without sleeping inside the Worker. The limiter bounds bursts per window; it does not space individual requests apart.
 
@@ -158,3 +159,13 @@ Checked 2026-10-22: [Workers Paid](https://developers.cloudflare.com/workers/pla
 For a 30-day month, a five-minute cron schedules 8,640 invocations. Measure dashboard/API invocations, per-cycle CPU, certificate-import CPU, source rows, adopted/backfilled/changed contacts, retries, scanned/written D1 rows and average storage. Request and CPU overage cost is `max(requests-10M,0)/1M*0.30 + max(CPU_ms-30M,0)/1M*0.02`, plus the account plan, D1 and [Cloudflare Email Service usage](https://developers.cloudflare.com/email-service/platform/pricing/) for this target, or the selected [Resend plan](https://resend.com/pricing) for deployments using that fallback. Count verification/change emails separately from LoFi's own approval emails. Do not call the service free based on a small contact count.
 
 [Worker limits](https://developers.cloudflare.com/workers/platform/limits/) include 128 MB per isolate, distinct CPU and wall time, and a 15-minute cron wall limit. The scheduler's 90-second deadline is a cooperative wall-time budget checked between work units, so an in-flight unit can finish after it. Worker clocks do not advance during synchronous execution between I/O events; `elapsedMs` is useful throughput evidence alongside counters and stop reasons, but does not measure billed CPU or enforce a CPU limit. Inspect deployed invocation CPU/wall metrics and memory errors. Final local bundle, startup-profile and signing timings are recorded in [signing evidence](evidence-signing.md); they do not measure deployed billed CPU or peak memory. No representative deployed full-tick capacity, production monthly usage or invoice has been measured. Collect representative deployed evidence and set an appropriate CPU limit before enabling exports.
+
+## Club Log
+
+Provision the application's developer key as the `CLUBLOG_API_KEY` Worker secret before connecting Club Log. Use the secure interactive secret command above, never a checked-in config value. A missing key causes a clear configuration error before any vendor request. The key belongs to the application; users supply their Club Log email, application password, and exact log callsign. [Club Log's developer authentication instructions](https://clublog.freshdesk.com/support/solutions/articles/54910-api-keys) explain application keys and passwords.
+
+Connection verification performs a bounded, read-only ADIF download. Credentials are encrypted and excluded from API responses and connection configuration. The logical destination combines the normalized account email and callsign; rotating an application password for that identity preserves its ledger and rescan progress. A different email or callsign requires removing the current credentials first. Pausing continues to occupy the one-account-per-provider slot.
+
+Club Log uses the existing per-contact, per-destination ledger and the same source-boundary, quiet-period, rollout and explicit write-authorization gates. Reconciliation must establish safe history evidence before a new upload. Ambiguous or interrupted writes require readback; an upload acknowledgement alone does not establish the observed revision. When a source correction changes the contact identity, Ferry verifies the prior remote record and the absence of a conflicting new identity, then uploads the new record while retaining the old record. The ledger shows a retained-record notice and encrypted identity history records the transition. Changes to other fields on the same identity require manual review because the API does not guarantee duplicate-field replacement. Ferry does not automatically delete or replace Club Log contacts, and source deletions retain remote history.
+
+Migration `0016_providers.sql` introduces a provider catalog and recreates the connection parent table within a deferred-foreign-key transaction, preserving all child records and existing triggers. Apply it through the migration runner as one transaction after `0015_admin_workload.sql`. No changes to prior migrations or the ledger schema are needed. Synthetic populated-database checks cover retained credentials, ledger/attempt history, source progress, templates, budgets, scheduler workload samples and indexes, and foreign-key integrity; live Club Log acceptance remains a scoped rollout check.

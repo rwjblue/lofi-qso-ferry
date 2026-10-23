@@ -2,30 +2,32 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  type AdifRecord,
   parseAdif,
   serializeAdifRecord,
-  type AdifRecord,
 } from "../src/adif.ts";
 import {
   contactAdif,
+  type DeliveryGates,
   dispatchAttempt,
   prepareDue,
   reconcileAttempt,
   refreshConfirmations,
-  type DeliveryGates,
 } from "../src/delivery.ts";
 import {
+  type Contact,
   projectContact,
   sourceFingerprint,
-  type Contact,
 } from "../src/projection.ts";
-import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import { LOTW_PRIOR_IDENTITY_NOTICE } from "../src/store.ts";
+import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import {
-  VendorDeferredError,
   VENDOR_POLICIES,
+  VendorDeferredError,
 } from "../src/vendor-requests.ts";
 import { database, seed } from "./helpers.ts";
+import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
+
 const gates: DeliveryGates = {
   exportsEnabled: true,
   liveWriteAuthorized: true,
@@ -35,12 +37,7 @@ const at = Date.parse("2026-10-22T12:00:01Z");
 const now = at + 31 * 60000;
 async function deliveryDatabase() {
   const harness = await database();
-  const sql = await readFile(
-    new URL("../migrations/0009_vendor_requests.sql", import.meta.url),
-    "utf8",
-  );
-  for (const statement of sql.split(";"))
-    if (statement.trim()) await harness.db.prepare(statement).run();
+  await applyAdditionalMigrations(harness.db);
   return harness;
 }
 async function contact(notes = "source note"): Promise<Contact> {

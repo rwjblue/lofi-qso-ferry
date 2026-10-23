@@ -98,6 +98,7 @@ async function runtime(environment = "local", emailFixture = false) {
       "utf8",
     );
     let current = "";
+    const statements = [];
     for (const line of schema.split("\n")) {
       current += `${line}\n`;
       const trigger = current.trimStart().startsWith("CREATE TRIGGER");
@@ -107,11 +108,12 @@ async function runtime(environment = "local", emailFixture = false) {
           line.trim() === "END;" ||
           line.trimStart().startsWith("CREATE TRIGGER"))
       ) {
-        await db.prepare(current).run();
+        statements.push(db.prepare(current));
         current = "";
       }
     }
     assert.ok(!current.trim(), `unterminated migration ${path}`);
+    await db.batch(statements);
   }
   return {
     mf,

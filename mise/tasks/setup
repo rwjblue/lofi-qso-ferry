@@ -7,9 +7,14 @@ if [[ ! -f .dev.vars ]]; then
 import {writeFileSync} from 'node:fs';
 import {randomBytes} from 'node:crypto';
 const random=()=>randomBytes(32).toString('base64url');
-writeFileSync('.dev.vars',`KEK_V1=${random()}\nAUTH_SECRET=${random()}\nEMAIL_CODE_SECRET=${random()}\nRESEND_API_KEY=\n`,{mode:0o600,flag:'wx'});
+writeFileSync('.dev.vars',`KEK_V1=${random()}\nAUTH_SECRET=${random()}\nEMAIL_CODE_SECRET=${random()}\nRESEND_API_KEY=\nCLUBLOG_API_KEY=\n`,{mode:0o600,flag:'wx'});
 JS
 fi
+# Keep local type generation aware of the optional integration on existing setups.
+node --input-type=module <<'JS'
+import {appendFileSync,readFileSync} from 'node:fs';
+if (!/^CLUBLOG_API_KEY=/m.test(readFileSync('.dev.vars','utf8'))) appendFileSync('.dev.vars','\nCLUBLOG_API_KEY=\n');
+JS
 npm run types
 npx esbuild src/browser.ts --bundle --minify --format=esm --outfile=public/app.js
 npx esbuild src/browser-admin.ts --bundle --minify --format=esm --outfile=public/admin.js

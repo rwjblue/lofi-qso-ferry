@@ -1,3 +1,5 @@
+import { destinationAdapter } from "./destination-adapters.ts";
+import { isDestinationKind } from "./providers.ts";
 import { recordBirth } from "./cutover.ts";
 import { lofiAccountLabel } from "./lofi-identity.ts";
 import type {
@@ -12,7 +14,6 @@ import {
   isEventRecord,
   isSourceDeleted,
   projectContact,
-  sourceFingerprint,
 } from "./projection.ts";
 import { canonical, randomToken, sha256 } from "./security.ts";
 import type { Connection, Store } from "./store.ts";
@@ -447,13 +448,13 @@ export async function observeContact(
   const destinations =
     routedDestinations ??
     (await store.connections(source.tenant)).filter(
-      (c) => c.kind !== "lofi" && c.status === "active",
+      (c) => isDestinationKind(c.kind) && c.status === "active",
     );
   if (
     destinations.some(
       (destination) =>
         destination.tenant !== source.tenant ||
-        destination.kind === "lofi" ||
+        !isDestinationKind(destination.kind) ||
         destination.status !== "active",
     )
   )
@@ -517,6 +518,8 @@ export async function observeContact(
     }
   }
   for (const destination of destinations) {
+    if (!isDestinationKind(destination.kind))
+      throw new Error("invalid_destination_scope");
     const key = {
       tenant: source.tenant,
       source: source.id,
@@ -524,9 +527,8 @@ export async function observeContact(
       destination: destination.id,
     };
     const previous = await store.ledger(key);
-    const hash = await sourceFingerprint(
+    const hash = await destinationAdapter(destination.kind).fingerprint(
       contact,
-      destination.kind as "qrz" | "lotw",
       previous?.narrative === "remote_preserved",
     );
     updates.push(

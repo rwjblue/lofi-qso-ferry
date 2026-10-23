@@ -3,6 +3,7 @@ import type {
   AdminWorkCounts,
   AdminWorkload,
 } from "./admin-types.ts";
+import { type DestinationKind, destinationKinds } from "./providers.ts";
 import { deliveryGates, exportsEffective } from "./service.ts";
 
 const hour = 3_600_000;
@@ -90,8 +91,9 @@ export function workloadSourceStatement(env: Env, now: number) {
             AND p.id=d.credential_version AND p.kind='credential' AND p.revoked_at IS NULL
             AND (p.expires_at IS NULL OR p.expires_at>?1)) THEN 'destination_unavailable'
           WHEN l.reason IN('Multiple connections match this station; resolve routing','No connection matches this station and date',
-            'qrz_station_or_date_route_mismatch','lotw_station_route_mismatch') THEN 'routing'
+            'qrz_station_or_date_route_mismatch','lotw_station_route_mismatch','clublog_station_route_mismatch') THEN 'routing'
           WHEN l.state IN('history_mismatch','history_ambiguous','historical_unverified') THEN 'history_review'
+          WHEN l.reason='clublog_projection_or_route_unsupported' THEN 'delivery_review'
           WHEN l.reason='Source replay/cutover evidence is not yet verified; absence cannot authorize backfill' THEN 'source_boundary'
           WHEN l.state IN('missing_current_identity','changed','live_new') THEN CASE
             WHEN ?2=0 THEN 'exports_disabled'
@@ -101,7 +103,13 @@ export function workloadSourceStatement(env: Env, now: number) {
               'qrz_changed_identity_collision','qrz_fresh_absence_check_found_candidate','lotw_subsecond_precision_unverified',
               'lotw_fresh_absence_check_found_candidate','lotw_correction_readback_ambiguous','lotw_historical_readback_unavailable',
               'lotw_certificate_selection_ambiguous_or_missing','lotw_certificate_not_currently_valid',
-              'lotw_certificate_revoked','lotw_certificate_unknown','source_replay_boundary_unverified') THEN 'delivery_review'
+              'lotw_certificate_revoked','lotw_certificate_unknown','source_replay_boundary_unverified',
+              'clublog_application_key_unavailable','clublog_remote_identity_claimed_elsewhere',
+              'clublog_same_identity_correction_requires_review','clublog_mapped_record_unverified',
+              'clublog_fresh_absence_check_found_candidate','clublog_prior_identity_unverified',
+              'clublog_credentials_require_verification',
+              'clublog_prior_identity_changed_before_dispatch','clublog_fresh_collision_before_dispatch',
+              'clublog_write_blocked') THEN 'delivery_review'
             ELSE 'ready' END
           WHEN l.state='inventory_pending' THEN 'ready'
           ELSE 'delivery_review' END AS reason
@@ -130,20 +138,20 @@ export function workloadSourceStatement(env: Env, now: number) {
             OR EXISTS(SELECT 1 FROM source_work o LEFT JOIN private_data op ON op.tenant=o.tenant AND op.connection=o.source AND op.id=o.private_id AND op.kind='source'
               WHERE o.tenant=w.tenant AND o.source=w.source AND o.operation_id=w.operation_id AND (o.kind='operation' OR o.is_event=1)
               AND NOT(o.kind='qso' AND o.deleted=1) AND (o.expires_at<=?1 OR op.id IS NULL OR op.revoked_at IS NOT NULL OR op.expires_at<=?1))) THEN 'operation_context_unavailable'
-          WHEN NOT EXISTS(SELECT 1 FROM connections d WHERE d.tenant=w.tenant AND d.kind IN('qrz','lotw') AND d.status='active') THEN 'no_destination'
+          WHEN NOT EXISTS(SELECT 1 FROM connections d WHERE d.tenant=w.tenant AND d.kind IN(SELECT value FROM json_each(?4)) AND d.status='active') THEN 'no_destination'
           WHEN NOT EXISTS(SELECT 1 FROM connections d JOIN private_data credential ON credential.tenant=d.tenant AND credential.connection=d.id
             AND credential.id=d.credential_version AND credential.kind='credential' AND credential.revoked_at IS NULL
             AND (credential.expires_at IS NULL OR credential.expires_at>?1)
-            WHERE d.tenant=w.tenant AND d.kind IN('qrz','lotw') AND d.status='active') THEN 'destination_unavailable'
+            WHERE d.tenant=w.tenant AND d.kind IN(SELECT value FROM json_each(?4)) AND d.status='active') THEN 'destination_unavailable'
           WHEN w.state='pending' OR d.ready>0 THEN 'ready'
           WHEN EXISTS(SELECT 1 FROM connections fresh JOIN private_data credential ON credential.tenant=fresh.tenant
             AND credential.connection=fresh.id AND credential.id=fresh.credential_version AND credential.kind='credential'
             AND credential.revoked_at IS NULL AND (credential.expires_at IS NULL OR credential.expires_at>?1)
-            WHERE fresh.tenant=w.tenant AND fresh.kind IN('qrz','lotw') AND fresh.status='active' AND fresh.created_at>w.processed_at
+            WHERE fresh.tenant=w.tenant AND fresh.kind IN(SELECT value FROM json_each(?4)) AND fresh.status='active' AND fresh.created_at>w.processed_at
             AND NOT EXISTS(SELECT 1 FROM ledger known WHERE known.tenant=w.tenant AND known.source=w.source AND known.qso=w.id AND known.destination=fresh.id)) THEN 'ready'
-          WHEN w.reason LIKE 'No QRZ route matches%' OR w.reason LIKE 'No LOTW route matches%'
-            OR w.reason LIKE 'Multiple QRZ routes match%' OR w.reason LIKE 'Multiple LOTW routes match%' THEN 'routing'
-          WHEN d.total IS NULL OR EXISTS(SELECT 1 FROM connections fresh WHERE fresh.tenant=w.tenant AND fresh.kind IN('qrz','lotw')
+          WHEN EXISTS(SELECT 1 FROM json_each(?4) kind WHERE w.reason LIKE 'No '||upper(kind.value)||' route matches%'
+            OR w.reason LIKE 'Multiple '||upper(kind.value)||' routes match%') THEN 'routing'
+          WHEN d.total IS NULL OR EXISTS(SELECT 1 FROM connections fresh WHERE fresh.tenant=w.tenant AND fresh.kind IN(SELECT value FROM json_each(?4))
             AND fresh.status='active' AND NOT EXISTS(SELECT 1 FROM ledger known WHERE known.tenant=w.tenant AND known.source=w.source AND known.qso=w.id AND known.destination=fresh.id)
             AND EXISTS(SELECT 1 FROM private_data credential WHERE credential.tenant=fresh.tenant AND credential.connection=fresh.id
               AND credential.id=fresh.credential_version AND credential.kind='credential' AND credential.revoked_at IS NULL
@@ -160,7 +168,7 @@ export function workloadSourceStatement(env: Env, now: number) {
         WHEN state='blocked' AND work_reason NOT IN(${quoted(contextReasons)}) THEN 'blocked' ELSE 'held' END AS classification,
       work_reason AS reason,COUNT(*) AS count,MIN(retained_at) AS oldestRetainedAt
     FROM source_rows GROUP BY effective_priority,classification,work_reason
-  `).bind(now, enabled, scope);
+  `).bind(now, enabled, scope, JSON.stringify(destinationKinds));
 }
 
 export function sourceWorkSummary(groups: SourceGroup[]) {
@@ -227,10 +235,11 @@ export async function getAdminWorkload(
     ) SELECT CAST((completed.at-?1-1)/?2 AS INTEGER) AS bucket,c.kind AS vendor,COUNT(*) AS count,MAX(completed.at) AS lastAt
       FROM completed JOIN attempts a ON a.tenant=completed.tenant AND a.id=completed.attempt
       JOIN connections c ON c.tenant=a.tenant AND c.id=a.destination
-      WHERE completed.at>?1 AND completed.at<=?3 AND c.kind IN('qrz','lotw') GROUP BY bucket,c.kind`).bind(
+      WHERE completed.at>?1 AND completed.at<=?3 AND c.kind IN(SELECT value FROM json_each(?4)) GROUP BY bucket,c.kind`).bind(
       now - day,
       hour,
       now,
+      JSON.stringify(destinationKinds),
     ),
     env.DB.prepare(
       "SELECT COUNT(*) AS count FROM attempt_state WHERE state='submitted'",
@@ -260,7 +269,7 @@ export async function getAdminWorkload(
   const buckets: AdminWorkload["deliveries"]["buckets"] = [];
   const deliveries = completed.results as {
     bucket: number;
-    vendor: "qrz" | "lotw";
+    vendor: DestinationKind;
     count: number;
     lastAt: number;
   }[];
@@ -274,21 +283,29 @@ export async function getAdminWorkload(
       live: row ? workCounts(row, "live") : null,
       background: row ? workCounts(row, "background") : null,
     });
-    const qrz =
-      deliveries.find(
-        (entry) => entry.bucket === bucket && entry.vendor === "qrz",
-      )?.count ?? 0;
-    const lotw =
-      deliveries.find(
-        (entry) => entry.bucket === bucket && entry.vendor === "lotw",
-      )?.count ?? 0;
-    buckets.push({ at, total: qrz + lotw, qrz, lotw });
+    const counts = Object.fromEntries(
+      destinationKinds.map((kind) => [
+        kind,
+        deliveries.find(
+          (entry) => entry.bucket === bucket && entry.vendor === kind,
+        )?.count ?? 0,
+      ]),
+    ) as Record<DestinationKind, number>;
+    buckets.push({
+      at,
+      total: Object.values(counts).reduce((sum, count) => sum + count, 0),
+      ...counts,
+    });
   }
   const firstAt = known.at(0)?.finished_at ?? null;
   const lastAt = known.at(-1)?.finished_at ?? null;
   const times = [now - day, ...known.map((row) => row.finished_at), now];
-  const qrz = buckets.reduce((n, row) => n + row.qrz, 0);
-  const lotw = buckets.reduce((n, row) => n + row.lotw, 0);
+  const counts = Object.fromEntries(
+    destinationKinds.map((kind) => [
+      kind,
+      buckets.reduce((sum, row) => sum + row[kind], 0),
+    ]),
+  ) as Record<DestinationKind, number>;
   return {
     source: sourceWorkSummary(groups),
     heldReasons: reasons("held"),
@@ -308,9 +325,8 @@ export async function getAdminWorkload(
     },
     deliveries: {
       windowMs: day,
-      total: qrz + lotw,
-      qrz,
-      lotw,
+      total: Object.values(counts).reduce((sum, count) => sum + count, 0),
+      ...counts,
       lastCompletedAt: deliveries.length
         ? Math.max(...deliveries.map((row) => row.lastAt))
         : null,

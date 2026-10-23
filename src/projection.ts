@@ -1,3 +1,6 @@
+import { type AdifRecord, serializeAdifRecord } from "./adif.ts";
+import { ClubLogError, clublogRecord } from "./clublog.ts";
+import type { DestinationKind } from "./providers.ts";
 import type { SourceRecord } from "./lofi.ts";
 
 export interface Contact {
@@ -349,9 +352,28 @@ export async function projectContact(
 }
 
 /** Versioned source baselines, independent from remote and outbound hashes. */
-export async function sourceFingerprint(
+async function lotwSourceFingerprint(contact: Contact): Promise<string> {
+  return projectionHash({
+    version: "lotw-source-v1",
+    call: contact.call,
+    stationCall: contact.stationCall,
+    startAtMillis: contact.startAtMillis,
+    band: contact.band,
+    mode: contact.mode,
+    submode: contact.submode,
+    frequencyMHz: contact.frequencyMHz,
+    grid: contact.grid,
+    state: contact.state,
+    county: contact.county,
+    dxcc: contact.dxcc,
+    cqZone: contact.cqZone,
+    ituZone: contact.ituZone,
+    deleted: contact.deleted,
+  });
+}
+
+async function qrzSourceFingerprint(
   contact: Contact,
-  destination: "qrz" | "lotw",
   remotePreserved = false,
 ): Promise<string> {
   const {
@@ -388,25 +410,6 @@ export async function sourceFingerprint(
       "deleted",
     ].map((key) => [key, contact[key as keyof Contact]]),
   );
-  if (destination === "lotw") {
-    return projectionHash({
-      version: "lotw-source-v1",
-      call: contact.call,
-      stationCall: contact.stationCall,
-      startAtMillis: contact.startAtMillis,
-      band: contact.band,
-      mode: contact.mode,
-      submode: contact.submode,
-      frequencyMHz: contact.frequencyMHz,
-      grid: contact.grid,
-      state: contact.state,
-      county: contact.county,
-      dxcc: contact.dxcc,
-      cqZone: contact.cqZone,
-      ituZone: contact.ituZone,
-      deleted: contact.deleted,
-    });
-  }
   return projectionHash({
     version: "qrz-source-v1",
     ...structured,
@@ -420,4 +423,108 @@ export async function sourceFingerprint(
           op: triggerContext(context.op, true),
         }),
   });
+}
+
+function coordinate(value: number, latitude: boolean): string {
+  const total = Math.round(Math.abs(value) * 60 * 1000) / 1000;
+  const degrees = Math.floor(total / 60);
+  const minutes = (total - degrees * 60).toFixed(3).padStart(6, "0");
+  return `${latitude ? (value >= 0 ? "N" : "S") : value >= 0 ? "E" : "W"}${String(degrees).padStart(3, "0")} ${minutes}`;
+}
+function countyAdif(county: string, state: string | undefined): string {
+  if (!state) throw new Error("County requires an explicit station state");
+  if (county.includes(",")) {
+    if (!county.toUpperCase().startsWith(`${state.toUpperCase()},`))
+      throw new Error("County and station state disagree");
+    return county;
+  }
+  return `${state},${county}`;
+}
+/** Structured fields are validated independently of all narrative templates. */
+export function contactAdif(contact: Contact): AdifRecord {
+  if (contact.deleted) throw new Error("Deleted contacts cannot be exported");
+  if (contact.startAtMillis % 1000)
+    throw new Error(
+      "Subsecond contact precision has no verified destination mapping",
+    );
+  const iso = new Date(contact.startAtMillis).toISOString();
+  const record: AdifRecord = {
+    STATION_CALLSIGN: contact.stationCall,
+    CALL: contact.call,
+    QSO_DATE: iso.slice(0, 10).replaceAll("-", ""),
+    TIME_ON: iso.slice(11, 19).replaceAll(":", ""),
+    BAND: contact.band,
+    MODE: contact.mode,
+  };
+  const optional: Record<string, string | number | undefined> = {
+    SUBMODE: contact.submode,
+    FREQ: contact.frequencyMHz,
+    RST_SENT: contact.rstSent,
+    RST_RCVD: contact.rstReceived,
+    MY_GRIDSQUARE: contact.grid,
+    MY_STATE: contact.state,
+    MY_CNTY: contact.county
+      ? countyAdif(contact.county, contact.state)
+      : undefined,
+    MY_DXCC: contact.dxcc,
+    MY_CQ_ZONE: contact.cqZone,
+    MY_ITU_ZONE: contact.ituZone,
+    OPERATOR: contact.operatorCall,
+    TX_PWR: contact.power,
+  };
+  for (const [field, value] of Object.entries(optional))
+    if (value !== undefined) record[field] = String(value);
+  if (contact.latitude !== undefined && contact.longitude !== undefined) {
+    record.MY_LAT = coordinate(contact.latitude, true);
+    record.MY_LON = coordinate(contact.longitude, false);
+  }
+  serializeAdifRecord(record);
+  return record;
+}
+
+const sourceFingerprints: Record<
+  DestinationKind,
+  (contact: Contact, remotePreserved: boolean) => Promise<string>
+> = {
+  qrz: qrzSourceFingerprint,
+  lotw: lotwSourceFingerprint,
+  clublog: async (contact) => {
+    let record: AdifRecord;
+    try {
+      record = clublogRecord({ ...contact, deleted: false });
+    } catch (error) {
+      if (!(error instanceof ClubLogError)) throw error;
+      // An unsupported projection blocks only this destination during preparation.
+      // Intake still records its revision so other destinations can progress.
+      return projectionHash({
+        version: "clublog-source-unmapped-v1",
+        stationCall: contact.stationCall,
+        call: contact.call,
+        startAtMillis: contact.startAtMillis,
+        band: contact.band,
+        mode: contact.mode,
+        submode: contact.submode,
+        frequencyMHz: contact.frequencyMHz,
+        operatorCall: contact.operatorCall,
+        rstSent: contact.rstSent,
+        rstReceived: contact.rstReceived,
+        deleted: contact.deleted,
+      });
+    }
+    return projectionHash({
+      version: "clublog-source-v1",
+      record,
+      deleted: contact.deleted,
+    });
+  },
+};
+/** Target-specific baselines retain their original versions when another target is added. */
+export async function sourceFingerprint(
+  contact: Contact,
+  destination: DestinationKind,
+  remotePreserved = false,
+): Promise<string> {
+  const fingerprint = sourceFingerprints[destination];
+  if (!fingerprint) throw new Error("Unsupported destination fingerprint");
+  return fingerprint(contact, remotePreserved);
 }

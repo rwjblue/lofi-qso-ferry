@@ -1,3 +1,4 @@
+import { vendorKinds } from "./providers.ts";
 import type {
   AdminBacklogSample,
   AdminOverview,
@@ -302,7 +303,7 @@ export async function getAdminOverview(
         .results[0] as AdminOverview["backlog"]["deliveryCandidates"],
     },
     attention: results[6].results as AdminOverview["attention"],
-    vendors: (["lofi", "qrz", "lotw"] as const).map((vendor) => {
+    vendors: vendorKinds.map((vendor) => {
       const policy = VENDOR_POLICIES[vendor];
       const row = vendors.find((entry) => entry.vendor === vendor);
       const window = Math.floor(now / policy.windowMs) * policy.windowMs;

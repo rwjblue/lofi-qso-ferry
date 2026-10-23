@@ -1806,6 +1806,274 @@ test("background rotation cannot advance after the source cycle lease is lost", 
   }
 });
 
+test("a slow forward-source background batch cannot strand a paired account's initial import", async (t) => {
+  const h = await schedulerFixture();
+  let wall = FIXTURE_NOW;
+  const wallClock = t.mock.method(Date, "now", () => wall);
+  try {
+    h.errors.qrz = true;
+    h.errors.lotw = true;
+    await tick(h.env, h.fetcher, wall);
+    h.errors.qrz = false;
+    h.errors.lotw = false;
+    await seed(h.store, "b");
+    await (
+      await h.store.putPrivate("b", "source", "import-source", "credential", {
+        key: "browser:synthetic-import",
+        secret: "synthetic-import",
+        token: "synthetic-import",
+      })
+    ).run();
+    await h.store
+      .statement(
+        "UPDATE connections SET credential_version='import-source',config=? WHERE tenant='b' AND id='source'",
+        JSON.stringify({ accountId: "account-import" }),
+      )
+      .run();
+    await h.store
+      .statement("DELETE FROM cursors WHERE stream='scheduler:background'")
+      .run();
+    await h.store
+      .statement("UPDATE scheduler_background_accounts SET last_turn=0")
+      .run();
+    await h.store
+      .statement("UPDATE scheduler_background_sources SET last_turn=0")
+      .run();
+    const phases: string[] = [];
+    const transport: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/v1/sync") {
+        if (
+          new Headers(init?.headers).get("Authorization") ===
+          "Bearer synthetic-import"
+        ) {
+          phases.push("import-poll");
+          // Even the selected source's canonical prelude can consume its
+          // entire turn; admission must already be durable at this point.
+          const admission = await h.store
+            .statement(
+              "SELECT last_turn FROM scheduler_background_sources WHERE tenant='b' AND source='source'",
+            )
+            .first<{ last_turn: number }>();
+          assert((admission?.last_turn ?? 0) > 0);
+          wall += 90_001;
+          return Response.json({
+            account: { uuid: "account-import" },
+            operations: [],
+            qsos: [],
+            meta: {
+              operations: { records_left: 0 },
+              qsos: { records_left: 0 },
+            },
+          });
+        }
+        phases.push("forward-poll");
+      } else if (url.hostname === "logbook.qrz.com") {
+        phases.push("slow-history");
+        wall += 90_001;
+        throw new Error("synthetic slow history failure");
+      }
+      return h.fetcher(input, init);
+    };
+    wall = FIXTURE_NOW + 300_000;
+    const first = await tick(h.env, transport, wall);
+    assert.deepEqual(phases, ["forward-poll", "slow-history"]);
+    assert.equal(first.stopReason, "deadline");
+    assert.equal(first.errors, 1);
+    assert.equal(
+      (
+        await h.store
+          .statement(
+            "SELECT last_turn FROM scheduler_background_sources WHERE tenant='b' AND source='source'",
+          )
+          .first<{ last_turn: number }>()
+      )?.last_turn,
+      0,
+    );
+    wall = FIXTURE_NOW + 600_000;
+    phases.length = 0;
+    // A new invocation reconstructs all in-memory state. Its live pair still
+    // starts with the forward account, but durable background order starts b.
+    const second = await tick(h.env, transport, wall);
+    assert.deepEqual(phases, ["forward-poll", "import-poll"]);
+    assert.equal(second.stopReason, "deadline");
+    assert.equal(second.sources, 2);
+    assert.equal(
+      (
+        await h.store
+          .statement(
+            "SELECT json_extract(cursor,'$.mode') mode FROM cursors WHERE tenant='b' AND connection='source' AND stream='sync'",
+          )
+          .first<{ mode: string }>()
+      )?.mode,
+      "forward",
+    );
+    assert.equal(first.exportsEnabled, false);
+    assert.equal(second.exportsEnabled, false);
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(await count(h, "source_cutovers"), 0);
+    assert.equal(h.calls.qrzWrites + h.calls.lotwUploads, 0);
+  } finally {
+    wallClock.mock.restore();
+    await h.mf.dispose();
+  }
+});
+
+test("slow failed background imports yield to every account across fresh invocations", async (t) => {
+  const h = await schedulerFixture();
+  let wall = FIXTURE_NOW;
+  const wallClock = t.mock.method(Date, "now", () => wall);
+  try {
+    for (const tenant of ["b", "c"]) {
+      await seed(h.store, tenant);
+      await (
+        await h.store.putPrivate(
+          tenant,
+          "source",
+          "import-source",
+          "credential",
+          {
+            key: `browser:synthetic-${tenant}`,
+            secret: "synthetic",
+            token: `synthetic-${tenant}`,
+          },
+        )
+      ).run();
+      await h.store
+        .statement(
+          "UPDATE connections SET credential_version='import-source',config=? WHERE tenant=? AND id='source'",
+          JSON.stringify({ accountId: `account-${tenant}` }),
+          tenant,
+        )
+        .run();
+    }
+    await h.store
+      .statement("UPDATE connections SET status='disabled' WHERE kind!='lofi'")
+      .run();
+    const visited: string[] = [];
+    const transport: typeof fetch = async (input, init) => {
+      assert.equal(new URL(String(input)).pathname, "/v1/sync");
+      const token = new Headers(init?.headers).get("Authorization");
+      visited.push(token === "Bearer synthetic" ? "a" : token!.slice(-1));
+      wall += 90_001;
+      throw new Error("synthetic slow source outage");
+    };
+    for (let index = 0; index < 3; index++) {
+      wall = FIXTURE_NOW + index * 300_000;
+      const result = await tick(h.env, transport, wall);
+      assert.equal(result.stopReason, "deadline");
+      assert.equal(result.errors, 1);
+      assert.equal(result.exportsEnabled, false);
+    }
+    assert.deepEqual(visited, ["a", "b", "c"]);
+    assert.deepEqual(
+      (
+        await h.store
+          .statement(
+            "SELECT tenant,last_turn FROM scheduler_background_accounts ORDER BY last_turn",
+          )
+          .all()
+      ).results,
+      [
+        { tenant: "a", last_turn: 1 },
+        { tenant: "b", last_turn: 2 },
+        { tenant: "c", last_turn: 3 },
+      ],
+    );
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(await count(h, "cursors", "stream='sync'"), 0);
+    assert.equal(h.calls.qrzWrites + h.calls.lotwUploads, 0);
+  } finally {
+    wallClock.mock.restore();
+    await h.mf.dispose();
+  }
+});
+
+test("an independently admitted forward source is refreshed once before its later live roster turn", async () => {
+  const h = await schedulerFixture();
+  try {
+    await tick(h.env, h.fetcher, FIXTURE_NOW);
+    const cursor = await h.store
+      .statement(
+        "SELECT cursor FROM cursors WHERE tenant='a' AND connection='source' AND stream='sync'",
+      )
+      .first<{ cursor: string }>();
+    assert(cursor);
+    for (const tenant of ["b", "c"]) {
+      await seed(h.store, tenant);
+      await (
+        await h.store.putPrivate(
+          tenant,
+          "source",
+          "forward-source",
+          "credential",
+          {
+            key: `browser:synthetic-${tenant}`,
+            secret: "synthetic",
+            token: `synthetic-${tenant}`,
+          },
+        )
+      ).run();
+      await h.store
+        .statement(
+          "UPDATE connections SET credential_version='forward-source',config=? WHERE tenant=? AND id='source'",
+          JSON.stringify({ accountId: `account-${tenant}` }),
+          tenant,
+        )
+        .run();
+      await h.store
+        .statement(
+          "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) VALUES(?,'source','sync',?,1,?)",
+          tenant,
+          JSON.stringify({
+            ...JSON.parse(cursor.cursor),
+            accountId: `account-${tenant}`,
+          }),
+          FIXTURE_NOW,
+        )
+        .run();
+    }
+    await h.store
+      .statement(
+        "UPDATE connections SET last_poll_at=CASE tenant WHEN 'a' THEN 0 WHEN 'b' THEN 1 ELSE 2 END WHERE kind='lofi'",
+      )
+      .run();
+    await h.store
+      .statement(
+        "UPDATE scheduler_background_accounts SET last_turn=CASE tenant WHEN 'c' THEN 0 ELSE 1 END",
+      )
+      .run();
+    const visited: string[] = [];
+    const transport: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).pathname === "/v1/sync") {
+        const token = new Headers(init?.headers).get("Authorization");
+        const tenant = token === "Bearer synthetic" ? "a" : token!.slice(-1);
+        visited.push(tenant);
+        if (tenant !== "a")
+          return Response.json({
+            account: { uuid: `account-${tenant}` },
+            operations: [],
+            qsos: [],
+            meta: {
+              operations: { records_left: 0 },
+              qsos: { records_left: 0 },
+            },
+          });
+      }
+      return h.fetcher(input, init);
+    };
+    const result = await tick(h.env, transport, FIXTURE_NOW + 300_000);
+    assert.equal(result.stopReason, "idle");
+    assert.equal(result.errors, 0);
+    assert.equal(result.sources, 3);
+    assert.deepEqual(visited, ["a", "b", "c"]);
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(h.calls.qrzWrites + h.calls.lotwUploads, 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
 test("one failed QRZ boundary partition does not hold healthy contacts in the same week", async () => {
   const h = await schedulerFixture();
   try {

@@ -55,6 +55,11 @@ import type { ReconciliationEvidence } from "./reconcile.ts";
 import { keyring } from "./security.ts";
 import { Store } from "./store.ts";
 import type { Connection, LedgerKey } from "./store.ts";
+import {
+  admitBackgroundSource,
+  backgroundSources,
+  type BackgroundSource,
+} from "./scheduler-admission.ts";
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
 export function deliveryGates(env: Env): DeliveryGates {
@@ -766,12 +771,14 @@ export async function tick(
     stopReason: "idle" as "idle" | "deadline" | "database_budget",
   };
   throughput.stageMs.startup = Math.max(0, Date.now() - startedAt);
+  const attemptedPolls = new Set<string>();
   const completedPolls = new Set<string>();
   const completedRescans = new Map<string, Set<string>>();
   const stoppedRereads = new Set<string>();
   const processSource = async (
     source: (typeof sources)[number],
     priority: VendorPriority,
+    admission?: BackgroundSource,
   ) => {
     if (expired()) return 0;
     const now = currentTime();
@@ -787,7 +794,15 @@ export async function tick(
     if (!lease) return 0;
     const canonicalTurn =
       (source.sync_mode === "forward" ? "live" : "background") === priority;
-    const pollTurn = canonicalTurn && !completedPolls.has(sourceKey);
+    // Independent background admission can choose a forward source before
+    // its live roster turn. Refresh it first without repeating a poll already
+    // attempted this invocation; polling still uses the cursor's live budget.
+    const pollTurn =
+      (canonicalTurn && !completedPolls.has(sourceKey)) ||
+      (priority === "background" &&
+        source.sync_mode === "forward" &&
+        !attemptedPolls.has(sourceKey));
+    let polled = false;
     const processRetainedContacts = async (readyContextOnly = false) => {
       if (expired()) return 0;
       await establishCutovers(store, source, gates, currentTime());
@@ -1086,7 +1101,20 @@ export async function tick(
     };
     let retainedSelected = 0;
     try {
+      if (
+        priority === "background" &&
+        (!admission ||
+          !(await admitBackgroundSource(
+            store,
+            admission,
+            lease,
+            currentTime(),
+          )))
+      )
+        return 0;
       if (pollTurn) {
+        polled = true;
+        attemptedPolls.add(sourceKey);
         try {
           const page = await measure("sourcePoll", () =>
             pollSource(
@@ -1164,7 +1192,7 @@ export async function tick(
       try {
         // A failed source still consumes its scheduling turn. Otherwise two
         // unavailable accounts can permanently starve every other tenant.
-        if (pollTurn)
+        if (polled)
           await store
             .statement(
               "UPDATE connections SET last_poll_at=MAX(COALESCE(last_poll_at,0),?) WHERE tenant=? AND id=? AND status='active'",
@@ -1283,8 +1311,12 @@ export async function tick(
     // otherwise consume the entire background request allowance.
     const backgroundTurns = await processAttempts("background", 2);
     passProgress += backgroundTurns;
-    for (const source of round)
-      passProgress += await processSource(source, "background");
+    // Live polling timestamps do not indicate whether background work got a
+    // turn. Choose its accounts independently so a slow first batch cannot
+    // indefinitely strand the second member of every live pair.
+    if (!expired())
+      for (const source of await backgroundSources(store, currentTime(), 2))
+        passProgress += await processSource(source, "background", source);
     passProgress += await processAttempts("background", 2 - backgroundTurns);
     sourceOffset += round.length;
     // A quiet pair does not imply later accounts are idle. Finish the entire

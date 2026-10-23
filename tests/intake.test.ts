@@ -6,6 +6,7 @@ import {
   contactPriority,
   expireSource,
   observeContact,
+  pendingContactBatch,
   pendingContacts,
   pollSource,
   rereadOperation,
@@ -140,8 +141,92 @@ async function work(
       id,
       kind,
     )
-    .first<Work>();
+    .first<Work & { processed_at: number }>();
 }
+
+test("contact batches count invalid selections and exclude work already handled in the drain", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  assert.deepEqual(
+    await pendingContactBatch(
+      store,
+      source,
+      1,
+      now,
+      "background",
+      undefined,
+      now,
+    ),
+    { contacts: [], selected: 0 },
+  );
+  await pollSource(
+    store,
+    source,
+    fetcher(async () =>
+      response(
+        [],
+        [
+          { ...loose, uuid: "a-invalid", their: {} },
+          { ...loose, uuid: "b-valid" },
+        ],
+      ),
+    ),
+    now,
+  );
+  const first = await pendingContactBatch(
+    store,
+    source,
+    1,
+    now,
+    "background",
+    undefined,
+    now,
+  );
+  assert.deepEqual(first, { contacts: [], selected: 1 });
+  assert.equal((await work(state, "a-invalid"))?.state, "blocked");
+  assert.equal((await work(state, "a-invalid"))?.processed_at, now);
+  const second = await pendingContactBatch(
+    store,
+    source,
+    1,
+    now + 1,
+    "background",
+    undefined,
+    now,
+  );
+  assert.equal(second.selected, 1);
+  assert.deepEqual(
+    second.contacts.map((contact) => contact.id),
+    ["b-valid"],
+  );
+  assert.equal((await work(state, "b-valid"))?.processed_at, now + 1);
+  assert.deepEqual(
+    await pendingContactBatch(
+      store,
+      source,
+      1,
+      now + 2,
+      "background",
+      undefined,
+      now,
+    ),
+    { contacts: [], selected: 0 },
+  );
+  const direct = await pendingContacts(
+    store,
+    source,
+    1,
+    now + 2,
+    undefined,
+    "b-valid",
+  );
+  assert.deepEqual(
+    direct.map((contact) => contact.id),
+    ["b-valid"],
+  );
+  assert.equal((await work(state, "b-valid"))?.processed_at, now + 1);
+});
 
 test("historical pages stay small while forward arrivals and edits retain live priority", async (t) => {
   const state = await setup();

@@ -254,6 +254,18 @@ export async function pendingContacts(
   priority?: VendorPriority,
   qso?: string,
 ): Promise<IntakeContact[]> {
+  return (await pendingContactBatch(store, source, limit, now, priority, qso))
+    .contacts;
+}
+export async function pendingContactBatch(
+  store: Store,
+  source: Connection,
+  limit = 40,
+  now = Date.now(),
+  priority?: VendorPriority,
+  qso?: string,
+  processedBefore?: number,
+): Promise<{ contacts: IntakeContact[]; selected: number }> {
   const context = await store
     .statement(
       "SELECT cursor,generation FROM cursors WHERE tenant=? AND connection=? AND stream='context'",
@@ -265,21 +277,33 @@ export async function pendingContacts(
     !context ||
     !(JSON.parse(context.cursor) as { complete: boolean }).complete
   )
-    return [];
+    return { contacts: [], selected: 0 };
   const rows = (
     await store
       .statement(
-        `SELECT w.* FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='qso' AND w.state IN('pending','waiting') AND w.expires_at>? ${priority ? `AND ${liveWorkSql("w")}=${priority === "live" ? 1 : 0}` : ""} ${qso === undefined ? "" : "AND w.id=?"} ORDER BY ${liveWorkSql("w")} DESC,w.processed_at,w.id LIMIT ?`,
+        `SELECT w.* FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='qso' AND w.state IN('pending','waiting') AND w.expires_at>? ${priority ? `AND ${liveWorkSql("w")}=${priority === "live" ? 1 : 0}` : ""} ${qso === undefined ? "" : "AND w.id=?"} ${processedBefore === undefined ? "" : "AND w.processed_at<?"} ORDER BY ${liveWorkSql("w")} DESC,w.processed_at,w.id LIMIT ?`,
         source.tenant,
         source.id,
         now,
         ...(qso === undefined ? [] : [qso]),
+        ...(processedBefore === undefined ? [] : [processedBefore]),
         limit,
       )
       .all<Work>()
   ).results;
   const contacts: IntakeContact[] = [];
   for (const row of rows) {
+    if (processedBefore !== undefined)
+      await store
+        .statement(
+          "UPDATE source_work SET processed_at=? WHERE tenant=? AND source=? AND id=? AND kind='qso' AND revision=?",
+          now,
+          row.tenant,
+          row.source,
+          row.id,
+          row.revision,
+        )
+        .run();
     try {
       const raw = await store.private<SourceRecord>(
         row.tenant,
@@ -401,7 +425,7 @@ export async function pendingContacts(
         .run();
     }
   }
-  return contacts;
+  return { contacts, selected: rows.length };
 }
 /** Fingerprints are per destination; a narrative edit cannot create LoTW work. */
 export async function observeContact(
@@ -811,25 +835,27 @@ export async function rereadOperation(
   now = Date.now(),
   priority?: VendorPriority,
   vendorNow: number | null = now,
+  processedBefore?: number,
 ) {
   const startedAt = Date.now();
   const liveOperation = `(w.priority='live' OR EXISTS(SELECT 1 FROM source_work q WHERE q.tenant=w.tenant AND q.source=w.source AND q.operation_id=w.id AND q.kind='qso' AND ${liveWorkSql("q")}))`;
   const operation = await store
     .statement(
-      `SELECT w.*,CASE WHEN ${liveOperation} THEN 'live' ELSE 'background' END AS request_priority FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='operation' AND w.state='pending' AND w.deleted=0 AND w.expires_at>? ${priority ? `AND ${liveOperation}=${priority === "live" ? 1 : 0}` : ""} ORDER BY ${liveOperation} DESC,w.processed_at,w.id LIMIT 1`,
+      `SELECT w.*,CASE WHEN ${liveOperation} THEN 'live' ELSE 'background' END AS request_priority FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='operation' AND w.state='pending' AND w.deleted=0 AND w.expires_at>? ${priority ? `AND ${liveOperation}=${priority === "live" ? 1 : 0}` : ""} ${processedBefore === undefined ? "" : "AND w.processed_at<?"} ORDER BY ${liveOperation} DESC,w.processed_at,w.id LIMIT 1`,
       connection.tenant,
       connection.id,
       now,
+      ...(processedBefore === undefined ? [] : [processedBefore]),
     )
     .first<Work & { request_priority: VendorPriority }>();
-  if (!operation) return { complete: true, records: 0 };
+  if (!operation) return { complete: true, records: 0, pages: 0 };
   const lease = await store.claim(
     connection.tenant,
     `reread:${connection.id}`,
     now,
     90_000,
   );
-  if (!lease) return { complete: false, records: 0 };
+  if (!lease) return { complete: false, records: 0, pages: 0 };
   try {
     const credentials = connection.credential_version
       ? await store.private<LoFiCredentials>(
@@ -1017,7 +1043,7 @@ export async function rereadOperation(
       work,
       now,
     );
-    return { complete: page.complete, records: page.qsos.length };
+    return { complete: page.complete, records: page.qsos.length, pages: 1 };
   } catch (error) {
     if (error instanceof VendorDeferredError) throw error;
     // A failed read must consume its scheduling turn without asserting any

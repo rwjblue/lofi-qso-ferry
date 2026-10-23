@@ -509,6 +509,113 @@ test("live QRZ raw HTML-encoded ADIF tail preserves literal entities and plus/am
     "Line 1\r\n<EOR> &amp; literal",
   );
 });
+test("QRZ decodes observed adjacent surrogate entities once without changing scalar Unicode", () => {
+  for (const [encoded, expected] of [
+    ["&#55357;&#56832;", "\u{1f600}"],
+    ["&#xD83D;&#xDE00;", "\u{1f600}"],
+    ["&#55357;&#xDE00;", "\u{1f600}"],
+    ["&#0055357;&#0056832;", "\u{1f600}"],
+    ["&#x00D800;&#x00DC00;", "\u{10000}"],
+    ["&#xDBFF;&#xDFFF;", "\u{10ffff}"],
+    ["&#128512;", "\u{1f600}"],
+    ["&#x1F600;", "\u{1f600}"],
+    ["&amp;#55357;&amp;#56832;", "&#55357;&#56832;"],
+    ["&amp;amp;#55357;&amp;amp;#56832;", "&amp;#55357;&amp;#56832;"],
+  ]) {
+    const parsed = parseQrzResponse(
+      `RESULT=OK&COUNT=1&ADIF=&lt;COMMENT:${expected.length}&gt;${encoded}&lt;EOR&gt;`,
+    );
+    assert.equal(parseAdif(parsed.ADIF!).records[0].COMMENT, expected);
+  }
+});
+test("unpaired, separated, reversed and out-of-range QRZ entities remain protocol failures and writes stay uncertain", async () => {
+  for (const encoded of [
+    "&#55357;",
+    "&#56832;",
+    "&#56832;&#55357;",
+    "&#55357;&#55357;",
+    "&#55357; &#56832;",
+    "&#55357;&amp;#56832;",
+    "&#x110000;",
+    "&#9999999;",
+  ]) {
+    const response = `RESULT=OK&COUNT=1&ADIF=&lt;COMMENT:2&gt;${encoded}&lt;EOR&gt;`;
+    const client = new QrzClient("synthetic", {
+      writesEnabled: true,
+      fetch: async () => new Response(response),
+    });
+    await assert.rejects(
+      client.fetchPage(),
+      (error: unknown) =>
+        error instanceof QrzError &&
+        error.kind === "protocol" &&
+        error.message === "Invalid QRZ ADIF entity encoding",
+    );
+    await assert.rejects(
+      client.insert(contact),
+      (error: unknown) =>
+        error instanceof QrzError && error.kind === "uncertain",
+    );
+  }
+});
+test("full QRZ FETCH retains supplementary narrative and following exact ASCII identity fields", async () => {
+  const narrative = "\u{1f600} &lt; literal &#55357;&#56832;";
+  const identity: Record<string, string> = {
+    ...contact,
+    APP_QRZLOG_LOGID: "41",
+  };
+  delete identity.COMMENT;
+  const raw = `<COMMENT:${narrative.length}>${narrative}${serializeAdifRecord(identity)}`;
+  const encoded = raw
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll("\u{1f600}", "&#55357;&#56832;");
+  const client = new QrzClient("synthetic", {
+    fetch: async (_input, init) => {
+      assert.equal(
+        new URLSearchParams(String(init?.body)).get("ACTION"),
+        "FETCH",
+      );
+      return new Response(`RESULT=OK&COUNT=1&ADIF=${encoded}`);
+    },
+  });
+  const page = await client.fetchPage();
+  assert.equal(page.nextAfterLogId, null);
+  assert.deepEqual({ ...page.records[0] }, { ...identity, COMMENT: narrative });
+  assert.equal(page.records[0].COMMENT.length, narrative.length);
+  assert.equal(page.records[0].COMMENT.codePointAt(0), 0x1f600);
+  assert.equal(sameQrzIdentity(contact, page.records[0]), true);
+  assert.throws(
+    () => serializeAdifRecord(page.records[0]),
+    /Unsupported ADI encoding/,
+  );
+});
+test("QRZ rejects declared lengths that split a supplementary character instead of accepting a partial field", async () => {
+  for (const prefix of ["", "header\n"]) {
+    const encoded = `${prefix}&lt;COMMENT:1&gt;&#55357;&#56832;${prefix ? "&lt;EOH&gt;" : ""}&lt;CALL:4&gt;W1AW&lt;APP_QRZLOG_LOGID:2&gt;41&lt;EOR&gt;`;
+    const client = new QrzClient("synthetic", {
+      fetch: async () => new Response(`RESULT=OK&COUNT=1&ADIF=${encoded}`),
+    });
+    await assert.rejects(
+      client.fetchPage(),
+      (error: unknown) =>
+        error instanceof QrzError &&
+        error.kind === "protocol" &&
+        error.message === "QRZ ADIF field splits a Unicode character",
+    );
+    await assert.rejects(
+      client.fetchLogId("41"),
+      (error: unknown) =>
+        error instanceof QrzError && error.kind === "protocol",
+    );
+    await assert.rejects(
+      client.findNeighborhood(contact),
+      (error: unknown) =>
+        error instanceof QrzError && error.kind === "protocol",
+    );
+  }
+});
 test("QRZ structured corrections exclude QRZCOM server metadata and adoption normalizes decimal frequencies", () => {
   const merged = mergeQrzCorrection(
     { ...remote, QRZCOM_QSO_UPLOAD_DATE: "server-managed" },

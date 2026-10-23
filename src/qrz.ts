@@ -37,20 +37,57 @@ function decodeHtmlOnce(value: string): string {
     quot: '"',
     apos: "'",
   };
-  return value.replace(
-    /&(?:amp|lt|gt|quot|apos|#\d{1,7}|#x[0-9a-f]{1,6});/gi,
-    (entity) => {
-      if (entity[1] !== "#") return named[entity.slice(1, -1).toLowerCase()];
-      const hex = entity[2]?.toLowerCase() === "x";
-      const point = Number.parseInt(
-        entity.slice(hex ? 3 : 2, -1),
-        hex ? 16 : 10,
-      );
-      if (point > 0x10ffff || (point >= 0xd800 && point <= 0xdfff))
+  const numeric = (entity: string) => {
+    const hex = entity[2]?.toLowerCase() === "x";
+    return Number.parseInt(entity.slice(hex ? 3 : 2, -1), hex ? 16 : 10);
+  };
+  const entities = /&(?:amp|lt|gt|quot|apos|#\d{1,7}|#x[0-9a-f]{1,6});/gi;
+  const decoded: string[] = [];
+  let end = 0;
+  for (let match = entities.exec(value); match; match = entities.exec(value)) {
+    decoded.push(value.slice(end, match.index));
+    const entity = match[0];
+    if (entity[1] !== "#")
+      decoded.push(named[entity.slice(1, -1).toLowerCase()]);
+    else {
+      let point = numeric(entity);
+      if (point >= 0xd800 && point <= 0xdbff) {
+        // QRZ readback has emitted adjacent UTF-16 high/low entity pairs.
+        // Consume only that lossless pair from the original input. Decoded
+        // ampersands are never scanned again, so literal entities stay literal.
+        const nextAt = entities.lastIndex;
+        const low = entities.exec(value);
+        const lowPoint = low?.[0][1] === "#" ? numeric(low[0]) : -1;
+        if (
+          !low ||
+          low.index !== nextAt ||
+          lowPoint < 0xdc00 ||
+          lowPoint > 0xdfff
+        )
+          throw new QrzError("protocol", "Invalid QRZ ADIF entity encoding");
+        point = 0x10000 + (point - 0xd800) * 0x400 + lowPoint - 0xdc00;
+      } else if (point > 0x10ffff || (point >= 0xdc00 && point <= 0xdfff))
         throw new QrzError("protocol", "Invalid QRZ ADIF entity encoding");
-      return String.fromCodePoint(point);
-    },
-  );
+      decoded.push(String.fromCodePoint(point));
+    }
+    end = entities.lastIndex;
+  }
+  decoded.push(value.slice(end));
+  return decoded.join("");
+}
+
+function assertWholeUnicodeFields(record: AdifRecord): void {
+  // Code-point iteration combines valid pairs. Any remaining surrogate is
+  // unpaired, including one created by an incorrect declared ADIF length.
+  for (const value of Object.values(record))
+    for (const character of value) {
+      const point = character.codePointAt(0) ?? -1;
+      if (point >= 0xd800 && point <= 0xdfff)
+        throw new QrzError(
+          "protocol",
+          "QRZ ADIF field splits a Unicode character",
+        );
+    }
 }
 export function parseQrzResponse(body: string): QrzResponse {
   if (body.length > 2 * 1024 * 1024 || /^\s*</.test(body))
@@ -307,7 +344,10 @@ export class QrzClient {
       throw new QrzError("rejected", "QRZ inventory incomplete or rejected");
     if (!/^\d+$/.test(result.COUNT ?? ""))
       throw new QrzError("protocol", "Missing QRZ inventory count");
-    const records = parseAdif(result.ADIF ?? "").records;
+    const document = parseAdif(result.ADIF ?? "");
+    assertWholeUnicodeFields(document.header);
+    for (const record of document.records) assertWholeUnicodeFields(record);
+    const records = document.records;
     if (
       records.length > max ||
       Number(result.COUNT) < records.length ||

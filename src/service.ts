@@ -589,38 +589,7 @@ export async function tick(
       if (failed?.status === "rejected") throw failed.reason;
       return batch.selected;
     };
-    let retainedSelected = 0;
-    try {
-      if (pollTurn) {
-        try {
-          const page = await measure("sourcePoll", () =>
-            pollSource(
-              store,
-              source,
-              fetcher,
-              currentTime(),
-              "sync",
-              clock ?? null,
-            ),
-          );
-          throughput.sourceRecords += page.records;
-          result.sources += page.pages;
-          progress += page.pages;
-          if (page.complete || page.pages === 0 || page.records === 0)
-            completedPolls.add(sourceKey);
-        } catch (error) {
-          completedPolls.add(sourceKey);
-          if (!(error instanceof VendorDeferredError)) throw error;
-          result.deferred++;
-        }
-      }
-      if (expired()) return progress;
-      if (priority === "background") {
-        // Retained contacts with complete context get a bounded turn before
-        // historical ingestion can consume the remaining wall-time budget.
-        retainedSelected = await processRetainedContacts(true);
-        if (expired()) return progress;
-      }
+    const processRescan = async () => {
       const rescans = completedRescans.get(sourceKey) ?? new Set<string>();
       completedRescans.set(sourceKey, rescans);
       const rescan =
@@ -656,7 +625,8 @@ export async function tick(
           if (error instanceof VendorDeferredError) result.deferred++;
           else result.errors++;
         }
-      if (expired()) return progress;
+    };
+    const processContextReread = async () => {
       if (!stoppedRereads.has(rereadKey)) {
         try {
           const reread = await measure("contextReread", () =>
@@ -678,6 +648,65 @@ export async function tick(
           else result.errors++;
         }
       }
+    };
+    let retainedSelected = 0;
+    try {
+      if (pollTurn) {
+        try {
+          const page = await measure("sourcePoll", () =>
+            pollSource(
+              store,
+              source,
+              fetcher,
+              currentTime(),
+              "sync",
+              clock ?? null,
+            ),
+          );
+          throughput.sourceRecords += page.records;
+          result.sources += page.pages;
+          progress += page.pages;
+          if (page.complete || page.pages === 0 || page.records === 0)
+            completedPolls.add(sourceKey);
+        } catch (error) {
+          completedPolls.add(sourceKey);
+          if (!(error instanceof VendorDeferredError)) throw error;
+          result.deferred++;
+        }
+      }
+      if (expired()) return progress;
+      if (priority === "background") {
+        // Persist the next first lane before doing work: any one lane can
+        // consume the deadline or fail, but cannot keep the others behind it.
+        // This metadata stream is separate from source/context proof cursors.
+        const turn = await store
+          .statement(
+            "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) SELECT ?1,?2,'scheduler:background','{}',1,?3 WHERE EXISTS(SELECT 1 FROM leases WHERE tenant=?1 AND scope=?4 AND token=?5 AND fence=?6 AND expires_at>?3) AND EXISTS(SELECT 1 FROM connections WHERE tenant=?1 AND id=?2 AND kind='lofi' AND status='active') ON CONFLICT(tenant,connection,stream) DO UPDATE SET generation=cursors.generation+1,updated_at=excluded.updated_at RETURNING generation",
+            source.tenant,
+            source.id,
+            currentTime(),
+            lease.scope,
+            lease.token,
+            lease.fence,
+          )
+          .first<{ generation: number }>();
+        if (!turn) return progress;
+        const lanes = [
+          async () => {
+            retainedSelected = await processRetainedContacts(true);
+          },
+          processRescan,
+          processContextReread,
+        ];
+        const firstLane = (turn.generation - 1) % lanes.length;
+        for (const lane of [
+          ...lanes.slice(firstLane),
+          ...lanes.slice(0, firstLane),
+        ]) {
+          if (expired()) return progress;
+          await lane();
+        }
+      } else await processContextReread();
       if (expired()) return progress;
       if (priority === "live" || retainedSelected === 0)
         await processRetainedContacts();

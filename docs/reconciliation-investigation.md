@@ -83,6 +83,19 @@ zero additional history reads. Both ticks create zero attempts and perform zero
 vendor writes. This proves reuse and suppression of unchanged work for that
 fixture, without approving any exception.
 
+A separate local 20-contact, same-week measurement isolates the remaining
+database cost. The cold pass made 40 classifications using three history
+requests, 519 metered D1 RPCs and 1,147 statements in 4,979 ms. Forcing those
+synthetic contacts due again while retaining valid inventory made the same 40
+classifications with 40 cache hits and zero vendor reads, but still required
+467 RPCs / 939 statements in 3,626 ms. Of those warm RPCs, 400 were per-contact
+work: observation 40, preflight 40, inventory 160, adoption metadata/commit 80,
+remembered checks 40, source status 20 and queue completion 20. The other 67
+were scheduler/source/selection overhead. One auth-cleanup request precedes
+the meter in each run. These local synthetic results identify why shared
+partition comparison and guarded bulk result commits are the next throughput
+step; the timings are not production capacity measurements.
+
 Background processing selects batches of 20; live processing remains one
 contact at a time to reserve write capacity. The scheduler yields at a
 90-second or 850-D1-call soft budget; already-started work may finish afterward.
@@ -118,8 +131,56 @@ requests cold and four cached. Up to four read-only background contacts overlap
 database latency; live and export-enabled work remain sequential. Contacts
 sharing a destination/week wait for the preceding history turn, and the source
 cycle lease remains held until every started worker settles. These follow-up
-changes pass all 465 tests and required local checks; deployment and production
-measurements are next.
+changes pass all 465 tests and required local checks. They deployed at 16:37 UTC
+in `471e8620` as Worker `5d667922-2d09-4020-8fbd-46594a537750`; all 465 tests
+and required checks also passed in
+[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39988135604).
+
+The first follow-up run, **16:40:49–16:42:24 UTC**, processed **20 contacts**
+and made **29 destination classifications**, including one adoption, in
+**95.3 seconds**. It recorded three errors, eight deferrals, 25 inventory fetches
+and 14 cache hits. The 16:43 snapshot contains six completed QRZ partitions and
+17 completed LoTW partitions. All nineteen migrations remain applied, with zero
+attempts, cutovers or temporary guard rows. This is one run's improvement from
+the earlier two-contact baseline, not sustained unique-contact completion.
+
+Database wall time was **92.9 seconds**, across 667 RPCs / 1,171 statements;
+summed RPC latency was 234.0 seconds because requests overlapped. Source polling
+read one empty canonical page, but neither historical rescan nor operation
+reread advanced. Inspection confirms the ready batch can consume every turn's
+deadline before background source recovery runs. A durable fair rotation of
+background processing lanes is the next correction; simply waiting longer does
+not fix this ordering defect.
+
+Read-only metadata localizes the three failures to two QRZ initial scans and
+one LoTW initial scan. Both QRZ partitions had zero pages; the corresponding
+LoTW partitions had valid, completed zero-record reports. This suggests QRZ
+rejected empty initial selections, but does not prove its response or absence.
+The LoTW failure coincided with a persisted cooldown ending at 16:42:54 UTC,
+consistent with a temporary service response. Exact HTTP statuses were not
+retained. Add fixed-category aggregate error counters before relying on these
+inferences for further changes; never retain error messages or raw responses.
+
+The next run, **16:45:45–16:47:16 UTC**, processed 21 contacts and made 24
+destination classifications, including two adoptions, in 91.6 seconds. It
+advanced one rescan page and one context reread page, returning 30 source
+records, with seven errors and three deferrals. Database wall time was 78.5
+seconds over 545 RPCs / 1,203 statements. The 16:48 snapshot had 77 remembered
+destination checks spanning 57 contacts, nine complete QRZ partitions and
+eighteen complete LoTW partitions. Attempts, cutovers and guard residue remained
+zero. Context can progress when the ready batch leaves time, but the deadline
+ordering still permits starvation; durable rotation addresses that risk.
+
+The scheduler correction rotates the first background lane across retained
+contacts, historical rescan and context reread. It persists the next turn before
+starting work under the exact unexpired source-cycle lease. A slow or failed
+lane therefore yields first position next time. Canonical polling remains first,
+live work remains ordered, and the new metadata cursor cannot satisfy source
+coverage or cutover proofs. It adds one database request per background turn
+without a migration or vendor-budget change. Virtual-time regressions exercise
+all three lanes across deadline exhaustion and a history failure; additional
+races reject expired or replaced cycle leases. All 467 tests and required local
+checks pass. Deployment evidence is recorded separately after release.
 
 Cumulative stage/database durations may overlap under concurrency. The new
 `database.wallMs` reports elapsed time with any database request in flight;
@@ -290,7 +351,15 @@ be claimed from destination batching alone.
    safe. Background pages remain 25 contacts; batching alone does not remove the
    6.9-day lower bound for one 200,000-contact source pass. Preserve generation
    checks, fences, canonical freshness polling and live reservations.
-4. **Add durable continuations and targeted inventory wakeups.** Shared
+4. **Batch classification for contacts sharing inventory.** After source-lane
+   fairness, reduce the remaining per-contact D1 round trips by comparing a
+   bounded group against one validated partition and batching guarded result
+   commits. Preserve individual source generations, collision reservations,
+   account/credential checks and commit-time evidence fences. Increasing
+   concurrency or enqueueing the current per-contact function does not remove
+   those round trips. Measure both cold and warm inventories before expanding
+   parallelism.
+5. **Add durable continuations and targeted inventory wakeups.** Shared
    partitions and durable indexed due-work metadata are implemented, but
    Cloudflare Queue jobs are not. Move bounded page/partition continuations to a
    durable queue with idempotent, fenced commits and fair live reserves; retain
@@ -299,7 +368,7 @@ be claimed from destination batching alone.
    24-hour retry remains the backstop. Queue redelivery must not duplicate vendor
    work, as [Cloudflare delivery guarantees](https://developers.cloudflare.com/queues/reference/delivery-guarantees/)
    specify at-least-once delivery.
-5. **Prove complete capacity before broader rollout.** The indexed-selection
+6. **Prove complete capacity before broader rollout.** The indexed-selection
    benchmark and 20-contact integration fixture are complete; full 4,000 and
    200,000-contact end-to-end benchmarks remain open. Exercise
    synthetic contacts with realistic operation/event density, repeated calls,

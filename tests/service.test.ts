@@ -1537,3 +1537,179 @@ test("a failed contact finalizer retains the source lease until delayed workers 
     await h.mf.dispose();
   }
 });
+
+test("background lanes rotate across deadlines and failures while source polling stays first", async (t) => {
+  const h = await schedulerFixture();
+  let wall = FIXTURE_NOW;
+  const wallClock = t.mock.method(Date, "now", () => wall);
+  try {
+    h.errors.qrz = true;
+    h.errors.lotw = true;
+    const initial = await tick(h.env, h.fetcher, FIXTURE_NOW);
+    assert.equal(initial.contacts, 1);
+    assert.equal(initial.errors, 2);
+    h.errors.qrz = false;
+    h.errors.lotw = false;
+    await h.store
+      .statement("DELETE FROM cursors WHERE stream='scheduler:background'")
+      .run();
+    await h.store
+      .statement(
+        "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) VALUES('a','source','rescan:destination',?,0,?)",
+        JSON.stringify({
+          mode: "backfill",
+          operations: {},
+          qsos: {},
+          accountId: "account-fixture",
+          rescanComplete: false,
+        }),
+        FIXTURE_NOW,
+      )
+      .run();
+    await (
+      await h.store.putPrivate("a", "source", "pending-context", "source", {
+        ...h.operation,
+        uuid: "op-pending",
+      })
+    ).run();
+    await h.store
+      .statement(
+        "INSERT INTO source_work(tenant,source,id,kind,private_id,revision,expires_at,priority) VALUES('a','source','op-pending','operation','pending-context','synthetic-operation-revision',?,'background')",
+        FIXTURE_NOW + 86_400_000,
+      )
+      .run();
+    for (const [index, expected] of [
+      "retained",
+      "rescan",
+      "reread",
+    ].entries()) {
+      wall = FIXTURE_NOW + (index + 1) * 5 * 60_000;
+      const phases: string[] = [];
+      let syncs = 0;
+      const fetcher: typeof fetch = async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/v1/sync") {
+          phases.push(++syncs === 1 ? "source-poll" : "rescan");
+          if (syncs > 1) wall += 90_001;
+        } else if (url.pathname === "/v1/operations/op-pending/qsos") {
+          phases.push("reread");
+          wall += 90_001;
+          return Response.json({
+            qsos: [],
+            meta: { qsos: { records_left: 0 } },
+          });
+        } else if (url.hostname === "logbook.qrz.com") {
+          phases.push("retained");
+          wall += 90_001;
+          throw new Error("synthetic slow history outage");
+        }
+        return h.fetcher(input, init);
+      };
+      const result = await tick(h.env, fetcher, wall);
+      assert.deepEqual(phases, ["source-poll", expected]);
+      assert.equal(result.stopReason, "deadline");
+      assert.equal(result.exportsEnabled, false);
+      assert.equal(result.contacts, index === 0 ? 1 : 0);
+      assert.equal(result.errors, index === 0 ? 1 : 0);
+      assert.equal(result.throughput?.rescanPages, index === 1 ? 1 : 0);
+      assert.equal(result.throughput?.rereadPages, index === 2 ? 1 : 0);
+      const turn = await h.store
+        .statement(
+          "SELECT generation,cursor FROM cursors WHERE tenant='a' AND connection='source' AND stream='scheduler:background'",
+        )
+        .first<{ generation: number; cursor: string }>();
+      assert.deepEqual(turn, { generation: index + 1, cursor: "{}" });
+    }
+    assert.equal(
+      await count(h, "source_work", "id='op-pending' AND state='context'"),
+      1,
+    );
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(await count(h, "source_cutovers"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+    assert.equal(h.calls.lotwUploads, 0);
+  } finally {
+    wallClock.mock.restore();
+    await h.mf.dispose();
+  }
+});
+
+test("background rotation cannot advance after the source cycle lease is lost", async () => {
+  for (const loss of ["expired", "replaced"] as const) {
+    const h = await schedulerFixture();
+    try {
+      h.errors.qrz = true;
+      h.errors.lotw = true;
+      await tick(h.env, h.fetcher, FIXTURE_NOW);
+      h.errors.qrz = false;
+      h.errors.lotw = false;
+      const saved = await h.store
+        .statement(
+          "SELECT generation,updated_at FROM cursors WHERE tenant='a' AND connection='source' AND stream='scheduler:background'",
+        )
+        .first<{ generation: number; updated_at: number }>();
+      const before = { ...h.calls };
+      let invalidated = false;
+      const wrap = (statement: D1PreparedStatement): D1PreparedStatement =>
+        new Proxy(statement, {
+          get(target, property) {
+            if (property === "bind")
+              return (...values: unknown[]) => wrap(target.bind(...values));
+            const member = Reflect.get(target, property, target);
+            if (property === "first")
+              return async () => {
+                invalidated = true;
+                await h.store
+                  .statement(
+                    loss === "expired"
+                      ? "UPDATE leases SET expires_at=0 WHERE tenant='a' AND scope='cycle:source'"
+                      : "UPDATE leases SET token='replacement-worker',fence=fence+1 WHERE tenant='a' AND scope='cycle:source'",
+                  )
+                  .run();
+                return member.call(target);
+              };
+            return typeof member === "function" ? member.bind(target) : member;
+          },
+        });
+      const database = new Proxy(h.env.DB, {
+        get(target, property) {
+          if (property === "prepare")
+            return (sql: string) => {
+              const statement = target.prepare(sql);
+              return sql.startsWith("INSERT INTO cursors(") &&
+                sql.includes("'scheduler:background'")
+                ? wrap(statement)
+                : statement;
+            };
+          const member = Reflect.get(target, property, target);
+          return typeof member === "function" ? member.bind(target) : member;
+        },
+      });
+      const result = await tick(
+        { ...h.env, DB: database },
+        h.fetcher,
+        FIXTURE_NOW + 5 * 60_000,
+      );
+      assert(invalidated, loss);
+      assert.equal(result.contacts, 0, loss);
+      assert.equal(result.errors, 0, loss);
+      assert.deepEqual(
+        await h.store
+          .statement(
+            "SELECT generation,updated_at FROM cursors WHERE tenant='a' AND connection='source' AND stream='scheduler:background'",
+          )
+          .first(),
+        saved,
+        loss,
+      );
+      assert.equal(h.calls.qrzReads, before.qrzReads, loss);
+      assert.equal(h.calls.lotwQueries, before.lotwQueries, loss);
+      assert.equal(h.calls.reread, before.reread, loss);
+      assert.equal(await count(h, "attempts"), 0);
+      assert.equal(h.calls.qrzWrites, 0);
+      assert.equal(h.calls.lotwUploads, 0);
+    } finally {
+      await h.mf.dispose();
+    }
+  }
+});

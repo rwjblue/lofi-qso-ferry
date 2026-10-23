@@ -146,22 +146,30 @@ function extension(
   oid: string,
 ): string | undefined {
   const ext = cert.extensions.find((entry) => entry.id === oid);
-  if (!ext || typeof ext.value !== "string") return undefined;
+  if (!ext) return undefined;
+  if (typeof ext.value !== "string")
+    fail("Invalid certificate authorization encoding");
+  // TQSL reads these extension octets as raw DXCC/date text. Also accept the
+  // DER string wrappers used by other certificate producers and our fixtures.
+  if (/^(?:\d{1,3}|\d{4}-\d{2}-\d{2})$/.test(ext.value)) return ext.value;
   let value: forge.asn1.Asn1;
   try {
-    value = forge.asn1.fromDer(ext.value);
+    value = parseDer(ext.value);
   } catch {
-    return undefined;
+    fail("Invalid certificate authorization encoding");
   }
   if (
+    value.tagClass !== forge.asn1.Class.UNIVERSAL ||
+    value.constructed ||
     ![
       forge.asn1.Type.UTF8,
       forge.asn1.Type.PRINTABLESTRING,
       forge.asn1.Type.IA5STRING,
     ].includes(value.type) ||
-    typeof value.value !== "string"
+    typeof value.value !== "string" ||
+    !value.value.length
   )
-    return undefined;
+    fail("Invalid certificate authorization encoding");
   return value.value;
 }
 function date(value: string | undefined, optional: true): string | null;

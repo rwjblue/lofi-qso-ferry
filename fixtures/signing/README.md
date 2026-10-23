@@ -14,6 +14,8 @@ openssl pkcs12 -export -in fixtures/signing/second-certificate.pem -inkey fixtur
 
 Fresh salts/IVs change container bytes while imported keys and the signing vector stay identical. `openssl.cnf` records the synthetic LoTW attribute/extension OIDs and authorization dates. The certificates were generated on 2026-10-22 with 1,460-day leaf and 3,650-day root validity. Date-stable tests use 2027-01-01; connection tests deliberately enforce current certificate validity and will need fixture renewal before expiry.
 
+These PEM fixtures wrap custom extension values in DER strings. The signing tests also generate synthetic blank-password containers with TQSL's raw-text DXCC and QSO-date extension values, including malformed variants that must fail closed. No personal certificate or key is used in those tests.
+
 `vector.json` is an independently checked OpenSSL RSA/SHA-1 vector. To regenerate the signature, write its `canonical` property as ASCII bytes **without a trailing newline**, run `openssl dgst -sha1 -sign fixtures/signing/key.pem -out /tmp/ferry-vector.sig /tmp/ferry-canonical`, and Base64-encode the signature. Production signing uses WebCrypto in the Worker, not the OpenSSL CLI.
 
 The Wavelog MIT license accompanies the adapted field ordering. These generated fixtures and their associated tests do not establish LoTW server acceptance.

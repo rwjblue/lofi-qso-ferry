@@ -28,6 +28,34 @@ const importOptions = {
   certificateStatus: async () => "unrevoked" as const,
   version: "synthetic-v1",
 };
+const authorizationOids = {
+  first: "1.3.6.1.4.1.12348.1.2",
+  last: "1.3.6.1.4.1.12348.1.3",
+  dxcc: "1.3.6.1.4.1.12348.1.4",
+};
+function authorizationContainer(overrides: Record<string, string | null> = {}) {
+  const cert = forge.pki.certificateFromPem(
+    fixture("certificate.pem").toString(),
+  );
+  const key = forge.pki.privateKeyFromPem(fixture("key.pem").toString());
+  const claims = {
+    [authorizationOids.first]: "2020-01-01",
+    [authorizationOids.last]: "2030-12-31",
+    [authorizationOids.dxcc]: "291",
+    ...overrides,
+  };
+  cert.setExtensions([
+    ...cert.extensions.filter((extension) => !(extension.id in claims)),
+    ...Object.entries(claims).flatMap(([id, value]) =>
+      value === null ? [] : [{ id, value }],
+    ),
+  ]);
+  cert.sign(key, forge.md.sha256.create());
+  return Buffer.from(
+    forge.asn1.toDer(forge.pkcs12.toPkcs12Asn1(key, [cert], "")).getBytes(),
+    "binary",
+  );
+}
 
 test("legacy RC2/3DES and modern AES PKCS12 import verify MAC, matching RSA, dates and trusted chain", async () => {
   for (const name of ["legacy.p12", "current.p12"]) {
@@ -43,6 +71,92 @@ test("legacy RC2/3DES and modern AES PKCS12 import verify MAC, matching RSA, dat
     assert.equal(credential.qsoTo, "2030-12-31");
     assert.equal(credential.status, "unrevoked");
     assert.match(credential.privateKeyPkcs8, /BEGIN PRIVATE KEY/);
+  }
+});
+test("blank-password PKCS12 imports raw ARRL authorization text without granting trust", async () => {
+  for (const qsoTo of ["2030-12-31", null]) {
+    const credential = await importPkcs12(
+      authorizationContainer({ [authorizationOids.last]: qsoTo }),
+      "",
+      { now },
+    );
+    assert.equal(credential.callsign, "W1AW");
+    assert.equal(credential.dxcc, 291);
+    assert.equal(credential.qsoFrom, "2020-01-01");
+    assert.equal(credential.qsoTo, qsoTo);
+    assert.equal(credential.trusted, false);
+    assert.equal(credential.status, "unknown");
+  }
+});
+test("present malformed authorization claims cannot widen certificate QSO dates", async (t) => {
+  const asn = forge.asn1;
+  const der = (
+    value: string,
+    tagClass = asn.Class.UNIVERSAL,
+    constructed = false,
+  ) =>
+    asn
+      .toDer(
+        asn.create(
+          tagClass,
+          asn.Type.IA5STRING,
+          constructed,
+          constructed
+            ? [
+                asn.create(
+                  asn.Class.UNIVERSAL,
+                  asn.Type.IA5STRING,
+                  false,
+                  value,
+                ),
+              ]
+            : value,
+        ),
+      )
+      .getBytes();
+  for (const [name, oid, value, error] of [
+    ["empty optional raw date", authorizationOids.last, "", /encoding/],
+    ["empty optional DER date", authorizationOids.last, der(""), /encoding/],
+    [
+      "trailing DER bytes",
+      authorizationOids.last,
+      `${der("2030-12-31")}\0`,
+      /encoding/,
+    ],
+    [
+      "wrong DER class",
+      authorizationOids.last,
+      der("2030-12-31", asn.Class.CONTEXT_SPECIFIC),
+      /encoding/,
+    ],
+    [
+      "constructed DER string",
+      authorizationOids.last,
+      der("2030-12-31", asn.Class.UNIVERSAL, true),
+      /encoding/,
+    ],
+    ["invalid raw DXCC", authorizationOids.dxcc, "291garbage", /encoding/],
+    ["zero DXCC", authorizationOids.dxcc, "0", /DXCC authorization/],
+    ["invalid raw date", authorizationOids.last, "2030-1-01", /encoding/],
+    [
+      "impossible calendar date",
+      authorizationOids.last,
+      "2030-02-30",
+      /QSO date authorization/,
+    ],
+    [
+      "reversed QSO date bounds",
+      authorizationOids.last,
+      "2019-12-31",
+      /QSO date authorization/,
+    ],
+  ] as const) {
+    await t.test(name, async () => {
+      await assert.rejects(
+        importPkcs12(authorizationContainer({ [oid]: value }), "", { now }),
+        error,
+      );
+    });
   }
 });
 test("wrong password, damaged MAC, trailing ASN1 and oversized import fail closed", async () => {

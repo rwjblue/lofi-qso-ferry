@@ -44,6 +44,17 @@ export const providerDefinitions = {
       corrections: "changed_identity",
     },
   },
+  wavelog: {
+    name: "Wavelog",
+    role: "destination",
+    capabilities: {
+      readback: true,
+      templates: false,
+      confirmation: false,
+      submissionOnly: false,
+      corrections: "manual_review",
+    },
+  },
 } as const;
 
 export type ProviderKind = keyof typeof providerDefinitions;

@@ -39,6 +39,7 @@ import {
 } from "./signing.ts";
 import { renderNarrative } from "./templates.ts";
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
+import { wavelogDeliveryAdapter } from "./wavelog-delivery.ts";
 
 async function prepareQrz(ctx: PrepareContext): Promise<Preparation> {
   const { store, key, contact, gates, deps, row, connection, now } = ctx;
@@ -636,4 +637,5 @@ export const deliveryAdapters: Readonly<
     },
   },
   clublog: clublogDeliveryAdapter,
+  wavelog: wavelogDeliveryAdapter,
 };

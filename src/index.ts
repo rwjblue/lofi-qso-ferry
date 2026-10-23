@@ -1,13 +1,13 @@
-import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
 import { adminRoute } from "./admin.ts";
 import { isAdmin } from "./admin-access.ts";
+import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
 import { connectionRoute } from "./connections.ts";
 import { lofiAccountLabel } from "./lofi-identity.ts";
 import { lotwVerification } from "./lotw-verification.ts";
 import { reviewRoute } from "./review.ts";
+import { runScheduledTick } from "./scheduler-history.ts";
 import { boundedJson, keyring } from "./security.ts";
 import { deliveryGates, exportsEffective } from "./service.ts";
-import { runScheduledTick } from "./scheduler-history.ts";
 import {
   defaultTemplate,
   destinationTemplates,
@@ -19,6 +19,7 @@ import {
   TEMPLATE_PROFILE,
   validateTemplateVersion,
 } from "./templates.ts";
+import { parseWavelogAllowedBaseUrls } from "./wavelog-url.ts";
 
 function secured(response: Response): Response {
   const headers = new Headers(response.headers);
@@ -67,7 +68,12 @@ export default {
       if (request.method !== "GET") await checkCsrf(request, env);
       const admin = await adminRoute(request, env, identity);
       if (admin) return secured(admin);
-      const connection = await connectionRoute(request, env, identity);
+      const connection = await connectionRoute(request, env, identity, {
+        wavelogAllowedBaseUrls:
+          url.pathname === "/api/connections/wavelog"
+            ? parseWavelogAllowedBaseUrls(env.WAVELOG_ALLOWED_BASE_URLS || "[]")
+            : [],
+      });
       if (connection) return secured(connection);
       const store = new Store(env.DB, keyring(env));
       const review = await reviewRoute(request, store, identity.tenant);

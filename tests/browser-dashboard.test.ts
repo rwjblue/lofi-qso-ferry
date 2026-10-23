@@ -32,6 +32,7 @@ test("all current legacy connections remain visible and removed credentials perm
       ["qrz", ["active", "extra"]],
       ["lotw", ["cert"]],
       ["clublog", []],
+      ["wavelog", []],
     ],
   );
   assert.equal(groups[0]?.previous[0]?.id, "old");
@@ -63,6 +64,7 @@ test("friendly labels preserve distinctions between pending, paused and unverifi
   assert.equal(vendorName("lofi"), "LoFi");
   assert.equal(vendorName("lotw"), "LoTW");
   assert.equal(vendorName("clublog"), "Club Log");
+  assert.equal(vendorName("wavelog"), "Wavelog");
   assert.equal(connectionStatus("disabled"), "Paused");
   assert.equal(connectionStatus("approval_pending"), "Approval pending");
   assert.equal(connectionStatus("needs_verification"), "Verification needed");

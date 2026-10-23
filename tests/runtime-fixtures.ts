@@ -66,6 +66,7 @@ export function fixtureEnvironment(db: D1Database): Env {
     ROLLOUT_CHECKS_PASSED: "false",
     SOURCE_BOUNDARY_VERIFIED: "false",
     ROLLOUT_QSO_IDS_JSON: "[]",
+    WAVELOG_ALLOWED_BASE_URLS: "[]",
     KEK_V1: keys.keys["1"],
     AUTH_SECRET: "synthetic-auth-secret-32-characters",
     RESEND_API_KEY: "",

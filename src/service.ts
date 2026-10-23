@@ -29,6 +29,9 @@ import type { Connection, LedgerKey } from "./store.ts";
 import { Store } from "./store.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
+import { WavelogError } from "./wavelog.ts";
+import { WavelogProvisioningError } from "./wavelog-stations.ts";
+import { parseWavelogAllowedBaseUrls } from "./wavelog-url.ts";
 export function deliveryGates(env: Env): DeliveryGates {
   const scope: unknown = JSON.parse(env.ROLLOUT_QSO_IDS_JSON || "[]");
   if (!Array.isArray(scope) || scope.some((v) => typeof v !== "string"))
@@ -75,6 +78,7 @@ async function reconcileContact(
   priority: VendorPriority,
   vendorNow: number | undefined,
   clublogApiKey?: string,
+  wavelogAllowedBaseUrls?: readonly string[],
 ) {
   const key: LedgerKey = {
     tenant: source.tenant,
@@ -120,6 +124,7 @@ async function reconcileContact(
       }),
       clublogApiKey,
       config,
+      wavelogAllowedBaseUrls,
     },
   );
   const evidence: ReconciliationEvidence = {
@@ -176,6 +181,9 @@ export async function tick(
   const deps = {
     fetcher,
     clublogApiKey: env.CLUBLOG_API_KEY,
+    wavelogAllowedBaseUrls: parseWavelogAllowedBaseUrls(
+      env.WAVELOG_ALLOWED_BASE_URLS || "[]",
+    ),
     ...(clock === undefined ? {} : { now: clock }),
   };
   const certificateRefresh = await refreshLotwCertificates(store, deps);
@@ -363,6 +371,7 @@ export async function tick(
                 priority,
                 clock,
                 env.CLUBLOG_API_KEY,
+                deps.wavelogAllowedBaseUrls,
               );
               if (expired()) break;
               const key = {
@@ -406,7 +415,12 @@ export async function tick(
                   "UPDATE ledger SET reason=? WHERE tenant=? AND source=? AND qso=? AND destination=?",
                   error instanceof ClubLogError && error.kind === "blocked"
                     ? "clublog_projection_or_route_unsupported"
-                    : "Destination readback unavailable; retry automatically",
+                    : error instanceof WavelogProvisioningError
+                      ? error.reason
+                      : error instanceof WavelogError &&
+                          error.kind === "blocked"
+                        ? "wavelog_projection_or_route_unsupported"
+                        : "Destination readback unavailable; retry automatically",
                   source.tenant,
                   source.id,
                   contact.id,

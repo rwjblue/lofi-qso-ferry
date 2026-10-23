@@ -93,7 +93,7 @@ export function workloadSourceStatement(env: Env, now: number) {
           WHEN l.reason IN('Multiple connections match this station; resolve routing','No connection matches this station and date',
             'qrz_station_or_date_route_mismatch','lotw_station_route_mismatch','clublog_station_route_mismatch') THEN 'routing'
           WHEN l.state IN('history_mismatch','history_ambiguous','historical_unverified') THEN 'history_review'
-          WHEN l.reason='clublog_projection_or_route_unsupported' THEN 'delivery_review'
+          WHEN l.reason='clublog_projection_or_route_unsupported' OR (l.reason GLOB 'wavelog_*' AND l.reason!='wavelog_qso_missing') THEN 'delivery_review'
           WHEN l.reason='Source replay/cutover evidence is not yet verified; absence cannot authorize backfill' THEN 'source_boundary'
           WHEN l.state IN('missing_current_identity','changed','live_new') THEN CASE
             WHEN ?2=0 THEN 'exports_disabled'

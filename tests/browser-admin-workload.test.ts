@@ -38,6 +38,7 @@ test("delivery breakdown includes Club Log counts and rates without counting pen
     qrz: 0,
     lotw: 12,
     clublog: 24,
+    wavelog: 0,
     lastCompletedAt: hour,
     buckets: [],
     submittedOutstanding: 7,
@@ -47,6 +48,7 @@ test("delivery breakdown includes Club Log counts and rates without counting pen
     { kind: "qrz", label: "QRZ Logbook", completed: 0, perHour: 0 },
     { kind: "lotw", label: "LoTW", completed: 12, perHour: 0.5 },
     { kind: "clublog", label: "Club Log", completed: 24, perHour: 1 },
+    { kind: "wavelog", label: "Wavelog", completed: 0, perHour: 0 },
   ]);
 });
 

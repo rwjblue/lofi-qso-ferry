@@ -31,6 +31,8 @@ import {
 } from "./signing.ts";
 import { type Connection, Store } from "./store.ts";
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
+import { WavelogClient, WavelogError } from "./wavelog.ts";
+import { normalizeWavelogBaseUrl } from "./wavelog-url.ts";
 
 class ConnectionError extends Error {
   constructor(
@@ -362,6 +364,7 @@ function book(value: unknown): QrzBook {
 }
 export interface ConnectionServices {
   fetcher?: typeof fetch;
+  wavelogAllowedBaseUrls?: readonly string[];
 }
 export async function connectionRoute(
   request: Request,
@@ -592,6 +595,128 @@ export async function connectionRoute(
           status: "active",
           message:
             "Club Log access verified. Saving credentials does not export contacts.",
+        },
+        201,
+      );
+    }
+    if (path === "/api/connections/wavelog") {
+      const allowed = services.wavelogAllowedBaseUrls ?? [];
+      if (!allowed.length)
+        throw new ConnectionError(
+          503,
+          "Wavelog is not configured on this server. Ask the operator to allow your instance URL.",
+          "wavelog_not_configured",
+        );
+      let baseUrl: string;
+      try {
+        baseUrl = normalizeWavelogBaseUrl(
+          text(input.baseUrl, "Wavelog instance URL", 2048),
+        );
+      } catch {
+        throw new ConnectionError(
+          400,
+          "Enter a valid HTTPS Wavelog instance URL",
+        );
+      }
+      if (!allowed.some((value) => normalizeWavelogBaseUrl(value) === baseUrl))
+        throw new ConnectionError(
+          403,
+          "This Wavelog instance has not been allowed by the server operator.",
+          "wavelog_instance_not_allowed",
+        );
+      const token = text(input.token, "Wavelog API token", 4096);
+      const stationCallsign = text(
+        input.stationCallsign,
+        "Wavelog station callsign",
+        20,
+      ).toUpperCase();
+      if (!/^[A-Z0-9]+(?:\/[A-Z0-9]+)*$/.test(stationCallsign))
+        throw new ConnectionError(400, "Invalid Wavelog station callsign");
+      const logbookId = input.logbookId;
+      if (
+        typeof logbookId !== "number" ||
+        !Number.isSafeInteger(logbookId) ||
+        logbookId <= 0
+      )
+        throw new ConnectionError(400, "Enter a valid Wavelog logbook ID");
+      if (input.autoCreateStations !== true || input.outboundPolicy !== "ferry")
+        throw new ConnectionError(
+          400,
+          "Confirm automatic station creation and Ferry-managed external uploads.",
+        );
+      const credential = { baseUrl, token };
+      const client = new WavelogClient(credential, {
+        allowedBaseUrls: allowed,
+        fetcher: vendorFetch(store, "wavelog", services.fetcher, {
+          priority: "live",
+          scope: baseUrl,
+        }),
+      });
+      const verified = await client.verifyLogin([
+        "station:read",
+        "station:write",
+        "qso:read",
+        "qso:write",
+        "logbook:read",
+        "logbook:write",
+      ]);
+      const remoteIdentity = `account:${await sha256(
+        canonical({
+          baseUrl,
+          ownerId: verified.user_id,
+          logbookId,
+          stationCallsign,
+        }),
+      )}`;
+      await assertConnectionSlot(
+        store,
+        identity.tenant,
+        "wavelog",
+        remoteIdentity,
+      );
+      const logbook = await client.getLogbook(logbookId);
+      const stations = await client.listStations();
+      if (
+        logbook.id !== logbookId ||
+        logbook.station_ids.some(
+          (id) =>
+            stations
+              .find((station) => station.id === id)
+              ?.callsign.toUpperCase() !== stationCallsign,
+        )
+      )
+        throw new ConnectionError(
+          400,
+          "Choose an empty logbook or one containing station locations for this callsign only.",
+          "wavelog_logbook_mismatch",
+        );
+      const saved = await saveVerifiedConnection(
+        store,
+        identity.tenant,
+        {
+          kind: "wavelog",
+          remoteIdentity,
+          label: `Wavelog ${stationCallsign}`,
+          credential,
+          config: {
+            baseUrl,
+            ownerId: verified.user_id,
+            stationCallsign,
+            logbookId,
+            autoCreateStations: true,
+            outboundPolicy: "ferry",
+            readAccess: true,
+          },
+        },
+        identity,
+        {},
+      );
+      return json(
+        {
+          id: saved.id,
+          status: "active",
+          message:
+            "Wavelog access and logbook verified. Saving credentials does not create stations or export contacts.",
         },
         201,
       );
@@ -834,7 +959,7 @@ export async function connectionRoute(
       const results = await store.db.batch<{ status: string }>([
         sessionGuard(store, identity, now),
         store.statement(
-          "UPDATE connections SET status=CASE WHEN kind='clublog' AND json_extract(config,'$.credentialRejected')=1 THEN 'needs_verification' ELSE ? END WHERE tenant=? AND id=? AND status='disabled' AND credential_version=? RETURNING status",
+          "UPDATE connections SET status=CASE WHEN kind IN('clublog','wavelog') AND json_extract(config,'$.credentialRejected')=1 THEN 'needs_verification' ELSE ? END WHERE tenant=? AND id=? AND status='disabled' AND credential_version=? RETURNING status",
           requestedStatus,
           identity.tenant,
           id,
@@ -855,8 +980,9 @@ export async function connectionRoute(
         id,
         status,
         message:
-          connection.kind === "clublog" && status === "needs_verification"
-            ? "Club Log credentials still need verification. Update credentials before delivery can resume."
+          (connection.kind === "clublog" || connection.kind === "wavelog") &&
+          status === "needs_verification"
+            ? `${providerName(connection.kind)} credentials still need verification. Update credentials before delivery can resume.`
             : "Connection resumed. Export rollout gates still apply.",
       });
     }
@@ -934,6 +1060,18 @@ export async function connectionRoute(
       return json(
         { error: error.message, ...(error.code ? { code: error.code } : {}) },
         error.status,
+      );
+    if (
+      error instanceof WavelogError &&
+      error.code === "required_scopes_missing"
+    )
+      return json(
+        {
+          code: "wavelog_scopes_missing",
+          error:
+            "The Wavelog API token needs station, logbook, and QSO read/write scopes.",
+        },
+        400,
       );
     // Vendor exceptions, input parsing and crypto errors may embed secrets; never echo them.
     return json(

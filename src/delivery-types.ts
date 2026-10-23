@@ -11,6 +11,7 @@ import type {
   Store,
 } from "./store.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
+import type { WavelogStationSpec } from "./wavelog.ts";
 
 export interface DeliveryGates {
   exportsEnabled: boolean;
@@ -24,6 +25,7 @@ export interface DeliveryDependencies {
   sign?: typeof buildSignedTq8;
   priority?: VendorPriority;
   clublogApiKey?: string;
+  wavelogAllowedBaseUrls?: readonly string[];
 }
 interface PayloadBase {
   projectionHash: string;
@@ -54,7 +56,22 @@ export interface ClublogPayload extends PayloadBase {
   retainedRemoteIds: string[];
   mode: "live" | "background";
 }
-export type PreparedPayload = QrzPayload | LotwPayload | ClublogPayload;
+export interface WavelogPayload extends PayloadBase {
+  kind: "wavelog";
+  operation: "insert";
+  record: AdifRecord;
+  station: WavelogStationSpec;
+  stationKey: string;
+  stationId: number | null;
+  logbookId: number;
+  remoteId: null;
+  naturalIdentity: string;
+}
+export type PreparedPayload =
+  | QrzPayload
+  | LotwPayload
+  | ClublogPayload
+  | WavelogPayload;
 export interface DeliveryResult {
   state:
     | "prepared"

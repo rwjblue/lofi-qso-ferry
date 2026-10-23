@@ -2,20 +2,20 @@
 
 Verified 2026-10-23 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
 
-| Resource                 | Current value                                                                                                                                                                                                                                                                                   |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                                                                                                                                                                                                           |
-| Worker                   | `lofi-qso-ferry`, environment `production`                                                                                                                                                                                                                                                      |
-| Deployed source revision | `de6259ee8bc7b69e66b983926659e2bd154c1995`                                                                                                                                                                                                                                                      |
-| Worker version           | `e712842f-71c4-4ec6-b807-69ab9fb1d112`, 100% of traffic                                                                                                                                                                                                                                         |
-| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                                                                                                                                                                                                                   |
-| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                                                                                                                                                                                                                |
-| Migrations               | `0001_foundation`, `0002_auth`, `0004_intake`, `0005_cutover`, `0006_account_templates`, `0007_invitations`, `0008_connection_policy`, `0009_vendor_requests`, `0010_source_priority`, `0011_admin_metrics`, `0012_admin_invitations`, `0013_lotw_trust`, `0014_retire_lotw_trust`, all applied |
-| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                                                                                                                                                                                                               |
-| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                                                                                                                                                                                                            |
-| Schedule                 | `*/5 * * * *`                                                                                                                                                                                                                                                                                   |
-| Alternate origins        | workers.dev and version previews disabled                                                                                                                                                                                                                                                       |
-| Artifact                 | 1,630.61 KiB raw / 312.34 KiB gzip; reported startup 43 ms                                                                                                                                                                                                                                      |
+| Resource                 | Current value                                                                                                                                                                                                                                                                                                          |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                                                                                                                                                                                                                                  |
+| Worker                   | `lofi-qso-ferry`, environment `production`                                                                                                                                                                                                                                                                             |
+| Deployed source revision | `9eef564af80d449a99227ae1099bd11fc8bff64a`                                                                                                                                                                                                                                                                             |
+| Worker version           | `ca6bc362-f675-4b96-9831-8c466391aa49`, 100% of traffic                                                                                                                                                                                                                                                                |
+| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                                                                                                                                                                                                                                          |
+| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                                                                                                                                                                                                                                       |
+| Migrations               | `0001_foundation`, `0002_auth`, `0004_intake`, `0005_cutover`, `0006_account_templates`, `0007_invitations`, `0008_connection_policy`, `0009_vendor_requests`, `0010_source_priority`, `0011_admin_metrics`, `0012_admin_invitations`, `0013_lotw_trust`, `0014_retire_lotw_trust`, `0015_admin_workload`, all applied |
+| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                                                                                                                                                                                                                                      |
+| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                                                                                                                                                                                                                                   |
+| Schedule                 | `*/5 * * * *`                                                                                                                                                                                                                                                                                                          |
+| Alternate origins        | workers.dev and version previews disabled                                                                                                                                                                                                                                                                              |
+| Artifact                 | 1,648.91 KiB raw / 316.66 KiB gzip; reported startup 47 ms                                                                                                                                                                                                                                                             |
 
 The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
 
@@ -39,7 +39,7 @@ ROLLOUT_QSO_IDS_JSON=[]
 - Session endpoint returns unauthenticated state with `signupAllowed=false`. The public landing shows an invite-only notice and passkey sign-in; the signup form is hidden. A live uninvited signup probe returned 403 before proof creation or sending.
 - Following the invitation link stays at `/join`, serves the app without the asset-canonicalization redirect, reveals invited enrollment and focuses its email field. Both confirmation inputs expose six-digit numeric/one-time-code attributes.
 - Remote settings independently confirm every closed gate, exact origin/RP, dedicated D1 and sender allowlist. Production local-mailbox and alternate workers.dev endpoints return 404. Email-content previews remain disabled, and no secrets were rotated.
-- Earlier full isolated checks passed **232 tests**, formatting, recommended lint with warnings as errors, types and build. Actual workerd exercises hosted invited registration and native adapter fetches through contained fixtures. Actual isolated Wrangler/D1/Chromium signup and passkey sign-in verify quiet40 and account-default template saves with zero connections, including persistence after reload. The latest deployment passed **328 tests** and the full checks recorded below.
+- Earlier full isolated checks passed **232 tests**, formatting, recommended lint with warnings as errors, types and build. Actual workerd exercises hosted invited registration and native adapter fetches through contained fixtures. Actual isolated Wrangler/D1/Chromium signup and passkey sign-in verify quiet40 and account-default template saves with zero connections, including persistence after reload. The latest deployment passed **344 tests** and the full checks recorded below.
 - Read-only remote D1 probes verified that the invite task must use query results, rather than bulk-file import summaries, to establish an exact email/deadline grant. Existing OAuth includes Email Sending write access. No real invitation grant/send was performed; CLI sends still require recipient-specific delivery confirmation.
 - The initial deployment delivered one real verification message to the owner's inbox through the same native provider path; only fixed delivery metadata was inspected. That smoke test enrolled no production account and initially observed zero account/connection/ledger/attempt rows. These are historical counts, not a claim about subsequent personal use. New branded mail was rendered/tested locally; email-client/device autofill remains unverified.
 
@@ -176,3 +176,37 @@ JavaScript exactly match the release files; unauthenticated review remains 401
 with no-store and the production local mailbox remains absent. Deployment metadata
 independently confirms every export gate is closed. Verification submitted no
 contacts and changed no real logbook entries.
+
+
+## Classified admin workload deployment
+
+Deployed signed main revision `9eef564af80d449a99227ae1099bd11fc8bff64a`
+as Worker `ca6bc362-f675-4b96-9831-8c466391aa49` at
+`2026-10-23T13:39:13.890Z`, receiving 100% of traffic. The guarded deployment
+applied migration `0015_admin_workload.sql` before deploying; all fourteen
+migrations are applied. Its six nullable scheduler columns preserve missing
+historical breakdowns as unknown, and its indexes support workload and delivery
+summaries. No application secrets changed.
+
+The admin console now distinguishes ready processing, known holds, invalid
+source records, and expired inputs. It shows sanitized reasons, hourly backlog
+trends with coverage and gaps, and completed destination-contact versions derived
+from durable attempt events. Repeated processing, LoTW submission acknowledgements,
+and adopted existing history do not inflate delivery throughput. See the
+[workload investigation](admin-workload-investigation.md) and
+[metric definitions](admin.md).
+
+Live `/admin`, `/admin.js`, `/admin.css`, and `/app.js` exactly match the release
+files. Health reports `status=ok` with exports disabled. Unauthenticated admin
+overview and invitation requests return 401 with no-store, the session remains
+invite-only, and the production local mailbox returns 404. Independent version
+metadata confirms all export gates closed, the existing origin/RP, and the
+dedicated production D1. New classified samples accumulate on normal scheduled
+runs; the pre-deployment history cannot supply their breakdown.
+
+All 344 tests, formatting, lint, both typechecks, and the Worker build passed.
+[GitHub CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39961544700)
+passed for the deployed revision. Desktop and mobile layouts were verified
+with synthetic data before release. The uploaded artifact is 1,648.91 KiB raw /
+316.66 KiB gzip with reported startup 47 ms, not a measurement of billed CPU.
+Verification performed no invitation sends or real logbook uploads.

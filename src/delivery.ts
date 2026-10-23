@@ -169,11 +169,25 @@ function countyLotw(county: string, state: string | undefined): string {
 }
 /** Structured fields are validated independently of all narrative templates. */
 export function contactAdif(contact: Contact): AdifRecord {
-  if (contact.deleted) throw new Error("Deleted contacts cannot be exported");
   if (contact.startAtMillis % 1000)
     throw new Error(
-      "Subsecond contact precision has no verified destination mapping",
+      "Subsecond export requires a verified destination identity claim",
     );
+  return structuredContactAdif(contact);
+}
+/**
+ * Read-only history comparison follows PoLo/HaLo's documented ADIF projection:
+ * retain UTC seconds and omit milliseconds without rounding. The source contact,
+ * generation and fingerprint keep their full precision. This does not authorize
+ * exporting a fractional timestamp; preparation still requires a durable claim
+ * that excludes other source UUIDs with the same destination identity.
+ * Primary implementation references are recorded in docs/evidence-qrz.md.
+ */
+export function contactReconciliationAdif(contact: Contact): AdifRecord {
+  return structuredContactAdif(contact);
+}
+function structuredContactAdif(contact: Contact): AdifRecord {
+  if (contact.deleted) throw new Error("Deleted contacts cannot be exported");
   const iso = new Date(contact.startAtMillis).toISOString();
   const record: AdifRecord = {
     STATION_CALLSIGN: contact.stationCall,
@@ -392,6 +406,8 @@ export async function prepareDue(
   if (gates.allowedQsoIds && !gates.allowedQsoIds.includes(key.qso))
     return { state: "blocked", reason: "qso_outside_rollout_scope" };
   const row = await store.ledger(key);
+  if (row?.provenance === "adoption_conflict")
+    return { state: "blocked", reason: "remote_identity_claim_conflict" };
   if (
     !row ||
     row.generation !== contact.generation ||
@@ -401,6 +417,11 @@ export async function prepareDue(
     !["missing_current_identity", "changed", "live_new"].includes(row.state)
   )
     return { state: "skipped", reason: "not_due_or_current" };
+  if (contact.startAtMillis % 1000)
+    return {
+      state: "blocked",
+      reason: "subsecond_export_requires_identity_claim",
+    };
   const unresolved = await store
     .statement(
       "SELECT 1 n FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled') LIMIT 1",
@@ -623,11 +644,6 @@ export async function prepareDue(
       ...(route.iota ? { iota: route.iota } : {}),
     };
     const iso = new Date(contact.startAtMillis).toISOString();
-    if (contact.startAtMillis % 1000)
-      return {
-        state: "blocked",
-        reason: "lotw_subsecond_precision_unverified",
-      };
     const lotwContact: LotwContact = {
       id: contact.id,
       generation: contact.generation,

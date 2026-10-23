@@ -11,10 +11,15 @@ import {
   pollSource,
   rereadOperation,
 } from "../src/intake.ts";
-import { LoFiError, type SourceRecord } from "../src/lofi.ts";
+import {
+  type LoFiCredentials,
+  LoFiError,
+  type SourceRecord,
+} from "../src/lofi.ts";
 import { purgeResolvedSource } from "../src/maintenance.ts";
 import { sourceFingerprint } from "../src/projection.ts";
 import { adoptHistory } from "../src/reconcile.ts";
+import { seal } from "../src/security.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
 import { database, seed } from "./helpers.ts";
 
@@ -143,6 +148,232 @@ async function work(
     )
     .first<Work & { processed_at: number }>();
 }
+
+test("source polls and operation rereads retain renewed bearers after success, failure and budget deferral", async (t) => {
+  for (const read of ["poll", "reread"] as const) {
+    for (const outcome of ["success", "failure", "deferred"] as const) {
+      await t.test(`${read}: ${outcome}`, async (t) => {
+        const { store, source, now, mf } = await setup();
+        t.after(() => mf.dispose());
+        await pollSource(store, source, async () => response([op], []), now);
+        const at = Math.floor(now / 300_000) * 300_000 + 300_001;
+        if (outcome === "deferred")
+          await store
+            .statement(
+              "UPDATE vendor_requests SET window_start=?,requests=2,background_requests=2 WHERE vendor='lofi'",
+              at - 1,
+            )
+            .run();
+        const requests: string[] = [];
+        const pages = fetcher(async (url, init) => {
+          requests.push(url.pathname);
+          if (url.pathname === "/v1/client")
+            return Response.json({ token: "renewed-token" });
+          if (
+            new Headers(init?.headers).get("Authorization") !==
+            "Bearer renewed-token"
+          )
+            return new Response(null, { status: 401 });
+          if (outcome === "failure") return new Response(null, { status: 500 });
+          assert.notEqual(
+            outcome,
+            "deferred",
+            "budget must reject the retry before I/O",
+          );
+          return read === "poll" ? response([], []) : operationResponse([qso]);
+        });
+        const run = (fetcher: typeof fetch, time: number) =>
+          read === "poll"
+            ? pollSource(store, source, fetcher, time, "rescan:fixture")
+            : rereadOperation(store, source, fetcher, time);
+        const before = await store
+          .statement(
+            "SELECT cursor FROM cursors WHERE stream=?",
+            read === "poll" ? "rescan:fixture" : "reread:op-1",
+          )
+          .first();
+        if (outcome === "success") await run(pages, at);
+        else {
+          await assert.rejects(run(pages, at), (error: unknown) =>
+            outcome === "deferred"
+              ? error instanceof VendorDeferredError && !error.requestSent
+              : error instanceof LoFiError &&
+                error.message === "vendor_http_error",
+          );
+          assert.deepEqual(
+            await store
+              .statement(
+                "SELECT cursor FROM cursors WHERE stream=?",
+                read === "poll" ? "rescan:fixture" : "reread:op-1",
+              )
+              .first(),
+            before,
+            "credential renewal cannot advance source coverage",
+          );
+        }
+        assert.equal(requests.length, outcome === "deferred" ? 2 : 3);
+        assert.equal(
+          requests.filter((path) => path === "/v1/client").length,
+          1,
+        );
+        const saved = await store.private<LoFiCredentials>(
+          "a",
+          "source",
+          "v2",
+          "credential",
+        );
+        assert.deepEqual(saved, {
+          key: "browser:fixture",
+          secret: "fixture-secret",
+          token: "renewed-token",
+        });
+        assert.equal(
+          (await store.connection("a", "source"))?.credential_version,
+          "v2",
+        );
+        await store
+          .statement("DELETE FROM cursors WHERE stream='rescan:fixture'")
+          .run();
+        await store
+          .statement(
+            "UPDATE source_work SET state='pending' WHERE kind='operation'",
+          )
+          .run();
+        let subsequentRequests = 0;
+        await run(
+          fetcher(async (url, init) => {
+            subsequentRequests++;
+            assert.notEqual(url.pathname, "/v1/client");
+            assert.equal(
+              new Headers(init?.headers).get("Authorization"),
+              "Bearer renewed-token",
+            );
+            return read === "poll"
+              ? response([], [])
+              : operationResponse([qso]);
+          }),
+          at + 300_000,
+        );
+        assert.equal(
+          subsequentRequests,
+          1,
+          "the next page must reuse the saved bearer",
+        );
+      });
+    }
+  }
+});
+
+test("late source renewals cannot overwrite a concurrent renewal or changed connection credentials", async (t) => {
+  for (const read of ["poll", "reread"] as const) {
+    for (const change of [
+      "renewal",
+      "replacement",
+      "revocation",
+      "identity",
+    ] as const) {
+      await t.test(`${read}: ${change}`, async (t) => {
+        const { store, source, now, mf } = await setup();
+        t.after(() => mf.dispose());
+        await pollSource(store, source, async () => response([op], []), now);
+        const at = Math.floor(now / 300_000) * 300_000 + 300_001;
+        const readEnvelope = () =>
+          store
+            .statement(
+              "SELECT envelope FROM private_data WHERE tenant='a' AND connection='source' AND id='v2' AND kind='credential'",
+            )
+            .first<{ envelope: string }>();
+        let expected = (await readEnvelope())!.envelope;
+        const pages = fetcher(async (url, init) => {
+          if (url.pathname === "/v1/client")
+            return Response.json({ token: "late-token" });
+          if (
+            new Headers(init?.headers).get("Authorization") !==
+            "Bearer late-token"
+          )
+            return new Response(null, { status: 401 });
+          if (change === "renewal") {
+            expected = JSON.stringify(
+              await seal(
+                {
+                  key: "browser:fixture",
+                  secret: "fixture-secret",
+                  token: "concurrent-token",
+                },
+                {
+                  tenant: "a",
+                  connection: "source",
+                  id: "v2",
+                  kind: "credential",
+                  purpose: "storage",
+                },
+                store.keys,
+              ),
+            );
+            await store
+              .statement(
+                "UPDATE private_data SET envelope=? WHERE tenant='a' AND connection='source' AND id='v2' AND kind='credential'",
+                expected,
+              )
+              .run();
+          } else if (change === "replacement") {
+            await (
+              await store.putPrivate("a", "source", "v3", "credential", {
+                key: "browser:replacement",
+                secret: "new-secret",
+                token: "new-token",
+              })
+            ).run();
+            await store
+              .statement(
+                "UPDATE connections SET credential_version='v3' WHERE tenant='a' AND id='source'",
+              )
+              .run();
+          } else if (change === "revocation") {
+            await store
+              .statement(
+                "UPDATE private_data SET revoked_at=? WHERE tenant='a' AND connection='source' AND id='v2' AND kind='credential'",
+                now,
+              )
+              .run();
+            await store
+              .statement(
+                "UPDATE connections SET status='disabled' WHERE tenant='a' AND id='source'",
+              )
+              .run();
+          } else {
+            await store
+              .statement(
+                "UPDATE connections SET remote_identity='another-account' WHERE tenant='a' AND id='source'",
+              )
+              .run();
+          }
+          return read === "poll" ? response([], []) : operationResponse([qso]);
+        });
+        const pending =
+          read === "poll"
+            ? pollSource(store, source, pages, at)
+            : rereadOperation(store, source, pages, at);
+        if (change === "replacement" || change === "revocation")
+          await assert.rejects(pending, /source connection changed/);
+        else await pending;
+        assert.equal((await readEnvelope())?.envelope, expected);
+        if (change === "replacement")
+          assert.equal(
+            (
+              await store.private<LoFiCredentials>(
+                "a",
+                "source",
+                "v3",
+                "credential",
+              )
+            )?.token,
+            "new-token",
+          );
+      });
+    }
+  }
+});
 
 test("contact batches count invalid selections and exclude work already handled in the drain", async (t) => {
   const state = await setup();

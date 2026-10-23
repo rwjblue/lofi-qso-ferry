@@ -77,6 +77,138 @@ test("an idle drain polls a completed source and processes each contact only onc
     await h.mf.dispose();
   }
 });
+test("read-only reconciliation retries fractional source timestamps and adopts whole-second history", async () => {
+  const h = await schedulerFixture();
+  try {
+    h.qso.startAtMillis = Number(h.qso.startAtMillis) + 789;
+    h.errors.qrz = true;
+    h.errors.lotw = true;
+    const first = await tick(h.env, h.fetcher, FIXTURE_NOW);
+    assert.equal(first.errors, 2);
+    h.errors.qrz = false;
+    h.errors.lotw = false;
+    const retry = await tick(h.env, h.fetcher, FIXTURE_NOW + 5 * 60_000);
+    assert.equal(retry.errors, 0);
+    assert(h.calls.qrzReads > 0);
+    assert(h.calls.lotwQueries > 0);
+    for (const destination of ["destination", "lotw"]) {
+      const row = (await h.store.ledger(key(destination)))!;
+      assert.equal(row.state, "adopted_existing");
+      assert.equal(row.reason, null);
+      assert.equal(row.sent_hash, null);
+      assert.equal(row.source_hash, row.baseline_hash);
+    }
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+    assert.equal(h.calls.lotwUploads, 0);
+    assert.equal(Number(h.qso.startAtMillis) % 1000, 789);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+test("closed export gates preserve ambiguous and mismatched history reasons", async () => {
+  const h = await schedulerFixture();
+  try {
+    h.qrzRecords.push({ ...h.qrzRecords[0], APP_QRZLOG_LOGID: "501" });
+    h.lotwRecords[0].MY_GRIDSQUARE = "FN32BB";
+    const result = await tick(h.env, h.fetcher, FIXTURE_NOW);
+    assert.equal(result.errors, 0);
+    const qrz = (await h.store.ledger(key("destination")))!;
+    const lotw = (await h.store.ledger(key("lotw")))!;
+    assert.equal(qrz.state, "history_ambiguous");
+    assert.equal(lotw.state, "history_mismatch");
+    for (const row of [qrz, lotw]) {
+      assert(row.reason);
+      assert.notEqual(row.reason, "qso_outside_rollout_scope");
+    }
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+    assert.equal(h.calls.lotwUploads, 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+test("source identity conflicts remain visible without repeating vendor reads", async () => {
+  const h = await schedulerFixture();
+  try {
+    h.qso.startAtMillis = Number(h.qso.startAtMillis) + 123;
+    const second = {
+      ...h.qso,
+      uuid: "q2",
+      startAtMillis: Number(h.qso.startAtMillis) + 456,
+      syncedAtMillis: 102,
+    };
+    h.changes.qsos.push(second);
+    const fetcher: typeof fetch = async (input, init) => {
+      const response = await h.fetcher(input, init);
+      if (new URL(String(input)).pathname === "/v1/operations/op-fixture/qsos")
+        return Response.json({
+          ...((await response.json()) as Record<string, unknown>),
+          qsos: [h.qso, second],
+        });
+      return response;
+    };
+    const first = await tick(h.env, fetcher, FIXTURE_NOW);
+    assert.equal(first.errors, 0);
+    for (const qso of ["q1", "q2"])
+      for (const destination of ["destination", "lotw"]) {
+        const row = (await h.store.ledger({ ...key(destination), qso }))!;
+        assert.equal(row.state, "history_ambiguous");
+        assert.equal(row.provenance, "adoption_conflict");
+        assert(row.reason);
+      }
+    const reads = [h.calls.qrzReads, h.calls.lotwQueries];
+    const retry = await tick(h.env, fetcher, FIXTURE_NOW + 5 * 60_000);
+    assert.equal(retry.errors, 0);
+    assert.deepEqual([h.calls.qrzReads, h.calls.lotwQueries], reads);
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+    assert.equal(h.calls.lotwUploads, 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+test("source ADIF errors are distinguished from destination failures without exposing payloads", async () => {
+  const h = await schedulerFixture();
+  try {
+    h.operation.county = "MA,private-county-value";
+    const result = await tick(h.env, h.fetcher, FIXTURE_NOW);
+    assert.equal(result.errors, 2);
+    for (const destination of ["destination", "lotw"])
+      assert.equal(
+        (await h.store.ledger(key(destination)))!.reason,
+        "Source fields cannot be represented in ADIF; review contact",
+      );
+    assert.equal(h.calls.qrzReads, 0);
+    assert.equal(h.calls.lotwQueries, 0);
+    assert.equal(await count(h, "attempts"), 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+test("unexpected readback failures retain only a fixed safe diagnostic", async () => {
+  const h = await schedulerFixture();
+  try {
+    const fetcher: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).hostname === "logbook.qrz.com")
+        throw new Error("private-api-key-and-vendor-response");
+      return h.fetcher(input, init);
+    };
+    const result = await tick(h.env, fetcher, FIXTURE_NOW);
+    assert.equal(result.errors, 1);
+    assert.equal(
+      (await h.store.ledger(key("destination")))!.reason,
+      "Destination reconciliation failed; retry automatically",
+    );
+    assert.equal(
+      (await h.store.ledger(key("lotw")))!.state,
+      "adopted_existing",
+    );
+    assert.equal(await count(h, "attempts"), 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
 test("one invocation resumes incomplete source pages and stops polling at completion", async () => {
   const h = await schedulerFixture();
   try {

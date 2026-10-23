@@ -80,6 +80,7 @@ export function workloadSourceStatement(env: Env, now: number) {
     WITH destination_work AS (
       SELECT l.tenant,l.source,l.qso,
         CASE
+          WHEN l.provenance='adoption_conflict' THEN 'history_review'
           WHEN l.state IN('source_deleted','retained_old_route') OR
             (l.state IN('adopted_existing','delivered','observed') AND l.source_hash IS l.baseline_hash) THEN 'resolved'
           WHEN EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id
@@ -99,6 +100,7 @@ export function workloadSourceStatement(env: Env, now: number) {
             WHEN l.due_at>?1 THEN 'quiet'
             WHEN l.reason IN('mapped_qrz_record_missing','qrz_replacement_contract_unverified','qrz_collision_ambiguous',
               'qrz_changed_identity_collision','qrz_fresh_absence_check_found_candidate','lotw_subsecond_precision_unverified',
+              'subsecond_export_requires_identity_claim','remote_identity_claim_conflict',
               'lotw_fresh_absence_check_found_candidate','lotw_correction_readback_ambiguous','lotw_historical_readback_unavailable',
               'lotw_certificate_selection_ambiguous_or_missing','lotw_certificate_not_currently_valid',
               'lotw_certificate_revoked','lotw_certificate_unknown','source_replay_boundary_unverified') THEN 'delivery_review'

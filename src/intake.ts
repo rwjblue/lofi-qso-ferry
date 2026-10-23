@@ -14,7 +14,14 @@ import {
   projectContact,
   sourceFingerprint,
 } from "./projection.ts";
-import { canonical, randomToken, sha256 } from "./security.ts";
+import {
+  canonical,
+  type Envelope,
+  open,
+  randomToken,
+  seal,
+  sha256,
+} from "./security.ts";
 import type { Connection, Store } from "./store.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
@@ -71,6 +78,69 @@ export interface PollResult {
   complete: boolean;
   coverage: "client-contract-only";
 }
+
+async function sourceSession(
+  store: Store,
+  connection: Connection,
+  fetcher: typeof fetch,
+  priority: VendorPriority,
+  vendorNow: number | null,
+) {
+  if (!connection.credential_version || connection.status !== "active")
+    throw new Error("source_connection_unavailable");
+  const identity = {
+    tenant: connection.tenant,
+    connection: connection.id,
+    id: connection.credential_version,
+    kind: "credential",
+    purpose: "storage",
+  };
+  const saved = await store
+    .statement(
+      "SELECT envelope FROM private_data WHERE tenant=? AND connection=? AND id=? AND kind='credential' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)",
+      connection.tenant,
+      connection.id,
+      connection.credential_version,
+      Date.now(),
+    )
+    .first<{ envelope: string }>();
+  if (!saved) throw new Error("source_connection_unavailable");
+  const credentials = await open<LoFiCredentials>(
+    JSON.parse(saved.envelope) as Envelope,
+    identity,
+    store.keys,
+  );
+  const client = new LoFiClient(
+    credentials,
+    vendorFetch(store, "lofi", fetcher, {
+      priority,
+      ...(vendorNow === null ? {} : { now: vendorNow }),
+    }),
+  );
+  return {
+    client,
+    async persistRenewal() {
+      const renewed = client.credentialsSnapshot();
+      if (!renewed.token || renewed.token === credentials.token) return;
+      const envelope = await seal(renewed, identity, store.keys);
+      // Refresh only the session bearer for this same identity. A concurrent
+      // renewal, credential replacement or revocation wins over this request.
+      await store
+        .statement(
+          "UPDATE private_data SET envelope=? WHERE tenant=? AND connection=? AND id=? AND kind='credential' AND envelope=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?) AND EXISTS(SELECT 1 FROM connections c WHERE c.tenant=private_data.tenant AND c.id=private_data.connection AND c.kind='lofi' AND c.status='active' AND c.credential_version=private_data.id AND c.remote_identity=?)",
+          JSON.stringify(envelope),
+          connection.tenant,
+          connection.id,
+          connection.credential_version,
+          saved.envelope,
+          Date.now(),
+          connection.remote_identity,
+        )
+        .run();
+    },
+  };
+}
+
 /** A raw page and its work index commit before the opaque source cursor advances. */
 export async function pollSource(
   store: Store,
@@ -93,17 +163,8 @@ export async function pollSource(
       complete: false,
       coverage: "client-contract-only",
     };
+  let session: Awaited<ReturnType<typeof sourceSession>> | undefined;
   try {
-    const credentials = connection.credential_version
-      ? await store.private<LoFiCredentials>(
-          connection.tenant,
-          connection.id,
-          connection.credential_version,
-          "credential",
-        )
-      : null;
-    if (!credentials || connection.status !== "active")
-      throw new Error("source_connection_unavailable");
     const cursor = await store
       .statement(
         "SELECT cursor,generation FROM cursors WHERE tenant=? AND connection=? AND stream=?",
@@ -133,16 +194,20 @@ export async function pollSource(
       };
     const priority: VendorPriority =
       stream === "sync" && state.mode === "forward" ? "live" : "background";
-    const client = new LoFiClient(
-      credentials,
-      vendorFetch(store, "lofi", fetcher, {
-        priority,
-        ...(vendorNow === null ? {} : { now: vendorNow }),
-      }),
+    session = await sourceSession(
+      store,
+      connection,
+      fetcher,
+      priority,
+      vendorNow,
     );
     let page: SyncPage;
     try {
-      page = await client.syncPage(state, now, priority === "live" ? 100 : 25);
+      page = await session.client.syncPage(
+        state,
+        now,
+        priority === "live" ? 100 : 25,
+      );
     } catch (error) {
       await recoverSourceGap(store, connection, error, now, stream);
       throw error;
@@ -249,7 +314,11 @@ export async function pollSource(
       coverage: page.coverage,
     };
   } finally {
-    await store.release(lease);
+    try {
+      await session?.persistRenewal();
+    } finally {
+      await store.release(lease);
+    }
   }
 }
 export async function pendingContacts(
@@ -862,17 +931,15 @@ export async function rereadOperation(
     90_000,
   );
   if (!lease) return { complete: false, records: 0, pages: 0 };
+  let session: Awaited<ReturnType<typeof sourceSession>> | undefined;
   try {
-    const credentials = connection.credential_version
-      ? await store.private<LoFiCredentials>(
-          connection.tenant,
-          connection.id,
-          connection.credential_version,
-          "credential",
-        )
-      : null;
-    if (!credentials || connection.status !== "active")
-      throw new Error("source_connection_unavailable");
+    session = await sourceSession(
+      store,
+      connection,
+      fetcher,
+      operation.request_priority,
+      vendorNow,
+    );
     if (
       !(await store.private(
         connection.tenant,
@@ -907,13 +974,7 @@ export async function rereadOperation(
       previous.epoch
         ? previous
         : { revision: operation.revision, epoch: randomToken() };
-    const page = await new LoFiClient(
-      credentials,
-      vendorFetch(store, "lofi", fetcher, {
-        priority: operation.request_priority,
-        ...(vendorNow === null ? {} : { now: vendorNow }),
-      }),
-    ).operationQsosPage(
+    const page = await session.client.operationQsosPage(
       operation.id,
       state,
       operation.request_priority === "live" ? 100 : 25,
@@ -1075,7 +1136,11 @@ export async function rereadOperation(
     ]);
     throw error;
   } finally {
-    await store.release(lease);
+    try {
+      await session?.persistRenewal();
+    } finally {
+      await store.release(lease);
+    }
   }
 }
 

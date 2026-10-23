@@ -8,6 +8,7 @@ import {
 } from "../src/adif.ts";
 import {
   contactAdif,
+  contactReconciliationAdif,
   dispatchAttempt,
   prepareDue,
   reconcileAttempt,
@@ -43,12 +44,15 @@ async function deliveryDatabase() {
     if (statement.trim()) await harness.db.prepare(statement).run();
   return harness;
 }
-async function contact(notes = "source note"): Promise<Contact> {
+async function contact(
+  notes = "source note",
+  startAtMillis = at,
+): Promise<Contact> {
   return projectContact(
     {
       uuid: "q1",
       operation: "op1",
-      startAtMillis: at,
+      startAtMillis,
       freq: 14060,
       band: "20m",
       mode: "CW",
@@ -65,6 +69,74 @@ async function contact(notes = "source note"): Promise<Contact> {
     { operationComplete: true },
   );
 }
+test("read-only ADIF history projection omits fractional seconds without rounding or changing source precision", async () => {
+  for (const [timestamp, date, time] of [
+    ["2026-10-22T12:00:01.001Z", "20261022", "120001"],
+    ["2026-10-22T12:00:59.999Z", "20261022", "120059"],
+    ["2026-12-31T23:59:59.999Z", "20261231", "235959"],
+    ["2027-01-01T00:00:00.001Z", "20270101", "000000"],
+  ]) {
+    const millis = Date.parse(timestamp!);
+    const fractional = await contact("source note", millis);
+    const before = structuredClone(fractional);
+    const wholeSecond = await contact("source note", millis - (millis % 1000));
+    const record = contactReconciliationAdif(fractional);
+    assert.equal(record.QSO_DATE, date);
+    assert.equal(record.TIME_ON, time);
+    assert.equal(fractional.timePrecision, "millisecond");
+    assert.notEqual(fractional.generation, wholeSecond.generation);
+    for (const destination of ["qrz", "lotw"] as const)
+      assert.notEqual(
+        await sourceFingerprint(fractional, destination),
+        await sourceFingerprint(wholeSecond, destination),
+      );
+    assert.deepEqual(fractional, before);
+    assert.throws(() => contactAdif(fractional), /identity claim/);
+  }
+});
+
+test("fractional contacts remain blocked from preparation before any vendor call or signing", async () => {
+  const h = await setup();
+  try {
+    const fractional = await contact("source note", at + 999);
+    for (const destination of ["qrz", "lotw"] as const) {
+      await h.store
+        .statement(
+          "UPDATE connections SET kind=? WHERE id='destination'",
+          destination,
+        )
+        .run();
+      await h.store.observe(
+        h.key,
+        fractional.generation,
+        await sourceFingerprint(fractional, destination),
+        30,
+        false,
+        at,
+      );
+      assert.deepEqual(
+        await prepareDue(h.store, h.key, fractional, gates, {
+          now,
+          fetcher: async () =>
+            assert.fail("Fractional export made a vendor request"),
+          sign: async () => assert.fail("Fractional export signed a contact"),
+        }),
+        {
+          state: "blocked",
+          reason: "subsecond_export_requires_identity_claim",
+        },
+      );
+      assert.equal(
+        (await h.store
+          .statement("SELECT COUNT(*) n FROM attempts")
+          .first<{ n: number }>())!.n,
+        0,
+      );
+    }
+  } finally {
+    await h.mf.dispose();
+  }
+});
 async function setup() {
   const harness = await deliveryDatabase();
   const key = await seed(harness.store);

@@ -2,7 +2,7 @@ import { establishCutovers, proveNewAfterCutover } from "./cutover.ts";
 import { rotatePrivateData, purgeResolvedSource } from "./maintenance.ts";
 import { purgeAuth } from "./auth.ts";
 import {
-  contactAdif,
+  contactReconciliationAdif,
   dispatchAttempt,
   prepareDue,
   reconcileAttempt,
@@ -17,11 +17,11 @@ import {
   pollSource,
   rereadOperation,
 } from "./intake.ts";
-import { LotwClient } from "./lotw.ts";
+import { LotwClient, LotwLoginError } from "./lotw.ts";
 import { refreshLotwCertificates } from "./lotw-maintenance.ts";
 import type { Contact } from "./projection.ts";
 import { sourceFingerprint } from "./projection.ts";
-import { QrzClient } from "./qrz.ts";
+import { QrzClient, QrzError } from "./qrz.ts";
 import { adoptHistory, classifyHistory } from "./reconcile.ts";
 import type { ReconciliationEvidence } from "./reconcile.ts";
 import { keyring } from "./security.ts";
@@ -76,6 +76,23 @@ export function routeMatches(
       (contact.dxcc === undefined || station.dxcc === contact.dxcc),
   );
 }
+class ReconciliationError extends Error {}
+
+/** Fixed categories only: vendor errors can contain credentials or contact data. */
+function reconciliationFailure(error: unknown, preparing: boolean): string {
+  if (error instanceof ReconciliationError) return error.message;
+  if (error instanceof QrzError) {
+    if (error.kind === "auth")
+      return "QRZ rejected readback credentials; review connection";
+    if (error.kind === "protocol")
+      return "QRZ readback response is invalid or incomplete; retry automatically";
+  }
+  if (error instanceof LotwLoginError && error.reason === "credentials")
+    return "LoTW rejected readback credentials; review connection";
+  return preparing
+    ? "Delivery preparation failed; review contact and connection"
+    : "Destination reconciliation failed; retry automatically";
+}
 async function reconcileContact(
   store: Store,
   source: Connection,
@@ -94,7 +111,13 @@ async function reconcileContact(
     destination: destination.id,
   };
   const ledger = await store.ledger(key);
-  if (!ledger || ledger.remote_id || ledger.state === "changed") return;
+  if (
+    !ledger ||
+    ledger.remote_id ||
+    ledger.state === "changed" ||
+    ledger.provenance === "adoption_conflict"
+  )
+    return;
   if (
     await store
       .statement(
@@ -107,18 +130,32 @@ async function reconcileContact(
       .first()
   )
     return;
-  const raw = destination.credential_version
-    ? await store.private<{
-        apiKey?: string;
-        query?: { username: string; password: string };
-      }>(
-        key.tenant,
-        destination.id,
-        destination.credential_version,
-        "credential",
-      )
-    : null;
-  const record = contactAdif(contact);
+  let record: ReturnType<typeof contactReconciliationAdif>;
+  try {
+    record = contactReconciliationAdif(contact);
+  } catch {
+    throw new ReconciliationError(
+      "Source fields cannot be represented in ADIF; review contact",
+    );
+  }
+  let raw: {
+    apiKey?: string;
+    query?: { username: string; password: string };
+  } | null;
+  try {
+    raw = destination.credential_version
+      ? await store.private<typeof raw>(
+          key.tenant,
+          destination.id,
+          destination.credential_version,
+          "credential",
+        )
+      : null;
+  } catch {
+    throw new ReconciliationError(
+      "Saved destination credentials could not be opened; review connection",
+    );
+  }
   let remote: Record<string, string>[] = [];
   let readAccess = false;
   if (destination.kind === "qrz" && raw?.apiKey) {
@@ -371,6 +408,7 @@ export async function tick(
               continue;
             }
             const destination = candidates[0];
+            let preparing = false;
             try {
               await reconcileContact(
                 store,
@@ -384,6 +422,10 @@ export async function tick(
                 clock,
               );
               if (expired()) break;
+              // Read-only adoption must retain its actual history diagnosis.
+              // Closed rollout gates are global status, not a contact failure.
+              if (!exportsEffective(gates)) continue;
+              preparing = true;
               const key = {
                 tenant: source.tenant,
                 source: source.id,
@@ -397,7 +439,7 @@ export async function tick(
               if (prepared.state === "blocked")
                 await store
                   .statement(
-                    "UPDATE ledger SET reason=? WHERE tenant=? AND source=? AND qso=? AND destination=?",
+                    "UPDATE ledger SET reason=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND state IN('missing_current_identity','changed','live_new')",
                     prepared.reason ?? "Delivery preparation requires review",
                     key.tenant,
                     key.source,
@@ -413,7 +455,8 @@ export async function tick(
               result.errors++;
               await store
                 .statement(
-                  "UPDATE ledger SET reason='Destination readback unavailable; retry automatically' WHERE tenant=? AND source=? AND qso=? AND destination=?",
+                  "UPDATE ledger SET reason=? WHERE tenant=? AND source=? AND qso=? AND destination=?",
+                  reconciliationFailure(error, preparing),
                   source.tenant,
                   source.id,
                   contact.id,

@@ -192,6 +192,66 @@ test("workload distinguishes actionable inventory, gate/quiet/in-flight holds an
   }
 });
 
+test("identity review holds remain visible with open gates and after route or retention state changes", async () => {
+  const h = await setup();
+  try {
+    Object.assign(h.env, {
+      EXPORTS_ENABLED: "true",
+      ROLLOUT_CHECKS_PASSED: "true",
+      LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
+      SOURCE_BOUNDARY_VERIFIED: "true",
+      ROLLOUT_QSO_IDS_JSON: '["*"]',
+    });
+    for (const reason of [
+      "subsecond_export_requires_identity_claim",
+      "remote_identity_claim_conflict",
+    ]) {
+      await h.addSource(reason, "waiting");
+      await h.ledger(reason, "missing_current_identity", now - 1, reason);
+    }
+    const states = [
+      "history_ambiguous",
+      "inventory_pending",
+      "changed",
+      "retained_old_route",
+      "adopted_existing",
+      "observed",
+    ];
+    for (const state of states) {
+      const id = `conflict-${state}`;
+      await h.addSource(id, "waiting");
+      await h.ledger(id, state);
+      await h.db
+        .prepare(
+          "UPDATE ledger SET provenance='adoption_conflict',baseline_hash=source_hash WHERE qso=?",
+        )
+        .bind(id)
+        .run();
+    }
+    const workload = await getAdminWorkload(h.env, now);
+    assert.equal(
+      workload.source.reduce((sum, row) => sum + row.ready, 0),
+      0,
+    );
+    assert.equal(
+      workload.source.reduce((sum, row) => sum + row.held, 0),
+      states.length + 2,
+    );
+    for (const [reason, count] of [
+      ["history_review", states.length],
+      ["delivery_review", 2],
+    ] as const)
+      assert.equal(
+        workload.heldReasons
+          .filter((row) => row.reason === reason)
+          .reduce((sum, row) => sum + row.count, 0),
+        count,
+      );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
 test("new source revisions and additional destinations stay actionable without ignoring credential and routing holds", async () => {
   const h = await setup();
   try {

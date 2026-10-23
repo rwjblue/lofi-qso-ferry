@@ -29,6 +29,8 @@ export interface ReconciliationOutcome {
   evidence: ReconciliationEvidence;
   remote?: AdifRecord;
 }
+export const ADOPTION_CONFLICT_REASON =
+  "Multiple source contacts claim one destination identity; review associations before exporting";
 /** Pure read-only classification. Partial evidence is never transformed into absence. */
 export function classifyHistory(
   source: AdifRecord,
@@ -204,7 +206,7 @@ export function comparableRemote(record: AdifRecord): AdifRecord {
 }
 /**
  * Adopt only durable metadata: no destination client/signing primitive is available
- * here. A single guarded UPDATE performs generation CAS and remote-claim exclusion.
+ * here. A guarded UPDATE performs generation CAS and remote-claim exclusion.
  * Trusted delivery/template provenance wins over a fresh inventory classification.
  */
 export async function adoptHistory(
@@ -229,6 +231,8 @@ export async function adoptHistory(
     ledger.generation !== generation
   )
     return { applied: false, reason: "source_generation_changed" };
+  if (ledger.provenance === "adoption_conflict")
+    return { applied: false, reason: "remote_identity_claim_conflict" };
   if (ledger.remote_id)
     return { applied: false, reason: "trusted_mapping_preserved" };
   if (
@@ -268,7 +272,7 @@ export async function adoptHistory(
       ? await store.lotwIdentityClaimGuard(key, remoteId)
       : { sql: "1", params: [] };
   const adoption = store.statement(
-    `UPDATE ledger SET confirmed=COALESCE(?,confirmed),state=?,reason=?,baseline_hash=COALESCE(?,source_hash),source_hash=COALESCE(?,source_hash),remote_hash=?,remote_id=?,provenance=CASE WHEN ?='adopted_existing' THEN 'adopted' ELSE provenance END,narrative=CASE WHEN ?='adopted_existing' AND ?='qrz' THEN 'remote_preserved' ELSE narrative END,updated_at=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND source_hash=? AND sent_hash IS NULL AND template_version IS NULL AND provenance!='ferry_created' AND NOT EXISTS(SELECT 1 FROM ledger other WHERE other.tenant=? AND other.destination=? AND other.remote_id=? AND (other.source!=? OR other.qso!=?)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND ${retainedClaim.sql}`,
+    `UPDATE ledger SET confirmed=COALESCE(?,confirmed),state=?,reason=?,baseline_hash=COALESCE(?,source_hash),source_hash=COALESCE(?,source_hash),remote_hash=?,remote_id=?,provenance=CASE WHEN ?='adopted_existing' THEN 'adopted' ELSE provenance END,narrative=CASE WHEN ?='adopted_existing' AND ?='qrz' THEN 'remote_preserved' ELSE narrative END,updated_at=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND source_hash=? AND sent_hash IS NULL AND template_version IS NULL AND provenance NOT IN('ferry_created','adoption_conflict') AND NOT EXISTS(SELECT 1 FROM ledger other WHERE other.tenant=? AND other.destination=? AND other.remote_id=? AND (other.source!=? OR other.qso!=?)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND ${retainedClaim.sql}`,
     outcome.state === "adopted_existing" && destination.kind === "lotw"
       ? outcome.remote?.QSL_RCVD === "Y"
         ? 1
@@ -325,8 +329,60 @@ export async function adoptHistory(
     adoption,
     ...(identity ? [identity] : []),
   ]);
-  if (result.meta.changes !== 1)
+  if (result.meta.changes !== 1) {
+    if (outcome.state === "adopted_existing" && remoteId) {
+      // A failed CAS alone is not an identity conflict. Fence this diagnosis to
+      // the same unbound source revision and an actual competing remote claim.
+      const contenderWhere = `contender.tenant=? AND contender.source=? AND contender.qso=? AND contender.destination=? AND contender.generation=? AND contender.source_hash=? AND contender.remote_id IS NULL AND contender.sent_hash IS NULL AND contender.template_version IS NULL AND contender.provenance!='ferry_created' AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=contender.tenant AND a.source=contender.source AND a.qso=contender.qso AND a.destination=contender.destination AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND (EXISTS(SELECT 1 FROM ledger other WHERE other.tenant=contender.tenant AND other.destination=contender.destination AND other.remote_id=? AND (other.source!=contender.source OR other.qso!=contender.qso)) OR NOT (${retainedClaim.sql}))`;
+      const contenderParams = [
+        key.tenant,
+        key.source,
+        key.qso,
+        key.destination,
+        generation,
+        ledger.source_hash,
+        remoteId,
+        ...retainedClaim.params,
+      ];
+      const conflictExists = `EXISTS(SELECT 1 FROM ledger contender WHERE ${contenderWhere} AND contender.provenance='adoption_conflict')`;
+      const ownerWhere = `owner.tenant=? AND owner.destination=? AND owner.remote_id=? AND owner.provenance='adoption_conflict' AND ${conflictExists}`;
+      const ownerParams = [
+        key.tenant,
+        key.destination,
+        remoteId,
+        ...contenderParams,
+      ];
+      const [quarantined] = await store.db.batch([
+        store.statement(
+          `UPDATE ledger AS contender SET state='history_ambiguous',provenance='adoption_conflict',reason=?,updated_at=? WHERE ${contenderWhere}`,
+          ADOPTION_CONFLICT_REASON,
+          now,
+          ...contenderParams,
+        ),
+        store.statement(
+          `UPDATE ledger AS owner SET state='history_ambiguous',provenance='adoption_conflict',reason=?,updated_at=? WHERE owner.tenant=? AND owner.destination=? AND owner.remote_id=? AND owner.provenance='adopted' AND owner.sent_hash IS NULL AND owner.template_version IS NULL AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=owner.tenant AND a.source=owner.source AND a.qso=owner.qso AND a.destination=owner.destination AND s.state NOT IN('prepared','rejected','cancelled')) AND ${conflictExists}`,
+          ADOPTION_CONFLICT_REASON,
+          now,
+          ...ownerParams,
+        ),
+        store.statement(
+          `INSERT INTO attempt_events(tenant,attempt,state,at,reason) SELECT s.tenant,s.attempt,'cancelled',?,? FROM attempt_state s JOIN attempts a ON a.tenant=s.tenant AND a.id=s.attempt JOIN ledger owner ON owner.tenant=a.tenant AND owner.source=a.source AND owner.qso=a.qso AND owner.destination=a.destination WHERE s.state='prepared' AND ${ownerWhere}`,
+          now,
+          ADOPTION_CONFLICT_REASON,
+          ...ownerParams,
+        ),
+        store.statement(
+          `UPDATE attempt_state SET state='cancelled',reason=?,updated_at=? WHERE state='prepared' AND EXISTS(SELECT 1 FROM attempts a JOIN ledger owner ON owner.tenant=a.tenant AND owner.source=a.source AND owner.qso=a.qso AND owner.destination=a.destination WHERE a.tenant=attempt_state.tenant AND a.id=attempt_state.attempt AND ${ownerWhere})`,
+          ADOPTION_CONFLICT_REASON,
+          now,
+          ...ownerParams,
+        ),
+      ]);
+      if (quarantined.meta.changes === 1)
+        return { applied: false, reason: "remote_identity_claim_conflict" };
+    }
     return { applied: false, reason: "generation_mapping_or_attempt_conflict" };
+  }
   return { applied: true };
 }
 /** Uncertain absence never authorizes resubmission; only exact revision observation settles it. */

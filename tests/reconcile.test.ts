@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { contactReconciliationAdif, prepareDue } from "../src/delivery.ts";
+import { projectContact, sourceFingerprint } from "../src/projection.ts";
 import {
   adoptHistory,
+  ADOPTION_CONFLICT_REASON,
   canonicalLotwIdentity,
   classifyHistory,
   lotwRemoteIdentity,
@@ -32,6 +35,168 @@ const evidence: ReconciliationEvidence = {
   catchupComplete: true,
   freshCheckComplete: true,
 };
+test("fractional source times adopt only a unique seconds projection and cannot share one remote claim", async () => {
+  for (const destination of ["qrz", "lotw"] as const) {
+    const { mf, store } = await database();
+    try {
+      const first = await seed(store);
+      await store
+        .statement(
+          "UPDATE connections SET kind=? WHERE id='destination'",
+          destination,
+        )
+        .run();
+      const contacts = await Promise.all(
+        [123, 987].map((milliseconds, index) =>
+          projectContact(
+            {
+              uuid: `q${index + 1}`,
+              operation: null,
+              startAtMillis: Date.parse("2026-10-22T12:00:01Z") + milliseconds,
+              band: "20m",
+              mode: "CW",
+              their: { call: "W1AW" },
+              our: { stationCall: "N0TEST/P", grid: "FN31" },
+            },
+            null,
+          ),
+        ),
+      );
+      const record = {
+        ...contactReconciliationAdif(contacts[0]!),
+        APP_QRZLOG_LOGID: "100",
+      };
+      for (const contact of contacts) {
+        const key = { ...first, qso: contact.id };
+        const projected = contactReconciliationAdif(contact);
+        const currentEvidence = {
+          ...evidence,
+          destination,
+          capturedGeneration: contact.generation,
+          currentGeneration: contact.generation,
+        };
+        for (const candidates of [
+          [{ ...record, TIME_ON: "1200" }],
+          [{ ...record, TIME_ON: "120002" }],
+          [record, { ...record, APP_QRZLOG_LOGID: "101" }],
+        ])
+          assert.equal(
+            classifyHistory(projected, candidates, currentEvidence).state,
+            "history_ambiguous",
+          );
+        const outcome = classifyHistory(projected, [record], currentEvidence);
+        assert.equal(outcome.state, "adopted_existing");
+        const fingerprint = await sourceFingerprint(contact, destination);
+        await store.observe(key, contact.generation, fingerprint, 30, false, 0);
+        assert.equal(
+          (
+            await adoptHistory(
+              store,
+              key,
+              contact.generation,
+              outcome,
+              1,
+              fingerprint,
+            )
+          ).applied,
+          contact.id === "q1",
+        );
+      }
+      assert((await store.ledger(first))!.remote_id);
+      assert.equal(
+        (await store.ledger({ ...first, qso: "q2" }))!.remote_id,
+        null,
+      );
+      const reserved = (await store.ledger(first))!.remote_id;
+      for (const contact of contacts) {
+        const key = { ...first, qso: contact.id };
+        const held = (await store.ledger(key))!;
+        assert.equal(held.state, "history_ambiguous");
+        assert.equal(held.provenance, "adoption_conflict");
+        assert.equal(held.reason, ADOPTION_CONFLICT_REASON);
+        const wholeSecond = await projectContact(
+          {
+            ...contact.context.qso,
+            startAtMillis: Date.parse("2026-10-22T12:00:01Z"),
+          },
+          null,
+        );
+        await store.observe(
+          key,
+          wholeSecond.generation,
+          await sourceFingerprint(wholeSecond, destination),
+          30,
+          false,
+          10,
+        );
+        assert.equal((await store.ledger(key))!.state, "history_ambiguous");
+        assert.equal(
+          (await store.ledger(key))!.baseline_hash,
+          held.baseline_hash,
+        );
+        assert.equal((await store.ledger(key))!.sent_hash, held.sent_hash);
+        assert.equal(
+          (
+            await adoptHistory(
+              store,
+              key,
+              wholeSecond.generation,
+              classifyHistory(contactReconciliationAdif(wholeSecond), [], {
+                ...evidence,
+                destination,
+                capturedGeneration: wholeSecond.generation,
+                currentGeneration: wholeSecond.generation,
+              }),
+              20,
+            )
+          ).reason,
+          "remote_identity_claim_conflict",
+        );
+        // Even a later route restoration must not turn the retained reservation
+        // back into an actionable correction.
+        await store
+          .statement(
+            "UPDATE ledger SET state='changed',reason=NULL WHERE tenant=? AND source=? AND qso=? AND destination=?",
+            key.tenant,
+            key.source,
+            key.qso,
+            key.destination,
+          )
+          .run();
+        assert.equal(
+          (
+            await prepareDue(
+              store,
+              key,
+              wholeSecond,
+              {
+                exportsEnabled: true,
+                liveWriteAuthorized: true,
+                sourceBoundaryVerified: true,
+              },
+              {
+                now: 1800011,
+                fetcher: async () =>
+                  assert.fail("conflicted mapping made a vendor request"),
+                sign: async () => assert.fail("conflicted mapping signed"),
+              },
+            )
+          ).reason,
+          "remote_identity_claim_conflict",
+        );
+      }
+      assert.equal((await store.ledger(first))!.remote_id, reserved);
+      assert.equal(
+        (await store
+          .statement("SELECT COUNT(*) n FROM attempts")
+          .first<{ n: number }>())!.n,
+        0,
+      );
+    } finally {
+      await mf.dispose();
+    }
+  }
+});
 test("partial/failed history coverage and source races never authorize backfill", () => {
   for (const flag of [
     "inventoryComplete",
@@ -108,12 +273,6 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
       0,
     );
     const conflicting = { ...key, qso: "duplicate" };
-    await store.observe(conflicting, "g1", "other-input", 30, false, 0);
-    assert.equal(
-      (await adoptHistory(store, conflicting, "g1", outcome, 2)).applied,
-      false,
-    );
-    assert.deepEqual(await store.lotwIdentities(conflicting), []);
     const next = canonicalLotwIdentity({ ...source, CALL: "W2NEW" });
     const nextIdentity = {
       remoteId: await lotwRemoteIdentity(next),
@@ -171,12 +330,16 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
       (await store.ledger(key))!.remote_id,
       await lotwRemoteIdentity(source),
     );
+    await store.observe(conflicting, "g1", "other-input", 30, false, 0);
+    const trustedOwner = await store.ledger(key);
     assert.equal(
       (await adoptHistory(store, conflicting, "g1", outcome, 1800016)).applied,
       false,
       "retained old identity stays associated with the original UUID after current mapping moves",
     );
     assert.equal((await store.ledger(conflicting))!.remote_id, null);
+    assert.equal((await store.ledger(conflicting))!.state, "history_ambiguous");
+    assert.deepEqual(await store.ledger(key), trustedOwner);
     assert.deepEqual(await store.lotwIdentities(conflicting), []);
     const otherTenant = { ...key, tenant: "b" };
     await store.observe(otherTenant, "g1", "other-tenant-input", 30, false, 0);
@@ -242,7 +405,7 @@ test("D1 generation CAS, remote uniqueness and tenant boundaries stop stale adop
       (await adoptHistory(store, second, "g1", outcome)).applied,
       false,
     );
-    assert.equal((await store.ledger(second))!.state, "inventory_pending");
+    assert.equal((await store.ledger(second))!.state, "history_ambiguous");
     await store.observe(second, "g2", "changed", 30, false, 10);
     assert.equal(
       (await adoptHistory(store, second, "g1", outcome)).reason,
@@ -291,6 +454,160 @@ test("trusted template mapping survives reconnect inventory", async () => {
     const ledger = (await store.ledger(key))!;
     assert.equal(ledger.template_version, version);
     assert.equal(ledger.provenance, "ferry_created");
+    const contender = { ...key, qso: "contender" };
+    await store.observe(contender, "g1", "other-input", 30, false, 1);
+    assert.equal(
+      (
+        await adoptHistory(
+          store,
+          contender,
+          "g1",
+          classifyHistory(source, [remote], evidence),
+          2,
+        )
+      ).reason,
+      "remote_identity_claim_conflict",
+    );
+    assert.equal((await store.ledger(contender))!.state, "history_ambiguous");
+    assert.deepEqual(await store.ledger(key), ledger);
+  } finally {
+    await mf.dispose();
+  }
+});
+test("competing adoption cancels only an unsent adopted correction and preserves receipts and uncertainty", async () => {
+  for (const state of [
+    "prepared",
+    "dispatching",
+    "uncertain",
+    "delivered",
+  ] as const) {
+    const { mf, store } = await database();
+    try {
+      const owner = await seed(store);
+      const contender = { ...owner, qso: "contender" };
+      const outcome = classifyHistory(source, [remote], evidence);
+      await store.observe(owner, "g1", "original-source", 30, false, 0);
+      assert((await adoptHistory(store, owner, "g1", outcome, 1)).applied);
+      await store.observe(owner, "g2", "corrected-source", 30, false, 10);
+      const attempt = await store.stage(
+        owner,
+        "g2",
+        { fixture: "correction" },
+        "v1",
+        null,
+        1800011,
+        "sent-projection",
+      );
+      if (state !== "prepared") {
+        const lease = (await store.claim("a", "correction", 1800012, 1000))!;
+        assert(await store.claimAttempt("a", attempt, lease, 1800013));
+        if (state !== "dispatching")
+          await store.resolve(
+            "a",
+            attempt,
+            lease,
+            state,
+            state === "delivered" ? "100" : null,
+            1800014,
+          );
+      }
+      const ownerBefore = (await store.ledger(owner))!;
+      const attemptBefore = await store
+        .statement("SELECT * FROM attempt_state WHERE attempt=?", attempt)
+        .first();
+      await store.observe(contender, "g1", "contender-source", 30, false, 10);
+      assert.equal(
+        (await adoptHistory(store, contender, "g1", outcome, 1800015)).reason,
+        "remote_identity_claim_conflict",
+      );
+      const heldContender = (await store.ledger(contender))!;
+      assert.equal(heldContender.state, "history_ambiguous");
+      assert.equal(heldContender.provenance, "adoption_conflict");
+      assert.equal(heldContender.source_hash, "contender-source");
+      assert.equal(heldContender.remote_id, null);
+      const ownerAfter = (await store.ledger(owner))!;
+      const attemptAfter = await store
+        .statement("SELECT * FROM attempt_state WHERE attempt=?", attempt)
+        .first();
+      if (state === "prepared") {
+        assert.deepEqual(ownerAfter, {
+          ...ownerBefore,
+          state: "history_ambiguous",
+          provenance: "adoption_conflict",
+          reason: ADOPTION_CONFLICT_REASON,
+          updated_at: 1800015,
+        });
+        assert.deepEqual(attemptAfter, {
+          ...attemptBefore,
+          state: "cancelled",
+          reason: ADOPTION_CONFLICT_REASON,
+          updated_at: 1800015,
+        });
+        assert.equal(
+          (await store
+            .statement(
+              "SELECT COUNT(*) n FROM attempt_events WHERE attempt=? AND state='cancelled' AND reason=?",
+              attempt,
+              ADOPTION_CONFLICT_REASON,
+            )
+            .first<{ n: number }>())!.n,
+          1,
+        );
+        const lease = (await store.claim(
+          "a",
+          "after-conflict",
+          1800016,
+          1000,
+        ))!;
+        assert.equal(
+          await store.claimAttempt("a", attempt, lease, 1800017),
+          false,
+        );
+      } else {
+        assert.deepEqual(ownerAfter, ownerBefore);
+        assert.deepEqual(attemptAfter, attemptBefore);
+      }
+    } finally {
+      await mf.dispose();
+    }
+  }
+});
+test("an unresolved contender attempt is not misclassified as an adoption identity conflict", async () => {
+  const { mf, store } = await database();
+  try {
+    const owner = await seed(store);
+    const contender = { ...owner, qso: "contender" };
+    const outcome = classifyHistory(source, [remote], evidence);
+    await store.observe(owner, "g1", "owner-source", 30, false, 0);
+    assert((await adoptHistory(store, owner, "g1", outcome, 1)).applied);
+    await store.observe(contender, "g1", "contender-source", 30, false, 0);
+    await store
+      .statement(
+        "UPDATE ledger SET state='missing_current_identity',narrative='remote_preserved' WHERE qso='contender'",
+      )
+      .run();
+    const attempt = await store.stage(
+      contender,
+      "g1",
+      { fixture: "unsent" },
+      "v1",
+      null,
+      1800001,
+    );
+    const ownerBefore = await store.ledger(owner);
+    const contenderBefore = await store.ledger(contender);
+    assert.equal(
+      (await adoptHistory(store, contender, "g1", outcome, 1800002)).reason,
+      "generation_mapping_or_attempt_conflict",
+    );
+    assert.deepEqual(await store.ledger(owner), ownerBefore);
+    assert.deepEqual(await store.ledger(contender), contenderBefore);
+    assert.equal(
+      (await store
+        .statement("SELECT state FROM attempt_state WHERE attempt=?", attempt)
+        .first<{ state: string }>())!.state,
+      "prepared",
+    );
   } finally {
     await mf.dispose();
   }

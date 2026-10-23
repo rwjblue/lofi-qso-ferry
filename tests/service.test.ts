@@ -334,6 +334,12 @@ test("failed sources and confirmation turns cannot starve a third isolated tenan
     ).results;
     assert.equal(sources.length, 3);
     assert(sources.every((row) => row.last_poll_at !== null));
+    const health = (
+      await h.store
+        .statement("SELECT config FROM connections WHERE kind='lofi'")
+        .all<{ config: string }>()
+    ).results.map((row) => JSON.parse(row.config));
+    assert(health.every((config) => config.lastSyncFailureAt >= FIXTURE_NOW));
     const turns = (
       await h.store
         .statement(

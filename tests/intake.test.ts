@@ -133,6 +133,131 @@ async function work(
     .first<Work>();
 }
 
+test("operation rereads skip tombstones and failed or partial pages yield fairly without inventing coverage", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  await pollSource(
+    store,
+    source,
+    async () =>
+      response(
+        [
+          { ...op, uuid: "a-deleted", deleted: true },
+          { ...op, uuid: "b-failing" },
+          { ...op, uuid: "c-partial" },
+          { ...op, uuid: "d-healthy" },
+        ],
+        [],
+      ),
+    now,
+  );
+  const seen: string[] = [];
+  const pages = fetcher(async (url) => {
+    seen.push(url.pathname);
+    if (url.pathname.includes("b-failing")) throw new Error("synthetic outage");
+    if (url.pathname.includes("c-partial"))
+      return operationResponse(
+        [{ ...qso, uuid: "partial-qso", operation: "c-partial" }],
+        1,
+        200,
+      );
+    if (url.pathname.includes("d-healthy")) return operationResponse([]);
+    throw new Error("Deleted operation must not be queried");
+  });
+  await assert.rejects(
+    rereadOperation(store, source, pages, now + 1),
+    /synthetic outage/,
+  );
+  assert.equal((await work(state, "b-failing", "operation"))?.state, "pending");
+  assert.equal(
+    (await work(state, "b-failing", "operation"))?.reason,
+    "operation_read_failed_retrying",
+  );
+  assert.equal(
+    await store
+      .statement("SELECT cursor FROM cursors WHERE stream='reread:b-failing'")
+      .first(),
+    null,
+  );
+  assert.equal(
+    (await rereadOperation(store, source, pages, now + 2)).complete,
+    false,
+  );
+  assert.equal((await work(state, "c-partial", "operation"))?.state, "pending");
+  assert.equal(
+    (await rereadOperation(store, source, pages, now + 3)).complete,
+    true,
+  );
+  assert.equal((await work(state, "d-healthy", "operation"))?.state, "context");
+  assert.deepEqual(seen, [
+    "/v1/operations/b-failing/qsos",
+    "/v1/operations/c-partial/qsos",
+    "/v1/operations/d-healthy/qsos",
+  ]);
+  await assert.rejects(
+    rereadOperation(store, source, pages, now + 4),
+    /synthetic outage/,
+  );
+  assert.equal(
+    seen.at(-1),
+    "/v1/operations/b-failing/qsos",
+    "failed operation is retried after other work has a turn",
+  );
+});
+
+test("successful source sync records separate success health and clears a stale failure", async (t) => {
+  const { store, source, now, mf } = await setup();
+  t.after(() => mf.dispose());
+  await store
+    .statement(
+      "UPDATE connections SET config=json_set(config,'$.lastError','Source sync requires attention') WHERE tenant='a' AND id='source'",
+    )
+    .run();
+  await pollSource(store, source, async () => response([], []), now);
+  const saved = JSON.parse((await store.connection("a", "source"))!.config);
+  assert.equal(saved.lastError, undefined);
+  assert.equal(saved.lastSuccessfulPollAt, now);
+});
+
+test("late failed operation reads cannot mark a newer lease's pending progress as failed", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  await pollSource(store, source, async () => response([op], []), now);
+  let failOld: (() => void) | undefined;
+  let reached: (() => void) | undefined;
+  const started = new Promise<void>((resolve) => {
+    reached = resolve;
+  });
+  const old = rereadOperation(
+    store,
+    source,
+    async () => {
+      reached?.();
+      await new Promise<void>((_resolve, reject) => {
+        failOld = () => reject(new Error("late old outage"));
+      });
+      throw new Error("unreachable");
+    },
+    now + 1,
+  );
+  const refused = assert.rejects(old, /late old outage/);
+  await started;
+  await rereadOperation(
+    store,
+    source,
+    async () => operationResponse([{ ...qso }], 1, 200),
+    now + 90_002,
+  );
+  const newer = await work(state, "op-1", "operation");
+  failOld?.();
+  await refused;
+  assert.deepEqual(await work(state, "op-1", "operation"), newer);
+  assert.equal(newer?.reason, null);
+  assert.equal(newer?.state, "pending");
+});
+
 test("raw intake and cursor commit together, overlapping poll lease cannot skip a page", async () => {
   const state = await setup();
   const { store, source, now, mf } = state;

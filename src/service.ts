@@ -324,7 +324,8 @@ export async function tick(
       result.errors++;
       await store
         .statement(
-          "UPDATE connections SET config=json_set(config,'$.lastError','Source sync requires attention') WHERE tenant=? AND id=?",
+          "UPDATE connections SET config=json_set(config,'$.lastError','Source sync requires attention','$.lastSyncFailureAt',?) WHERE tenant=? AND id=?",
+          now,
           source.tenant,
           source.id,
         )

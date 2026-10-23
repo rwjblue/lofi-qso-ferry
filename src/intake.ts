@@ -135,7 +135,9 @@ export async function pollSource(
       }
     work.push(
       store.statement(
-        "UPDATE connections SET last_poll_at=? WHERE tenant=? AND id=? AND status='active'",
+        "UPDATE connections SET last_poll_at=?,config=CASE WHEN ?='sync' THEN json_set(json_remove(config,'$.lastError'),'$.lastSuccessfulPollAt',?) ELSE config END WHERE tenant=? AND id=? AND status='active'",
+        now,
+        stream,
         now,
         connection.tenant,
         connection.id,
@@ -720,9 +722,10 @@ export async function rereadOperation(
   fetcher: typeof fetch = fetch,
   now = Date.now(),
 ) {
+  const startedAt = Date.now();
   const operation = await store
     .statement(
-      "SELECT * FROM source_work WHERE tenant=? AND source=? AND kind='operation' AND state='pending' AND expires_at>? ORDER BY processed_at LIMIT 1",
+      "SELECT * FROM source_work WHERE tenant=? AND source=? AND kind='operation' AND state='pending' AND deleted=0 AND expires_at>? ORDER BY processed_at,id LIMIT 1",
       connection.tenant,
       connection.id,
       now,
@@ -880,6 +883,17 @@ export async function rereadOperation(
           state.epoch ?? null,
         ),
       );
+    } else {
+      work.push(
+        store.statement(
+          "UPDATE source_work SET processed_at=?,reason=NULL WHERE tenant=? AND source=? AND id=? AND kind='operation' AND revision=?",
+          now,
+          connection.tenant,
+          connection.id,
+          operation.id,
+          operation.revision,
+        ),
+      );
     }
     work.push(
       store.statement(
@@ -906,6 +920,29 @@ export async function rereadOperation(
       now,
     );
     return { complete: page.complete, records: page.qsos.length };
+  } catch (error) {
+    // A failed read must consume its scheduling turn without asserting any
+    // coverage. Guard the diagnostic so an old request cannot mark a newer
+    // source revision, renewed connection or another tenant.
+    const guard = sourceGuard(store, connection, operation);
+    await store.db.batch([
+      guard.sql,
+      store.statement(
+        "UPDATE source_work SET processed_at=?,reason='operation_read_failed_retrying' WHERE tenant=? AND source=? AND id=? AND kind='operation' AND revision=? AND state='pending' AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?)",
+        now,
+        connection.tenant,
+        connection.id,
+        operation.id,
+        operation.revision,
+        connection.tenant,
+        lease.scope,
+        lease.token,
+        lease.fence,
+        now + Math.max(0, Date.now() - startedAt),
+      ),
+      store.statement("DELETE FROM source_write_guards WHERE id=?", guard.id),
+    ]);
+    throw error;
   } finally {
     await store.release(lease);
   }

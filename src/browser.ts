@@ -75,7 +75,9 @@ async function run(callback: () => Promise<void>) {
 function form(id: string, callback: (data: FormData) => Promise<void>) {
   element<HTMLFormElement>(id).addEventListener("submit", (event) => {
     event.preventDefault();
-    const button = element(id).querySelector("button");
+    const button = element(id).querySelector<HTMLButtonElement>(
+      'button[type="submit"]',
+    );
     if (button) button.disabled = true;
     void run(async () => {
       try {
@@ -200,6 +202,22 @@ function action(label: string, callback: () => Promise<void>) {
   return button;
 }
 
+let lotwLoginRequest = 0;
+interface LotwLoginCheckResponse {
+  loginVerification: {
+    status: "verified" | "rejected" | "unavailable";
+    checkedAt: string;
+  };
+  message: string;
+}
+
+function showLotwLoginResult(value: string, failed = false) {
+  const result = element("lotw-login-result");
+  result.textContent = value;
+  result.classList.toggle("connection-error", failed);
+  result.hidden = false;
+}
+
 async function updateCredentials(connection: ConnectionSummary) {
   const response = await api<{
     connections: { id: string; config: Record<string, unknown> }[];
@@ -210,6 +228,10 @@ async function updateCredentials(connection: ConnectionSummary) {
   const details = element<HTMLDetailsElement>(`connect-${connection.kind}`);
   const form = element<HTMLFormElement>(connection.kind);
   form.reset();
+  if (connection.kind === "lotw") {
+    ++lotwLoginRequest;
+    element("lotw-login-result").hidden = true;
+  }
   const fields =
     connection.kind === "qrz"
       ? ["bookId", "stationCallsign", "startDate", "endDate"]
@@ -253,6 +275,45 @@ function renderConnection(connection: ConnectionSummary, previous = false) {
     item.append(
       node("p", "Account name reported by LoFi.", "small connection-note"),
     );
+  if (connection.kind === "lotw" && !previous && connection.lotwVerification) {
+    const checks = node("ul", "", "verification-checks");
+    checks.setAttribute("aria-label", "LoTW verification checks");
+    const labels = {
+      login: "LoTW website login",
+      certificate: "Certificate import",
+      trust: "Certificate trust",
+      certificate_status: "Certificate status",
+    };
+    const statuses = {
+      ok: "Verified",
+      warning: "Needs attention",
+      error: "Failed",
+      unknown: "Not checked",
+    };
+    for (const check of connection.lotwVerification) {
+      const row = node("li", "", "verification-check");
+      const heading = node("div", "", "verification-heading");
+      heading.append(
+        node("span", labels[check.id]),
+        node(
+          "span",
+          statuses[check.status],
+          `verification-state check-${check.status}`,
+        ),
+      );
+      row.append(heading, node("p", check.message, "small"));
+      if (check.checkedAt)
+        row.append(
+          node(
+            "p",
+            `Checked ${new Date(check.checkedAt).toLocaleString()}`,
+            "small verification-time",
+          ),
+        );
+      checks.append(row);
+    }
+    item.append(checks);
+  }
   if (connection.last_error)
     item.append(node("p", connection.last_error, "small connection-error"));
   if (connection.last_poll_at)
@@ -309,6 +370,23 @@ function renderConnection(connection: ConnectionSummary, previous = false) {
   if (connection.kind !== "lofi" && connection.status !== "approval_pending")
     actions.append(
       action("Update credentials", () => updateCredentials(connection)),
+    );
+  if (connection.kind === "lotw")
+    actions.append(
+      action("Check login", async () => {
+        try {
+          const result = await api<LotwLoginCheckResponse>(
+            "/api/connections/lotw/check-login",
+            { id: connection.id },
+          );
+          message(
+            result.message,
+            result.loginVerification.status !== "verified",
+          );
+        } finally {
+          await load();
+        }
+      }),
     );
   actions.append(
     action(
@@ -905,6 +983,47 @@ form("qrz", async (data) => {
   element<HTMLFormElement>("qrz").reset();
   await load();
 });
+bind("lotw-check-login", async () => {
+  const button = element<HTMLButtonElement>("lotw-check-login");
+  button.disabled = true;
+  const request = ++lotwLoginRequest;
+  showLotwLoginResult("Checking LoTW website login…");
+  try {
+    const data = new FormData(element<HTMLFormElement>("lotw"));
+    const result = await api<LotwLoginCheckResponse>(
+      "/api/connections/lotw/check-login",
+      {
+        username: text(data, "username"),
+        password: text(data, "queryPassword"),
+      },
+    );
+    if (request !== lotwLoginRequest) return;
+    const failed = result.loginVerification.status !== "verified";
+    showLotwLoginResult(
+      `${result.message} Checked ${new Date(result.loginVerification.checkedAt).toLocaleString()}.`,
+      failed,
+    );
+    message(result.message, failed);
+  } catch (error) {
+    if (request !== lotwLoginRequest) return;
+    showLotwLoginResult(
+      error instanceof Error ? error.message : "Unable to check LoTW login.",
+      true,
+    );
+    throw error;
+  } finally {
+    button.disabled = false;
+  }
+});
+for (const name of ["username", "queryPassword"]) {
+  const input = element<HTMLFormElement>("lotw").elements.namedItem(name);
+  if (input instanceof HTMLInputElement)
+    input.addEventListener("input", () => {
+      ++lotwLoginRequest;
+      if (!element("lotw-login-result").hidden)
+        showLotwLoginResult("Credentials changed. Check LoTW login again.");
+    });
+}
 form("lotw", async (data) => {
   const file = data.get("p12");
   if (!(file instanceof File) || file.size > 256000)
@@ -912,20 +1031,26 @@ form("lotw", async (data) => {
   const bytes = new Uint8Array(await file.arrayBuffer());
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  await api("/api/connections/lotw", {
-    p12: btoa(binary),
-    password: text(data, "password"),
-    ...(text(data, "username")
-      ? {
-          query: {
-            username: text(data, "username"),
-            password: text(data, "queryPassword"),
-          },
-        }
-      : {}),
-  });
+  const result = await api<{ status: string; message: string }>(
+    "/api/connections/lotw",
+    {
+      p12: btoa(binary),
+      password: text(data, "password"),
+      ...(text(data, "username")
+        ? {
+            query: {
+              username: text(data, "username"),
+              password: text(data, "queryPassword"),
+            },
+          }
+        : {}),
+    },
+  );
   element<HTMLFormElement>("lotw").reset();
+  ++lotwLoginRequest;
+  element("lotw-login-result").hidden = true;
   await load();
+  message(result.message, result.status === "needs_verification");
 });
 form("settings", async (data) => {
   await api("/api/settings", {

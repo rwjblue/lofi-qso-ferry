@@ -303,6 +303,60 @@ summary {
 .connection-error {
   color: #8e3933;
 }
+.verification-checks {
+  list-style: none;
+  margin: 0.7rem 0;
+  padding: 0;
+}
+.verification-check {
+  border-left: 3px solid var(--line);
+  padding: 0.5rem 0.7rem;
+  margin: 0.45rem 0;
+}
+.verification-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-size: 0.84rem;
+  font-weight: 650;
+}
+.verification-check p {
+  margin: 0.25rem 0 0;
+}
+.verification-state {
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.72rem;
+}
+.check-ok {
+  background: #edf5ef;
+  color: #266347;
+}
+.check-warning {
+  background: #fff1d5;
+  color: #825b19;
+}
+.check-error {
+  background: #f9e9e6;
+  color: #8e3933;
+}
+.check-unknown {
+  background: #eef1f0;
+  color: #617672;
+}
+.verification-time {
+  font-size: 0.74rem;
+}
+.login-result {
+  border-left: 3px solid var(--line);
+  padding: 0.4rem 0.7rem;
+}
+#lotw > button[type="submit"] {
+  display: block;
+  margin-top: 1rem;
+}
 .ledger-explainer {
   margin-bottom: 0.8rem;
 }

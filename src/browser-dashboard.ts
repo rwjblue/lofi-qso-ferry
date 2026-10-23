@@ -1,6 +1,13 @@
 export const vendorKinds = ["lofi", "qrz", "lotw"] as const;
 export type VendorKind = (typeof vendorKinds)[number];
 
+export interface LotwVerificationCheck {
+  id: "login" | "certificate" | "trust" | "certificate_status";
+  status: "ok" | "warning" | "error" | "unknown";
+  message: string;
+  checkedAt?: string;
+}
+
 export interface ConnectionSummary {
   id: string;
   kind: string;
@@ -8,6 +15,7 @@ export interface ConnectionSummary {
   status: string;
   last_error?: string | null;
   last_poll_at: number | null;
+  lotwVerification?: LotwVerificationCheck[];
 }
 
 export function vendorName(kind: string): string {

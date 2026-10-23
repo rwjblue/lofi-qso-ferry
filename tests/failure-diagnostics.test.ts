@@ -51,6 +51,14 @@ test("known protocol, report, retention and D1 guard errors have fixed codes", (
       new QrzError("protocol", "private unknown protocol response"),
       "qrz_protocol",
     ],
+    [
+      new QrzError("protocol", "QRZ response body could not be read"),
+      "qrz_response_body_unreadable",
+    ],
+    [
+      new QrzError("protocol", "Invalid QRZ response UTF-8"),
+      "qrz_response_utf8",
+    ],
     [new QrzError("rejected", "private rejection"), "qrz_rejected"],
     [new LotwLoginError("credentials"), "lotw_credentials"],
     [new LotwLoginError("unavailable"), "lotw_login_unavailable"],

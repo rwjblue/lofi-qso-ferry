@@ -50,6 +50,8 @@ const qrzDetails = new Map([
   ["Invalid QRZ form encoding", "qrz_form_encoding"],
   ["Missing QRZ result", "qrz_missing_result"],
   ["QRZ response exceeds 2 MiB", "qrz_response_bound"],
+  ["QRZ response body could not be read", "qrz_response_body_unreadable"],
+  ["Invalid QRZ response UTF-8", "qrz_response_utf8"],
   [
     "Invalid QRZ response; mutation outcome must be reconciled",
     "qrz_response_invalid",

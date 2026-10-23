@@ -1,4 +1,4 @@
-import { parseAdif, serializeAdifRecord, type AdifRecord } from "./adif.ts";
+import { type AdifRecord, parseAdif, serializeAdifRecord } from "./adif.ts";
 import { VendorDeferredError } from "./vendor-requests.ts";
 export const QRZ_ENDPOINT = "https://logbook.qrz.com/api";
 export class QrzError extends Error {
@@ -16,6 +16,18 @@ export class QrzError extends Error {
   }
 }
 export type QrzResponse = Record<string, string>;
+// Only these fixed parser/body messages may survive a read-response failure.
+// Never preserve an arbitrary stream error or its cause, even if it is typed.
+const READ_RESPONSE_ERRORS = new Set([
+  "Invalid QRZ ADIF entity encoding",
+  "Invalid QRZ response framing",
+  "Duplicate QRZ response parameter",
+  "Invalid QRZ form encoding",
+  "Missing QRZ result",
+  "QRZ response exceeds 2 MiB",
+  "QRZ response body could not be read",
+  "Invalid QRZ response UTF-8",
+]);
 /** The live API uses a raw HTML-entity-encoded ADIF tail, not a form value. */
 function decodeHtmlOnce(value: string): string {
   const named: Record<string, string> = {
@@ -74,7 +86,12 @@ async function boundedBody(response: Response): Promise<string> {
   let length = 0;
   try {
     while (true) {
-      const part = await reader.read();
+      let part: ReadableStreamReadResult<Uint8Array>;
+      try {
+        part = await reader.read();
+      } catch {
+        throw new QrzError("protocol", "QRZ response body could not be read");
+      }
       if (part.done) break;
       length += part.value.length;
       if (length > 2 * 1024 * 1024)
@@ -90,7 +107,13 @@ async function boundedBody(response: Response): Promise<string> {
     data.set(chunk, offset);
     offset += chunk.length;
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(data);
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(data);
+  } catch (error) {
+    if (error instanceof TypeError)
+      throw new QrzError("protocol", "Invalid QRZ response UTF-8");
+    throw error;
+  }
 }
 export interface QrzBook {
   bookId: string;
@@ -193,7 +216,14 @@ export class QrzClient {
     let data: QrzResponse;
     try {
       data = parseQrzResponse(await boundedBody(response));
-    } catch {
+    } catch (error) {
+      if (
+        !mutating &&
+        error instanceof QrzError &&
+        error.kind === "protocol" &&
+        READ_RESPONSE_ERRORS.has(error.message)
+      )
+        throw new QrzError("protocol", error.message);
       throw new QrzError(
         mutating ? "uncertain" : "protocol",
         "Invalid QRZ response; mutation outcome must be reconciled",

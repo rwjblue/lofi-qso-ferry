@@ -1,16 +1,18 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
+import { parseAdif, serializeAdifRecord } from "../src/adif.ts";
+import { createFailureDiagnostics } from "../src/failure-diagnostics.ts";
 import {
+  matchQrzHistory,
+  mayCleanOldQrzIdentity,
+  mergeQrzCorrection,
+  parseQrzResponse,
   QrzClient,
   QrzError,
-  parseQrzResponse,
-  mergeQrzCorrection,
-  matchQrzHistory,
   sameQrzIdentity,
-  mayCleanOldQrzIdentity,
 } from "../src/qrz.ts";
-import { parseAdif, serializeAdifRecord } from "../src/adif.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
+
 const contact = {
   STATION_CALLSIGN: "N0TEST/P",
   CALL: "W1AW",
@@ -54,6 +56,150 @@ test("QRZ responses decode narrative form values exactly once", () => {
   );
   assert.throws(() => parseQrzResponse("RESULT=OK&RESULT=FAIL"));
   assert.throws(() => parseQrzResponse("<html>error</html>"));
+});
+test("read responses preserve only fixed validation diagnostics while writes stay uncertain", async (t) => {
+  const secret = "private-record-and-credential";
+  const cases: [string, () => Response, string, string][] = [
+    [
+      "html",
+      () => new Response(`<html>${secret}</html>`),
+      "Invalid QRZ response framing",
+      "qrz_response_framing",
+    ],
+    [
+      "duplicate parameter",
+      () => new Response(`RESULT=OK&result=FAIL&TOKEN=${secret}`),
+      "Duplicate QRZ response parameter",
+      "qrz_duplicate_parameter",
+    ],
+    [
+      "missing result",
+      () => new Response(`COUNT=0&REASON=${secret}`),
+      "Missing QRZ result",
+      "qrz_missing_result",
+    ],
+    [
+      "entity encoding",
+      () =>
+        new Response(
+          `RESULT=OK&COUNT=1&ADIF=&lt;CALL:7&gt;&#x110000;${secret}&lt;EOR&gt;`,
+        ),
+      "Invalid QRZ ADIF entity encoding",
+      "qrz_entity_encoding",
+    ],
+    [
+      "form encoding",
+      () =>
+        new Response(
+          `RESULT=OK&COUNT=1&ADIF=%3CCALL%3A7%3E${secret}%3CEOR%3E%ZZ`,
+        ),
+      "Invalid QRZ form encoding",
+      "qrz_form_encoding",
+    ],
+    [
+      "body limit",
+      () =>
+        new Response(
+          secret.repeat(Math.ceil((2 * 1024 * 1024 + 1) / secret.length)),
+        ),
+      "QRZ response exceeds 2 MiB",
+      "qrz_response_bound",
+    ],
+    [
+      "utf8",
+      () => new Response(new Uint8Array([0xff])),
+      "Invalid QRZ response UTF-8",
+      "qrz_response_utf8",
+    ],
+    [
+      "stream failure",
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new Error(secret, { cause: new Error(secret) }));
+            },
+          }),
+        ),
+      "QRZ response body could not be read",
+      "qrz_response_body_unreadable",
+    ],
+  ];
+  for (const [name, response, message, code] of cases)
+    await t.test(name, async () => {
+      const client = new QrzClient(secret, {
+        writesEnabled: true,
+        fetch: async () => response(),
+      });
+      const diagnostics = createFailureDiagnostics();
+      for (const read of [() => client.fetchPage(), () => client.status()])
+        await assert.rejects(read, (error: unknown) => {
+          assert(error instanceof QrzError);
+          assert.equal(error.kind, "protocol");
+          assert.equal(error.message, message);
+          assert.equal(error.cause, undefined);
+          diagnostics.record(error, "history_read", "qrz");
+          return true;
+        });
+      await assert.rejects(client.insert(contact), (error: unknown) => {
+        assert(error instanceof QrzError);
+        assert.equal(error.kind, "uncertain");
+        assert.equal(
+          error.message,
+          "Invalid QRZ response; mutation outcome must be reconciled",
+        );
+        assert.equal(error.cause, undefined);
+        diagnostics.record(error, "preparation", "qrz");
+        return true;
+      });
+      assert.deepEqual(diagnostics.counts[`history_read:qrz:${code}`], {
+        events: 2,
+        affected: 2,
+      });
+      assert.deepEqual(diagnostics.counts["preparation:qrz:qrz_uncertain"], {
+        events: 1,
+        affected: 1,
+      });
+      assert.doesNotMatch(
+        JSON.stringify(diagnostics.counts),
+        /private|credential|record-and/,
+      );
+    });
+});
+test("unrecognized QRZ body failures and rejected FETCH never expose vendor reasons or imply empty history", async () => {
+  const secret = "private-response-token";
+  const response = new Response();
+  Object.defineProperty(response, "body", {
+    get() {
+      throw new QrzError("protocol", secret);
+    },
+  });
+  const unknown = new QrzClient(secret, { fetch: async () => response });
+  await assert.rejects(unknown.fetchPage(), (error: unknown) => {
+    assert(error instanceof QrzError);
+    assert.equal(error.kind, "protocol");
+    assert.equal(
+      error.message,
+      "Invalid QRZ response; mutation outcome must be reconciled",
+    );
+    assert.equal(error.cause, undefined);
+    return true;
+  });
+  for (const body of [
+    "RESULT=FAIL&COUNT=0",
+    `RESULT=FAIL&COUNT=0&REASON=${secret}`,
+  ]) {
+    const rejected = new QrzClient(secret, {
+      fetch: async () => new Response(body),
+    });
+    await assert.rejects(rejected.fetchPage(), (error: unknown) => {
+      assert(error instanceof QrzError);
+      assert.equal(error.kind, "rejected");
+      assert.equal(error.message, "QRZ inventory incomplete or rejected");
+      assert.equal(error.cause, undefined);
+      return true;
+    });
+  }
 });
 test("page completion depends on parsed records, not global COUNT", async () => {
   const requests: URLSearchParams[] = [];

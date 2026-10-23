@@ -38,6 +38,10 @@ import {
 import type { IntakeContact } from "./intake.ts";
 import { LotwClient, LotwLoginError } from "./lotw.ts";
 import { refreshLotwCertificates } from "./lotw-maintenance.ts";
+import {
+  backfillLegacyQrzIdentity,
+  type IdentityBackfillResult,
+} from "./identity-backfill.ts";
 import type { Contact } from "./projection.ts";
 import { sourceFingerprint } from "./projection.ts";
 import { QrzClient, QrzError } from "./qrz.ts";
@@ -690,6 +694,7 @@ export interface ThroughputMetrics {
   inventoryFetches: number;
   inventoryCacheHits: number;
   reconciliationBatchCalls: number;
+  identityBackfill?: IdentityBackfillResult;
   failures: ReturnType<typeof createFailureDiagnostics>["counts"];
   stageMs: Record<string, number>;
   database: DatabaseMetrics;
@@ -755,6 +760,14 @@ export async function tick(
     ...(clock === undefined ? {} : { now: clock }),
   };
   const certificateRefresh = await refreshLotwCertificates(store, deps);
+  const identityBackfill = await measure("identityBackfill", () =>
+    backfillLegacyQrzIdentity(store, {
+      ...deps,
+      shouldContinue: () => !expired(),
+      onFailure: (error) => diagnostics.record(error, "history_read", "qrz"),
+    }),
+  );
+  throughput.identityBackfill = identityBackfill;
   const sources = (
     await store
       .statement(
@@ -766,8 +779,8 @@ export async function tick(
     sources: 0,
     contacts: 0,
     attempts: 0,
-    errors: certificateRefresh.errors,
-    deferred: certificateRefresh.deferred,
+    errors: certificateRefresh.errors + identityBackfill.errors,
+    deferred: certificateRefresh.deferred + identityBackfill.deferred,
     exportsEnabled: exportsEffective(gates),
     rounds: 0,
     elapsedMs: 0,

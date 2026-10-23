@@ -1,6 +1,99 @@
 # Implementation progress
 
-Release checkpoint, 2026-10-23 19:45 UTC: the reconciliation cohort slice is deployed
+Current checkpoint, 2026-10-23 21:03 UTC: signed revision
+`57a64b02285f55f3dee25fdf52674ac54cd3893f` deployed as Worker
+`25628683-a870-40e5-835f-e697adbc7f44` at 100% traffic. The diagnostic
+follow-up preserves fixed QRZ read-response failure categories and measures
+D1 server SQL time, row counts, retry attempts and metadata coverage. It retains
+write uncertainty, query behavior, existing request budgets and all export gates.
+All **548 tests** and required checks pass locally; [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40023892103)
+passed all 548 tests and required checks. Independent verification at 21:05:18 UTC confirms closed gates,
+healthy read-only service and matching assets. No new migration was required;
+the database remains at twenty migrations. The first refined-counter run follows.
+
+The first refined-counter run, 21:05:42–21:07:13 UTC, completed 104 contact
+turns and 158 destination classifications, including ten adoptions, in 91.239
+seconds. It recorded 33 errors and four deferrals. QRZ entity decoding accounts
+for eleven diagnostic events affecting twenty history routes; ten separate QRZ
+rejection events affected twelve routes. One LoTW unavailable event and four
+budget-deferral events account for the remaining categories. Events are not
+physical request counts. The entity failure is now localized to numeric Unicode
+validation, but its exact input pattern still needs a bounded diagnostic probe.
+
+D1 used 702 RPCs and 3,624 statements, with 84.089 seconds of wall time and
+97.357 seconds of cumulative request time. Metadata covered 3,395 statements:
+1.425 seconds of reported SQL execution, 1,004,089 rows read, 5,818 rows written,
+zero additional statement retries, and ENAM service for all covered statements.
+The uncovered 229 statements and last-attempt-only SQL reporting prevent
+attributing the wait gap purely to network latency. This points to further
+round-trip reduction and query profiling, not a reason to raise budgets.
+The 21:08:59 UTC snapshot confirms zero attempts, cutovers or temporary guards.
+
+
+Previous checkpoint, 2026-10-23 20:44 UTC: signed revision
+`8863bd9439681122e71bc3c2a31174a72aa30bb2` deployed as Worker
+`004edefd-d2a5-462c-b079-1cf8d04e6b05` at 100% traffic. Five small signed
+commits add safe failure diagnostics, mixed-date history sharing, independent
+background account/source admission and bounded cold-history concurrency.
+All **531 tests**, formatting, lint, both TypeScript checks and the Worker build
+pass locally. [Release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40021495718)
+passed all 531 tests and required checks; the first scheduled-run measurement follows.
+
+Independent verification at 20:44:30 UTC confirms all five gates closed, healthy
+read-only service, matching assets, twenty migrations through `0021` and zero
+attempts, cutovers or temporary guards. The warm 20-contact/20-week fixture uses
+**57 cohort RPCs / 128 whole-run RPCs / 716 SQL statements**, preserving all 40
+outcomes without vendor reads or writes. Cold history retains four-way
+concurrency and drains started work before releasing leases. Background
+admission tests cover 100 accounts, multiple sources, restart, slow failures,
+lifecycle changes and stale leases; the complete growth workload remains open.
+
+The first new run, 20:46:52–20:48:32 UTC, completed 22 contact turns and
+27 destination classifications, including two adoptions, with 11 errors and
+two deferrals. It used 254 RPCs and 880 SQL statements in 100.130 seconds;
+97.563 seconds were database wall time. It stopped at the soft deadline after
+in-flight work settled. This sample does not establish a production speedup.
+The new fixed categories identify QRZ rejected responses (four events affecting
+six routes across the single-contact and shared-history paths), QRZ invalid
+responses (two events affecting four routes), one LoTW unavailable event and
+one LoTW budget-deferral event affecting two routes. Diagnostic events are not
+physical request counts. The exact QRZ parser cause and the source of variable
+D1 latency still need investigation. The 20:48:44 UTC snapshot confirms zero
+attempts, cutovers or temporary guards.
+
+A separate aggregate check at 20:52:23 UTC found 177 completed operation
+contexts and 41 deleted operation records. All 41 raw pending operation rows
+were tombstones; zero operations were eligible for rereading. The dashboard
+already excludes those tombstones from pending reads. They are not a stalled
+context backlog, and forcing rereads would not resolve the remaining history
+exceptions.
+
+At 20:54:24 UTC, current workload metadata separates 2,429 ready source
+contacts (2,422 background and seven live), 1,500 contacts held for history
+review, 203 held for routing, two held for unavailable operation context, and
+one blocked by a frequency/band mismatch. Ready means eligible for processing,
+not permission to export. Among destination review rows, 655 QRZ holds identify
+minute-only time precision, 904 lack a unique exact identity, 1,597 LoTW holds
+identify lower grid precision, and 109 LoTW mismatches identify missing or
+different location fields. Destination counts overlap across source contacts
+and must not be added to the workload counts. These require review policies
+and source/route corrections where appropriate; waiting for cron cannot
+approve them. The two context-held contacts require separate source review;
+zero eligible operation rereads does not imply every contact has valid context.
+
+The next two runs processed 103 and 137 contact turns, respectively; the
+latter classified 190 destinations in 68.887 seconds, with 33 errors and
+65.353 seconds of database wait. More precise QRZ response categories and
+D1 SQL/coverage metadata are deployed in the 21:03 UTC follow-up.
+
+Next: diagnose production retry categories, finish source-context/rescan work,
+measure larger source pages and checkpoints, park dependencies, complete
+live/vendor fairness and safe multi-contact delivery, then exercise the full
+workload matrix. Exports remain disabled until the independent source,
+identity, exception-review and scoped canary requirements are met. See the
+[capacity plan](docs/capacity-plan.md).
+
+Previous checkpoint, 2026-10-23 19:45 UTC: the reconciliation cohort slice deployed
 in six signed logical commits and passes **512 tests**, formatting, lint, types and
 the Worker build. It shares observation/history reads and guarded outcomes while
 preserving per-contact source/evidence fences, collision quarantine and failed
@@ -8,7 +101,7 @@ partition isolation. The warm 20-contact fixture uses **19 cohort RPCs** instead
 of 400 and **86 complete-tick RPCs** instead of 467; SQL falls from 939 to 556.
 Reproduce with `mise exec -- npx tsx scripts/benchmark-reconciliation-cohort.ts`.
 Signed revision `bca137b1a38ceb7ab0601e1db53136d69cce9c9c` (application code
-`b23e563a4104bd16b8bb9ce0cd6d356ddfad9d3f`) is deployed as Worker
+`b23e563a4104bd16b8bb9ce0cd6d356ddfad9d3f`) deployed as Worker
 `1f481a97-7e78-443a-a180-ea488822f78b` at 100% traffic. Independent live checks
 confirm all five gates closed, healthy read-only service, matching browser assets,
 nineteen migrations and zero attempts, cutovers or temporary guard residue.
@@ -21,7 +114,7 @@ This approximately 78% lower RPC cost per turn comes from one mixed-work
 observation with warm inventory; it is not unique completed reconciliation
 or sustained capacity. The 19:49:24 UTC snapshot still confirms nineteen
 migrations and zero attempts, cutovers or temporary guards. See the [capacity plan](docs/capacity-plan.md) for
-remaining work, including fair account admission, economical live delivery and
+remaining work at that checkpoint, including fair account admission, economical live delivery and
 full workload acceptance.
 
 The second run, 19:50:42–19:52:09 UTC, processed 137 contact turns and 249
@@ -45,7 +138,7 @@ and the Worker build pass locally. Deadline/failure and lost-lease regressions
 pass; canonical freshness polling and all export gates remain unchanged.
 - Batched intake/checkpoints and shared context reads reduce local D1 calls from **32→7** for an operation plus 25 contacts, **33→9** for a 25-contact operation reread, **56→7** for a 25-contact replay, and **102→5** for projecting 20 contacts sharing operation/event context. Full projection, tenant boundaries and atomic checkpoint rollback remain tested.
 - Durable indexed work scheduling selects 100 contacts with **200 rows read** at both 4,000 and 200,000 contacts: **7.68 ms** and **7.63 ms** locally. With nearly all background rows held, the same selection takes **5.95/6.22 ms**, again reading 200 rows. Reproduce with `mise run benchmark-reconciliation`. These measure local selection only, not full reconciliation throughput.
-- Successful stable review outcomes wait **24 hours**; incomplete inventory/loading outcomes retry after **five minutes**. Relevant source, context, routing, credential and policy changes invalidate checks. Retention extensions and routine credential rewraps preserve holds. Inventory completion does not currently wake old stable holds; the 24-hour retry is the backstop.
+- Successful stable review outcomes wait **24 hours**; incomplete inventory/loading outcomes retry after **five minutes**. Relevant source, context, routing, credential and policy changes invalidate checks. Retention extensions and routine credential rewraps preserve holds. Inventory completion does not currently wake dependent contacts directly; eliminating repeated dependency checks requires shared inventory jobs and durable dependent membership.
 - Shared history uses encrypted **four-hour** partitions covering up to a week, QRZ base/modification catch-up pages and LoTW splitting when a date range is too large. Retention is bounded to **2 MiB per partition**, **128 MiB per source/destination** and **2,048 partitions per source/destination**. Incomplete, expired or revoked evidence cannot establish coverage. Cached absence retains a hold and never substitutes for the fresh targeted check required before exporting.
 - A local scheduler fixture classifies **20 contacts into 40 stable destination holds using three history requests** (two QRZ, one LoTW). The following tick processes zero contacts and makes zero additional history reads. Both ticks produce zero attempts or vendor writes. This verifies reuse and repeat suppression on that fixture; it does not demonstrate a 200,000-contact drain rate.
 - Background selection uses **20-contact batches**, live selection remains **one contact** to reserve write capacity, and the scheduler yields at its **90-second or 850-D1-call soft budget**. Stage durations, D1 RPC/SQL-statement counts, destination classifications and inventory fetch/cache activity are retained in scheduler telemetry. In-flight work may finish after a soft threshold.
@@ -53,7 +146,7 @@ pass; canonical freshness polling and all export gates remain unchanged.
 
 The first new production run processed only four contacts in 93.7 seconds, with four QRZ errors and 73.4 seconds of cumulative database wait. That observation exposed a rejected QRZ modification query and excessive sequential round trips. A follow-up now adds a full verification fallback, further batched reads and at most four concurrent read-only background contacts; all 465 tests and required local checks pass, and the follow-up deployed at 16:37 UTC. The first follow-up run processed **20 contacts and 29 destination classifications in 95.3 seconds**, with three errors, eight deferrals and zero attempts. Historical rescan/context pages did not advance: background lane starvation is corrected in the 16:53 release, with its first run advancing two rescan pages, two context pages and 23 contacts. This is a first-run improvement, not sustained capacity acceptance. See the [measured bottleneck and follow-up](docs/reconciliation-investigation.md#first-throughput-release-production-bottlenecks-and-follow-up).
 
-Remaining capacity work: measure the deployed cohort path and resource use, implement fair account admission and targeted completion wakeups, validate larger LoFi source pages, share source coverage where safe, implement outbound identity claims and safe multi-member delivery, add durable queue continuations and run the full 100-account/10,000-contact daily workload alongside 4,000/200,000-contact interruption/fairness/import scenarios. Source pages remain **25 contacts** under the existing vendor budgets. Neither a full 200,000-contact benchmark nor the proposed one-day target is complete. See the [measurement details and acceptance plan](docs/reconciliation-investigation.md).
+Remaining capacity work: measure the deployed cohort/admission path and resource use, complete general live/vendor fairness and dependency parking, validate larger LoFi source pages, share source coverage where safe, implement outbound identity claims and safe multi-member delivery, add durable queue continuations and run the full 100-account/10,000-contact daily workload alongside 4,000/200,000-contact interruption/fairness/import scenarios. Source pages remain **25 contacts** under the existing vendor budgets. Neither a full 200,000-contact benchmark nor the proposed one-day target is complete. See the [measurement details and acceptance plan](docs/reconciliation-investigation.md).
 
 The separate [workload investigation](docs/admin-workload-investigation.md) shows the context backlog is held work awaiting pending operation rereads, not 767 malformed contacts. At 13:23 UTC, the new read-only classification found **1,423 ready for processing**, **2,704 held for operation context**, **five held for routing**, **one held for history review** and **one blocked by callsign validation**. All were background work. LoFi history and context reads share four background requests per five-minute window. A completed operation-list scan does not finish every operation's contacts/events; normal bounded reads must continue, and the historical callsign hold was traced to canonical `our.call` parsing and corrected in deployed revision `32758f5`, without changing owner data. These counts are time-specific and do not establish upload eligibility or a completion estimate.
 
@@ -102,10 +195,10 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 - The follow-up keeps canonical source sync first, processes a retained background contact before historical rescan/reread work, and prefers contacts with available base operation context over known context holds. Complete context, routing, history, source-proof and export checks remain enforced. A pre-deployment read-only selection experiment found available base context for only two of the first ten contacts under the old ordering versus all ten under the new ordering; it wrote zero rows. This does not establish complete event coverage for every selected contact.
 - Follow-up `634517d0` passed **377 tests**, formatting, lint, types and build locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39965786804). Concurrent upstream documentation revision `854259b` was integrated and preserved. The first observed production run confirms contact processing and specific readback outcomes; sustained draining and complete history acceptance remain outstanding.
 
-## Current production deployment (19:45 UTC)
+## Current production deployment (21:03 UTC)
 
-- Latest deployment: revision `bca137b1a38ceb7ab0601e1db53136d69cce9c9c` (application code `b23e563a4104bd16b8bb9ce0cd6d356ddfad9d3f`), Worker `1f481a97-7e78-443a-a180-ea488822f78b`, created at `2026-10-23T19:45:28.295064Z` and confirmed at 100% traffic. Host/RP remains `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, with five-minute cron. Independent version readback confirms all gates closed and health `status=ok`, `exportsEnabled=false`; root HTML and both browser bundles match the local build. See [deployment evidence](docs/deployment.md).
-- Dedicated D1 `ferry-production` has all nineteen migrations independently verified at 19:45:46 UTC. The initial throughput deployment applied migrations 0017–0020; this cohort release needed no migrations. Attempts, cutovers and temporary inventory/adoption guard rows remain zero. No application secrets changed.
+- Latest deployment: revision `57a64b02285f55f3dee25fdf52674ac54cd3893f`, Worker `25628683-a870-40e5-835f-e697adbc7f44`, created at `2026-10-23T21:03:33.920866Z` and confirmed at 100% traffic. Host/RP remains `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, with five-minute cron. Independent version readback confirms all gates closed and health `status=ok`, `exportsEnabled=false`; root HTML and both browser bundles match the local build. See [deployment evidence](docs/deployment.md).
+- Dedicated D1 `ferry-production` has all twenty migrations independently verified at 20:44:30 UTC. The initial throughput deployment applied migrations 0017–0020; independent background admission adds migration 0021. Attempts, cutovers and temporary inventory/adoption guard rows remain zero. No application secrets changed.
 - Every export gate is closed: `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, empty `LIVE_WRITE_AUTHORIZATION` and `ROLLOUT_QSO_IDS_JSON=[]`. There is no LoTW root-policy binding or root updater; LoTW validates certificate authority during upload processing.
 - The saved LoTW connection is active with unrevoked serial status. Existing encrypted credentials do not need reimport because local trust flags were removed. Successful preflight and login are not signed-upload acceptance evidence.
 - Native `EMAIL` sender restricted to `signup@ferry.n1rwj.com`; sending DNS verified, existing Fastmail MX preserved, email-content previews disabled. Existing Wrangler OAuth includes Email Sending write access; no new credentials are needed for invites.

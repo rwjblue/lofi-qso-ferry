@@ -1,13 +1,72 @@
 # Capacity plan
 
-Status: first reconciliation slice deployed read-only at 19:45 UTC on
-2026-10-23, revision `bca137b1` (application code `b23e563a`). All 512 tests
-and required checks pass locally and in release CI; the first completed
-production run is recorded below. Sustained capacity remains unverified.
-Production exports remain disabled.
+Status: diagnostic follow-up deployed read-only at 21:03:35 UTC on 2026-10-23,
+signed revision `57a64b02285f55f3dee25fdf52674ac54cd3893f`, Worker
+`25628683-a870-40e5-835f-e697adbc7f44`, at 100% traffic. All 548 tests and required
+checks pass locally; [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40023892103)
+passed all 548 tests and required checks. Independent 21:05:18 UTC verification confirms all five gates closed,
+HTTP 200 health and matching assets. No new migration was required; twenty
+remain applied through `0021`. The first refined-counter run is recorded below.
+Sustained capacity remains unverified. Production exports remain disabled.
 This plan extends the [reconciliation investigation](reconciliation-investigation.md)
 to ongoing delivery across accounts. Targets below are engineering acceptance
 criteria, not demonstrated service guarantees.
+
+The preceding admission release `8863bd9` deployed at 20:44:21 UTC and passed
+all 531 tests and required checks locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40021495718).
+It added mixed-date cohort batching and independent background account/source
+admission with migration `0021`. The diagnostic follow-up refines fixed QRZ
+parse/body categories and D1 response metadata; scheduler behavior and write
+uncertainty rules are unchanged. The three production runs below belong to the
+admission release. The earlier 19:45 UTC first-slice measurements remain separate.
+
+The first new run, 20:46:52–20:48:32 UTC, completed 22 contact turns and
+27 destination classifications, including two adoptions, with 11 errors and
+two deferrals. It used 254 RPCs and 880 SQL statements in 100.130 seconds;
+97.563 seconds were database wall time. It stopped at the soft deadline after
+in-flight work settled. This sample does not establish a production speedup.
+The new fixed categories identify QRZ rejected responses (four events affecting
+six routes across the single-contact and shared-history paths), QRZ invalid
+responses (two events affecting four routes), one LoTW unavailable event and
+one LoTW budget-deferral event affecting two routes. Diagnostic events are not
+physical request counts. The exact QRZ parser cause and the source of variable
+D1 latency still need investigation. The 20:48:44 UTC snapshot confirms zero
+attempts, cutovers or temporary guards.
+
+The following runs confirm variable progress rather than a settled service rate:
+
+| Run start (UTC) | Contact turns | Classifications |  Duration | D1 RPCs | D1 wall time | Errors |
+| --------------- | ------------: | --------------: | --------: | ------: | -----------: | -----: |
+| 20:46:52        |            22 |              27 | 100.130 s |     254 |     97.563 s |     11 |
+| 20:50:44        |           103 |             118 |  91.845 s |     681 |     81.143 s |     23 |
+| 20:55:45        |           137 |             190 |  68.887 s |     868 |     65.353 s |     33 |
+
+The latter two runs adopted five and fourteen destination records, respectively,
+and each advanced four source rescan pages. QRZ invalid/rejected responses
+persisted, alongside LoTW unavailable responses and shared budget deferrals.
+These are contact turns and destination outcomes, not unique fully reconciled
+contacts. Zero attempts, cutovers and temporary guards remain verified at
+20:57:00 UTC. More precise QRZ response categories and D1 SQL/coverage metadata
+deployed in the 21:03:35 UTC diagnostic follow-up.
+
+The first refined-counter run, 21:05:42–21:07:13 UTC, completed 104 contact
+turns and 158 destination classifications, including ten adoptions, in 91.239
+seconds. It recorded 33 errors and four deferrals. QRZ entity decoding accounts
+for eleven diagnostic events affecting twenty history routes; ten separate QRZ
+rejection events affected twelve routes. One LoTW unavailable event and four
+budget-deferral events account for the remaining categories. Events are not
+physical request counts. The entity failure is now localized to numeric Unicode
+validation, but its exact input pattern still needs a bounded diagnostic probe.
+
+D1 used 702 RPCs and 3,624 statements, with 84.089 seconds of wall time and
+97.357 seconds of cumulative request time. Metadata covered 3,395 statements:
+1.425 seconds of reported SQL execution, 1,004,089 rows read, 5,818 rows written,
+zero additional statement retries, and ENAM service for all covered statements.
+The uncovered 229 statements and last-attempt-only SQL reporting prevent
+attributing the wait gap purely to network latency. This points to further
+round-trip reduction and query profiling, not a reason to raise budgets.
+The 21:08:59 UTC snapshot confirms zero attempts, cutovers or temporary guards.
+
 
 ## Workloads and success criteria
 
@@ -56,7 +115,7 @@ A local 20-contact, same-week, two-destination baseline fixture made 467 D1 RPCs
 939 SQL statements with fully cached history, zero vendor reads and 40 review
 classifications. Of those RPCs, 160 reread the same history, 40 observed contacts,
 40 checked eligibility, 80 applied outcomes, and 80 saved checks/source status/
-queue completion. The deployed cohort implementation reduces this fixture to
+queue completion. The first-slice cohort implementation reduced this fixture to
 86 whole-tick RPCs and 556 SQL statements, of which 19 RPCs are cohort work.
 Local elapsed time does not predict remote D1 latency.
 
@@ -98,10 +157,10 @@ target is met. Integration/race regressions pass and live dispatch remains
 sequential. Production acceptance still requires comparison of actual
 classification rate and database wall time before increasing cohort size.
 
-The local warm fixture now uses **19 RPCs** for cohort work, down from 400;
-whole-tick calls fall **467→86** and SQL statements **939→556**. All 40
-classifications remain, with 40 cache hits, zero vendor history calls and zero
-exports. Cold whole-tick calls fall **519→170**, still using three history fetches.
+The first slice's local warm fixture used **19 RPCs** for cohort work, down from
+400; whole-tick calls fell **467→86** and SQL statements **939→556**. All 40
+classifications remained, with 40 cache hits, zero vendor history calls and zero
+exports. Cold whole-tick calls fell **519→170**, still using three history fetches.
 These are fixture-specific amplification measurements, not a service-rate SLA.
 
 Reproduce without production access:
@@ -116,19 +175,84 @@ preparation retain their existing path. New `reconciliationBatchCalls` telemetry
 separates cohort RPC cost from selection and housekeeping. A failed date leaf
 holds only dependent contacts; healthy history can still be classified.
 
+The second slice's local warm fixture covers **20 contacts in 20 distinct
+weeks**, across both destinations. It uses **57 cohort RPCs**, **128 whole-tick
+RPCs** and **716 SQL statements**, retaining all 40 classifications with zero
+vendor reads and writes. Outcome and evidence-fence regressions pass. This
+tests mixed-date database amplification; it does not demonstrate production
+throughput or a full import.
+
+Mixed-date grouping retains up to four concurrent cold-partition advances
+across the active cohorts. A deadline stops new advances; an invariant failure
+also stops queued work, and every started save and lease release settles before
+the batch returns. Bounded-cold regressions covering concurrency, deduplication,
+deadline and failure draining pass.
+
+Private-safe diagnostics separate a shared failure event from its affected
+routes. `throughput.failures` uses fixed `stage:vendor:code` keys with `events`
+and `affected` counts. Reuse of the same error object in one category counts
+one event while each affected route is counted; separate error objects count
+separately. These are diagnostic events, not physical network-call counts.
+Only fixed codes are retained, without arbitrary messages, stacks, causes,
+contact identifiers or credentials. The existing `inventoryFetches` counter
+still records successful progress and cannot establish that no request failed.
+
 ### 2. Wake eligible work and schedule accounts fairly
 
-Inventory completion should wake only contacts waiting for that evidence,
-instead of waiting for a 24-hour review timer. Persist the dependency without
-storing plaintext contact data. Validate larger LoFi page sizes against real
-responses before changing them; repeated context and destination rescans must
-share retained source work where its proof allows reuse.
+Incomplete inventory and loading holds already retry after **five minutes**;
+stable completed review outcomes wait **24 hours**. A targeted completion wakeup
+alone therefore removes at most the five-minute inventory retry timer, not a
+day-long dependency delay. Cron timing, admission and vendor budgets can add
+further delay. Avoiding repeated dependency checks requires parking contacts
+against a shared inventory leader/job and waking only its dependents when the
+required evidence completes. Persist that dependency without plaintext contact
+data. The leader/job lifecycle is still needed.
 
-Replace full account sweeps with indexed due work and bounded account turns.
+Migration `0021` and the admission module now maintain eligible account/source
+order through lifecycle triggers. A bounded indexed selector chooses one oldest
+unleased source per least-recently-admitted account. A monotonic sequence avoids
+clock ties. One atomic three-statement batch advances both turns before selected
+work, including its canonical refresh, under exact account/source snapshots and
+the current source-cycle lease token, fence and expiry. Seven module tests pass,
+including 100 accounts with 2,000 pending import rows, multiple sources, restart
+and same-clock turns, lifecycle changes, stale leases and the index plan.
+
+The service now selects its background roster independently of canonical polling;
+six focused integration regressions pass, including slow imports across restarts
+and an early admitted source reaching its later live turn without duplicate
+polling. Slow forward history yields to a paired backfill on the next turn, and
+three slow failed imports rotate across fresh invocations. Startup or the initial
+live pair can still consume the deadline before background admission. General
+phase fairness, adaptive polling and production capacity remain unverified. The
+2,000-row module fixture does not complete the 100-account daily workload or
+200,000-contact import test.
+
+Validate larger LoFi page sizes against real responses before changing them;
+repeated context and destination rescans must share retained source work where
+its proof allows reuse.
+
+The next source-page slice should begin with 100-record operation rereads, then
+100-record sync/rescan streams, under the existing request allowances. The
+adapter accepts up to 200 and the pinned HaLo client defaults to 100, but Ferry's
+recorded live probe requested only five records per stream. The existing local
+100-operation/100-contact checkpoint uses eight RPCs and 1,307 SQL statements;
+measure encrypted bytes and complete checkpoint time before enabling larger
+background pages. Preserve the cursor on failure and defer any smaller retry
+to a later scheduled turn. Shared source coverage needs explicit scan
+subscribers and atomic progress; retained rows alone cannot replace each
+destination's cutover evidence or justify merging divergent scan cursors.
+Even 100 contacts per request would leave an ideal 200,000-contact source pass
+at about 1.7 days with four background requests per five minutes, before context,
+rescans, other accounts or retries. Larger pages alone do not meet the proposed
+one-day import target.
+
+Complete indexed due work and bounded account turns across the service.
 Separate live arrivals, history imports, readback and maintenance. Reserve live
-capacity and give background work guaranteed progress; an account with a large
-import cannot consume everyone else's vendor allowance. Use adaptive polling
-for idle accounts, with explicit measured discovery latency and retry jitter.
+capacity and measure bounded background wait; the full live fairness and
+vendor-admission policy remains open beyond the background slice. Use adaptive
+polling for idle accounts, with explicit measured discovery latency and retry
+jitter. The deployed background change does not establish 100-account fairness or
+remove the shared vendor limits.
 
 Acceptance: deterministic multi-account tests demonstrate bounded wait and
 progress under bursts, cooldowns and a 200,000-contact import. Report actual
@@ -201,3 +325,11 @@ is at least once, which is why leases, idempotency and the outbox precede queue
 adoption. [LoTW signed submission](https://lotw.arrl.org/lotw-help/developer-submit-qsos/)
 accepts signed files; safe multi-contact lifecycle handling remains application
 work, not a signer-only change.
+
+[Worker placement](https://developers.cloudflare.com/workers/configuration/placement/#review-limitations-1)
+affects fetch handlers, not scheduled handlers, so enabling placement does not
+directly solve cron-to-D1 latency. [D1 response metadata](https://developers.cloudflare.com/d1/worker-api/return-object/)
+reports SQL timing, rows and retry attempts. SQL timing describes the last
+attempt and excludes network; methods without metadata and earlier retry
+attempts leave coverage gaps. Compare these counters with binding wait time
+without labeling the entire difference as network latency.

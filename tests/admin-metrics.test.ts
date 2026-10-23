@@ -263,6 +263,8 @@ test("backlog separates retained contacts, quiet candidates, unresolved attempts
       sourceBackground: 1,
       attemptsDueLive: 1,
       attemptsDueBackground: 1,
+      workLive: null,
+      workBackground: null,
     });
   } finally {
     await h.mf.dispose();
@@ -398,6 +400,8 @@ test("scheduler records starts, completed turns, safe failures and seven-day ret
       sourceBackground: 0,
       attemptsDueLive: 0,
       attemptsDueBackground: 0,
+      workLive: { ready: 0, held: 0, blocked: 0 },
+      workBackground: { ready: 0, held: 0, blocked: 0 },
     });
     assert.deepEqual(complete.scheduler.totals24h, {
       runs: 1,

@@ -1,10 +1,64 @@
 export type AdminPriority = "live" | "background";
 
+export interface AdminWorkCounts {
+  /** No known metadata hold; the worker must still validate before sending. */
+  ready: number;
+  held: number;
+  blocked: number;
+}
+
+export interface AdminWorkload {
+  source: (AdminWorkCounts & {
+    priority: AdminPriority;
+    expired: number;
+    oldestRetainedAt: number | null;
+  })[];
+  heldReasons: AdminWorkReason[];
+  blockedReasons: AdminWorkReason[];
+  trend: {
+    windowMs: number;
+    firstAt: number | null;
+    lastAt: number | null;
+    sampleCount: number;
+    truncated: boolean;
+    expectedSamples: number;
+    stale: boolean;
+    maxGapMs: number | null;
+    /** Latest snapshot per hour; absent/legacy breakdowns stay unknown. */
+    points: {
+      at: number;
+      live: AdminWorkCounts | null;
+      background: AdminWorkCounts | null;
+    }[];
+  };
+  deliveries: {
+    windowMs: number;
+    /** Completed destination-contact versions, including corrections. */
+    total: number;
+    qrz: number;
+    lotw: number;
+    lastCompletedAt: number | null;
+    buckets: { at: number; total: number; qrz: number; lotw: number }[];
+    submittedOutstanding: number;
+    /** Current adopted-history mappings; never counted as deliveries. */
+    adoptedExisting: number;
+  };
+}
+
+export interface AdminWorkReason {
+  priority: AdminPriority;
+  reason: string;
+  label: string;
+  count: number;
+}
+
 export interface AdminBacklogSample {
   sourceLive: number;
   sourceBackground: number;
   attemptsDueLive: number;
   attemptsDueBackground: number;
+  workLive: AdminWorkCounts | null;
+  workBackground: AdminWorkCounts | null;
 }
 
 export interface AdminSchedulerRun {
@@ -29,6 +83,7 @@ export interface AdminSchedulerRun {
 
 export interface AdminOverview {
   generatedAt: number;
+  workload: AdminWorkload;
   scheduler: {
     intervalMs: number;
     staleAfterMs: number;

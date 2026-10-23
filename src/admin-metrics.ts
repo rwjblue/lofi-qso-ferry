@@ -7,6 +7,12 @@ import type {
 import { lofiAccountLabel } from "./lofi-identity.ts";
 import { deliveryGates, exportsEffective } from "./service.ts";
 import { VENDOR_POLICIES } from "./vendor-requests.ts";
+import {
+  getAdminWorkload,
+  sourceWorkSummary,
+  workCounts,
+  workloadSourceStatement,
+} from "./admin-workload.ts";
 
 export type { AdminOverview } from "./admin-types.ts";
 
@@ -21,6 +27,7 @@ const attemptFilter =
 export async function sampleAdminBacklog(
   db: D1Database,
   now: number,
+  env?: Env,
 ): Promise<AdminBacklogSample> {
   const [sources, attempts] = await db.batch<{
     priority: AdminPriority;
@@ -41,11 +48,28 @@ export async function sampleAdminBacklog(
     rows: { priority: AdminPriority; count: number }[],
     priority: AdminPriority,
   ) => rows.find((row) => row.priority === priority)?.count ?? 0;
+  const work = env
+    ? sourceWorkSummary(
+        (
+          await workloadSourceStatement(env, now).all<
+            Parameters<typeof sourceWorkSummary>[0][number]
+          >()
+        ).results,
+      )
+    : null;
+  const counts = (priority: AdminPriority) => {
+    const row = work?.find((row) => row.priority === priority);
+    return row
+      ? { ready: row.ready, held: row.held, blocked: row.blocked }
+      : null;
+  };
   return {
     sourceLive: count(sources.results, "live"),
     sourceBackground: count(sources.results, "background"),
     attemptsDueLive: count(attempts.results, "live"),
     attemptsDueBackground: count(attempts.results, "background"),
+    workLive: counts("live"),
+    workBackground: counts("background"),
   };
 }
 
@@ -67,6 +91,12 @@ interface RunRow {
   source_background: number | null;
   attempts_due_live: number | null;
   attempts_due_background: number | null;
+  work_live_ready: number | null;
+  work_live_held: number | null;
+  work_live_blocked: number | null;
+  work_background_ready: number | null;
+  work_background_held: number | null;
+  work_background_blocked: number | null;
 }
 
 function runSummary(row: RunRow): AdminSchedulerRun {
@@ -95,6 +125,8 @@ function runSummary(row: RunRow): AdminSchedulerRun {
             sourceBackground: row.source_background,
             attemptsDueLive: row.attempts_due_live,
             attemptsDueBackground: row.attempts_due_background,
+            workLive: workCounts(row, "live"),
+            workBackground: workCounts(row, "background"),
           },
   };
 }
@@ -231,6 +263,7 @@ export async function getAdminOverview(
   })[];
   return {
     generatedAt: now,
+    workload: await getAdminWorkload(env, now),
     scheduler: {
       intervalMs: 300_000,
       staleAfterMs: 900_000,

@@ -2,6 +2,28 @@
 
 This roadmap is the handoff for implementation in this repository. Checked items have implementation and local evidence. Unchecked items retain external verification or rollout work; they must not be inferred from synthetic success. The owner authorized small signed commits directly to `origin/main` for implementation; no implementation PRs are opened. Retain the product decisions in [README](README.md). Each milestone should update its evidence and remaining questions here.
 
+## Next milestones (2026-10-23)
+
+Core feature paths, owner enrollment and service linking are implemented. Production remains read-only. The immediate work is to resolve the reconciliation backlog and prove rollout readiness; linking credentials and waiting for cron do not establish that readiness. Fractional-timestamp exports also need durable outbound identity claims before they can be enabled safely.
+
+1. **Continue read-only inventory and verify sustained progress.** The deployed `634517d0` repair completed one observed production run with a source page, a contact processing turn, zero errors and zero deferrals. At 14:04:02 UTC, source work was 1,509 ready, 2,624 held and one blocked. The shift from the earlier 1,486 ready/2,647 held reflects released context, not a cleared backlog. Continue bounded inventory/context reads and review specific QRZ identity ambiguity, LoTW grid mismatch, routing and callsign exceptions. Old generic diagnostics remain until revisited. Full reconciliation and sustained throughput must be demonstrated before export enablement.
+2. **Establish the source contract and remaining personal checks.** Complete exhaustive LoFi UUID/tombstone inventory and replay/cutover evidence; verify an independent backup passkey, secret backup and representative deployed signing/resource behavior. Preserve `SOURCE_BOUNDARY_VERIFIED=false` until supported by that evidence.
+3. **Complete outbound identity collision protection.** Implement durable identity claims for both QRZ and LoTW before fractional-timestamp exports can enter the canary. Adoption reservations and quarantine now protect competing source contacts in local tests; that protection does not provide outbound claims or make a later edit exportable through a collision.
+4. **Run explicitly authorized first writes.** Select exact new source UUIDs and destinations, prove QRZ mutation/narrative/location behavior and Worker-signed LoTW acceptance through readback, and record the deployed revision and results. Keep prior QRZ identities retained until cleanup is separately proven safe.
+5. **Expand automatic coverage, then improve operations.** After reviewing the canary and historical exceptions, explicitly expand scope. Measure cost and exercise restore/revocation before broader use. Workload classification, backlog trends and completed-delivery history have shipped. Remaining operator improvements are ordered in the [admin roadmap](docs/admin.md#follow-ups-in-order): queue age and opt-in alerts, support drill-down, capacity tuning, then controlled operations.
+
+The initial repair `1679f749` passed 371 tests in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39963134190). All 12 retained contacts sampled from generic reconciliation failures projected successfully and contained nonzero milliseconds; strict outbound ADIF conversion rejected them before vendor reads. Read-only conversion now follows PoLo/HaLo whole-second truncation while preserving raw timestamps and fingerprints. Fractional-timestamp writes remain blocked with `subsecond_export_requires_identity_claim` until durable collision claims cover both QRZ and LoTW. Renewed LoFi bearer persistence and scheduler error classification are also repaired; the persistence defect's contribution to the earlier backlog remains unconfirmed. Independent D1 metadata at 13:41:45 UTC verified fourteen migrations, zero attempts and zero cutovers.
+
+Post-deployment observation found historical reads consuming a scheduler turn before contact processing and known context holds being selected ahead of available work. The scheduling follow-up keeps canonical sync first, processes a retained background contact before historical rescan/reread work, and prefers available base context without relaxing complete-context or export checks. In a read-only pre-deployment experiment, available base contexts among the first ten selections improved from two to ten, with zero writes. All 377 tests and required checks passed locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39965786804). The 14:00:46 UTC production run completed in 132,058 ms with one source page, one contact processing turn, zero errors and zero deferrals. This confirms limited recovery for one run, not a sustained draining rate.
+
+The 14:04:02 UTC snapshot still has 4,134 source contacts and 264 old generic readback-reason rows per destination awaiting revisit, plus a prior QRZ retry-error row. Actual vendor reads now produce actionable diagnostics: QRZ has no unique exact identity matching its time precision/mode evidence, and LoTW reports a differing or absent `MY_GRIDSQUARE`. Review these outcomes before treating history as adopted or absent. Fourteen migrations, zero attempts and zero cutovers remain verified.
+
+Adoption collision quarantine is implemented and tested: when two source contacts claim the same remote identity, both an untransmitted adopted owner and the contender become `history_ambiguous`, the existing reservation remains, and a later edit cannot auto-export either contact. This work does not make fractional-timestamp writes eligible.
+
+The [workload investigation](docs/admin-workload-investigation.md) separates readback defects from source dependencies. At 13:23 UTC, read-only classification found 1,423 ready-for-processing records, 2,704 held for operation context, five held for routing, one held for history review and one blocked by callsign validation. Context rereads share the existing LoFi allowance of four background requests per five minutes; more elapsed time or a completed operation-list scan does not mean every operation's contacts/events have been read. Those time-specific counts do not authorize uploads or establish a completion estimate.
+
+See [current progress](PROGRESS.md) for the resumable checkpoint and the [rollout checklist](docs/rollout-checklist.md) for the evidence and authorization required to open the gates.
+
 ## Delivery order
 
 | Milestone                       | Depends on                               | Result                                                           |
@@ -22,8 +44,10 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 ### 0A. LoFi changes, pagination, and effective context
 
 - [x] Adapt the known [qso-sidecar](https://github.com/rwjblue/qso-sidecar/blob/c502cecd068a6a4330afd94458e5636fa17f3a51/src/lofi.rs) and [HaLo LoFi](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/extensions/sync/ham2k-lofi/src/index.ts) protocol behavior into a small typed client/spike. Do not copy Sidecar's contest assumptions.
-- [ ] Establish whether `/v1/sync` is the appropriate read path and document exact operation/QSO cursor semantics, page completion, historical edits, tombstones, permission renewal, and cursor expiration. Treat a snapshot/replay boundary as unproven until demonstrated.
-- [ ] Test null-operation general-log contacts and determine whether a selective reread is available. Specify temporary buffering if not.
+- [x] Implement `/v1/sync` from the inspected client contract, independent operation/QSO checkpoints, explicit page completion and same-identity permission renewal. Record bounded live cursor/resumption and operation-read evidence.
+- [ ] Establish exhaustive historical-edit/tombstone replay and cursor-retention/expiration guarantees. Treat a snapshot/replay boundary as unproven until demonstrated.
+- [x] Fixture-test null-operation general-log contacts and bounded encrypted buffering when current context is available.
+- [ ] Verify live null-operation behavior and whether selective reread is available; retain visible recovery exceptions when buffered data expires.
 - [x] Capture synthetic fixtures for operation and segment corrections, same-time boundaries, own/worked POTA refs, multiple station callsigns, explicit clearing values, and raw frequency units.
 
 **Acceptance:** a paged import and later catch-up do not lose or duplicate work after restart; changing only an operation's location causes affected QSO projections to change. Record unsupported recovery semantics explicitly instead of substituting device timestamps for a server cursor.
@@ -33,7 +57,8 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 - [x] Implement and fixture-test response/ADIF parsing, pagination, empty/error responses, book identity, and required subscription checks using the [API contract](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html).
 - [ ] Prove how `INSERT`, duplicate rejection, `OPTION=REPLACE`, returned LOGIDs, confirmed records, time precision, and portable-location fields behave. Distinguish documented behavior from observed behavior.
 - [x] Fixture-test preservation of narrative and writable remote-owned fields during a structured correction, and bounded identity/collision searches. Live field-preservation evidence remains in the mutation check above.
-- [ ] Specify uncertain-response reconciliation and the narrow provenance-checked cleanup of a Ferry-created old identity. No guessed update-by-LOGID primitive.
+- [x] Implement uncertain-response reconciliation against the exact transmitted projection and specify provenance requirements for old-identity cleanup. No guessed update-by-LOGID primitive.
+- [ ] Prove the narrow cleanup contract for a Ferry-created old identity before exposing automatic deletion; retained identities remain visible in the meantime.
 
 **Acceptance:** fixtures distinguish missing, ambiguous, rejected, replaced, and possibly accepted requests; existing text survives the intended update. Any live mutation experiment uses a deliberately designated test logbook/contact and separate authorization, never the owner's existing history by default.
 
@@ -41,7 +66,8 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 
 - [x] Build an isolated Worker signing spike with generated keys and representative PKCS#12 fixtures. Compare against [Wavelog's direct signer](https://github.com/wavelog/wavelog/blob/7f8eef4de94c674f73c6859ed4e0b0247f68dcd9/application/controllers/Lotw.php) and native TQSL/reference output where useful.
 - [x] Verify key import, legacy/current PKCS#12 encryption, certificate/key matching, callsign/DXCC/QSO-date authorization, canonical station/contact fields, RSA signature bytes, gzip, and multipart encoding.
-- [ ] Measure actual Worker bundle size, memory, and CPU for import and representative batches. Prove the chosen cryptographic primitives in the deployed runtime; published algorithm support is not a completed test.
+- [x] Record Worker bundle/startup observations and exercise cryptographic primitives with generated fixtures in actual local workerd.
+- [ ] Measure deployed billed CPU/memory for import and representative batches, and prove a real Worker-signed artifact through scoped ARRL acceptance. Local runtime results and published algorithm support do not establish this evidence.
 - [x] Exercise [LoTW query parsing](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/) with accepted unconfirmed records, own station detail, error HTML, date partitions, and receive-time checkpoints. Distinguish submission acknowledgement from observed processing and QSL confirmation.
 
 **Acceptance:** reproducible synthetic vectors and runtime measurements are checked in without personal keys or logs. Document what still needs a deliberately scoped live ARRL acceptance check. A separate signer host is not the default fallback; report an actual blocker before revising the agreed architecture.
@@ -65,7 +91,7 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 
 ## 2. Add accounts and service connections
 
-- [ ] Implement email signup proof, first passkey enrollment, passkey-only login, sessions, additional keys, revocation, and email change exactly as [specified](docs/authentication.md). Select the email provider and production RP hostname before real enrollment.
+- [x] Implement email signup proof, first passkey enrollment, passkey-only login, sessions, additional keys, revocation, and email change exactly as [specified](docs/authentication.md). Production uses native Cloudflare email and `ferry.n1rwj.com` as its fixed RP; the owner has enrolled.
 - [x] Make second-passkey/synced-provider recovery guidance visible; losing every usable passkey has no automatic v1 reset path.
 - [x] Link a LoFi account through its existing approval flow. Verify account ownership and show which source account is connected.
 - [x] Link QRZ book keys and validate station callsign/date routing. Link LoTW signing material and optional query credentials, keeping their purposes separate.
@@ -89,16 +115,20 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 - [x] Adopt unique existing records with a captured source baseline and remote observation, without a fabricated delivery receipt. Preserve trusted Ferry mappings on reconnect and QRZ remote narrative on first adoption.
 - [x] Establish source intake before scanning, catch up races, and recheck absence before first backfill. Use bounded encrypted temporary partitions and remove them after durable progress.
 - [x] Without LoTW read access, leave prior history unverified and permit only live records proven new after the source cutover. Expose incomplete coverage rather than treating it as absence.
+- [x] Match read-only historical identities at the same whole-second precision as PoLo/HaLo while preserving raw source milliseconds and fingerprints. Keep outbound preparation stricter than historical lookup.
+- [x] Implement and test adoption collision quarantine for both the untransmitted adopted owner and contender, preserving the identity reservation and blocking later edit exports.
+- [ ] Implement durable outbound identity claims for contacts whose distinct source timestamps truncate to the same destination second, for both QRZ and LoTW. Until then fractional-timestamp exports remain explicitly blocked; successful read-only adoption does not remove that restriction.
 
 **Acceptance:** a representative source log already uploaded to both services produces zero INSERT, REPLACE, DELETE, or signing operations during adoption and unchanged subsequent polls. A contact absent at just one destination queues only there. Failed/partial inventories never authorize backfill. Two source UUIDs cannot silently adopt one remote record.
 
 ## 5. Deliver to QRZ and support forward-only templates
 
-- [ ] Implement insert/correction with stable book routing, response mapping, fetch/merge preservation, uncertain-result reconciliation, and the tested duplicate contract.
+- [x] Implement and fixture-test insert/correction with stable book routing, response mapping, fetch/merge preservation and uncertain-result reconciliation. Replacement remains gated on the live contract in milestone 0B.
 - [x] Reuse the appropriately licensed HaLo Liquid SDK/helpers or compatible bounded implementation. Preserve notices and avoid importing the separately licensed full exporter without an explicit licensing decision.
 - [x] Implement immutable version creation and first-staged-export binding from [templates](docs/templates.md). Keep unbound, template-bound, and remote-preserved policies distinct.
 - [x] Include a POTA example using the operator's activated park; enforce resource and length-correct ADIF serialization limits.
-- [ ] Handle changed identities with durable old/new IDs and provenance-checked cleanup. Leave adopted old identities intact and visible. Source deletions cancel unsent work and record retained remote state.
+- [x] Handle changed identities with durable old/new identity evidence while retaining prior remote records visibly. Source deletions cancel unsent work and record retained remote state.
+- [ ] Enable narrow provenance-checked cleanup only after its live contract is proven. Adopted old identities remain intact.
 
 **Acceptance:** changing a template generates no historical scan, invalidation, hash recomputation, or job. In-flight requests and retries keep their pinned version. An actual later source change uses current data with that version. Adopted text survives structured corrections; note-only source edits do not take ownership. Lost responses do not cause blind inserts or deletes.
 
@@ -124,14 +154,26 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 
 ## Decisions to record during implementation
 
-Keep unresolved items attached to their milestone: verified LoFi replay boundaries and null-operation rereads; QRZ replacement/collision and field-preservation semantics; Worker PKCS#12/signature compatibility; LoTW station/mode configuration provenance; email provider and production hostname; concrete retention/batch limits and measured cost. These are implementation evidence requirements, not reasons to reopen the settled live-sync, forward-only-template, passkey-login, minimal-storage, or hosted-signer product choices.
+Keep unresolved items attached to their milestone: verified LoFi replay boundaries and null-operation rereads; QRZ replacement/collision and field-preservation semantics; deployed signing measurements and ARRL acceptance; LoTW station/mode configuration provenance; measured retention/batch capacity and cost. The native email provider, production hostname and initial one-contact LoTW artifact size are selected. These are implementation evidence requirements, not reasons to reopen the settled live-sync, forward-only-template, passkey-login, minimal-storage, or hosted-signer product choices.
 
-## Current acceptance boundary (2026-10-22)
+## Current acceptance boundary (2026-10-23)
 
-The complete local service is implemented: all eight areas have executable code,
-fixtures and actual workerd/D1 coverage. The dashboard has been exercised in
-Chromium at desktop and 390px mobile widths with a virtual passkey. Production
-exports remain disabled. No live INSERT, REPLACE, DELETE or LoTW upload occurred.
+Core service paths across all eight areas have executable code, fixtures and
+actual workerd/D1 coverage. Durable outbound identity claims for fractional
+timestamps remain an implementation requirement for both destinations. The
+dashboard has been exercised in Chromium at desktop and 390px mobile widths with
+a virtual passkey. Production exports remain disabled. No live INSERT, REPLACE,
+DELETE or LoTW upload occurred.
+
+The latest release is `634517d0de72002c585da4815bf728ccbd182b13`, deployed as
+Worker `bb37da72-5aad-42a5-a5b7-29503787b0c8` at `2026-10-23T13:59:38.831Z`.
+All 377 tests and required checks passed locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39965786804).
+Live version and health checks confirm 100% traffic on this version and all five
+gates closed. The 14:04:02 UTC D1 snapshot confirms fourteen migrations, zero
+attempts and zero cutovers, with limited processing recovery in one run. Owner
+enrollment and LoFi/QRZ/LoTW linking are complete. Sustained progress and complete
+owner-history acceptance remain outstanding.
+See [deployment evidence](docs/deployment.md).
 
 Milestone 0 has bounded live read evidence for all three vendors, local signing
 vectors and Worker HTTP passkey evidence. Exhaustive source UUID/tombstone replay,
@@ -142,7 +184,7 @@ identities remain retained until the narrow cleanup contract is live-proven.
 
 Milestone 7 has a reproducible local demo, dashboard and operational runbooks.
 Production is now deployed read-only. Complete owner-history review, scoped first
-writes and measured monthly cost remain blocked on the exact inputs in the
+writes and measured monthly cost remain outstanding under the exact inputs in the
 [rollout checklist](docs/rollout-checklist.md). The implementation does not replace
 those checks with mock success. See [PROGRESS.md](PROGRESS.md) for the current
 resumable checkpoint.
@@ -197,7 +239,7 @@ resumable checkpoint.
   production gates remain closed. See [local setup](docs/local-development.md),
   [operations](docs/operations.md) and [rollout inputs](docs/rollout-checklist.md).
 
-Final local acceptance checkpoint: `mise run check` passes formatting, recommended
+Initial local acceptance checkpoint (historical): `mise run check` passes formatting, recommended
 lint with warnings treated as errors, server/browser TypeScript, all **146 tests**
 and the **1,534.84 KiB raw / 290.24 KiB gzip** Worker build. `mise run demo`
 passes **24 tests**. Workerd signing and D1 fixtures use the application's
@@ -233,7 +275,7 @@ Deployed follow-up revision `58a965d7c54d`, Worker version `0bf32d19-13c7-43da-b
 
 ## Connection passkey freshness follow-up
 
-The LoFi approval form now obtains a fresh passkey assertion automatically when needed, with preserved input and no connection request on cancellation. Auth/CSRF failures are distinct from scrubbed vendor errors; only a known pre-dispatch freshness failure can retry once. Concurrent session/account-switch and passkey-ceremony boundaries have focused coverage. Actual local Worker/Chromium tests exercise real signatures and contained vendor requests. All 180 tests, formatting, strict lint, types and the Worker build pass. Deployed `cbe9e63af1bf` as Worker `6a580035-ad08-4e35-9fa5-5d09fe5f9baf`; live asset/origin-error/closed-gate checks pass. The owner completes the actual passkey and vendor approval after refreshing Ferry. See [progress](PROGRESS.md).
+The LoFi approval form now obtains a fresh passkey assertion automatically when needed, with preserved input and no connection request on cancellation. Auth/CSRF failures are distinct from scrubbed vendor errors; only a known pre-dispatch freshness failure can retry once. Concurrent session/account-switch and passkey-ceremony boundaries have focused coverage. Actual local Worker/Chromium tests exercise real signatures and contained vendor requests. All 180 tests, formatting, strict lint, types and the Worker build passed for this historical release. Deployed `cbe9e63af1bf` as Worker `6a580035-ad08-4e35-9fa5-5d09fe5f9baf`; live asset/origin-error/closed-gate checks passed. The owner has since completed the actual passkey and vendor approval. See [progress](PROGRESS.md).
 
 ## Read-only source review and connection controls
 
@@ -244,4 +286,4 @@ The LoFi approval form now obtains a fresh passkey assertion automatically when 
 - [x] Skip operation tombstones, fairly rotate failed/partial context reads and fence stale failure diagnostics. Preserve coverage and retry evidence.
 - [x] Pass full formatting/lint/types/build and all **196 tests**, including real D1 race/retention/no-mutation checks. Actual isolated Worker/Chromium passkey signup/link/pause/resume/review confirms the expected comment, duplicate rejection, preserved unsaved edits, mobile375px without overflow, and zero attempts/outbox/vendor exports.
 
-The owner has now completed real LoFi linking. Aggregate live metadata confirms initial source ingestion; no destination was connected at that check, so an empty delivery ledger was expected. The dashboard now provides useful source review independently. Deployment verification follows in [progress](PROGRESS.md); all live-write and exhaustive source-boundary acceptance checks remain separate.
+At this historical checkpoint the owner had completed real LoFi linking. Aggregate live metadata confirmed initial source ingestion; no destination was connected at that check, so an empty delivery ledger was expected. The dashboard provides useful source review independently. Both destinations have since been connected; current backlog and rollout status are recorded above and in [progress](PROGRESS.md). All live-write and exhaustive source-boundary acceptance checks remain separate.

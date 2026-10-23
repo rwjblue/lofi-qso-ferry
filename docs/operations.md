@@ -4,7 +4,7 @@ All checked-in environments disable exports. Local tests and synthetic signature
 
 ## Current production target
 
-On 2026-10-22 the operator selected `https://ferry.n1rwj.com`, with RP ID `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. Dedicated D1 `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) has all nine migrations applied. The Worker `lofi-qso-ferry` is deployed read-only at the selected hostname. Its version, deployed revision and live endpoint checks are recorded in [deployment evidence](deployment.md).
+On 2026-10-22 the operator selected `https://ferry.n1rwj.com`, with RP ID `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. Dedicated D1 `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) has all fourteen migrations applied. The Worker `lofi-qso-ferry` is deployed read-only at the selected hostname. Its version, deployed revision and live endpoint checks are recorded in [deployment evidence](deployment.md).
 
 Production uses the native Cloudflare `EMAIL` binding restricted to `signup@ferry.n1rwj.com`, with that address in `MAIL_FROM`. Sending domain `ferry.n1rwj.com` (`e69af8ef82a140b38eeaef98d417ef30`) is enabled and its `preview_enabled=false` setting was read back. Cloudflare and Google DNS-over-HTTPS both resolved its bounce MX/SPF, DKIM and DMARC records; the parent domain's Fastmail MX records remain unchanged. One verification message was delivered to the owner’s Fastmail inbox through the live signup form. The initial smoke test created no account. Hosted enrollment is now invite only; existing users retain their passkeys and sessions.
 
@@ -36,8 +36,10 @@ a 90-day audit of web actions. The console also shows scheduler history, live
 and background workload, source freshness, vendor budgets and export gates.
 See the [admin proposal](admin.md) for metric definitions and follow-ups.
 
-Apply `0011_admin_metrics.sql` and `0012_admin_invitations.sql` before deploying
-this release or using its invite CLI. Scheduler history starts with deployment;
+Apply `0011_admin_metrics.sql`, `0012_admin_invitations.sql` and
+`0015_admin_workload.sql` before deploying the current admin release. The guarded
+deployment applies outstanding migrations before changing the Worker. Scheduler
+history starts with deployment;
 seven days of run metadata are retained. Pushing commits does not apply these
 migrations or deploy the Worker; `mise run deploy-readonly` builds both browser
 entry points, applies migrations and deploys with the existing export gates
@@ -86,6 +88,10 @@ The enablement flags are operational gates, not authorization obtained from this
 
 ## Failures, throttling and revocation
 
+Read-only reconciliation compares fractional source timestamps using PoLo/HaLo's whole-second ADIF representation while retaining the full source timestamp and fingerprint. Export preparation still blocks fractional timestamps with `subsecond_export_requires_identity_claim`; this read-only projection does not authorize outbound rounding. See [timestamp and identity evidence](evidence-qrz.md). Source ADIF validation and saved-credential failures have distinct fixed diagnostics; unexpected failures never expose raw vendor errors. Closed export gates do not replace a contact's reconciliation diagnosis with an allowlist warning.
+
+LoFi token renewal is saved automatically in encrypted storage after successful renewal, even if the following page fails or hits a request budget. Concurrent credential changes, revocation and newer renewals take precedence. This does not advance a failed page's cursor or require reconnecting the account. Pending operation context and unfinished destination rescans still need their normal bounded read turns; the source contact total is not a count of completed destination reconciliations.
+
 A prepared attempt owns immutable encrypted bytes, members and versions. Repeated cron ticks must send the saved artifact. A crash after dispatch or lost response becomes uncertain and is reconciled before any new create. A LoTW queue acknowledgement is `submitted`, exact readback is `observed`, and QSL confirmation remains separate. An old identity or wrong location cannot acknowledge a correction. Without read access, submission-only uncertainty remains visible.
 
 Transient failures proven to occur before dispatch may retry with bounded exponential delay and jitter, capped at six hours with a five-minute scheduler floor. Authentication, certificate, ambiguous history and unsupported-field errors require attention on that connection/contact. Never log credential-bearing LoTW URLs or raw vendor payloads. Routine `ferry_tick` logs contain aggregate source/contact/attempt counters, deferred work separately from errors, `rounds`, `elapsedMs` and `stopReason` (`idle` or `deadline`).
@@ -103,6 +109,8 @@ The policy constants are in `src/vendor-requests.ts`. Background requests consum
 HTTP 429 establishes a shared vendor cooldown. Honor `Retry-After` as either seconds or an HTTP date; missing or invalid values on 429 use five minutes. HTTP 503 with a valid `Retry-After` also establishes a cooldown. A shorter concurrent response cannot shorten an existing cooldown, and window rollover does not clear it. Connections return a scrubbed 503 response with `Retry-After` while deferred. An upload that may have reached a vendor remains uncertain and uses readback; a request denied before dispatch retains its prepared artifact and retries no earlier than the cooldown. Do not reset ledgers or source cursors to bypass throttling.
 
 Each five-minute invocation drains eligible work in repeated fair rounds until its 90-second soft deadline or no new eligible work remains. A round selects up to two sources, reserving a source turn for each traffic class when both forward sync and initial imports are waiting. Each selected source gets one contact turn per traffic class per round, keeping inventory and preparation close to dispatch. Live source polling and contact processing run before the round's six live delivery/readback turns, so a new edit can cancel stale prepared bytes before dispatch. History gets two delivery/readback turns per round; already prepared historical uploads get their turn before new inventory reads can consume the background allowance. These are scheduling quanta, not per-invocation ceilings: further rounds can process more history when live work is idle, within the same background request caps. Preparation pauses when a vendor already has two prepared background attempts, keeping saved artifacts close to their dispatch turn instead of letting a large import fill the outbox.
+
+Within each traffic class, retained contacts with available operation context are selected before known dependency holds. A background source turn processes one such contact after canonical polling and before more historical rescan/reread work; if no retained contact is ready, it retries selection after the operation read. This prevents historical I/O and known holds from repeatedly consuming the entire contact budget. Live context updates still precede live contact processing. Every selected contact still passes full source, operation/event and generation checks.
 
 A completed canonical source poll is not repeated in the same invocation; incomplete pages can continue while request and time budgets permit. Operation context is read at most once per operation per invocation. Contact turns are marked against an invocation cutoff, so waiting records are not selected again, and delivery/readback attempts are deferred at least five minutes after their turn. Waiting contacts and attempts therefore cannot consume repeated rounds without new eligible work. The scheduler stops without sleeping when it has no work left. Initial scans, destination rescans and repair scans request 25 rows per side/page; forward sync and operation context needed by live contacts request 100. LoTW confirmation refreshes also use the background budget.
 

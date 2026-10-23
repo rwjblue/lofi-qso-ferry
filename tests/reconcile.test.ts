@@ -717,7 +717,12 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
       { claim: await destinationIdentityClaim("lotw", next) },
     );
     assert.equal((await store.ledger(key))!.confirmed, 0);
-    const lease = (await store.claim("a", "correction", 1800012, 1000))!;
+    const lease = (await store.claim(
+      "a",
+      "delivery:destination",
+      1800012,
+      1000,
+    ))!;
     assert(await store.claimAttempt("a", attempt, lease, 1800013));
     await store.resolve(
       "a",
@@ -929,7 +934,12 @@ test("competing adoption cancels only an unsent adopted correction and preserves
         { claim: await destinationIdentityClaim("qrz", source) },
       );
       if (state !== "prepared") {
-        const lease = (await store.claim("a", "correction", 1800012, 1000))!;
+        const lease = (await store.claim(
+          "a",
+          "delivery:destination",
+          1800012,
+          1000,
+        ))!;
         assert(await store.claimAttempt("a", attempt, lease, 1800013));
         if (state !== "dispatching")
           await store.resolve(
@@ -1098,7 +1108,12 @@ test("adopted and observed LoTW identity keys prevent a second source UUID from 
       undefined,
       { claim: await destinationIdentityClaim("lotw", lotwRemote) },
     );
-    const lease = (await store.claim("a", "lotw-reconcile", 1800001, 1000))!;
+    const lease = (await store.claim(
+      "a",
+      "delivery:destination",
+      1800001,
+      1000,
+    ))!;
     assert(await store.claimAttempt("a", id, lease, 1800002));
     await store.resolve("a", id, lease, "uncertain", null, 1800003);
     const identity = await lotwRemoteIdentity(lotwRemote);

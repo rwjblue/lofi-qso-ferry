@@ -261,10 +261,17 @@ test("successful destination-contact versions deduplicate terminal events, exclu
         "INSERT INTO connections(tenant,id,kind,remote_identity,label,created_at) VALUES('a','lotw','lotw','lotw','LoTW',0)",
       )
       .run();
+    await h.db
+      .prepare(
+        "INSERT INTO connections(tenant,id,kind,remote_identity,label,created_at) VALUES('a','clublog','clublog','clublog','Club Log',0)",
+      )
+      .run();
     for (const [id, vendor] of [
       ["qrz", "destination"],
       ["lotw", "lotw"],
       ["submitted", "lotw"],
+      ["clublog", "clublog"],
+      ["clublog-pending", "clublog"],
       ["old", "destination"],
       ["adopted", "destination"],
     ] as const) {
@@ -279,7 +286,9 @@ test("successful destination-contact versions deduplicate terminal events, exclu
         await h.attempt(
           id,
           id,
-          id === "submitted" ? "submitted" : "observed",
+          id === "submitted" || id === "clublog-pending"
+            ? "submitted"
+            : "observed",
           vendor,
         );
     }
@@ -295,6 +304,10 @@ test("successful destination-contact versions deduplicate terminal events, exclu
       ["lotw", "submitted", now - hour],
       ["lotw", "observed", now],
       ["submitted", "submitted", now],
+      ["clublog", "submitted", now - hour],
+      ["clublog", "observed", now - hour / 2],
+      ["clublog", "observed", now],
+      ["clublog-pending", "submitted", now],
       ["old", "delivered", now - day],
       ["old", "observed", now],
       ["correction", "delivered", now - day + 1],
@@ -306,19 +319,140 @@ test("successful destination-contact versions deduplicate terminal events, exclu
         .bind(id, state, at)
         .run();
     const view = await getAdminWorkload(h.env, now);
-    assert.equal(view.deliveries.total, 3);
+    assert.equal(view.deliveries.total, 4);
     assert.equal(view.deliveries.qrz, 2);
     assert.equal(view.deliveries.lotw, 1);
-    assert.equal(view.deliveries.submittedOutstanding, 1);
+    assert.equal(view.deliveries.clublog, 1);
+    assert.equal(view.deliveries.submittedOutstanding, 2);
     assert.equal(view.deliveries.adoptedExisting, 1);
     assert.equal(view.deliveries.lastCompletedAt, now);
     assert.equal(view.deliveries.buckets[0]?.total, 1);
     assert.equal(view.deliveries.buckets[22]?.total, 1);
-    assert.equal(view.deliveries.buckets[23]?.total, 1);
+    assert.equal(view.deliveries.buckets[23]?.total, 2);
+    assert.equal(view.deliveries.buckets[23]?.clublog, 1);
     assert.equal(
       view.deliveries.buckets.reduce((n, row) => n + row.total, 0),
+      4,
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("Club Log-only accounts report ready work and preserve routing and delivery review holds", async () => {
+  const h = await setup();
+  try {
+    await h.db
+      .prepare("UPDATE connections SET kind='clublog' WHERE id='destination'")
+      .run();
+    Object.assign(h.env, {
+      EXPORTS_ENABLED: "true",
+      ROLLOUT_CHECKS_PASSED: "true",
+      LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
+      SOURCE_BOUNDARY_VERIFIED: "true",
+      ROLLOUT_QSO_IDS_JSON: '["*"]',
+    });
+    await h.addSource("new");
+    await h.addSource("inventory", "waiting");
+    await h.ledger("inventory", "inventory_pending");
+    const reviewReasons = [
+      "clublog_application_key_unavailable",
+      "clublog_remote_identity_claimed_elsewhere",
+      "clublog_same_identity_correction_requires_review",
+      "clublog_mapped_record_unverified",
+      "clublog_fresh_absence_check_found_candidate",
+      "clublog_prior_identity_unverified",
+      "clublog_credentials_require_verification",
+      "clublog_projection_or_route_unsupported",
+      "clublog_prior_identity_changed_before_dispatch",
+      "clublog_fresh_collision_before_dispatch",
+      "clublog_write_blocked",
+    ];
+    for (const reason of reviewReasons) {
+      await h.addSource(reason, "waiting");
+      await h.ledger(
+        reason,
+        reason === "clublog_projection_or_route_unsupported"
+          ? "inventory_pending"
+          : "missing_current_identity",
+        now - 1,
+        reason,
+      );
+    }
+    for (const reason of [
+      "No CLUBLOG route matches station and date",
+      "Multiple CLUBLOG routes match; resolve routing",
+    ])
+      await h.addSource(reason, "waiting", reason);
+    await h.addSource("route-check", "waiting");
+    await h.ledger(
+      "route-check",
+      "missing_current_identity",
+      now - 1,
+      "clublog_station_route_mismatch",
+    );
+    const view = await getAdminWorkload(h.env, now);
+    assert.equal(view.source[1]?.ready, 2);
+    assert.equal(view.source[1]?.held, reviewReasons.length + 3);
+    assert.equal(
+      view.heldReasons.find((row) => row.reason === "delivery_review")?.count,
+      reviewReasons.length,
+    );
+    assert.equal(
+      view.heldReasons.find((row) => row.reason === "routing")?.count,
       3,
     );
+    assert(!view.heldReasons.some((row) => row.reason === "no_destination"));
+    await h.db
+      .prepare(
+        "UPDATE private_data SET revoked_at=? WHERE connection='destination' AND kind='credential'",
+      )
+      .bind(now)
+      .run();
+    const unavailable = await getAdminWorkload(h.env, now);
+    assert.equal(unavailable.source[1]?.ready, 0);
+    assert.equal(
+      unavailable.heldReasons.find(
+        (row) => row.reason === "destination_unavailable",
+      )?.count,
+      reviewReasons.length + 5,
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("a newly connected Club Log destination makes resolved source work actionable", async () => {
+  const h = await setup();
+  try {
+    await h.addSource(
+      "existing",
+      "waiting",
+      "No QRZ route matches station and date",
+    );
+    await h.ledger("existing", "delivered");
+    await h.db
+      .prepare(
+        "UPDATE ledger SET baseline_hash=source_hash WHERE qso='existing'",
+      )
+      .run();
+    await h.db
+      .prepare("UPDATE source_work SET processed_at=? WHERE id='existing'")
+      .bind(now - 1000)
+      .run();
+    assert.equal((await getAdminWorkload(h.env, now)).source[1]?.ready, 0);
+    await h.db
+      .prepare(
+        "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at) VALUES('a','clublog','clublog','clublog','Club Log','active','v1',?)",
+      )
+      .bind(now)
+      .run();
+    await (
+      await h.store.putPrivate("a", "clublog", "v1", "credential", {
+        secret: "never-read",
+      })
+    ).run();
+    assert.equal((await getAdminWorkload(h.env, now)).source[1]?.ready, 1);
   } finally {
     await h.mf.dispose();
   }

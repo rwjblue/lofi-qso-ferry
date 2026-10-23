@@ -3,3 +3,6 @@ KEK_V1=replace-with-base64-32-byte-key
 AUTH_SECRET=replace-with-independent-random-secret
 EMAIL_CODE_SECRET=replace-with-independent-random-secret
 RESEND_API_KEY=
+
+# Optional server application key obtained from Club Log; never enter a user password here.
+CLUBLOG_API_KEY=

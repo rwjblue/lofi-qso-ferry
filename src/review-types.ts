@@ -1,3 +1,5 @@
+import type { ProviderKind } from "./providers.ts";
+
 /** Public data only: safe to import from the browser without Worker types. */
 export interface ReviewSource {
   id: string;
@@ -58,7 +60,7 @@ export interface ReviewResponse {
   sources: ReviewSource[];
   sourcesTruncated: boolean;
   readiness: {
-    kind: "lofi" | "qrz" | "lotw";
+    kind: ProviderKind;
     status: "ready" | "not_connected" | "scanning" | "attention" | "paused";
     message: string;
   }[];

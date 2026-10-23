@@ -1,14 +1,14 @@
-import { establishCutovers, proveNewAfterCutover } from "./cutover.ts";
-import { rotatePrivateData, purgeResolvedSource } from "./maintenance.ts";
 import { purgeAuth } from "./auth.ts";
+import { ClubLogError } from "./clublog.ts";
+import { establishCutovers, proveNewAfterCutover } from "./cutover.ts";
+import type { DeliveryGates } from "./delivery.ts";
 import {
-  contactAdif,
   dispatchAttempt,
   prepareDue,
   reconcileAttempt,
   refreshConfirmations,
 } from "./delivery.ts";
-import type { DeliveryGates } from "./delivery.ts";
+import { destinationAdapter } from "./destination-adapters.ts";
 import {
   expireSource,
   observeContact,
@@ -17,18 +17,18 @@ import {
   pollSource,
   rereadOperation,
 } from "./intake.ts";
-import { LotwClient } from "./lotw.ts";
 import { refreshLotwCertificates } from "./lotw-maintenance.ts";
+import { purgeResolvedSource, rotatePrivateData } from "./maintenance.ts";
 import type { Contact } from "./projection.ts";
-import { sourceFingerprint } from "./projection.ts";
-import { QrzClient } from "./qrz.ts";
-import { adoptHistory, classifyHistory } from "./reconcile.ts";
+import { handleProviderRejection } from "./provider-errors.ts";
+import { destinationKinds, isDestinationKind } from "./providers.ts";
 import type { ReconciliationEvidence } from "./reconcile.ts";
+import { adoptHistory, classifyHistory } from "./reconcile.ts";
 import { keyring } from "./security.ts";
-import { Store } from "./store.ts";
 import type { Connection, LedgerKey } from "./store.ts";
-import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
+import { Store } from "./store.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
+import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
 export function deliveryGates(env: Env): DeliveryGates {
   const scope: unknown = JSON.parse(env.ROLLOUT_QSO_IDS_JSON || "[]");
   if (!Array.isArray(scope) || scope.some((v) => typeof v !== "string"))
@@ -56,24 +56,12 @@ export function routeMatches(
   destination: Connection,
   contact: Contact,
 ): boolean {
-  const config = JSON.parse(destination.config) as Record<string, unknown>;
-  if (destination.kind === "qrz") {
-    const date = new Date(contact.startAtMillis).toISOString().slice(0, 10);
-    return (
-      config.stationCallsign === contact.stationCall &&
-      typeof config.startDate === "string" &&
-      typeof config.endDate === "string" &&
-      date >= config.startDate &&
-      date <= config.endDate
-    );
-  }
-  const stations = (
-    Array.isArray(config.stations) ? config.stations : [config.station]
-  ) as { callsign?: string; dxcc?: number }[];
-  return stations.some(
-    (station) =>
-      station?.callsign === contact.stationCall &&
-      (contact.dxcc === undefined || station.dxcc === contact.dxcc),
+  return (
+    isDestinationKind(destination.kind) &&
+    destinationAdapter(destination.kind).routeMatches(
+      JSON.parse(destination.config) as Record<string, unknown>,
+      contact,
+    )
   );
 }
 async function reconcileContact(
@@ -86,6 +74,7 @@ async function reconcileContact(
   now: number,
   priority: VendorPriority,
   vendorNow: number | undefined,
+  clublogApiKey?: string,
 ) {
   const key: LedgerKey = {
     tenant: source.tenant,
@@ -107,44 +96,31 @@ async function reconcileContact(
       .first()
   )
     return;
+  if (!isDestinationKind(destination.kind)) return;
+  const adapter = destinationAdapter(destination.kind);
   const raw = destination.credential_version
-    ? await store.private<{
-        apiKey?: string;
-        query?: { username: string; password: string };
-      }>(
+    ? await store.private<unknown>(
         key.tenant,
         destination.id,
         destination.credential_version,
         "credential",
       )
     : null;
-  const record = contactAdif(contact);
-  let remote: Record<string, string>[] = [];
-  let readAccess = false;
-  if (destination.kind === "qrz" && raw?.apiKey) {
-    remote = await new QrzClient(raw.apiKey, {
-      fetch: vendorFetch(store, "qrz", fetcher, { priority, now: vendorNow }),
-    }).findNeighborhood(record);
-    readAccess = true;
-  } else if (destination.kind === "lotw" && raw?.query) {
-    const date = new Date(contact.startAtMillis).toISOString().slice(0, 10);
-    remote = (
-      await new LotwClient(raw.query, {
-        fetcher: vendorFetch(store, "lotw", fetcher, {
-          priority,
-          now: vendorNow,
-        }),
-      }).query({
-        startDate: date,
-        endDate: date,
-        stationCallsign: contact.stationCall,
-        workedCallsign: contact.call,
-      })
-    ).records;
-    readAccess = true;
-  }
+  const record = adapter.project(contact);
+  const { records: remote, readAccess } = await adapter.readHistory(
+    raw,
+    contact,
+    record,
+    {
+      fetcher: vendorFetch(store, destination.kind, fetcher, {
+        priority,
+        now: vendorNow,
+      }),
+      clublogApiKey,
+    },
+  );
   const evidence: ReconciliationEvidence = {
-    destination: destination.kind as "qrz" | "lotw",
+    destination: destination.kind,
     capturedGeneration: contact.generation,
     currentGeneration: contact.generation,
     readAccess,
@@ -172,7 +148,7 @@ async function reconcileContact(
     outcome,
     now,
     outcome.state === "adopted_existing" && destination.kind === "qrz"
-      ? await sourceFingerprint(contact, "qrz", true)
+      ? await adapter.fingerprint(contact, true)
       : undefined,
   );
 }
@@ -196,6 +172,7 @@ export async function tick(
   await rotatePrivateData(store);
   const deps = {
     fetcher,
+    clublogApiKey: env.CLUBLOG_API_KEY,
     ...(clock === undefined ? {} : { now: clock }),
   };
   const certificateRefresh = await refreshLotwCertificates(store, deps);
@@ -330,9 +307,9 @@ export async function tick(
         try {
           result.contacts++;
           const destinations = (await store.connections(source.tenant)).filter(
-            (c) => c.kind !== "lofi" && c.status === "active",
+            (c) => isDestinationKind(c.kind) && c.status === "active",
           );
-          const routed = (["qrz", "lotw"] as const).flatMap((kind) => {
+          const routed = destinationKinds.flatMap((kind) => {
             const matches = destinations.filter(
               (c) => c.kind === kind && routeMatches(c, contact),
             );
@@ -340,7 +317,7 @@ export async function tick(
           });
           await observeContact(store, source, contact, now, routed);
           const routingIssues: string[] = [];
-          for (const kind of ["qrz", "lotw"] as const) {
+          for (const kind of destinationKinds) {
             if (expired()) break;
             const candidates = destinations.filter(
               (c) => c.kind === kind && routeMatches(c, contact),
@@ -382,6 +359,7 @@ export async function tick(
                 now,
                 priority,
                 clock,
+                env.CLUBLOG_API_KEY,
               );
               if (expired()) break;
               const key = {
@@ -411,9 +389,21 @@ export async function tick(
                 continue;
               }
               result.errors++;
+              if (
+                await handleProviderRejection(store, destination, error, {
+                  tenant: source.tenant,
+                  source: source.id,
+                  qso: contact.id,
+                  destination: destination.id,
+                })
+              )
+                continue;
               await store
                 .statement(
-                  "UPDATE ledger SET reason='Destination readback unavailable; retry automatically' WHERE tenant=? AND source=? AND qso=? AND destination=?",
+                  "UPDATE ledger SET reason=? WHERE tenant=? AND source=? AND qso=? AND destination=?",
+                  error instanceof ClubLogError && error.kind === "blocked"
+                    ? "clublog_projection_or_route_unsupported"
+                    : "Destination readback unavailable; retry automatically",
                   source.tenant,
                   source.id,
                   contact.id,
@@ -510,9 +500,9 @@ export async function tick(
           // Refresh from retained inputs before the dispatch guard; an actual
           // edit cancels the saved unsent artifact through observeContact.
           const destinations = (await store.connections(source.tenant)).filter(
-            (c) => c.kind !== "lofi" && c.status === "active",
+            (c) => isDestinationKind(c.kind) && c.status === "active",
           );
-          const routed = (["qrz", "lotw"] as const).flatMap((kind) => {
+          const routed = destinationKinds.flatMap((kind) => {
             const matches = destinations.filter(
               (c) => c.kind === kind && routeMatches(c, contact),
             );

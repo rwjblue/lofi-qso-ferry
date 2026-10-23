@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AdminOverview } from "../src/admin-types.ts";
 import {
+  deliveryBreakdown,
   trendSegments,
   workloadChange,
   workloadStatus,
@@ -28,6 +29,25 @@ const counts = (ready: number, held = 0, blocked = 0) => ({
   ready,
   held,
   blocked,
+});
+
+test("delivery breakdown includes Club Log counts and rates without counting pending submissions", () => {
+  const rows = deliveryBreakdown({
+    windowMs: 24 * hour,
+    total: 36,
+    qrz: 0,
+    lotw: 12,
+    clublog: 24,
+    lastCompletedAt: hour,
+    buckets: [],
+    submittedOutstanding: 7,
+    adoptedExisting: 10,
+  });
+  assert.deepEqual(rows, [
+    { kind: "qrz", label: "QRZ Logbook", completed: 0, perHour: 0 },
+    { kind: "lotw", label: "LoTW", completed: 12, perHour: 0.5 },
+    { kind: "clublog", label: "Club Log", completed: 24, perHour: 1 },
+  ]);
 });
 
 test("backlog deltas ignore missing samples instead of treating them as empty queues", () => {

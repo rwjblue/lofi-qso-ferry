@@ -4,7 +4,7 @@ Status: v1 implementation contract, checked on 2026-10-22. The Worker, D1, adapt
 
 ## Scope and components
 
-Ferry reads Ham2K LoFi and delivers to QRZ and LoTW. PoLo/HaLo remain the place to log and edit contacts. The dashboard manages connections, routing, templates, and exceptions; it does not become another log editor. Multiple independent users share the service, with tenant boundaries enforced from the first release.
+Ferry reads Ham2K LoFi and delivers to QRZ, LoTW and Club Log. PoLo/HaLo remain the place to log and edit contacts. The dashboard manages connections, routing, templates, and exceptions; it does not become another log editor. Multiple independent users share the service, with tenant boundaries enforced from the first release.
 
 Start with one TypeScript Worker, D1, a five-minute Cron Trigger, and Worker Secrets. The Worker handles the web application, passkeys, source intake, bounded delivery jobs, and LoTW signing. D1 holds durable state and leases. Each scheduled invocation resumes bounded work and leaves checkpoints before exhausting its budget. Queues can be introduced when measured scale needs them; a queue, container, R2 archive, and separate signer host are not initial dependencies.
 
@@ -19,8 +19,18 @@ Use [Cloudflare Cron Triggers](https://developers.cloudflare.com/workers/configu
 | Scheduler/outbox       | Per-contact quiet period, immutable attempts, leases, retries, checkpoints             |
 | QRZ adapter            | Book routing, readback, insert/replace, narrowly scoped identity cleanup               |
 | LoTW adapter/signer    | Certificate/location selection, signing, submission, readback state                    |
+| Club Log adapter       | Callsign routing, history adoption, merge-only uploads and exact readback              |
 
 Keep these as modules with explicit interfaces in one application until operational evidence justifies separate services.
+
+The browser-safe provider registry describes provider roles and capabilities.
+Destination adapters own routing, supported projections, fingerprints, history
+matching and remote identities. Delivery adapters own preparation, dispatch and
+observation; the scheduler owns leases, immutable attempts, rollout gates and
+source/credential rechecks. Adding a provider requires an adapter and a provider
+catalog entry, without adding columns to the ledger. Provider-specific forms and
+credential validation remain explicit. The current product still permits only
+one nonrevoked account per provider.
 
 ## Source contract and reuse
 
@@ -52,7 +62,7 @@ Persist one atomic request budget and cooldown per vendor across tenants and Wor
 
 ## Minimal retained state
 
-The stable ledger key is `(tenant, linked LoFi account, QSO UUID, logical destination)`. A logical QRZ destination includes the account/book; a logical LoTW destination identifies the account. Key rotation, certificate renewal, and reconnecting the same destination preserve that identity and its history.
+The stable ledger key is `(tenant, linked LoFi account, QSO UUID, logical destination)`. A logical QRZ destination includes the account/book; a logical LoTW destination identifies the account; a Club Log destination identifies the account and callsign log. Key rotation, certificate renewal, and reconnecting the same destination preserve that identity and its history. Migration 0016 replaces the provider-name checks in connections and request budgets with a shared provider catalog; the existing ledger is unchanged.
 
 | Data                        | Retention and purpose                                                                                                              |
 | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
@@ -67,6 +77,18 @@ The stable ledger key is `(tenant, linked LoFi account, QSO UUID, logical destin
 Keep source input hashes separate from hashes of remote observations and transmitted payloads. They have different projections and cannot be compared interchangeably. In particular, adoption records an observed source baseline, not a fictional Ferry delivery. See [bootstrap](bootstrap.md).
 
 Retain pending source material when the source cannot reread it selectively. General-log entries and current operation/segment reconstruction may need temporary encrypted buffers. Do not claim zero source storage; avoid a permanent full mirror. Once an attempt or partition resolves, retain only the ledger and essential dependencies. Template changes require no historical scan. Retention expiry of an uncertain attempt creates a reconciliation requirement, not permission to resend.
+
+Club Log identity corrections retain compact encrypted prior-identity evidence
+alongside the immutable attempt. Future matching may exclude only those proven
+prior identities; unrelated nearby records still block mutation. Detailed
+correction evidence expires after 90 days, while the compact identity evidence
+and visible retained-record notice persist.
+
+Before dispatch, Club Log reserves the intended identity in the existing
+attempt-state row. This is ownership metadata, not proof of acceptance. History
+adoption and competing attempts cannot claim another source contact's current,
+retained or unresolved identity. Rejected and cancelled attempts release their
+reservation; uncertain reservations survive outbox expiry until reconciled.
 
 ## Destination contracts
 
@@ -94,6 +116,32 @@ LoTW's [correction rules](https://lotw.arrl.org/lotw-help/submitting-qsos/) dist
 
 The [supported signed record fields](https://lotw.arrl.org/lotw-help/developer-submit-qsos/) do not provide a general COMMENT/NOTES/QSLMSG or POTA-reference channel. A QRZ comment-only change therefore produces no LoTW work. Transmit supported station/location data with the appropriate certificate, preserving grid and relevant subdivisions. Multiple locations are station data, not separate Ferry login sessions; see [LoTW callsigns and locations](https://lotw.arrl.org/lotw-help/multiple-callsigns-locations/).
 
+### Club Log
+
+Use one account email, application password and callsign log, plus the deployed
+application's `CLUBLOG_API_KEY`. Verification reads the bounded ADIF export; it
+does not establish upload authorization or validate the application key. Route
+only the exact verified station callsign. New forward contacts use the realtime
+endpoint; history uses merge-only batch uploads under a separate background
+allowance. Never send the API's clear-log option.
+
+Adopt exact historical matches without writing. Every upload, including an
+acknowledged realtime request, remains submitted until supported fields match
+readback. Unknown mutation outcomes retain their immutable payload and require
+reconciliation before another create. A non-200 response suspends the affected
+connection; it does not establish that a dispatched write failed.
+
+Changed identities may append a corrected record and visibly retain the prior
+record. Same-identity changes to frequency, operator or reports require review
+because duplicate upload is not a verified update contract. The adapter exposes
+no remote delete, confirmation refresh or narrative template support. Own
+location and park-reference changes therefore create no Club Log work.
+
+The initial bounded export supports at most 2 MiB and 10,000 records. Unsupported
+submodes and subsecond source times block only this destination. See
+[Club Log evidence](evidence-clublog.md) for protocol sources, test coverage and
+remaining live-contract validation limits.
+
 ### Direct Worker signing
 
 [Wavelog's LoTW controller](https://github.com/wavelog/wavelog/blob/7f8eef4de94c674f73c6859ed4e0b0247f68dcd9/application/controllers/Lotw.php) and [signed export builder](https://github.com/wavelog/wavelog/blob/7f8eef4de94c674f73c6859ed4e0b0247f68dcd9/application/views/lotw_views/adif_views/adif_export.php) demonstrate direct certificate import, canonical signing, TQ8 construction, gzip, and upload without launching TQSL. That is evidence for the approach, not proof of Ferry's Worker compatibility or a storage design to copy.
@@ -108,13 +156,13 @@ Maintain the signing-field/mode/location configuration as a versioned dependency
 
 ## User experience and operational boundaries
 
-Signup is email confirmation followed by passkey creation; all later login uses passkeys. The [authentication contract](authentication.md) covers multiple credentials and the explicit v1 recovery boundary. LoFi linking, QRZ keys, and LoTW certificate/read credentials are service connections, not alternative Ferry login methods.
+Signup is email confirmation followed by passkey creation; all later login uses passkeys. The [authentication contract](authentication.md) covers multiple credentials and the explicit v1 recovery boundary. LoFi linking, QRZ keys, LoTW certificate/read credentials and Club Log application passwords are service connections, not alternative Ferry login methods.
 
 Show last source poll, pending quiet-period work, adopted history, submitted/observed deliveries, and actionable exceptions independently per destination. Prefer aggregate counts and short redacted explanations; fetch detailed contact context when needed. A bad certificate or ambiguous historical match must not pause unrelated users or contacts.
 
 The current product permits one nonrevoked connection per optional service, while retaining the data model and history of existing additional destinations. Pausing retains that service slot; same-identity credential renewal preserves history, and removing credentials permits linking another account. No service is required for saving account settings or template defaults. LoFi account labels are vendor-provided names. Source ingestion counts and bounded retained-source previews are independent of destination delivery counts; previewing current saved templates never binds a version or changes adopted narrative.
 
-On first connection, perform [history reconciliation](bootstrap.md) while establishing durable source change intake. Already uploaded contacts are adopted without writes. Missing current identities enter normal delivery only after complete evidence and a fresh check. The two destinations can finish at different times.
+On first connection, perform [history reconciliation](bootstrap.md) while establishing durable source change intake. Already uploaded contacts are adopted without writes. Missing current identities enter normal delivery only after complete evidence and a fresh check. Destinations can finish at different times.
 
 Source tombstones cancel unsent work. For already delivered contacts, v1 records deletion locally and exposes retained remote state; it does not propagate broad remote deletes. The narrow QRZ identity-correction cleanup above is a separate, provenance-checked operation. Identity corrections, ambiguous history, and destination restrictions must be visible without adding an operation-release step to ordinary logging.
 

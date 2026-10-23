@@ -1,5 +1,6 @@
-export const vendorKinds = ["lofi", "qrz", "lotw"] as const;
-export type VendorKind = (typeof vendorKinds)[number];
+import { providerName, vendorKinds, type ProviderKind } from "./providers.ts";
+export { vendorKinds } from "./providers.ts";
+export type VendorKind = ProviderKind;
 
 export interface LotwVerificationCheck {
   id: "login" | "certificate" | "certificate_status";
@@ -19,7 +20,7 @@ export interface ConnectionSummary {
 }
 
 export function vendorName(kind: string): string {
-  return { lofi: "LoFi", qrz: "QRZ Logbook", lotw: "LoTW" }[kind] ?? kind;
+  return providerName(kind);
 }
 
 export function connectionGroups(connections: ConnectionSummary[]) {
@@ -56,7 +57,7 @@ export function ledgerEmptyMessage(connections: ConnectionSummary[]): string {
   if (!current.some((connection) => connection.kind === "lofi"))
     return "No delivery activity yet. Connect LoFi to review your source contacts.";
   if (!current.some((connection) => connection.kind !== "lofi"))
-    return "No delivery activity yet. Your LoFi contacts appear in read-only review; connect QRZ or LoTW to begin destination history adoption.";
+    return "No delivery activity yet. Your LoFi contacts appear in read-only review; connect a destination to begin destination history adoption.";
   return "No delivery activity yet. Check source progress and destination readiness in read-only review. Delivery counts begin when contacts are reconciled with a destination.";
 }
 

@@ -1,3 +1,4 @@
+import { providerKinds, providerName } from "./providers.ts";
 import { templateContext } from "./delivery.ts";
 import type { Work } from "./intake.ts";
 import type { SourceRecord } from "./lofi.ts";
@@ -498,84 +499,79 @@ export async function reviewSource(
       )
       .all<{ kind: string; status: string; config: string }>()
   ).results;
-  const readiness: ReviewResponse["readiness"] = ["lofi", "qrz", "lotw"].map(
-    (kind) => {
-      const owned = connections.filter(
-        (connection) => connection.kind === kind,
+  const readiness: ReviewResponse["readiness"] = providerKinds.map((kind) => {
+    const owned = connections.filter((connection) => connection.kind === kind);
+    const active = owned.some((connection) => connection.status === "active");
+    let status: ReviewResponse["readiness"][number]["status"] = !owned.length
+      ? "not_connected"
+      : active
+        ? "ready"
+        : "paused";
+    if (kind === "lofi" && active) {
+      const activeSources = states.filter(
+        (source) => source.public.status === "active",
       );
-      const active = owned.some((connection) => connection.status === "active");
-      let status: ReviewResponse["readiness"][number]["status"] = !owned.length
-        ? "not_connected"
-        : active
-          ? "ready"
-          : "paused";
-      if (kind === "lofi" && active) {
-        const activeSources = states.filter(
-          (source) => source.public.status === "active",
-        );
-        if (
-          activeSources.some((source) => source.hasError) ||
-          activeSources.some(
-            (source) =>
-              source.public.lastFailureAt &&
-              source.public.lastFailureAt > (source.public.lastSuccessAt ?? 0),
-          )
+      if (
+        activeSources.some((source) => source.hasError) ||
+        activeSources.some(
+          (source) =>
+            source.public.lastFailureAt &&
+            source.public.lastFailureAt > (source.public.lastSuccessAt ?? 0),
         )
-          status = "attention";
-        else if (
-          activeSources.some(
-            (source) =>
-              !source.public.initialScanComplete ||
-              !source.public.contextComplete ||
-              source.public.counts.pendingOperations > 0,
-          )
-        )
-          status = "scanning";
-      } else if (
-        owned.some((connection) => connection.status === "needs_verification")
       )
-        status = active ? "ready" : "attention";
-      let message =
-        kind === "lofi"
-          ? status === "not_connected"
-            ? "Connect and approve a LoFi account to begin read-only ingestion."
-            : "Source counts describe ingestion, not delivery. Retained recent contacts can be reviewed before any destination is connected."
-          : status === "not_connected"
-            ? `No ${kind === "qrz" ? "QRZ" : "LoTW"} destination is connected. Delivery counts remain zero; source review is still available.`
-            : "Connected destination metadata can be reviewed. Previewing never enables delivery or proves historical absence.";
-      if (kind === "lotw" && status !== "not_connected") {
-        const current = owned.filter(
-          (connection) =>
-            connection.status === "active" ||
-            connection.status === "needs_verification",
+        status = "attention";
+      else if (
+        activeSources.some(
+          (source) =>
+            !source.public.initialScanComplete ||
+            !source.public.contextComplete ||
+            source.public.counts.pendingOperations > 0,
+        )
+      )
+        status = "scanning";
+    } else if (
+      owned.some((connection) => connection.status === "needs_verification")
+    )
+      status = active ? "ready" : "attention";
+    let message =
+      kind === "lofi"
+        ? status === "not_connected"
+          ? "Connect and approve a LoFi account to begin read-only ingestion."
+          : "Source counts describe ingestion, not delivery. Retained recent contacts can be reviewed before any destination is connected."
+        : status === "not_connected"
+          ? `No ${providerName(kind)} destination is connected. Delivery counts remain zero; source review is still available.`
+          : "Connected destination metadata can be reviewed. Previewing never enables delivery or proves historical absence.";
+    if (kind === "lotw" && status !== "not_connected") {
+      const current = owned.filter(
+        (connection) =>
+          connection.status === "active" ||
+          connection.status === "needs_verification",
+      );
+      const warnings = new Set(
+        current.flatMap((connection) =>
+          lotwVerification(jsonObject(connection.config), { now })
+            .filter(
+              (check) => check.status === "warning" || check.status === "error",
+            )
+            .map((check) => check.message),
+        ),
+      );
+      if (status === "paused") {
+        message =
+          "The LoTW connection is paused. Resume it before checking delivery readiness.";
+      } else {
+        const ready = current.every((connection) =>
+          lotwReadyForUpload(jsonObject(connection.config), now),
         );
-        const warnings = new Set(
-          current.flatMap((connection) =>
-            lotwVerification(jsonObject(connection.config), { now })
-              .filter(
-                (check) =>
-                  check.status === "warning" || check.status === "error",
-              )
-              .map((check) => check.message),
-          ),
-        );
-        if (status === "paused") {
-          message =
-            "The LoTW connection is paused. Resume it before checking delivery readiness.";
-        } else {
-          const ready = current.every((connection) =>
-            lotwReadyForUpload(jsonObject(connection.config), now),
-          );
-          status = ready ? "ready" : "attention";
-          const summary = ready
-            ? "LoTW certificate preflight checks passed. LoTW validates the certificate on upload; these checks do not verify upload acceptance."
-            : "LoTW needs certificate or login checks before signing. Review the connection checks.";
-          message = [summary, ...warnings].join(" ");
-        }
+        status = ready ? "ready" : "attention";
+        const summary = ready
+          ? "LoTW certificate preflight checks passed. LoTW validates the certificate on upload; these checks do not verify upload acceptance."
+          : "LoTW needs certificate or login checks before signing. Review the connection checks.";
+        message = [summary, ...warnings].join(" ");
       }
-      return { kind: kind as "lofi" | "qrz" | "lotw", status, message };
-    },
-  );
+    }
+    return { kind, status, message };
+  });
   return {
     readOnly: true,
     generatedAt: new Date(now).toISOString(),

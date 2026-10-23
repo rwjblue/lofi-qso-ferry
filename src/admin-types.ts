@@ -1,3 +1,5 @@
+import type { DestinationKind, ProviderKind } from "./providers.ts";
+
 export type AdminPriority = "live" | "background";
 
 export interface AdminWorkCounts {
@@ -35,14 +37,15 @@ export interface AdminWorkload {
     windowMs: number;
     /** Completed destination-contact versions, including corrections. */
     total: number;
-    qrz: number;
-    lotw: number;
     lastCompletedAt: number | null;
-    buckets: { at: number; total: number; qrz: number; lotw: number }[];
+    buckets: ({ at: number; total: number } & Record<
+      DestinationKind,
+      number
+    >)[];
     submittedOutstanding: number;
     /** Current adopted-history mappings; never counted as deliveries. */
     adoptedExisting: number;
-  };
+  } & Record<DestinationKind, number>;
 }
 
 export interface AdminWorkReason {
@@ -135,7 +138,7 @@ export interface AdminOverview {
     count: number;
   }[];
   vendors: {
-    vendor: "lofi" | "qrz" | "lotw";
+    vendor: ProviderKind;
     requests: number;
     backgroundRequests: number;
     totalLimit: number;
@@ -172,7 +175,7 @@ export interface AdminOverview {
       tenant: string;
       accountEmail: string;
       id: string;
-      kind: "lofi" | "qrz" | "lotw";
+      kind: ProviderKind;
       label: string;
       status: string;
       lastAttemptAt: number | null;

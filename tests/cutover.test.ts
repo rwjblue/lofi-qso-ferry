@@ -8,12 +8,12 @@ import {
 import { classifyHistory } from "../src/reconcile.ts";
 import { database, seed } from "./helpers.ts";
 import { applyAdditionalMigrations, FIXTURE_NOW } from "./runtime-fixtures.ts";
-async function setup() {
+async function setup(kind = "lotw") {
   const h = await database();
   await applyAdditionalMigrations(h.db);
   await seed(h.store);
   await h.store
-    .statement("UPDATE connections SET kind='lotw' WHERE id='destination'")
+    .statement("UPDATE connections SET kind=? WHERE id='destination'", kind)
     .run();
   const source = (await h.store.connection("a", "source"))!;
   const key = (qso: string, destination = "destination") => ({
@@ -374,6 +374,31 @@ test("tenant/source isolation and cursor rollback protect birth evidence", async
       await establishCutovers(h.store, h.source, verified, FIXTURE_NOW + 4),
       0,
     );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("registered Club Log destinations receive their own source cutover and new-contact proof", async () => {
+  const h = await setup("clublog");
+  try {
+    await h.page("backfill", ["historical"]);
+    assert.equal(
+      await establishCutovers(h.store, h.source, verified, FIXTURE_NOW + 1),
+      1,
+    );
+    assert.equal(
+      await proveNewAfterCutover(h.store, h.key("historical")),
+      false,
+    );
+    await h.page("forward", ["new"], true, "sync", FIXTURE_NOW + 2);
+    assert.equal(await proveNewAfterCutover(h.store, h.key("new")), true);
+    await h.store
+      .statement(
+        "UPDATE connections SET status='disabled' WHERE id='destination'",
+      )
+      .run();
+    assert.equal(await proveNewAfterCutover(h.store, h.key("new")), false);
   } finally {
     await h.mf.dispose();
   }

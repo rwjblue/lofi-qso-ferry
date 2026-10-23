@@ -56,13 +56,13 @@ new arrivals, released holds, expiry, and source changes can all affect it. A
 falling count does not by itself prove delivery throughput or spare capacity.
 
 **Actual delivery throughput** counts each immutable contact-version/destination
-attempt once, at its first completed event. QRZ acceptance and successful LoTW
-readback are separate. Retries and repeated completion events never inflate the
-count. Corrections are new delivery versions, and sending one contact to two
-destinations counts twice. LoTW submission acknowledgements and adopted existing
-history are shown separately and never counted as completed deliveries. The
-hourly rate is the observed 24-hour total divided by 24, not an estimated maximum
-capacity or completion ETA.
+attempt once, at its first completed event. QRZ acceptance, successful LoTW
+readback, and successful Club Log readback are counted separately. Retries and
+repeated completion events never inflate the count. Corrections are new delivery
+versions, and sending one contact to two destinations counts twice. Submissions
+awaiting readback and adopted existing history are shown separately and never
+counted as completed deliveries. The hourly rate is the observed 24-hour total
+divided by 24, not an estimated maximum capacity or completion ETA.
 
 Successful source pages, drain rounds, and idle/deadline stop reasons remain in
 scheduler history. Contact and attempt counters count processing turns, not
@@ -129,9 +129,10 @@ Expired and revoked invitations remain visible for 90 days after expiry.
 Apply all outstanding migrations before deploying this code. The initial admin
 release requires `0011_admin_metrics.sql` and `0012_admin_invitations.sql`; the
 workload breakdown and trend samples additionally require
-`0015_admin_workload.sql`. Classified backlog history starts after deployment;
-old samples cannot supply the missing breakdown. Completed delivery events can
-be counted from existing history.
+`0015_admin_workload.sql`. Club Log support requires `0016_providers.sql`.
+Classified backlog history starts after deployment; old samples cannot supply
+the missing breakdown. Completed delivery events can be counted from existing
+history.
 Build both browser entry points with `mise run build`; verify with
 `mise run check`. Existing export configuration stays in effect. No real
 invitation, vendor upload or production migration is part of development tests.

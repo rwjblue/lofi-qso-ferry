@@ -5,14 +5,16 @@ import {
   requireRecent,
   type SessionIdentity,
 } from "./auth.ts";
+import { ClubLogClient } from "./clublog.ts";
 import { LoFiClient, type LoFiCredentials } from "./lofi.ts";
 import { lofiAccountEmail, lofiAccountLabel } from "./lofi-identity.ts";
 import { LotwClient, LotwLoginError } from "./lotw.ts";
 import {
   type LotwLoginVerification,
-  lotwVerification,
   lotwReadyForUpload,
+  lotwVerification,
 } from "./lotw-verification.ts";
+import { providerName } from "./providers.ts";
 import { type QrzBook, QrzClient } from "./qrz.ts";
 import {
   boundedJson,
@@ -136,7 +138,7 @@ async function assertConnectionSlot(
   )
     throw new ConnectionError(
       409,
-      `A ${kind === "lofi" ? "LoFi" : kind === "qrz" ? "QRZ" : "LoTW"} connection already exists. Resume it, update its credentials, or remove its credentials before connecting a different account.`,
+      `A ${providerName(kind)} connection already exists. Resume it, update its credentials, or remove its credentials before connecting a different account.`,
     );
 }
 /** All identities here have already been established with read-only vendor evidence. */
@@ -532,6 +534,68 @@ export async function connectionRoute(
         201,
       );
     }
+    if (path === "/api/connections/clublog") {
+      if (!env.CLUBLOG_API_KEY?.trim())
+        throw new ConnectionError(
+          503,
+          "Club Log is not configured on this server. Ask the operator to configure its application API key.",
+          "clublog_not_configured",
+        );
+      const email = normalizeEmail(input.email);
+      const callsign = text(
+        input.callsign,
+        "Club Log callsign",
+        20,
+      ).toUpperCase();
+      if (!/^[A-Z0-9]+(?:\/[A-Z0-9]+)*$/.test(callsign))
+        throw new ConnectionError(400, "Invalid Club Log callsign");
+      if (
+        typeof input.password !== "string" ||
+        !input.password.length ||
+        input.password.length > 1024 ||
+        hasAsciiControl(input.password)
+      )
+        throw new ConnectionError(
+          400,
+          "Enter your Club Log application password",
+        );
+      const credential = { email, password: input.password, callsign };
+      const remoteIdentity = `account:${await sha256(canonical({ email, callsign }))}`;
+      await assertConnectionSlot(
+        store,
+        identity.tenant,
+        "clublog",
+        remoteIdentity,
+      );
+      await new ClubLogClient(credential, {
+        apiKey: env.CLUBLOG_API_KEY,
+        fetcher: vendorFetch(store, "clublog", services.fetcher, {
+          priority: "live",
+        }),
+      }).verifyLogin();
+      const saved = await saveVerifiedConnection(
+        store,
+        identity.tenant,
+        {
+          kind: "clublog",
+          remoteIdentity,
+          label: `Club Log ${callsign}`,
+          credential,
+          config: { stationCallsign: callsign, readAccess: true },
+        },
+        identity,
+        {},
+      );
+      return json(
+        {
+          id: saved.id,
+          status: "active",
+          message:
+            "Club Log access verified. Saving credentials does not export contacts.",
+        },
+        201,
+      );
+    }
     if (path === "/api/connections/lotw/check-login") {
       let connection: Connection | null = null;
       let query: { username: string; password: string };
@@ -762,16 +826,16 @@ export async function connectionRoute(
           409,
           "Credentials expired; remove them and reconnect",
         );
-      const status =
+      const requestedStatus =
         connection.kind === "lotw" && !lotwReadyForUpload(config)
           ? "needs_verification"
           : "active";
       const now = Date.now();
-      await store.db.batch([
+      const results = await store.db.batch<{ status: string }>([
         sessionGuard(store, identity, now),
         store.statement(
-          "UPDATE connections SET status=? WHERE tenant=? AND id=? AND status='disabled' AND credential_version=?",
-          status,
+          "UPDATE connections SET status=CASE WHEN kind='clublog' AND json_extract(config,'$.credentialRejected')=1 THEN 'needs_verification' ELSE ? END WHERE tenant=? AND id=? AND status='disabled' AND credential_version=? RETURNING status",
+          requestedStatus,
           identity.tenant,
           id,
           connection.credential_version,
@@ -781,10 +845,19 @@ export async function connectionRoute(
           identity.tenant,
         ),
       ]);
+      const status = results[1].results[0]?.status;
+      if (!status)
+        throw new ConnectionError(
+          409,
+          "Connection changed while resuming; refresh and try again",
+        );
       return json({
         id,
         status,
-        message: "Connection resumed. Export rollout gates still apply.",
+        message:
+          connection.kind === "clublog" && status === "needs_verification"
+            ? "Club Log credentials still need verification. Update credentials before delivery can resume."
+            : "Connection resumed. Export rollout gates still apply.",
       });
     }
     if (

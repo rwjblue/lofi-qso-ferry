@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { serializeAdifRecord } from "../src/adif.ts";
+import { getAdminWorkload } from "../src/admin-workload.ts";
+import { clublogRecord, clublogRemoteIdentity } from "../src/clublog.ts";
+import { projectContact } from "../src/projection.ts";
 import { tick } from "../src/service.ts";
-import { seed } from "./helpers.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
-import { schedulerFixture, FIXTURE_NOW } from "./runtime-fixtures.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
+import { seed } from "./helpers.ts";
+import { FIXTURE_NOW, schedulerFixture } from "./runtime-fixtures.ts";
+
 const key = (destination: string) => ({
   tenant: "a",
   source: "source",
@@ -956,6 +960,142 @@ test("expired history resumes through background repair without resetting forwar
       .statement("SELECT cursor FROM cursors WHERE stream='repair'")
       .first<{ cursor: string }>();
     assert.equal(JSON.parse(repair!.cursor).rescanComplete, true);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+async function addClublog(h: Awaited<ReturnType<typeof schedulerFixture>>) {
+  await h.store
+    .statement(
+      "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,config,created_at) VALUES('a','clublog','clublog','synthetic-clublog','Synthetic Club Log','active','fixture-clublog',?,0)",
+      JSON.stringify({ stationCallsign: "W1AW", readAccess: true }),
+    )
+    .run();
+  await (
+    await h.store.putPrivate("a", "clublog", "fixture-clublog", "credential", {
+      email: "operator@example.test",
+      password: "synthetic-clublog-password",
+      callsign: "W1AW",
+    })
+  ).run();
+}
+
+test("scheduled Club Log readback rejection suspends that credential while other destinations progress", async () => {
+  const h = await schedulerFixture();
+  try {
+    await addClublog(h);
+    let clublogReads = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).hostname !== "clublog.org")
+        return h.fetcher(input, init);
+      clublogReads++;
+      return new Response("synthetic-secret must never be stored", {
+        status: 403,
+      });
+    };
+    await tick(h.env, fetcher, FIXTURE_NOW);
+    assert.equal(clublogReads, 1);
+    assert.equal(
+      (await h.store.ledger(key("destination")))?.state,
+      "adopted_existing",
+    );
+    assert.equal(
+      (await h.store.ledger(key("lotw")))?.state,
+      "adopted_existing",
+    );
+    const connection = await h.store.connection("a", "clublog");
+    assert.equal(connection?.status, "needs_verification");
+    assert.equal(JSON.parse(connection!.config).credentialRejected, true);
+    assert.doesNotMatch(connection!.config, /synthetic-secret/);
+    assert.match(
+      (await h.store.ledger(key("clublog")))?.reason ?? "",
+      /Verify the connected credentials/,
+    );
+    await tick(h.env, fetcher, FIXTURE_NOW + 5 * 60_000);
+    assert.equal(clublogReads, 1);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("an unsupported Club Log projection cannot block intake or adoption by QRZ and LoTW", async () => {
+  const h = await schedulerFixture();
+  try {
+    await addClublog(h);
+    h.qso.band = "2190m";
+    delete h.qso.freq;
+    for (const record of [...h.qrzRecords, ...h.lotwRecords]) {
+      record.BAND = "2190m";
+      delete record.FREQ;
+    }
+    const fetcher: typeof fetch = async (input, init) => {
+      assert.notEqual(
+        new URL(String(input)).hostname,
+        "clublog.org",
+        "unsupported projection cannot send a vendor request",
+      );
+      return h.fetcher(input, init);
+    };
+    await tick(h.env, fetcher, FIXTURE_NOW);
+    assert.equal(
+      (await h.store.ledger(key("destination")))?.state,
+      "adopted_existing",
+    );
+    assert.equal(
+      (await h.store.ledger(key("lotw")))?.state,
+      "adopted_existing",
+    );
+    assert.equal(
+      (await h.store.ledger(key("clublog")))?.reason ?? "",
+      "clublog_projection_or_route_unsupported",
+    );
+    assert.equal((await h.store.connection("a", "clublog"))?.status, "active");
+    const workload = await getAdminWorkload(h.env, FIXTURE_NOW);
+    assert.equal(
+      workload.source.reduce((sum, row) => sum + row.ready, 0),
+      0,
+    );
+    assert.equal(
+      workload.heldReasons.find((row) => row.reason === "delivery_review")
+        ?.count,
+      1,
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("scheduler independently adopts existing Club Log history alongside QRZ and LoTW", async () => {
+  const h = await schedulerFixture();
+  try {
+    await addClublog(h);
+    const record = clublogRecord(
+      await projectContact(h.qso, h.operation, [], { operationComplete: true }),
+    );
+    let reads = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.hostname !== "clublog.org") return h.fetcher(input, init);
+      assert.equal(url.pathname, "/getadif.php");
+      reads++;
+      return new Response(
+        `<ADIF_VER:5>3.1.6<EOH>\n${serializeAdifRecord(record)}`,
+      );
+    };
+    const result = await tick(h.env, fetcher, FIXTURE_NOW);
+    assert.equal(result.errors, 0);
+    assert.equal(reads, 1);
+    for (const destination of ["destination", "lotw", "clublog"])
+      assert.equal(
+        (await h.store.ledger(key(destination)))?.state,
+        "adopted_existing",
+      );
+    assert.equal(
+      (await h.store.ledger(key("clublog")))?.remote_id,
+      await clublogRemoteIdentity(record),
+    );
+    assert.equal(await count(h, "attempts"), 0);
   } finally {
     await h.mf.dispose();
   }

@@ -1,9 +1,10 @@
-import { canonical, open, randomToken, seal, sha256 } from "./security.ts";
+import type { ProviderKind } from "./providers.ts";
 import type { Envelope, Keyring } from "./security.ts";
+import { canonical, open, randomToken, seal, sha256 } from "./security.ts";
 export interface Connection {
   tenant: string;
   id: string;
-  kind: "lofi" | "qrz" | "lotw";
+  kind: ProviderKind;
   remote_identity: string;
   label: string;
   status: string;
@@ -44,12 +45,18 @@ export interface LotwIdentityEvidence {
   remoteId: string;
   identity: Record<string, string>;
 }
+export interface RemoteIdentityEvidence {
+  remoteId: string;
+  identity: Record<string, string>;
+}
 export interface RetainedLotwIdentity extends LotwIdentityEvidence {
   firstEvidence: "adopted" | "submitted" | "uncertain" | "observed";
   recordedAt: number;
 }
 export const LOTW_PRIOR_IDENTITY_NOTICE =
   "LoTW identity changed; prior remote record may remain";
+export const RETAINED_REMOTE_IDENTITY_NOTICE =
+  "Prior remote record retained after identity correction";
 type SqlGuard = { sql: string; params: (string | number | null)[] };
 export class Store {
   constructor(
@@ -331,6 +338,48 @@ export class Store {
       key.destination,
     ).first<Ledger>();
   }
+  private async retainedIdentityPrefix(key: LedgerKey) {
+    return `prior:${await sha256(canonical([key.source, key.qso]))}:`;
+  }
+  /** Exclude another source owner's mapped, retained or in-flight identity. */
+  async remoteIdentityClaimGuard(
+    key: LedgerKey,
+    remoteId: string,
+  ): Promise<SqlGuard> {
+    const suffix = `:${remoteId}`;
+    return {
+      sql: "NOT EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=? AND l.destination=? AND l.remote_id=? AND (l.source!=? OR l.qso!=?)) AND NOT EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=? AND p.connection=? AND p.kind='retained_remote_identity' AND substr(p.id,-?)=? AND p.id!=? AND p.revoked_at IS NULL) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.destination=? AND s.remote_id=? AND s.state NOT IN('rejected','cancelled') AND (a.source!=? OR a.qso!=?))",
+      params: [
+        key.tenant,
+        key.destination,
+        remoteId,
+        key.source,
+        key.qso,
+        key.tenant,
+        key.destination,
+        suffix.length,
+        suffix,
+        (await this.retainedIdentityPrefix(key)) + remoteId,
+        key.tenant,
+        key.destination,
+        remoteId,
+        key.source,
+        key.qso,
+      ],
+    };
+  }
+  /** Compact known prior identities survive temporary source/outbox retention. */
+  async retainedRemoteIds(key: LedgerKey): Promise<string[]> {
+    const prefix = await this.retainedIdentityPrefix(key);
+    const rows = await this.statement(
+      "SELECT id FROM private_data WHERE tenant=? AND connection=? AND kind='retained_remote_identity' AND substr(id,1,?)=? AND revoked_at IS NULL",
+      key.tenant,
+      key.destination,
+      prefix.length,
+      prefix,
+    ).all<{ id: string }>();
+    return rows.results.map(({ id }) => id.slice(prefix.length));
+  }
   observation(
     key: LedgerKey,
     generation: string,
@@ -411,6 +460,8 @@ export class Store {
     transmittedHash?: string,
     lotwIdentityId?: string,
     priority?: "live" | "background",
+    notice?: string,
+    priorIdentity?: RemoteIdentityEvidence,
   ) {
     const id = randomToken();
     const payloadHash = transmittedHash ?? (await sha256(canonical(payload)));
@@ -422,6 +473,25 @@ export class Store {
       payload,
       now + 7 * 86400_000,
     );
+    const priorIdentityId = priorIdentity
+      ? (await this.retainedIdentityPrefix(key)) + priorIdentity.remoteId
+      : null;
+    const priorIdentityEnvelope =
+      priorIdentity && priorIdentityId
+        ? JSON.stringify(
+            await seal(
+              priorIdentity,
+              {
+                tenant: key.tenant,
+                connection: key.destination,
+                id: priorIdentityId,
+                kind: "retained_remote_identity",
+                purpose: "storage",
+              },
+              this.keys,
+            ),
+          )
+        : null;
     await this.db.batch([
       this.statement(
         "INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version) VALUES(?,?,?,?,?,?,?,?,?)",
@@ -436,6 +506,18 @@ export class Store {
         credentialVersion,
       ),
       encrypted,
+      ...(priorIdentityId && priorIdentityEnvelope
+        ? [
+            this.statement(
+              "INSERT INTO private_data(tenant,connection,id,kind,envelope,created_at) VALUES(?,?,?,'retained_remote_identity',?,?) ON CONFLICT(tenant,connection,id,kind) DO NOTHING",
+              key.tenant,
+              key.destination,
+              priorIdentityId,
+              priorIdentityEnvelope,
+              now,
+            ),
+          ]
+        : []),
       this.statement(
         "INSERT INTO attempts SELECT ?,?,?,?,?,?,?,?,?,?,?,source_hash FROM ledger WHERE tenant=? AND source=? AND qso=? AND destination=?",
         key.tenant,
@@ -471,11 +553,12 @@ export class Store {
         now,
       ),
       this.statement(
-        "UPDATE ledger SET narrative=CASE WHEN narrative='unbound' AND ? IS NOT NULL THEN 'template_bound' ELSE narrative END,template_version=?,confirmed=CASE WHEN ? IS NOT NULL AND (remote_id IS NULL OR remote_id!=?) THEN 0 ELSE confirmed END WHERE tenant=? AND source=? AND qso=? AND destination=?",
+        "UPDATE ledger SET narrative=CASE WHEN narrative='unbound' AND ? IS NOT NULL THEN 'template_bound' ELSE narrative END,template_version=?,confirmed=CASE WHEN ? IS NOT NULL AND (remote_id IS NULL OR remote_id!=?) THEN 0 ELSE confirmed END,reason=COALESCE(?,reason) WHERE tenant=? AND source=? AND qso=? AND destination=?",
         expectedTemplate,
         expectedTemplate,
         lotwIdentityId ?? null,
         lotwIdentityId ?? null,
+        notice ?? null,
         key.tenant,
         key.source,
         key.qso,
@@ -491,7 +574,20 @@ export class Store {
     lease: Lease,
     now = Date.now(),
     lotwIdentity?: LotwIdentityEvidence,
+    reservationId?: string,
   ): Promise<boolean> {
+    const reservationKey = reservationId
+      ? await this.statement(
+          "SELECT tenant,source,qso,destination FROM attempts WHERE tenant=? AND id=?",
+          tenant,
+          id,
+        ).first<LedgerKey>()
+      : null;
+    if (reservationId && !reservationKey) return false;
+    const reservationGuard =
+      reservationId && reservationKey
+        ? await this.remoteIdentityClaimGuard(reservationKey, reservationId)
+        : { sql: "1", params: [] };
     const winner = lotwIdentity ? randomToken() : null;
     const identityStatements = await this.lotwResolutionStatements(
       tenant,
@@ -506,13 +602,14 @@ export class Store {
     );
     const [result] = await this.db.batch([
       this.statement(
-        `UPDATE attempt_state SET state='dispatching',dispatched_at=?,updated_at=?,lease_token=?,fence=?,reason=CASE WHEN ? IS NULL THEN reason ELSE ? END WHERE tenant=? AND attempt=? AND state='prepared' AND due_at<=? AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?) AND EXISTS(SELECT 1 FROM attempts a JOIN connections c ON c.tenant=a.tenant AND c.id=a.destination JOIN connections src ON src.tenant=a.tenant AND src.id=a.source AND src.status='active' JOIN private_data p ON p.tenant=a.tenant AND p.connection=a.destination AND p.id=a.credential_version AND p.kind='credential' WHERE a.tenant=? AND a.id=? AND c.status='active' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) AND c.credential_version=a.credential_version)`,
+        `UPDATE attempt_state SET state='dispatching',dispatched_at=?,updated_at=?,lease_token=?,fence=?,reason=CASE WHEN ? IS NULL THEN reason ELSE ? END,remote_id=COALESCE(?,remote_id) WHERE tenant=? AND attempt=? AND state='prepared' AND due_at<=? AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?) AND EXISTS(SELECT 1 FROM attempts a JOIN connections c ON c.tenant=a.tenant AND c.id=a.destination JOIN connections src ON src.tenant=a.tenant AND src.id=a.source AND src.status='active' JOIN private_data p ON p.tenant=a.tenant AND p.connection=a.destination AND p.id=a.credential_version AND p.kind='credential' WHERE a.tenant=? AND a.id=? AND c.status='active' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) AND c.credential_version=a.credential_version) AND ${reservationGuard.sql}`,
         now,
         now,
         lease.token,
         lease.fence,
         winner,
         winner,
+        reservationId ?? null,
         tenant,
         id,
         now,
@@ -524,6 +621,7 @@ export class Store {
         tenant,
         id,
         now,
+        ...reservationGuard.params,
       ),
       ...identityStatements,
       ...(winner
@@ -547,6 +645,7 @@ export class Store {
     remoteId: string | null = null,
     now = Date.now(),
     lotwIdentity?: LotwIdentityEvidence,
+    reason?: string,
   ) {
     const guard = randomToken();
     const identityStatements = ["submitted", "uncertain", "observed"].includes(
@@ -575,21 +674,32 @@ export class Store {
         now,
       ),
       this.statement(
-        "UPDATE attempt_state SET state=?,remote_id=?,updated_at=? WHERE tenant=? AND attempt=?",
+        "UPDATE attempt_state SET state=?,remote_id=COALESCE(?,remote_id),updated_at=?,reason=? WHERE tenant=? AND attempt=?",
         state,
         remoteId,
         now,
+        reason ?? null,
         tenant,
         id,
       ),
       this.statement(
-        "INSERT INTO attempt_events(tenant,attempt,state,at) VALUES(?,?,?,?)",
+        "INSERT INTO attempt_events(tenant,attempt,state,at,reason) VALUES(?,?,?,?,?)",
         tenant,
         id,
         state,
         now,
+        reason ?? null,
       ),
       ...identityStatements,
+      this.statement(
+        "UPDATE ledger SET reason=? WHERE tenant=? AND (source,qso,destination) IN(SELECT source,qso,destination FROM attempts WHERE tenant=? AND id=?) AND ? IS NOT NULL AND ?='rejected' AND state NOT IN('source_deleted','retained_old_route')",
+        reason ?? null,
+        tenant,
+        tenant,
+        id,
+        reason ?? null,
+        state,
+      ),
       this.statement(
         `UPDATE ledger SET state=CASE WHEN state IN('source_deleted','retained_old_route') THEN state WHEN source_hash!=(SELECT source_hash FROM attempts WHERE tenant=? AND id=?) THEN 'changed' ELSE ? END,remote_id=COALESCE(?,remote_id),sent_hash=(SELECT payload_hash FROM attempts WHERE tenant=? AND id=?),baseline_hash=(SELECT source_hash FROM attempts WHERE tenant=? AND id=?) WHERE tenant=? AND (source,qso,destination) IN(SELECT source,qso,destination FROM attempts WHERE tenant=? AND id=?) AND ? IN ('delivered','observed','submitted')`,
         tenant,

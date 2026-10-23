@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { clublogRemoteIdentity } from "../src/clublog.ts";
 import {
   adoptHistory,
   canonicalLotwIdentity,
   classifyHistory,
   lotwRemoteIdentity,
-  reconcileQrzAttempt,
   type ReconciliationEvidence,
+  reconcileQrzAttempt,
 } from "../src/reconcile.ts";
 import { database, seed } from "./helpers.ts";
+import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
+
 const source = {
   STATION_CALLSIGN: "N0TEST/P",
   CALL: "W1AW",
@@ -408,3 +411,169 @@ test("LoTW adoption compares supported location only and requires meaningful fre
     "adopted_existing",
   );
 });
+
+test("Club Log history uses its own identity and adopts without granting submission-only eligibility", async () => {
+  const h = await database();
+  try {
+    await applyAdditionalMigrations(h.db);
+    const key = await seed(h.store);
+    await h.store
+      .statement("UPDATE connections SET kind='clublog' WHERE id='destination'")
+      .run();
+    const clublogSource = {
+      STATION_CALLSIGN: source.STATION_CALLSIGN,
+      CALL: source.CALL,
+      QSO_DATE: source.QSO_DATE,
+      TIME_ON: source.TIME_ON,
+      BAND: source.BAND,
+      MODE: source.MODE,
+    };
+    const clublogEvidence = { ...evidence, destination: "clublog" as const };
+    assert.equal(
+      classifyHistory(clublogSource, [], {
+        ...clublogEvidence,
+        readAccess: false,
+        provenNewAfterCutover: true,
+      }).state,
+      "historical_unverified",
+    );
+    const outcome = classifyHistory(
+      clublogSource,
+      [clublogSource],
+      clublogEvidence,
+    );
+    assert.equal(outcome.state, "adopted_existing");
+    await h.store.observe(key, "g1", "clublog-projection", 30, false, 0);
+    assert.equal(
+      (await adoptHistory(h.store, key, "g1", outcome, 1)).applied,
+      true,
+    );
+    const ledger = await h.store.ledger(key);
+    assert.equal(ledger?.remote_id, await clublogRemoteIdentity(clublogSource));
+    assert.equal(ledger?.provenance, "adopted");
+    assert.equal(ledger?.narrative, "unbound");
+    assert.equal(ledger?.confirmed, 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("Club Log prior remote identities cannot be adopted by another source contact", async () => {
+  const h = await database();
+  try {
+    await applyAdditionalMigrations(h.db);
+    const key = await seed(h.store);
+    await seed(h.store, "b");
+    await h.store
+      .statement("UPDATE connections SET kind='clublog' WHERE id='destination'")
+      .run();
+    const original = {
+      STATION_CALLSIGN: source.STATION_CALLSIGN,
+      CALL: source.CALL,
+      QSO_DATE: source.QSO_DATE,
+      TIME_ON: source.TIME_ON,
+      BAND: source.BAND,
+      MODE: source.MODE,
+    };
+    const priorId = await clublogRemoteIdentity(original);
+    const outcome = classifyHistory(original, [original], {
+      ...evidence,
+      destination: "clublog",
+    });
+    await h.store.observe(key, "g1", "original-projection", 30, false, 0);
+    assert((await adoptHistory(h.store, key, "g1", outcome, 1)).applied);
+    const corrected = { ...original, CALL: "W2NEW" };
+    const correctedId = await clublogRemoteIdentity(corrected);
+    await h.store.observe(key, "g2", "corrected-projection", 30, false, 10);
+    const attempt = await h.store.stage(
+      key,
+      "g2",
+      { record: corrected },
+      "v1",
+      null,
+      1800011,
+      "corrected-projection",
+      undefined,
+      "live",
+      undefined,
+      { remoteId: priorId, identity: original },
+    );
+    const lease = (await h.store.claim("a", "correction", 1800012, 1000))!;
+    assert(await h.store.claimAttempt("a", attempt, lease, 1800013));
+    await h.store.resolve("a", attempt, lease, "submitted", null, 1800014);
+    assert(
+      await h.store.resolveReconciled(
+        "a",
+        attempt,
+        lease,
+        correctedId,
+        1800015,
+      ),
+    );
+    assert.equal((await h.store.ledger(key))!.remote_id, correctedId);
+    assert.deepEqual(await h.store.retainedRemoteIds(key), [priorId]);
+    const duplicate = { ...key, qso: "duplicate" };
+    await h.store.observe(
+      duplicate,
+      "g1",
+      "duplicate-projection",
+      30,
+      false,
+      0,
+    );
+    assert.equal(
+      (await adoptHistory(h.store, duplicate, "g1", outcome, 1800016)).applied,
+      false,
+      "a retained remote identity remains associated with its original source UUID",
+    );
+    assert.equal((await h.store.ledger(duplicate))!.remote_id, null);
+    const otherTenant = { ...key, tenant: "b" };
+    await h.store.observe(
+      otherTenant,
+      "g1",
+      "other-tenant-projection",
+      30,
+      false,
+      0,
+    );
+    assert(
+      (await adoptHistory(h.store, otherTenant, "g1", outcome, 1800017))
+        .applied,
+      "retained remote identity claims remain tenant isolated",
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+for (const state of ["source_deleted", "retained_old_route"] as const) {
+  test(`history adoption preserves a concurrent ${state} transition`, async () => {
+    const { mf, store } = await database();
+    try {
+      const key = await seed(store);
+      await store.observe(key, "g1", "source-projection", 30, false, 0);
+      const outcome = classifyHistory(source, [remote], evidence);
+      await store
+        .statement(
+          "UPDATE ledger SET state=?,reason='source-transition',baseline_hash='previous-baseline' WHERE tenant=? AND source=? AND qso=? AND destination=?",
+          state,
+          key.tenant,
+          key.source,
+          key.qso,
+          key.destination,
+        )
+        .run();
+      assert.equal(
+        (await adoptHistory(store, key, "g1", outcome, 1)).applied,
+        false,
+      );
+      const row = (await store.ledger(key))!;
+      assert.equal(row.state, state);
+      assert.equal(row.reason, "source-transition");
+      assert.equal(row.baseline_hash, "previous-baseline");
+      assert.equal(row.remote_id, null);
+    } finally {
+      await mf.dispose();
+    }
+  });
+}

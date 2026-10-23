@@ -1,6 +1,7 @@
+import type { ProviderKind } from "./providers.ts";
 import type { Store } from "./store.ts";
 
-export type Vendor = "lofi" | "qrz" | "lotw";
+export type Vendor = ProviderKind;
 export type VendorPriority = "live" | "background";
 export interface VendorPolicy {
   windowMs: number;
@@ -14,6 +15,7 @@ export const VENDOR_POLICIES: Readonly<Record<Vendor, Readonly<VendorPolicy>>> =
     lofi: { windowMs: 300_000, total: 24, background: 4 },
     qrz: { windowMs: 300_000, total: 120, background: 24 },
     lotw: { windowMs: 300_000, total: 40, background: 8 },
+    clublog: { windowMs: 300_000, total: 40, background: 8 },
   };
 
 export class VendorDeferredError extends Error {

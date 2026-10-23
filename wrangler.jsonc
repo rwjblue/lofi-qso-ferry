@@ -73,11 +73,11 @@
       "name": "lofi-qso-ferry",
       "vars": {
         "ENVIRONMENT": "production",
-        "RP_ID": "configure.invalid",
-        "ORIGIN": "https://configure.invalid",
+        "RP_ID": "ferry.n1rwj.com",
+        "ORIGIN": "https://ferry.n1rwj.com",
         "EXPORTS_ENABLED": "false",
         "LIVE_WRITE_AUTHORIZATION": "",
-        "MAIL_FROM": "configure@example.invalid",
+        "MAIL_FROM": "LoFi QSO Ferry <signup@ferry.n1rwj.com>",
         "LOTW_TRUST_ROOTS_JSON": "[]",
         "ACTIVE_KEK_VERSION": "1",
         "ROLLOUT_CHECKS_PASSED": "false",
@@ -88,10 +88,25 @@
         {
           "binding": "DB",
           "database_name": "ferry-production",
-          "database_id": "00000000-0000-0000-0000-000000000003",
+          "database_id": "45ad64ad-92bb-491a-b6e6-1d2b17450144",
           "migrations_dir": "migrations"
+        }
+      ],
+      "workers_dev": false,
+      "preview_urls": false,
+      "routes": [
+        {
+          "pattern": "ferry.n1rwj.com",
+          "custom_domain": true
+        }
+      ],
+      "send_email": [
+        {
+          "name": "EMAIL",
+          "allowed_sender_addresses": ["signup@ferry.n1rwj.com"]
         }
       ]
     }
-  }
+  },
+  "account_id": "478f5e15ae2afa01364d19f42a3e06f2"
 }

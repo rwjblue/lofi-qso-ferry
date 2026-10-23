@@ -1,24 +1,24 @@
 import { timingSafeEqual } from "node:crypto";
 import {
+  type AuthenticationResponseJSON,
+  type AuthenticatorTransport,
   generateAuthenticationOptions,
   generateRegistrationOptions,
+  type RegistrationResponseJSON,
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
-  type AuthenticationResponseJSON,
-  type RegistrationResponseJSON,
-  type AuthenticatorTransport,
 } from "@simplewebauthn/server";
 import {
   b64,
   boundedJson,
   digestCode,
+  type Envelope,
   keyring,
   open,
   randomToken,
   seal,
   sha256,
   unb64,
-  type Envelope,
 } from "./security.ts";
 
 const browserCookie = "__Host-ferry_browser";
@@ -275,7 +275,31 @@ async function sendCode(
     ).run();
     return;
   }
-  if (!env.RESEND_API_KEY || env.MAIL_FROM.includes("invalid"))
+  if (env.MAIL_FROM.includes("invalid"))
+    throw new AuthError(503, "Email delivery is not configured");
+  const content = {
+    to: [pending.email],
+    subject: "Confirm your LoFi QSO Ferry email",
+    text: `Your verification code is ${code}. Enter it in the original Ferry tab within 10 minutes. This code cannot sign into or recover an existing account.`,
+  };
+  if (env.EMAIL) {
+    try {
+      // MAIL_FROM is operator configuration, not an arbitrary RFC 5322 header.
+      // Accept a bare address or the controlled display-name form used here.
+      const named = /^([A-Za-z0-9 ._-]{1,80}) <([^<>]+)>$/.exec(env.MAIL_FROM);
+      const from: EmailAddress = {
+        email: normalizeEmail(named?.[2] ?? env.MAIL_FROM),
+        name: named?.[1] ?? "LoFi QSO Ferry",
+      };
+      await env.EMAIL.send({ ...content, from });
+      return;
+    } catch {
+      // A lost acknowledgement can still mean the email was sent. Invalidate
+      // this proof in beginEmail; never send a second copy through a fallback.
+      throw new AuthError(503, "Email delivery is temporarily unavailable");
+    }
+  }
+  if (!env.RESEND_API_KEY)
     throw new AuthError(503, "Email delivery is not configured");
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
@@ -285,10 +309,8 @@ async function sendCode(
       "Idempotency-Key": `ferry-${pending.id}`,
     },
     body: JSON.stringify({
+      ...content,
       from: env.MAIL_FROM,
-      to: [pending.email],
-      subject: "Confirm your LoFi QSO Ferry email",
-      text: `Your verification code is ${code}. Enter it in the original Ferry tab within 10 minutes. This code cannot sign into or recover an existing account.`,
     }),
     signal: AbortSignal.timeout(15_000),
     redirect: "error",

@@ -60,7 +60,7 @@ class Browser {
     data?: unknown,
     headers: Record<string, string> = {},
   ) {
-    const request = new Request(`http://localhost:8787/api/auth/${path}`, {
+    const request = new Request(`${this.env.ORIGIN}/api/auth/${path}`, {
       method: data === undefined ? "GET" : "POST",
       headers: {
         Cookie: this.cookieHeader(),
@@ -154,6 +154,290 @@ test("email policy preserves local case, dots and plus tags and canonicalizes on
     "a@host..test",
   ])
     assert.throws(() => normalizeEmail(value));
+});
+
+test("native email confirms browser-bound signup and email changes while passkey login sends no mail", async (context) => {
+  const { env, mf, db } = await setup();
+  try {
+    env.ENVIRONMENT = "production";
+    env.ORIGIN = "https://ferry.example.test";
+    env.RP_ID = "ferry.example.test";
+    env.MAIL_FROM = "LoFi QSO Ferry <signup@ferry.example.test>";
+    const messages: EmailMessageBuilder[] = [];
+    env.EMAIL = {
+      send: async (message: EmailMessage | EmailMessageBuilder) => {
+        assert.ok("subject" in message);
+        messages.push(message);
+        return { messageId: `synthetic-${messages.length}` };
+      },
+    };
+    const external = context.mock.method(globalThis, "fetch", async () => {
+      throw new Error("No real email provider may be contacted by this test");
+    });
+    const code = (index: number) => {
+      const value = /verification code is (\d{8})\./.exec(
+        messages[index].text ?? "",
+      )?.[1];
+      assert.ok(value);
+      return value;
+    };
+    const a = new Browser(env);
+    const b = new Browser(env);
+    await a.refresh();
+    await b.refresh();
+    const begun = await a.request("signup", {
+      email: "Native+Tag@Example.TEST",
+    });
+    assert.equal(begun.status, 200);
+    assert.equal(messages.length, 1);
+    assert.deepEqual(messages[0].from, {
+      email: "signup@ferry.example.test",
+      name: "LoFi QSO Ferry",
+    });
+    assert.deepEqual(messages[0].to, ["Native+Tag@example.test"]);
+    const pending = await db
+      .prepare("SELECT * FROM signups WHERE id=?")
+      .bind(begun.body.id)
+      .first();
+    assert.ok(pending);
+    assert.equal(pending.purpose, "signup");
+    assert.equal(pending.tenant, null);
+    assert.ok(!JSON.stringify(pending).includes(code(0)));
+    assert.equal(
+      (
+        await b.request("signup/verify", {
+          id: begun.body.id,
+          code: code(0),
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (
+        await a.request("signup/verify", {
+          id: begun.body.id,
+          code: code(0),
+        })
+      ).status,
+      200,
+    );
+    assert.equal((await a.refresh()).body.authenticated, false);
+    const options = await a.request("register/options", {
+      signupId: begun.body.id,
+    });
+    const key = await authenticator();
+    const registration = options.body.options as Record<string, unknown>;
+    const user = (registration.user as { id: string }).id;
+    const changes = { origin: env.ORIGIN, rp: env.RP_ID };
+    assert.equal(
+      (
+        await a.request("register/verify", {
+          ceremonyId: options.body.ceremonyId,
+          response: await key.registration(registration, changes),
+        })
+      ).status,
+      200,
+    );
+    assert.equal((await a.refresh()).body.authenticated, true);
+    assert.equal((await a.request("local-mailbox")).status, 404);
+    await a.request("logout", {});
+    await a.refresh();
+    const login = await a.request("login/options", {});
+    assert.equal(
+      (
+        await a.request("login/verify", {
+          ceremonyId: login.body.ceremonyId,
+          response: await key.assertion(
+            login.body.options as Record<string, unknown>,
+            user,
+            changes,
+          ),
+        })
+      ).status,
+      200,
+    );
+    await a.refresh();
+    assert.equal(
+      messages.length,
+      1,
+      "existing-account login uses only a passkey",
+    );
+    const changed = await a.request("email", { email: "Changed@example.test" });
+    assert.equal(changed.status, 200);
+    assert.equal(messages.length, 2);
+    const emailPending = await db
+      .prepare("SELECT * FROM signups WHERE id=?")
+      .bind(changed.body.id)
+      .first();
+    assert.equal(emailPending?.purpose, "email");
+    assert.equal(
+      emailPending?.tenant,
+      (
+        await db
+          .prepare("SELECT tenant FROM passkeys WHERE id=?")
+          .bind(key.id)
+          .first<{ tenant: string }>()
+      )?.tenant,
+    );
+    assert.equal(
+      (
+        await a.request("signup/verify", {
+          id: changed.body.id,
+          code: code(1),
+        })
+      ).status,
+      400,
+      "an email-change proof cannot enroll a new account",
+    );
+    assert.equal(
+      (
+        await a.request("email/verify", {
+          id: changed.body.id,
+          code: code(1),
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      ((await a.refresh()).body.account as { email: string }).email,
+      "Changed@example.test",
+    );
+    assert.equal(external.mock.callCount(), 0);
+  } finally {
+    await mf.dispose();
+  }
+});
+
+test("uncertain native email failure invalidates its proof and never falls back to Resend", async (context) => {
+  const { env, mf, db } = await setup();
+  try {
+    env.ENVIRONMENT = "production";
+    env.ORIGIN = "https://ferry.example.test";
+    env.RP_ID = "ferry.example.test";
+    env.MAIL_FROM = "signup@ferry.example.test";
+    env.RESEND_API_KEY = "synthetic-fallback-key";
+    let attempts = 0;
+    let sent: EmailMessageBuilder | undefined;
+    env.EMAIL = {
+      send: async (message: EmailMessage | EmailMessageBuilder) => {
+        assert.ok("subject" in message);
+        attempts++;
+        sent = message;
+        throw new Error("private-provider-diagnostic-must-not-escape");
+      },
+    };
+    const external = context.mock.method(globalThis, "fetch", async () => {
+      throw new Error(
+        "Resend fallback must not run after uncertain native send",
+      );
+    });
+    const browser = new Browser(env);
+    await browser.refresh();
+    const failed = await browser.request("signup", {
+      email: "Failure@example.test",
+    });
+    assert.equal(failed.status, 503);
+    assert.deepEqual(failed.body, {
+      error: "Email delivery is temporarily unavailable",
+    });
+    assert.equal(attempts, 1);
+    assert.ok(sent);
+    assert.deepEqual(sent.from, {
+      email: "signup@ferry.example.test",
+      name: "LoFi QSO Ferry",
+    });
+    const pending = await db
+      .prepare("SELECT id,consumed_at,verified_at,purpose FROM signups")
+      .first<{
+        id: string;
+        consumed_at: number | null;
+        verified_at: number | null;
+        purpose: string;
+      }>();
+    assert.ok(pending?.consumed_at);
+    assert.equal(pending.verified_at, null);
+    assert.equal(pending.purpose, "signup");
+    const code = /verification code is (\d{8})\./.exec(sent.text ?? "")?.[1];
+    assert.ok(code);
+    assert.equal(
+      (await browser.request("signup/verify", { id: pending.id, code })).status,
+      400,
+      "an email possibly delivered before its failure has no usable proof",
+    );
+    assert.equal((await browser.refresh()).body.authenticated, false);
+    assert.equal(external.mock.callCount(), 0);
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT count(*) n FROM local_mailbox")
+          .first<{ n: number }>()
+      )?.n,
+      0,
+    );
+    assert.equal(
+      (
+        await db
+          .prepare("SELECT count(*) n FROM accounts")
+          .first<{ n: number }>()
+      )?.n,
+      0,
+    );
+  } finally {
+    await mf.dispose();
+  }
+});
+
+test("local email stays local when a native binding exists and absent bindings retain Resend delivery", async (context) => {
+  const { env, mf } = await setup();
+  try {
+    let native = 0;
+    env.EMAIL = {
+      send: async () => {
+        native++;
+        throw new Error("Local email must not use native binding");
+      },
+    };
+    const local = new Browser(env);
+    await signup(local, "Local@example.test");
+    assert.equal(native, 0);
+    delete env.EMAIL;
+    env.ENVIRONMENT = "production";
+    env.ORIGIN = "https://ferry.example.test";
+    env.RP_ID = "ferry.example.test";
+    env.MAIL_FROM = "LoFi QSO Ferry <signup@ferry.example.test>";
+    env.RESEND_API_KEY = "synthetic-resend-key";
+    let body: Record<string, unknown> | undefined;
+    const external = context.mock.method(
+      globalThis,
+      "fetch",
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        assert.equal(String(input), "https://api.resend.com/emails");
+        assert.equal(init?.method, "POST");
+        assert.equal(init?.redirect, "error");
+        const headers = new Headers(init?.headers);
+        assert.equal(
+          headers.get("Authorization"),
+          "Bearer synthetic-resend-key",
+        );
+        assert.match(headers.get("Idempotency-Key") ?? "", /^ferry-/);
+        body = JSON.parse(String(init?.body));
+        return new Response("{}", { status: 200 });
+      },
+    );
+    const browser = new Browser(env);
+    await browser.refresh();
+    assert.equal(
+      (await browser.request("signup", { email: "Resend@example.test" }))
+        .status,
+      200,
+    );
+    assert.equal(external.mock.callCount(), 1);
+    assert.equal(body?.from, env.MAIL_FROM);
+    assert.deepEqual(body?.to, ["Resend@example.test"]);
+    assert.equal(body?.subject, "Confirm your LoFi QSO Ferry email");
+  } finally {
+    await mf.dispose();
+  }
 });
 
 test("email-confirmed discoverable registration, no email reset, single-use atomic activation", async () => {

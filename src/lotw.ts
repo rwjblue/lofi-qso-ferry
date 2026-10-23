@@ -1,9 +1,9 @@
-import { parseAdif, type AdifRecord } from "./adif.ts";
+import { type AdifRecord, parseAdif } from "./adif.ts";
 import {
-  lotwMode,
   type CertificateStatus,
   type LotwContact,
   type LotwStation,
+  lotwMode,
 } from "./signing.ts";
 
 const QUERY_ENDPOINT = "https://lotw.arrl.org/lotwuser/lotwreport.adi";
@@ -107,7 +107,7 @@ export function parseUploadResponse(input: string): SubmissionResult {
   ];
   if (results.length !== 1)
     return { state: "uncertain", code: "unrecognized_upload_response" };
-  return results[0]![1]!.toLowerCase() === "accepted"
+  return results[0][1].toLowerCase() === "accepted"
     ? { state: "submitted", code: "queue_acknowledged" }
     : { state: "rejected", code: "vendor_rejected" };
 }
@@ -195,7 +195,7 @@ export class LotwClient {
         Superseded: "superseded",
         Revoked: "revoked",
       };
-      return known[statuses[0]![1]!.trim()] ?? "unknown";
+      return known[statuses[0][1].trim()] ?? "unknown";
     } catch {
       return "unknown";
     }
@@ -260,13 +260,13 @@ export function observeLotwContact(
   );
   if (!candidates.length)
     return { state: "absent", confirmed: false, differingFields: [] };
-  if (candidates.length !== 1 || candidates[0]!.TIME_ON !== time)
+  if (candidates.length !== 1 || candidates[0].TIME_ON !== time)
     return {
       state: "ambiguous",
       confirmed: false,
       differingFields: ["TIME_ON"],
     };
-  const record = candidates[0]!;
+  const record = candidates[0];
   const expected: Record<string, string> = {
     BAND_RX: "",
     FREQ_RX: "",

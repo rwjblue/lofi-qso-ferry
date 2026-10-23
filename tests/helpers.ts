@@ -13,7 +13,7 @@ export async function database() {
     convertV4MiniflareOptions({
       modules: true,
       script: "export default {fetch(){return new Response('ok')}}",
-      compatibilityDate: "2026-07-30",
+      compatibilityDate: "2026-10-22",
       d1Databases: ["DB"],
     }),
   );
@@ -26,7 +26,7 @@ export async function database() {
   const statements: string[] = [];
   let current = "";
   for (const line of schema.split("\n")) {
-    current += line + "\n";
+    current += `${line}\n`;
     const trigger = current.trimStart().startsWith("CREATE TRIGGER");
     if (
       line.trimEnd().endsWith(";") &&

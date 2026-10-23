@@ -198,7 +198,7 @@ export function comparableRemote(record: AdifRecord): AdifRecord {
   return Object.fromEntries(
     COMPARABLE.filter((field) => Object.hasOwn(record, field)).map((field) => [
       field,
-      record[field]!.toUpperCase(),
+      record[field].toUpperCase(),
     ]),
   );
 }
@@ -343,5 +343,5 @@ export function reconcileQrzAttempt(
       reason:
         "No unique observation of the exact transmitted revision; do not resend blindly",
     };
-  return { state: "observed", remoteId: exact[0]!.APP_QRZLOG_LOGID };
+  return { state: "observed", remoteId: exact[0].APP_QRZLOG_LOGID };
 }

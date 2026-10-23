@@ -111,8 +111,9 @@ export function normalizeEmail(value: unknown): string {
   const rawDomain = trimmed.slice(split + 1);
   if (
     local.length > 64 ||
-    /[<>(),:;\\\[\]"\u0000-\u001f]/.test(local) ||
-    /[/:?#\[\]\\]/.test(rawDomain)
+    /[<>(),:;\\[\]"]/.test(local) ||
+    [...local].some((character) => character.charCodeAt(0) <= 0x1f) ||
+    /[/:?#[\]\\]/.test(rawDomain)
   )
     throw new AuthError(400, "Enter a valid email address");
   const domain = new URL(`https://${rawDomain}`).hostname.toLowerCase();

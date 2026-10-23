@@ -136,6 +136,8 @@ export async function establishCutovers(
           .rescanComplete === true,
     );
     if (!predatesInventory && !rescanComplete) continue;
+    const completedEvidence = predatesInventory ? sync : rescan;
+    if (!completedEvidence) continue;
     const kind = predatesInventory ? "initial_inventory" : "destination_rescan";
     const result = await store
       .statement(
@@ -148,8 +150,8 @@ export async function establishCutovers(
         sync.generation,
         sync.cursor,
         kind,
-        predatesInventory ? sync.generation : rescan!.generation,
-        predatesInventory ? sync.cursor : rescan!.cursor,
+        completedEvidence.generation,
+        completedEvidence.cursor,
         now,
         source.tenant,
         source.id,

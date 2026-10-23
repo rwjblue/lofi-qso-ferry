@@ -19,7 +19,7 @@ test("encrypted envelope rejects tenant, purpose, identity and tampering; rotati
     await assert.rejects(open(envelope, { ...identity, ...changed }, keys));
   await assert.rejects(
     open(
-      { ...envelope, ciphertext: envelope.ciphertext.slice(0, -4) + "AAAA" },
+      { ...envelope, ciphertext: `${envelope.ciphertext.slice(0, -4)}AAAA` },
       identity,
       keys,
     ),

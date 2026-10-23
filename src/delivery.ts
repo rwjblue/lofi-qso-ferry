@@ -380,8 +380,7 @@ export async function prepareDue(
   const connection = await store.connection(key.tenant, key.destination);
   const source = await store.connection(key.tenant, key.source);
   if (
-    !connection ||
-    connection.status !== "active" ||
+    connection?.status !== "active" ||
     source?.status !== "active" ||
     !connection.credential_version
   )
@@ -477,7 +476,7 @@ export async function prepareDue(
         const neighbors = await client.findNeighborhood(record);
         if (
           neighbors.length !== 1 ||
-          neighbors[0]!.APP_QRZLOG_LOGID !== row.remote_id
+          neighbors[0].APP_QRZLOG_LOGID !== row.remote_id
         )
           return { state: "blocked", reason: "qrz_collision_ambiguous" };
         operation = "replace";
@@ -553,7 +552,7 @@ export async function prepareDue(
       !Number.isInteger(contact.dxcc ?? routes[0]?.dxcc)
     )
       return { state: "blocked", reason: "lotw_station_route_mismatch" };
-    const route = routes[0]!;
+    const route = routes[0];
     const credential = await store.private<LotwCredential>(
       key.tenant,
       key.destination,
@@ -670,7 +669,7 @@ export async function prepareDue(
         state: "blocked",
         reason: "lotw_certificate_selection_ambiguous_or_missing",
       };
-    const selected = eligibleCertificates[0]!;
+    const selected = eligibleCertificates[0];
     const status = await client.certificateStatus(selected.serial);
     if (status !== "unrevoked")
       return { state: "blocked", reason: `lotw_certificate_${status}` };
@@ -749,8 +748,7 @@ async function attemptData(
   if (!attempt) return null;
   const connection = await store.connection(tenant, attempt.destination);
   if (
-    !connection ||
-    connection.status !== "active" ||
+    connection?.status !== "active" ||
     (await store.connection(tenant, attempt.source))?.status !== "active"
   )
     return null;
@@ -1127,19 +1125,20 @@ export async function reconcileAttempt(
       );
       if (result.state !== "observed")
         return { state: "unresolved", reason: `lotw_${result.state}` };
+      const identity = await lotwAttemptIdentity(
+        data.payload.station,
+        data.payload.contact,
+      );
       observation = {
         confirmed: result.confirmed,
-        identity: await lotwAttemptIdentity(
-          data.payload.station,
-          data.payload.contact,
-        ),
+        identity,
         data: {
           station: data.payload.station,
           contact: data.payload.contact,
           projectionHash: data.payload.projectionHash,
         },
       };
-      remoteId = observation.identity!.remoteId;
+      remoteId = identity.remoteId;
     }
     const applied = await store.resolveReconciled(
       tenant,

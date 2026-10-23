@@ -27,7 +27,7 @@ function decodeHtmlOnce(value: string): string {
   return value.replace(
     /&(?:amp|lt|gt|quot|apos|#\d{1,7}|#x[0-9a-f]{1,6});/gi,
     (entity) => {
-      if (entity[1] !== "#") return named[entity.slice(1, -1).toLowerCase()]!;
+      if (entity[1] !== "#") return named[entity.slice(1, -1).toLowerCase()];
       const hex = entity[2]?.toLowerCase() === "x";
       const point = Number.parseInt(
         entity.slice(hex ? 3 : 2, -1),
@@ -355,7 +355,7 @@ export class QrzClient {
         "uncertain",
         "QRZ mutation receipt is inconsistent; reconcile before retry",
       );
-    return { logId: result.LOGID!, replaced: result.RESULT === "REPLACE" };
+    return { logId: result.LOGID, replaced: result.RESULT === "REPLACE" };
   }
   /** Recheck remote-owned fields while preserving the exact durably prepared payload. */
   async replacePrepared(
@@ -372,7 +372,7 @@ export class QrzClient {
     if (!remote || !sameQrzIdentity(remote, record))
       throw new QrzError("blocked", "QRZ replacement mapping changed");
     const neighbors = await this.findNeighborhood(record);
-    if (neighbors.length !== 1 || neighbors[0]!.APP_QRZLOG_LOGID !== logId)
+    if (neighbors.length !== 1 || neighbors[0].APP_QRZLOG_LOGID !== logId)
       throw new QrzError("blocked", "QRZ duplicate neighborhood is ambiguous");
     const merged = mergeQrzCorrection(remote, record, policy);
     const canonicalRecord = (value: AdifRecord) =>
@@ -403,7 +403,7 @@ export class QrzClient {
         "QRZ replacement identity differs from mapping",
       );
     const candidates = await this.findNeighborhood(current);
-    if (candidates.length !== 1 || candidates[0]!.APP_QRZLOG_LOGID !== logId)
+    if (candidates.length !== 1 || candidates[0].APP_QRZLOG_LOGID !== logId)
       throw new QrzError("blocked", "QRZ duplicate neighborhood is ambiguous");
     return this.writeRecord(mergeQrzCorrection(remote, current, policy), true);
   }
@@ -518,7 +518,7 @@ function normalizedFrequency(value: string): string | null {
   )
     return null;
   const [integer, fraction = ""] = value.split(".");
-  const whole = integer!.replace(/^0+(?=\d)/, "");
+  const whole = integer.replace(/^0+(?=\d)/, "");
   const decimals = fraction.replace(/0+$/, "");
   return decimals ? `${whole}.${decimals}` : whole;
 }
@@ -547,12 +547,12 @@ export function matchQrzHistory(
       state: "history_ambiguous",
       reason: "No unique exact identity, including time precision and mode",
     };
-  const remote = exact[0]!;
+  const remote = exact[0];
   for (const field of ["FREQ", "FREQ_RX"])
     if (source[field]) {
-      const local = normalizedFrequency(source[field]!);
+      const local = normalizedFrequency(source[field]);
       const observed = remote[field]
-        ? normalizedFrequency(remote[field]!)
+        ? normalizedFrequency(remote[field])
         : null;
       if (!local || !observed)
         return {

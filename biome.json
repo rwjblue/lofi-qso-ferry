@@ -5,10 +5,39 @@
       "**",
       "!!worker-configuration.d.ts",
       "!!package-lock.json",
-      "!!fixtures/**"
+      "!!fixtures"
     ]
   },
-  "formatter": { "indentStyle": "space", "indentWidth": 2 },
-  "linter": { "enabled": true, "rules": { "preset": "none" } },
-  "javascript": { "formatter": { "quoteStyle": "double" } }
+  "formatter": {
+    "indentStyle": "space",
+    "indentWidth": 2
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended"
+    }
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double"
+    }
+  },
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "overrides": [
+    {
+      "includes": ["tests/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          }
+        }
+      }
+    }
+  ]
 }

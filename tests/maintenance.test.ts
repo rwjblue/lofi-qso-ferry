@@ -11,7 +11,7 @@ async function intakeSchema(db: D1Database) {
   );
   let pending = "";
   for (const line of sql.split("\n")) {
-    pending += line + "\n";
+    pending += `${line}\n`;
     const trigger = pending.trimStart().startsWith("CREATE TRIGGER");
     if (line.trim().endsWith(";") && (!trigger || line.trim() === "END;")) {
       await db.prepare(pending).run();

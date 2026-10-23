@@ -1,8 +1,247 @@
+import { authRoute, checkCsrf, session } from "./auth.ts";
+import { connectionRoute } from "./connections.ts";
+import { boundedJson, keyring } from "./security.ts";
+import { deliveryGates, exportsEffective, tick } from "./service.ts";
+import { Store } from "./store.ts";
+import {
+  POTA_TEMPLATE,
+  TEMPLATE_PROFILE,
+  validateTemplateVersion,
+} from "./templates.ts";
+function secured(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set(
+    "Content-Security-Policy",
+    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+  );
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", "no-referrer");
+  headers.set(
+    "Permissions-Policy",
+    "publickey-credentials-get=(self), publickey-credentials-create=(self)",
+  );
+  if (headers.get("content-type")?.includes("json"))
+    headers.set("Cache-Control", "no-store");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
 export default {
-  async fetch(request, env) {
-    if (new URL(request.url).pathname === "/health") {
-      return Response.json({ status: "ok", exports: false });
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    try {
+      if (url.pathname === "/health")
+        return secured(
+          Response.json({
+            status: "ok",
+            exportsEnabled: exportsEffective(deliveryGates(env)),
+          }),
+        );
+      if (!url.pathname.startsWith("/api/"))
+        return secured(await env.ASSETS.fetch(request));
+      const authentication = await authRoute(request, env);
+      if (authentication) return secured(authentication);
+      const identity = await session(request, env);
+      if (!identity)
+        return secured(
+          Response.json({ error: "Sign in with a passkey" }, { status: 401 }),
+        );
+      if (request.method !== "GET") await checkCsrf(request, env);
+      const connection = await connectionRoute(request, env, identity);
+      if (connection) return secured(connection);
+      const store = new Store(env.DB, keyring(env));
+      if (request.method === "GET" && url.pathname === "/api/dashboard") {
+        const account = await store
+          .statement(
+            "SELECT email,quiet_minutes FROM accounts WHERE id=?",
+            identity.tenant,
+          )
+          .first<{ email: string; quiet_minutes: number }>();
+        const counts = (
+          await store
+            .statement(
+              "SELECT state,count(*) AS count FROM ledger WHERE tenant=? GROUP BY state",
+              identity.tenant,
+            )
+            .all<{ state: string; count: number }>()
+        ).results;
+        const activityRows = (
+          await store
+            .statement(
+              "SELECT source,qso,destination,state,reason,confirmed FROM ledger WHERE tenant=? ORDER BY updated_at DESC LIMIT 50",
+              identity.tenant,
+            )
+            .all<{
+              source: string;
+              qso: string;
+              destination: string;
+              state: string;
+              reason: string | null;
+              confirmed: number;
+            }>()
+        ).results;
+        const connections = (
+          await store
+            .statement(
+              "SELECT id,kind,label,status,last_poll_at,json_extract(config,'$.lastError') AS last_error FROM connections WHERE tenant=? ORDER BY created_at",
+              identity.tenant,
+            )
+            .all()
+        ).results;
+        const lotwDestinations = new Set(
+          connections
+            .filter((connection) => connection.kind === "lotw")
+            .map((connection) => connection.id),
+        );
+        const activity: {
+          qso: string;
+          destination: string;
+          state: string;
+          reason: string | null;
+          confirmed: number;
+          priorIdentityCount?: number;
+        }[] = await Promise.all(
+          activityRows.map(async ({ source, ...row }) => ({
+            ...row,
+            priorIdentityCount: lotwDestinations.has(row.destination)
+              ? await store.lotwPriorIdentityCount({
+                  tenant: identity.tenant,
+                  source,
+                  qso: row.qso,
+                  destination: row.destination,
+                })
+              : 0,
+          })),
+        );
+        const sourceErrors = (
+          await store
+            .statement(
+              "SELECT id AS qso,source AS destination,'source_blocked' AS state,reason,0 AS confirmed FROM source_work WHERE tenant=? AND state!='context' AND reason IS NOT NULL ORDER BY processed_at DESC LIMIT 20",
+              identity.tenant,
+            )
+            .all()
+        ).results;
+        activity.push(
+          ...sourceErrors.map((row) => ({
+            qso: String(row.qso),
+            destination: String(row.destination),
+            state: String(row.state),
+            reason: row.reason === null ? null : String(row.reason),
+            confirmed: 0,
+          })),
+        );
+        if (sourceErrors.length)
+          counts.push({ state: "source_blocked", count: sourceErrors.length });
+        const passkeys = (
+          await store
+            .statement(
+              "SELECT id,label,last_used_at FROM passkeys WHERE tenant=? AND revoked_at IS NULL ORDER BY created_at",
+              identity.tenant,
+            )
+            .all()
+        ).results;
+        const sessions = (
+          await store
+            .statement(
+              "SELECT created_at,token_hash=? AS current FROM sessions WHERE tenant=? AND revoked_at IS NULL AND expires_at>?",
+              identity.tokenHash,
+              identity.tenant,
+              Date.now(),
+            )
+            .all()
+        ).results;
+        const gates = deliveryGates(env);
+        return secured(
+          Response.json({
+            email: account?.email,
+            quietMinutes: account?.quiet_minutes,
+            counts: Object.fromEntries(counts.map((c) => [c.state, c.count])),
+            activity,
+            connections,
+            passkeys,
+            sessions,
+            exportsEnabled: exportsEffective(gates),
+            potaExample: POTA_TEMPLATE,
+          }),
+        );
+      }
+      if (request.method === "POST" && url.pathname === "/api/settings") {
+        const input = await boundedJson(request, 4096);
+        const minutes = Number(input.quietMinutes);
+        if (!Number.isInteger(minutes) || minutes < 20 || minutes > 60)
+          return secured(
+            Response.json(
+              { error: "Choose a quiet period between 20 and 60 minutes" },
+              { status: 400 },
+            ),
+          );
+        await store
+          .statement(
+            "UPDATE accounts SET quiet_minutes=? WHERE id=?",
+            minutes,
+            identity.tenant,
+          )
+          .run();
+        return secured(Response.json({ ok: true }));
+      }
+      if (request.method === "POST" && url.pathname === "/api/templates") {
+        const input = await boundedJson(request, 32_000);
+        const destination = String(input.destination ?? "");
+        const connection = await store.connection(identity.tenant, destination);
+        if (connection?.kind !== "qrz")
+          return secured(
+            Response.json(
+              { error: "QRZ connection not found" },
+              { status: 404 },
+            ),
+          );
+        const version = {
+          id: "pending",
+          profile: TEMPLATE_PROFILE as typeof TEMPLATE_PROFILE,
+          fields: input.fields as Record<string, string>,
+          fallbackNotes: input.fallbackNotes === true,
+        };
+        validateTemplateVersion(version);
+        const id = await store.saveTemplate(
+          identity.tenant,
+          destination,
+          version,
+        );
+        return secured(Response.json({ id }));
+      }
+      return secured(Response.json({ error: "Not found" }, { status: 404 }));
+    } catch (error) {
+      const status =
+        typeof error === "object" &&
+        error !== null &&
+        "status" in error &&
+        typeof error.status === "number"
+          ? error.status
+          : 400;
+      return secured(
+        Response.json(
+          {
+            error:
+              status >= 500
+                ? "Service unavailable; retry later"
+                : "Request could not be completed. Verify your passkey and check the supplied values.",
+          },
+          { status },
+        ),
+      );
     }
-    return env.ASSETS.fetch(request);
+  },
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    context: ExecutionContext,
+  ) {
+    context.waitUntil(
+      tick(env).then((result) => {
+        console.log(JSON.stringify({ event: "ferry_tick", ...result }));
+      }),
+    );
   },
 } satisfies ExportedHandler<Env>;

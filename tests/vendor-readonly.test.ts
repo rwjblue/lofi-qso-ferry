@@ -78,7 +78,8 @@ test("probe derives bounded LoTW day in memory and emits only fixed boolean/coun
     fetcher: async (input, init) => {
       const url = new URL(String(input));
       if (url.origin === "https://logbook.qrz.com") {
-        assert.equal((init?.body as URLSearchParams).get("ACTION"), "FETCH");
+        assert(init?.body instanceof URLSearchParams);
+        assert.equal(init.body.get("ACTION"), "FETCH");
         return new Response(
           new URLSearchParams({
             RESULT: "OK",

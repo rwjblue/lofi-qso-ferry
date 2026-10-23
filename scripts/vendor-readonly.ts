@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
-import { QrzClient } from "../src/qrz.ts";
+import { promisify } from "node:util";
 import { LotwClient } from "../src/lotw.ts";
+import { QrzClient } from "../src/qrz.ts";
 
 const execute = promisify(execFile);
 type Provider = "qrz_logbook" | "lotw";
@@ -178,7 +178,7 @@ export async function vendorReadonlyProbe(
           page.nextAfterLogId !== null &&
           page.nextAfterLogId > Number(record.APP_QRZLOG_LOGID);
         if (!day && /^\d{8}$/.test(record.QSO_DATE ?? "")) {
-          const value = record.QSO_DATE!;
+          const value = record.QSO_DATE;
           const derived = `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}`;
           if (validDate(derived)) day = derived;
         }

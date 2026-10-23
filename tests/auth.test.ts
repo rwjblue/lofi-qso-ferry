@@ -240,7 +240,7 @@ test("signup browser binding, code expiry/attempt limit, CSRF and replaced-code 
     }[];
     const code = mail.find((item) => item.id === start.body.id)?.code;
     assert.equal(
-      (await b.request("local-mailbox")).body.messages instanceof Array,
+      Array.isArray((await b.request("local-mailbox")).body.messages),
       true,
     );
     assert.equal(
@@ -293,7 +293,7 @@ test("signup browser binding, code expiry/attempt limit, CSRF and replaced-code 
     const dump = JSON.stringify(
       await db.prepare("SELECT * FROM signups").all(),
     );
-    assert.ok(!dump.includes(`\"code\":\"${code}\"`));
+    assert.ok(!dump.includes(`"code":"${code}"`));
   } finally {
     await mf.dispose();
   }

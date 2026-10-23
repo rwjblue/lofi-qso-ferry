@@ -1,6 +1,11 @@
 import { recordBirth } from "./cutover.ts";
 import { LoFiClient, LoFiError } from "./lofi.ts";
-import type { LoFiCredentials, SourceRecord, SyncState } from "./lofi.ts";
+import type {
+  LoFiCredentials,
+  SourceRecord,
+  SyncPage,
+  SyncState,
+} from "./lofi.ts";
 import {
   isEventRecord,
   isSourceDeleted,
@@ -95,7 +100,7 @@ export async function pollSource(
         complete: true,
         coverage: "client-contract-only",
       };
-    let page;
+    let page: SyncPage;
     try {
       page = await client.syncPage(state, now);
     } catch (error) {

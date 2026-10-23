@@ -47,7 +47,7 @@ export default { async fetch(request, env) {
     convertV4MiniflareOptions({
       modules: true,
       script,
-      compatibilityDate: "2026-07-30",
+      compatibilityDate: "2026-10-22",
       compatibilityFlags: ["nodejs_compat"],
       bindings: { FIXTURE: JSON.stringify({ root, vector, fixtures }) },
     }),

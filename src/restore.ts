@@ -28,8 +28,8 @@ export async function lockRestoredDatabase(database: D1Database): Promise<{
     restoreLockStatements().map((sql) => database.prepare(sql)),
   );
   return {
-    lockedAccounts: result[0]!.meta.changes,
-    disabledConnections: result[2]!.meta.changes,
-    blockedAttempts: result[5]!.meta.changes,
+    lockedAccounts: result[0].meta.changes,
+    disabledConnections: result[2].meta.changes,
+    blockedAttempts: result[5].meta.changes,
   };
 }

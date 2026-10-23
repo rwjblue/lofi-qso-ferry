@@ -121,7 +121,7 @@ function inspectP12(root: forge.asn1.Asn1): void {
         oid.startsWith("1.2.840.113549.1.12.1.") ||
         oid === "1.2.840.113549.1.5.12"
       ) {
-        boundedInteger(asnChildren(children[1]!)[1]);
+        boundedInteger(asnChildren(children[1])[1]);
       }
     }
     for (const child of children) visit(child, depth + 1);
@@ -164,6 +164,8 @@ function extension(
     return undefined;
   return value.value;
 }
+function date(value: string | undefined, optional: true): string | null;
+function date(value: string | undefined, optional?: false): string;
 function date(value: string | undefined, optional = false): string | null {
   if (!value && optional) return null;
   if (
@@ -256,7 +258,7 @@ async function verifyTrustedChain(
         ).values(),
       ];
       if (unique.length !== 1) return false;
-      const parent = unique[0]!;
+      const parent = unique[0];
       const basic: unknown = parent.getExtension("basicConstraints");
       const usage: unknown = parent.getExtension("keyUsage");
       if (
@@ -317,10 +319,10 @@ export async function importPkcs12(
   }
   const keyBags = [
     ...(p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[
-      forge.pki.oids.pkcs8ShroudedKeyBag!
+      forge.pki.oids.pkcs8ShroudedKeyBag
     ] ?? []),
     ...(p12.getBags({ bagType: forge.pki.oids.keyBag })[
-      forge.pki.oids.keyBag!
+      forge.pki.oids.keyBag
     ] ?? []),
   ];
   if (keyBags.length !== 1 || !keyBags[0]?.key)
@@ -329,7 +331,7 @@ export async function importPkcs12(
   if (key.n.bitLength() < 1024 || key.n.bitLength() > 4096)
     fail("Unsupported RSA key size");
   const certificates = (
-    p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag!] ??
+    p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] ??
     []
   )
     .map((bag) => bag.cert)
@@ -343,7 +345,7 @@ export async function importPkcs12(
   );
   if (matching.length !== 1)
     fail("Certificate and private key must match uniquely");
-  const cert = matching[0]!;
+  const cert = matching[0];
   const leafUsage: unknown = cert.getExtension("keyUsage");
   if (
     leafUsage &&
@@ -365,7 +367,7 @@ export async function importPkcs12(
     Number(dxccText) < 1
   )
     fail("LoTW callsign or DXCC authorization is missing");
-  const qsoFrom = date(extension(cert, OID.first))!;
+  const qsoFrom = date(extension(cert, OID.first));
   const qsoTo = date(extension(cert, OID.last), true);
   if (qsoTo && qsoTo < qsoFrom)
     fail("Invalid certificate QSO date authorization");
@@ -616,8 +618,7 @@ export async function signCanonical(
   canonical: string,
 ): Promise<string> {
   const der = forge.pem.decode(privateKeyPkcs8)[0];
-  if (!der || der.type !== "PRIVATE KEY")
-    fail("Normalized PKCS#8 key is required");
+  if (der?.type !== "PRIVATE KEY") fail("Normalized PKCS#8 key is required");
   const key = await crypto.subtle.importKey(
     "pkcs8",
     bytes(der.body),

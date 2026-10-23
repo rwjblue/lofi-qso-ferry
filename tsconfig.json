@@ -11,5 +11,11 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "worker-configuration.d.ts"]
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "worker-configuration.d.ts",
+    "scripts/**/*.ts"
+  ],
+  "exclude": ["src/browser.ts"]
 }

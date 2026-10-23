@@ -78,7 +78,7 @@ function parse(source: string): Node[] {
       throw new TemplateError("Template nesting limit exceeded");
     const nodes: Node[] = [];
     while (index < tokens.length) {
-      const raw = tokens[index++]!;
+      const raw = tokens[index++];
       if (raw.startsWith("{{")) {
         nodes.push({ kind: "output", text: raw.slice(2, -2).trim() });
         continue;
@@ -90,7 +90,7 @@ function parse(source: string): Node[] {
         continue;
       }
       const tag = raw.slice(2, -2).trim();
-      const name = tag.split(/\s/)[0]!;
+      const name = tag.split(/\s/)[0];
       if (stops.includes(name)) return { nodes, stop: tag };
       if (name === "assign") {
         if (!/^assign\s+[A-Za-z_]\w*\s*=\s*.+$/.test(tag))
@@ -125,14 +125,14 @@ function parse(source: string): Node[] {
           throw new TemplateError("Unclosed for loop");
         nodes.push({
           kind: "for",
-          name: match[1]!,
-          expression: match[2]!,
+          name: match[1],
+          expression: match[2],
           body: loop.nodes,
         });
       } else if (name === "comment") {
         let closed = false;
         while (index < tokens.length)
-          if (tokens[index++]!.trim() === "{% endcomment %}") {
+          if (tokens[index++].trim() === "{% endcomment %}") {
             closed = true;
             break;
           }
@@ -149,7 +149,7 @@ function splitExpression(input: string, separator: string): string[] {
   let quote = "";
   let start = 0;
   for (let i = 0; i < input.length; i++) {
-    const char = input[i]!;
+    const char = input[i];
     if (quote) {
       if (char === quote) quote = "";
       continue;
@@ -209,7 +209,7 @@ function scalar(
   if (!/^[A-Za-z_]\w*(?:\.[A-Za-z0-9_]\w*)*$/.test(expression))
     throw new TemplateError(`Unsupported template expression: ${expression}`);
   const path = expression.split(".");
-  let value: TemplateValue = property(scope, path[0]!);
+  let value: TemplateValue = property(scope, path[0]);
   for (const part of path.slice(1)) value = property(value, part);
   return value;
 }
@@ -285,7 +285,10 @@ function filter(
         parts.length < 2
           ? parts.join("")
           : boundedJoin(
-              [boundedJoin(parts.slice(0, -1), arg(0, ", ")), parts.at(-1)!],
+              [
+                boundedJoin(parts.slice(0, -1), arg(0, ", ")),
+                parts[parts.length - 1],
+              ],
               arg(1, " & "),
             );
       break;
@@ -375,7 +378,7 @@ function filter(
         "9": "N",
       };
       result = text(value).replace(/[0159]/g, (digit) =>
-        arg(0, "09").includes(digit) ? digits[digit]! : digit,
+        arg(0, "09").includes(digit) ? digits[digit] : digit,
       );
       break;
     }
@@ -412,7 +415,7 @@ function filter(
       result = arg(0, "%Y-%m-%d").replace(/%([A-Za-z%])/g, (_, key: string) => {
         if (formats[key] === undefined)
           throw new TemplateError(`Unsupported UTC date directive %${key}`);
-        return formats[key]!;
+        return formats[key];
       });
       break;
     }
@@ -429,7 +432,7 @@ function evaluate(
   budget: Budget,
 ): TemplateValue {
   const parts = splitExpression(expression, "|");
-  let value = scalar(parts[0]!, scope, budget);
+  let value = scalar(parts[0], scope, budget);
   for (const part of parts.slice(1)) {
     const sections = splitExpression(part, ":");
     if (sections.length > 2)
@@ -439,7 +442,7 @@ function evaluate(
           scalar(item, scope, budget),
         )
       : [];
-    value = filter(sections[0]!, value, args, budget);
+    value = filter(sections[0], value, args, budget);
   }
   return value;
 }
@@ -471,13 +474,13 @@ function condition(
     const parts = splitExpression(expression, operator);
     if (parts.length === 1) continue;
     if (parts.length !== 2) throw new TemplateError("Invalid comparison");
-    const left = evaluate(parts[0]!, scope, budget);
-    const right = evaluate(parts[1]!, scope, budget);
+    const left = evaluate(parts[0], scope, budget);
+    const right = evaluate(parts[1], scope, budget);
     if (operator === " contains ")
       return typeof left === "string"
         ? left.includes(text(right))
         : Array.isArray(left) && left.includes(right);
-    const equality = ["blank", "empty"].includes(parts[1]!)
+    const equality = ["blank", "empty"].includes(parts[1])
       ? blank(left)
       : left === right;
     if (operator === " == ") return equality;
@@ -549,7 +552,7 @@ export function renderTemplate(
         for (let i = 0; i < values.length; i++) {
           if (++budget.iterations > LIMITS.iterations)
             throw new TemplateError("Aggregate loop iteration limit exceeded");
-          scope[node.name] = values[i]!;
+          scope[node.name] = values[i];
           scope.forloop = {
             index: i + 1,
             index0: i,

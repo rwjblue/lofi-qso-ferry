@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Exercise the real local Worker with synthetic accounts and vendor fixtures"
+set -euo pipefail
+npm run build
+npx tsx --test tests/worker-e2e.test.ts tests/intake.test.ts tests/delivery.test.ts

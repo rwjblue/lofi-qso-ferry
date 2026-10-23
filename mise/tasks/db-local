@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 #MISE description="Apply migrations to local D1 only"
 set -euo pipefail
-npx wrangler d1 migrations apply ferry-local --local
+npx wrangler d1 migrations apply ferry-local --local --env=

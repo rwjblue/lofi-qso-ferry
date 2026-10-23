@@ -68,7 +68,7 @@ export function parseAdif(input: string): AdifDocument {
     }
     const match = /^([A-Z][A-Z0-9_]*):(\d{1,7})(?::[A-Z])?$/i.exec(tag);
     if (!match) throw new Error("Malformed ADIF field");
-    const name = match[1]!.toUpperCase();
+    const name = match[1].toUpperCase();
     const length = Number(match[2]);
     if (length > 65536 || pos + length > input.length)
       throw new Error("Truncated or excessive ADIF field");

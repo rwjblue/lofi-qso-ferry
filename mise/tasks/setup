@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Install and initialize an isolated local Ferry"
+set -euo pipefail
+npm ci
+if [[ ! -f .dev.vars ]]; then
+  node --input-type=module <<'JS'
+import {writeFileSync} from 'node:fs';
+import {randomBytes} from 'node:crypto';
+const random=()=>randomBytes(32).toString('base64url');
+writeFileSync('.dev.vars',`KEK_V1=${random()}\nAUTH_SECRET=${random()}\nEMAIL_CODE_SECRET=${random()}\nRESEND_API_KEY=\n`,{mode:0o600,flag:'wx'});
+JS
+fi
+npm run types
+npx esbuild src/browser.ts --bundle --minify --format=esm --outfile=public/app.js
+npx wrangler d1 migrations apply ferry-local --local --env=

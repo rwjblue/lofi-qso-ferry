@@ -32,12 +32,17 @@ class ConnectionError extends Error {
 }
 const json = (value: unknown, status = 200) =>
   Response.json(value, { status, headers: { "Cache-Control": "no-store" } });
+const hasAsciiControl = (value: string): boolean => {
+  for (const character of value)
+    if (character.charCodeAt(0) <= 0x1f) return true;
+  return false;
+};
 const text = (value: unknown, label: string, maximum = 256): string => {
   if (
     typeof value !== "string" ||
     !value.trim() ||
     value.length > maximum ||
-    /[\u0000-\u001f]/.test(value)
+    hasAsciiControl(value)
   )
     throw new ConnectionError(400, `Invalid ${label}`);
   return value.trim();
@@ -292,8 +297,7 @@ export async function connectionRoute(
       const id = text(input.id, "connection ID", 100);
       const pending = await store.connection(identity.tenant, id);
       if (
-        !pending ||
-        pending.kind !== "lofi" ||
+        pending?.kind !== "lofi" ||
         pending.status !== "approval_pending" ||
         !pending.credential_version
       )
@@ -409,7 +413,7 @@ export async function connectionRoute(
               typeof value.password !== "string" ||
               !value.password.length ||
               value.password.length > 1024 ||
-              /[\u0000-\u001f]/.test(value.password)
+              hasAsciiControl(value.password)
             )
               throw new ConnectionError(400, "Invalid LoTW query password");
             return value.password;

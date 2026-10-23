@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Bundle dashboard and validate Worker without deploying"
+set -euo pipefail
+npx esbuild src/browser.ts --bundle --minify --format=esm --outfile=public/app.js
+npx wrangler deploy --env= --dry-run --outdir dist

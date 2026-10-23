@@ -101,6 +101,41 @@ test("empty page with records left does not declare completion or erase cursor",
   assert.equal(page.next.qsos.watermark, 500);
 });
 
+test("sync exposes only the verified account's confirmed email and distinguishes omitted metadata", async () => {
+  for (const [account, expected] of [
+    [
+      {
+        uuid: "account-1",
+        name: "iPad",
+        email: " owner@example.test ",
+        pending_email: "pending@example.test",
+      },
+      "owner@example.test",
+    ],
+    [{ uuid: "account-1", name: "iPad" }, undefined],
+    [{ uuid: "account-1", email: null }, null],
+    [{ uuid: "account-1", email: "iPad" }, null],
+    [{ uuid: "account-1", pending_email: "pending@example.test" }, undefined],
+  ] as const) {
+    const client = new LoFiClient(
+      credentials,
+      fake(async () =>
+        json({
+          ...reply([], [], { records_left: 0 }, { records_left: 0 }),
+          account,
+        }),
+      ),
+    );
+    assert.equal((await client.syncPage(initial, 1000)).accountEmail, expected);
+    assert.equal(
+      (await client.syncPage({ ...initial, accountId: undefined }, 1000))
+        .accountEmail,
+      undefined,
+      "unverified account metadata cannot change the display identity",
+    );
+  }
+});
+
 test("repeated cursor, missing count, missing server timestamp and cursor refusal block checkpoint", async () => {
   for (const [code, response] of [
     [
@@ -178,8 +213,14 @@ test("401 renews the original device identity once and never sends a bearer to r
       if (calls.length === 1) return json({}, 401);
       if (String(input).endsWith("/client")) {
         const body = JSON.parse(String(init?.body));
-        assert.equal(body.client.key, credentials.key);
-        assert.equal(body.client.type, "browser");
+        assert.deepEqual(body, {
+          client: {
+            name: "LoFi QSO Ferry",
+            type: "browser",
+            key: credentials.key,
+            secret: credentials.secret,
+          },
+        });
         return json({ token: "renewed" });
       }
       assert.equal(

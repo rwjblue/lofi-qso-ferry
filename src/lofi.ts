@@ -1,3 +1,5 @@
+import { LOFI_CLIENT_NAME, lofiAccountEmail } from "./lofi-identity.ts";
+
 /** LoFi transport. This client never sends operation/QSO mutations. */
 export type SourceRecord = Record<string, unknown>;
 
@@ -24,6 +26,8 @@ export interface SyncState {
 export interface SyncPage {
   operations: SourceRecord[];
   qsos: SourceRecord[];
+  /** Confirmed email from the verified account; null means explicitly unavailable. */
+  accountEmail?: string | null;
   next: SyncState;
   complete: boolean;
   /** A client implementation is not proof of a vendor replay boundary. */
@@ -164,7 +168,7 @@ export class LoFiClient {
         },
         body: JSON.stringify({
           client: {
-            name: "LoFi QSO Ferry",
+            name: LOFI_CLIENT_NAME,
             type: "browser",
             key: this.credentials.key,
             secret: this.credentials.secret,
@@ -425,6 +429,9 @@ export class LoFiClient {
     return {
       operations,
       qsos,
+      ...(state.accountId && Object.hasOwn(account, "email")
+        ? { accountEmail: lofiAccountEmail(account.email) ?? null }
+        : {}),
       next,
       complete,
       coverage: "client-contract-only",

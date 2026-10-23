@@ -6,6 +6,7 @@ import {
   type SessionIdentity,
 } from "./auth.ts";
 import { LoFiClient, type LoFiCredentials } from "./lofi.ts";
+import { lofiAccountEmail, lofiAccountLabel } from "./lofi-identity.ts";
 import { LotwClient, LotwLoginError } from "./lotw.ts";
 import {
   type LotwLoginVerification,
@@ -318,7 +319,10 @@ function safeConnection(connection: Connection) {
   return {
     id: connection.id,
     kind: connection.kind,
-    label: connection.label,
+    label:
+      connection.kind === "lofi" && connection.status !== "approval_pending"
+        ? lofiAccountLabel(config.accountEmail)
+        : connection.label,
     status: connection.status,
     config: {
       ...config,
@@ -465,10 +469,8 @@ export async function connectionRoute(
       const account = await client.accounts();
       const accountId = text(account.uuid, "verified LoFi account ID", 100);
       await assertConnectionSlot(store, identity.tenant, "lofi", accountId, id);
-      const label =
-        typeof account.name === "string"
-          ? account.name.slice(0, 100)
-          : `LoFi ${accountId}`;
+      const accountEmail = lofiAccountEmail(account.email) ?? null;
+      const label = lofiAccountLabel(accountEmail);
       const saved = await saveVerifiedConnection(
         store,
         identity.tenant,
@@ -477,7 +479,7 @@ export async function connectionRoute(
           remoteIdentity: accountId,
           label,
           credential: client.credentialsSnapshot(),
-          config: { accountId, replayBoundaryVerified: false },
+          config: { accountId, accountEmail, replayBoundaryVerified: false },
         },
         identity,
         { replacing: id },

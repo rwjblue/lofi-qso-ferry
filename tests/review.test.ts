@@ -203,6 +203,37 @@ test("retained review uses effective segment context and current production rend
   }
 });
 
+test("source review shows confirmed email and hides historical names and account ID fallbacks", async (t) => {
+  const h = await setup();
+  t.after(() => h.mf.dispose());
+  for (const [label, accountEmail, expected] of [
+    ["stale@example.test", "confirmed@example.test", "confirmed@example.test"],
+    ["iPad", null, "Email unavailable"],
+    ["old-device@example.test", null, "Email unavailable"],
+    ["LoFi historic-account-id", null, "Email unavailable"],
+    ["", null, "Email unavailable"],
+  ]) {
+    await h.store
+      .statement(
+        "UPDATE connections SET label=?,config=json_set(config,'$.accountEmail',?) WHERE tenant='a' AND id='source'",
+        label,
+        accountEmail,
+      )
+      .run();
+    const result = await reviewSource(h.store, "a", {}, h.now);
+    assert.equal(result.sources[0].label, expected);
+    assert.doesNotMatch(
+      JSON.stringify(result),
+      /iPad|historic-account-id|not-returned-vendor-id|old-device@example\.test|stale@example\.test/,
+    );
+    assert.equal(
+      (await h.store.connection("a", "source"))?.label,
+      label,
+      "review does not mutate the saved identity",
+    );
+  }
+});
+
 test("LoTW readiness explains saved verification evidence without vendor reads, private config exposure or paused and tenant regressions", async (t) => {
   const h = await setup();
   t.after(() => h.mf.dispose());

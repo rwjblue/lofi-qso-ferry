@@ -1,6 +1,7 @@
 import { templateContext } from "./delivery.ts";
 import type { Work } from "./intake.ts";
 import type { SourceRecord } from "./lofi.ts";
+import { lofiAccountLabel } from "./lofi-identity.ts";
 import { lotwReadyForUpload, lotwVerification } from "./lotw-verification.ts";
 import {
   isEventRecord,
@@ -35,7 +36,6 @@ export type {
 
 interface SourceRow {
   id: string;
-  label: string;
   status: string;
   last_poll_at: number | null;
   config: string;
@@ -163,7 +163,7 @@ async function sourceState(
       Boolean(health.lastError) || (counts?.operationReadFailures ?? 0) > 0,
     public: {
       id: source.id,
-      label: source.label,
+      label: lofiAccountLabel(health.accountEmail),
       status: source.status,
       lastPollAt: source.last_poll_at,
       lastSuccessAt: timestamp(
@@ -448,7 +448,7 @@ export async function reviewSource(
   const rows = (
     await store
       .statement(
-        "SELECT id,label,status,last_poll_at,config FROM connections WHERE tenant=? AND kind='lofi' AND (? IS NULL OR id=?) ORDER BY created_at,id LIMIT 11",
+        "SELECT id,status,last_poll_at,config FROM connections WHERE tenant=? AND kind='lofi' AND (? IS NULL OR id=?) ORDER BY created_at,id LIMIT 11",
         tenant,
         selectedSource ?? null,
         selectedSource ?? null,

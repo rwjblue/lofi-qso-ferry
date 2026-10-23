@@ -674,23 +674,33 @@ test("LoFi approval binds only the vendor current account and saves no contact w
   const fetcher: typeof fetch = async (input, init) => {
     const path = new URL(String(input)).pathname;
     seen.push(path);
-    if (path === "/v1/client")
+    if (path === "/v1/client") {
+      const body = JSON.parse(String(init?.body));
+      assert.deepEqual(Object.keys(body), ["client"]);
+      assert.equal(body.client.name, "LoFi QSO Ferry");
       return Response.json({ token: "synthetic-lofi-token" });
+    }
     if (path === "/v1/client/permissions") {
-      assert.equal(JSON.parse(String(init?.body)).send_email, true);
+      assert.deepEqual(JSON.parse(String(init?.body)), {
+        email: "approval@example.test",
+        send_email: true,
+      });
       return Response.json({ success: true });
     }
     if (path === "/v1/accounts")
       return Response.json({
         current_account: {
           uuid: "verified-lofi-account",
-          name: "Synthetic station",
+          name: "iPad",
+          email: "confirmed@example.test",
+          pending_email: "pending@example.test",
         },
+        current_client: { name: "LoFi QSO Ferry" },
       });
     throw new Error("Unexpected vendor path");
   };
   const started = await connectionRoute(
-    await request("/lofi/start", { email: "a@example.test" }, env),
+    await request("/lofi/start", { email: "approval@example.test" }, env),
     env,
     identity,
     { fetcher },
@@ -704,7 +714,11 @@ test("LoFi approval binds only the vendor current account and saves no contact w
   const finished = await connectionRoute(
     await request(
       "/lofi/finish",
-      { id: pending.id, accountId: "untrusted-other-account" },
+      {
+        id: pending.id,
+        accountId: "untrusted-other-account",
+        email: "caller-supplied@example.test",
+      },
       env,
     ),
     env,
@@ -717,6 +731,30 @@ test("LoFi approval binds only the vendor current account and saves no contact w
   assert.equal(
     (await store.connection("a", result.id))?.remote_identity,
     "verified-lofi-account",
+  );
+  assert.equal(
+    (await store.connection("a", result.id))?.label,
+    "confirmed@example.test",
+  );
+  assert.equal(
+    JSON.parse((await store.connection("a", result.id))!.config).accountEmail,
+    "confirmed@example.test",
+  );
+  const listed = await connectionRoute(
+    new Request("http://localhost/api/connections"),
+    env,
+    identity,
+  );
+  const output = await listed!.text();
+  assert.equal(
+    JSON.parse(output).connections.find(
+      (row: { id: string }) => row.id === result.id,
+    ).label,
+    "confirmed@example.test",
+  );
+  assert.doesNotMatch(
+    output,
+    /iPad|approval@example\.test|pending@example\.test|caller-supplied@example\.test/,
   );
   assert.equal(await store.connection("a", pending.id), null);
   assert.deepEqual(seen, [
@@ -731,6 +769,103 @@ test("LoFi approval binds only the vendor current account and saves no contact w
         .first<{ n: number }>()
     )?.n,
     0,
+  );
+});
+test("LoFi listings hide historical names and unavailable email while retaining pending approval labels", async (t) => {
+  const { env, store, mf } = await setup();
+  t.after(() => mf.dispose());
+  for (const [label, status, accountEmail, expected] of [
+    ["iPad", "active", null, "Email unavailable"],
+    ["LoFi historic-account-id", "disabled", null, "Email unavailable"],
+    ["", "revoked", null, "Email unavailable"],
+    ["iPad", "needs_verification", null, "Email unavailable"],
+    ["old-device@example.test", "active", null, "Email unavailable"],
+    [
+      "stale@example.test",
+      "active",
+      "confirmed@example.test",
+      "confirmed@example.test",
+    ],
+    [
+      "LoFi approval pending",
+      "approval_pending",
+      null,
+      "LoFi approval pending",
+    ],
+  ]) {
+    await store
+      .statement(
+        "UPDATE connections SET label=?,status=?,config=json_set(config,'$.accountEmail',?) WHERE tenant='a' AND id='source'",
+        label,
+        status,
+        accountEmail,
+      )
+      .run();
+    const listed = await connectionRoute(
+      new Request("http://localhost/api/connections"),
+      env,
+      identity,
+    );
+    const output = await listed!.text();
+    assert.equal(
+      JSON.parse(output).connections.find(
+        (row: { id: string }) => row.id === "source",
+      ).label,
+      expected,
+    );
+    assert.doesNotMatch(
+      output,
+      /iPad|historic-account-id|old-device@example\.test|stale@example\.test/,
+    );
+    assert.equal(
+      (await store.connection("a", "source"))?.label,
+      label,
+      "listing does not mutate the saved identity",
+    );
+  }
+});
+test("LoFi linking never substitutes another address when confirmed vendor email is unavailable", async (t) => {
+  const { env, store, mf } = await setup();
+  t.after(() => mf.dispose());
+  await vacate(store, "lofi");
+  const fetcher: typeof fetch = async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/v1/client")
+      return Response.json({ token: "synthetic-lofi-token" });
+    if (path === "/v1/client/permissions")
+      return Response.json({ success: true });
+    assert.equal(path, "/v1/accounts");
+    return Response.json({
+      current_account: {
+        uuid: "verified-lofi-account",
+        name: "iPad",
+        pending_email: "pending@example.test",
+      },
+    });
+  };
+  const started = await connectionRoute(
+    await request("/lofi/start", { email: "approval@example.test" }, env),
+    env,
+    identity,
+    { fetcher },
+  );
+  assert.equal(started?.status, 201, await started?.clone().text());
+  const pending = (await started!.json()) as { id: string };
+  const finished = await connectionRoute(
+    await request("/lofi/finish", { id: pending.id }, env),
+    env,
+    identity,
+    { fetcher },
+  );
+  assert.equal(finished?.status, 200, await finished?.clone().text());
+  const result = (await finished!.json()) as { id: string };
+  assert.equal(
+    (await store.connection("a", result.id))?.label,
+    "Email unavailable",
+  );
+  assert.equal(
+    JSON.parse((await store.connection("a", result.id))!.config).accountEmail,
+    null,
   );
 });
 test("LoTW account verification permits multiple isolated station certificates and renewal retains destination", async (t) => {

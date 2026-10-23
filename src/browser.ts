@@ -19,6 +19,7 @@ import {
   previewStatus,
   vendorName,
 } from "./browser-dashboard.ts";
+import { lofiAccountLabel, LOFI_CLIENT_NAME } from "./lofi-identity.ts";
 import type { ReviewResponse } from "./review-types.ts";
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -262,8 +263,8 @@ function renderConnection(connection: ConnectionSummary, previous = false) {
   item.append(
     node(
       "b",
-      connection.kind === "lofi"
-        ? `LoFi account · ${connection.label}`
+      connection.kind === "lofi" && connection.status !== "approval_pending"
+        ? LOFI_CLIENT_NAME
         : connection.label,
     ),
     node(
@@ -274,7 +275,11 @@ function renderConnection(connection: ConnectionSummary, previous = false) {
   );
   if (connection.kind === "lofi" && connection.status !== "approval_pending")
     item.append(
-      node("p", "Account name reported by LoFi.", "small connection-note"),
+      node(
+        "p",
+        `LoFi account: ${lofiAccountLabel(connection.label)}`,
+        "small connection-note",
+      ),
     );
   if (connection.kind === "lotw" && !previous && connection.lotwVerification) {
     const checks = node("ul", "", "verification-checks");
@@ -566,7 +571,8 @@ function renderReview(data: ReviewResponse) {
   for (const source of data.sources) {
     const card = node("div", "", "source-progress");
     card.append(
-      node("h3", `LoFi account · ${source.label}`),
+      node("h3", `LoFi account · ${lofiAccountLabel(source.label)}`),
+      node("p", `Client: ${LOFI_CLIENT_NAME}`, "small"),
       node("p", source.message, "small"),
     );
     const counts = node("div", "", "source-counts");

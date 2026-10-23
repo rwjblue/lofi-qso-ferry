@@ -64,6 +64,51 @@ test("empty overview reports unknown scheduler health and all gates independentl
   }
 });
 
+test("admin connection labels use confirmed LoFi metadata independently of the Ferry account email", async (t) => {
+  const h = await setup();
+  t.after(() => h.mf.dispose());
+  await seed(h.store);
+  for (const [label, status, accountEmail, expected] of [
+    ["iPad", "active", null, "Email unavailable"],
+    ["old-device@example.test", "revoked", null, "Email unavailable"],
+    [
+      "old-device@example.test",
+      "active",
+      "confirmed-lofi@example.test",
+      "confirmed-lofi@example.test",
+    ],
+    [
+      "LoFi approval pending",
+      "approval_pending",
+      null,
+      "LoFi approval pending",
+    ],
+  ]) {
+    await h.store
+      .statement(
+        "UPDATE connections SET label=?,status=?,config=json_object('accountEmail',?) WHERE tenant='a' AND id='source'",
+        label,
+        status,
+        accountEmail,
+      )
+      .run();
+    const overview = await getAdminOverview(h.env, now);
+    const source = overview.connections.items.find(
+      (item) => item.id === "source",
+    );
+    assert.equal(source?.label, expected);
+    assert.equal(source?.accountEmail, "a@example.test");
+    assert.doesNotMatch(
+      JSON.stringify(overview),
+      /iPad|old-device@example|lofiAccountEmail/,
+    );
+    assert.equal(
+      overview.connections.items.find((item) => item.kind === "qrz")?.label,
+      "destination",
+    );
+  }
+});
+
 test("backlog separates retained contacts, quiet candidates, unresolved attempts and attention", async () => {
   const h = await setup();
   try {

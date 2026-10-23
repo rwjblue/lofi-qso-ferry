@@ -379,6 +379,57 @@ test("actual Worker HTTP flow verifies passkeys, isolates tenants, preserves tem
   );
 });
 
+test("actual dashboard hides historical LoFi names and displays only confirmed account email metadata", async (context) => {
+  const { mf, db, outbound } = await runtime();
+  context.after(() => mf.dispose());
+  const client = new Client(mf);
+  await activate(client, "dashboard@example.test");
+  const account = await db
+    .prepare("SELECT id FROM accounts WHERE email='dashboard@example.test'")
+    .first<{ id: string }>();
+  assert.ok(account);
+  await db
+    .prepare(
+      "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,created_at) VALUES(?,'source','lofi','vendor-id','iPad','active',0)",
+    )
+    .bind(account.id)
+    .run();
+  for (const [label, status, accountEmail, expected] of [
+    ["iPad", "active", null, "Email unavailable"],
+    ["old-device@example.test", "disabled", null, "Email unavailable"],
+    [
+      "old-device@example.test",
+      "active",
+      "confirmed-lofi@example.test",
+      "confirmed-lofi@example.test",
+    ],
+    [
+      "LoFi approval pending",
+      "approval_pending",
+      null,
+      "LoFi approval pending",
+    ],
+  ]) {
+    await db
+      .prepare(
+        "UPDATE connections SET label=?,status=?,config=json_object('accountEmail',?) WHERE tenant=? AND id='source'",
+      )
+      .bind(label, status, accountEmail, account.id)
+      .run();
+    const result = await client.request("/api/dashboard");
+    assert.equal(result.status, 200);
+    assert.equal(
+      (result.body.connections as { id: string; label: string }[]).find(
+        (connection) => connection.id === "source",
+      )?.label,
+      expected,
+    );
+    assert.doesNotMatch(JSON.stringify(result.body), /iPad|old-device@example/);
+    assert.equal(result.body.email, "dashboard@example.test");
+  }
+  assert.equal(outbound(), 0, "display reads do not contact LoFi");
+});
+
 test("production Worker does not expose fixture mailbox or enroll under local RP", async (context) => {
   const { mf, outbound } = await runtime("production");
   context.after(() => mf.dispose());

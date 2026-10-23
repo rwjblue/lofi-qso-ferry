@@ -4,6 +4,7 @@ import type {
   AdminPriority,
   AdminSchedulerRun,
 } from "./admin-types.ts";
+import { lofiAccountLabel } from "./lofi-identity.ts";
 import { deliveryGates, exportsEffective } from "./service.ts";
 import { VENDOR_POLICIES } from "./vendor-requests.ts";
 
@@ -188,7 +189,7 @@ export async function getAdminOverview(
     db.prepare("SELECT COUNT(*) AS total FROM connections"),
     db
       .prepare(
-        "SELECT c.tenant,a.email AS accountEmail,c.id,c.kind,c.label,c.status,c.last_poll_at AS lastAttemptAt,json_extract(c.config,'$.lastSuccessfulPollAt') AS lastSuccessfulPollAt,json_extract(c.config,'$.lastSyncSuccessAt') AS lastSyncSuccessAt,json_extract(c.config,'$.lastSyncFailureAt') AS lastFailureAt,json_extract(c.config,'$.lastError') IS NOT NULL AS hasError,json_extract(s.cursor,'$.mode') AS syncMode,COALESCE(json_extract(x.cursor,'$.complete'),0) AS contextComplete FROM connections c JOIN accounts a ON a.id=c.tenant LEFT JOIN cursors s ON s.tenant=c.tenant AND s.connection=c.id AND s.stream='sync' LEFT JOIN cursors x ON x.tenant=c.tenant AND x.connection=c.id AND x.stream='context' ORDER BY c.created_at DESC,c.tenant,c.id LIMIT ?",
+        "SELECT c.tenant,a.email AS accountEmail,c.id,c.kind,c.label,c.status,c.last_poll_at AS lastAttemptAt,json_extract(c.config,'$.accountEmail') AS lofiAccountEmail,json_extract(c.config,'$.lastSuccessfulPollAt') AS lastSuccessfulPollAt,json_extract(c.config,'$.lastSyncSuccessAt') AS lastSyncSuccessAt,json_extract(c.config,'$.lastSyncFailureAt') AS lastFailureAt,json_extract(c.config,'$.lastError') IS NOT NULL AS hasError,json_extract(s.cursor,'$.mode') AS syncMode,COALESCE(json_extract(x.cursor,'$.complete'),0) AS contextComplete FROM connections c JOIN accounts a ON a.id=c.tenant LEFT JOIN cursors s ON s.tenant=c.tenant AND s.connection=c.id AND s.stream='sync' LEFT JOIN cursors x ON x.tenant=c.tenant AND x.connection=c.id AND x.stream='context' ORDER BY c.created_at DESC,c.tenant,c.id LIMIT ?",
       )
       .bind(listLimit),
   ]);
@@ -222,6 +223,7 @@ export async function getAdminOverview(
     AdminOverview["connections"]["items"][number],
     "lastSuccessAt" | "hasError" | "contextComplete"
   > & {
+    lofiAccountEmail: unknown;
     lastSuccessfulPollAt: unknown;
     lastSyncSuccessAt: unknown;
     hasError: number;
@@ -294,8 +296,17 @@ export async function getAdminOverview(
       total: connectionTotal,
       truncated: connectionTotal > listLimit,
       items: connectionRows.map(
-        ({ lastSuccessfulPollAt, lastSyncSuccessAt, ...row }) => ({
+        ({
+          lofiAccountEmail,
+          lastSuccessfulPollAt,
+          lastSyncSuccessAt,
+          ...row
+        }) => ({
           ...row,
+          label:
+            row.kind === "lofi" && row.status !== "approval_pending"
+              ? lofiAccountLabel(lofiAccountEmail)
+              : row.label,
           lastAttemptAt: timestamp(row.lastAttemptAt),
           lastSuccessAt:
             timestamp(lastSuccessfulPollAt) ?? timestamp(lastSyncSuccessAt),

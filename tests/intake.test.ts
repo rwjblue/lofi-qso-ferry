@@ -715,6 +715,92 @@ test("successful source sync records separate success health and clears a stale 
   assert.equal(saved.lastSuccessfulPollAt, now);
 });
 
+test("canonical sync refreshes account email without using immutable names, pending emails or rescan metadata", async (t) => {
+  const { store, source, now, mf } = await setup();
+  t.after(() => mf.dispose());
+  await store
+    .statement(
+      "UPDATE connections SET label='iPad' WHERE tenant='a' AND id='source'",
+    )
+    .run();
+  const page =
+    (account: SourceRecord): typeof fetch =>
+    async () => {
+      const body = (await response([], []).json()) as SourceRecord;
+      return Response.json({ ...body, account });
+    };
+  await pollSource(
+    store,
+    source,
+    page({ uuid: "account-1", name: "iPad", email: "owner@example.test" }),
+    now,
+  );
+  assert.equal(
+    (await store.connection("a", "source"))?.label,
+    "owner@example.test",
+  );
+  assert.equal(
+    JSON.parse((await store.connection("a", "source"))!.config).accountEmail,
+    "owner@example.test",
+  );
+  await pollSource(
+    store,
+    source,
+    page({
+      uuid: "account-1",
+      name: "iPad",
+      pending_email: "pending@example.test",
+    }),
+    now + 1,
+  );
+  assert.equal(
+    (await store.connection("a", "source"))?.label,
+    "owner@example.test",
+  );
+  await pollSource(
+    store,
+    source,
+    page({ uuid: "account-1", email: "older@example.test" }),
+    now + 2,
+    "rescan:destination",
+  );
+  assert.equal(
+    (await store.connection("a", "source"))?.label,
+    "owner@example.test",
+  );
+  await assert.rejects(
+    pollSource(
+      store,
+      source,
+      page({ uuid: "other-account", email: "other@example.test" }),
+      now + 3,
+    ),
+    /account_changed/,
+  );
+  assert.equal(
+    (await store.connection("a", "source"))?.label,
+    "owner@example.test",
+  );
+  await pollSource(
+    store,
+    source,
+    page({
+      uuid: "account-1",
+      email: null,
+      pending_email: "pending@example.test",
+    }),
+    now + 4,
+  );
+  assert.equal(
+    (await store.connection("a", "source"))?.label,
+    "Email unavailable",
+  );
+  assert.equal(
+    JSON.parse((await store.connection("a", "source"))!.config).accountEmail,
+    null,
+  );
+});
+
 test("late failed operation reads cannot mark a newer lease's pending progress as failed", async (t) => {
   const state = await setup();
   const { store, source, now, mf } = state;

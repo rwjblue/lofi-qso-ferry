@@ -2,6 +2,7 @@ import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
 import { adminRoute } from "./admin.ts";
 import { isAdmin } from "./admin-access.ts";
 import { connectionRoute } from "./connections.ts";
+import { lofiAccountLabel } from "./lofi-identity.ts";
 import { lotwVerification } from "./lotw-verification.ts";
 import { reviewRoute } from "./review.ts";
 import { boundedJson, keyring } from "./security.ts";
@@ -118,17 +119,20 @@ export default {
             }>()
         ).results.map(({ config, ...connection }) => {
           const parsed: unknown = JSON.parse(config);
+          const metadata =
+            parsed && typeof parsed === "object" && !Array.isArray(parsed)
+              ? (parsed as Record<string, unknown>)
+              : {};
           return {
             ...connection,
+            label:
+              connection.kind === "lofi" &&
+              connection.status !== "approval_pending"
+                ? lofiAccountLabel(metadata.accountEmail)
+                : connection.label,
             ...(connection.kind === "lotw"
               ? {
-                  lotwVerification: lotwVerification(
-                    parsed &&
-                      typeof parsed === "object" &&
-                      !Array.isArray(parsed)
-                      ? (parsed as Record<string, unknown>)
-                      : {},
-                  ),
+                  lotwVerification: lotwVerification(metadata),
                 }
               : {}),
           };

@@ -1,4 +1,5 @@
 import { recordBirth } from "./cutover.ts";
+import { lofiAccountLabel } from "./lofi-identity.ts";
 import type {
   LoFiCredentials,
   SourceRecord,
@@ -187,10 +188,15 @@ export async function pollSource(
       }
     work.push(
       store.statement(
-        "UPDATE connections SET last_poll_at=?,config=CASE WHEN ?='sync' THEN json_set(json_remove(config,'$.lastError'),'$.lastSuccessfulPollAt',?) ELSE config END WHERE tenant=? AND id=? AND status='active'",
+        "UPDATE connections SET last_poll_at=?,label=CASE WHEN ?='sync' AND ? THEN ? ELSE label END,config=CASE WHEN ?='sync' THEN json_set(json_remove(config,'$.lastError'),'$.lastSuccessfulPollAt',?,'$.accountEmail',CASE WHEN ? THEN ? ELSE json_extract(config,'$.accountEmail') END) ELSE config END WHERE tenant=? AND id=? AND status='active'",
         now,
         stream,
+        Number(page.accountEmail !== undefined),
+        lofiAccountLabel(page.accountEmail),
+        stream,
         now,
+        Number(page.accountEmail !== undefined),
+        page.accountEmail ?? null,
         connection.tenant,
         connection.id,
       ),

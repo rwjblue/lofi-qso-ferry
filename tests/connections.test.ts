@@ -709,6 +709,144 @@ test("LoTW account verification permits multiple isolated station certificates a
     0,
   );
 });
+test("LoTW verification identifies certificate and login failures without leaking or saving credentials", async (t) => {
+  const p12 = readFileSync(
+    new URL("../fixtures/signing/current.p12", import.meta.url),
+  ).toString("base64");
+  for (const failure of ["password", "corrupt", "html", "http", "transport"]) {
+    await t.test(failure, async (t) => {
+      const { env, store, mf } = await setup();
+      t.after(() => mf.dispose());
+      const privateRowsBefore = await store
+        .statement("SELECT count(*) n FROM private_data")
+        .first<{ n: number }>();
+      const certificateFailure =
+        failure === "password" || failure === "corrupt";
+      const input = {
+        p12:
+          failure === "corrupt"
+            ? Buffer.from("corrupt certificate container").toString("base64")
+            : p12,
+        password:
+          failure === "password" ? "wrong-import-secret" : "ferry-fixture",
+        query: { username: "synthetic-account", password: "login-secret" },
+      };
+      const seen: string[] = [];
+      const fetcher: typeof fetch = async (input) => {
+        const url = new URL(String(input));
+        seen.push(url.pathname);
+        if (url.pathname === "/lotw/crl")
+          return new Response("<Status>Unrevoked</Status>");
+        assert.equal(url.pathname, "/lotwuser/lotwreport.adi");
+        if (failure === "transport")
+          throw new Error(`sensitive transport details: ${url}`);
+        return new Response(
+          "<html>sensitive vendor details: synthetic-account login-secret</html>",
+          { status: failure === "http" ? 401 : 200 },
+        );
+      };
+      const response = await connectionRoute(
+        await request("/lotw", input, env),
+        env,
+        identity,
+        { fetcher },
+      );
+      assert.equal(response?.status, 400);
+      const output = await response!.text();
+      const body = JSON.parse(output);
+      assert.equal(
+        body.code,
+        certificateFailure
+          ? "lotw_certificate_import_failed"
+          : "lotw_login_verification_failed",
+      );
+      assert.match(
+        body.error,
+        certificateFailure
+          ? /^Certificate import failed\./
+          : /^Certificate file opened successfully, but LoTW login verification failed\./,
+      );
+      assert.match(body.error, /password/i);
+      for (const secret of [
+        input.p12,
+        input.password,
+        "synthetic-account",
+        "login-secret",
+        "sensitive",
+        "lotwreport.adi",
+      ])
+        assert(!output.includes(secret));
+      assert.deepEqual(
+        seen,
+        certificateFailure ? [] : ["/lotw/crl", "/lotwuser/lotwreport.adi"],
+      );
+      assert.deepEqual(
+        await store
+          .statement("SELECT count(*) n FROM private_data")
+          .first<{ n: number }>(),
+        privateRowsBefore,
+      );
+      assert.equal(
+        (
+          await store
+            .statement("SELECT count(*) n FROM connections WHERE kind='lotw'")
+            .first<{ n: number }>()
+        )?.n,
+        0,
+      );
+    });
+  }
+});
+test("LoTW verification preserves vendor deferrals during certificate status and login checks", async (t) => {
+  const p12 = readFileSync(
+    new URL("../fixtures/signing/current.p12", import.meta.url),
+  ).toString("base64");
+  for (const deferredPath of ["/lotw/crl", "/lotwuser/lotwreport.adi"]) {
+    await t.test(deferredPath, async (t) => {
+      const { env, mf } = await setup();
+      t.after(() => mf.dispose());
+      let network = 0;
+      const fetcher: typeof fetch = async (input) => {
+        network++;
+        const url = new URL(String(input));
+        if (url.pathname === deferredPath)
+          return new Response("sensitive vendor details", {
+            status: 429,
+            headers: { "Retry-After": "600" },
+          });
+        assert.equal(url.pathname, "/lotw/crl");
+        return new Response("<Status>Unrevoked</Status>");
+      };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const response = await connectionRoute(
+          await request(
+            "/lotw",
+            {
+              p12,
+              password: "ferry-fixture",
+              query: {
+                username: "synthetic-account",
+                password: "login-secret",
+              },
+            },
+            env,
+          ),
+          env,
+          identity,
+          { fetcher },
+        );
+        assert.equal(response?.status, 503);
+        assert(Number(response?.headers.get("Retry-After")) > 0);
+        const output = await response!.text();
+        assert.equal(JSON.parse(output).code, "vendor_deferred");
+        assert(
+          !output.includes("sensitive") && !output.includes("login-secret"),
+        );
+      }
+      assert.equal(network, deferredPath === "/lotw/crl" ? 1 : 2);
+    });
+  }
+});
 test("untrusted LoTW certificate can be encrypted for later verification but cannot become active", async (t) => {
   const { env, store, mf } = await setup();
   t.after(() => mf.dispose());

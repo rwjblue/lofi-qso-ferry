@@ -28,6 +28,7 @@ class ConnectionError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -500,14 +501,25 @@ export async function connectionRoute(
         priority: "live",
       });
       const statusClient = new LotwClient(null, { fetcher: lotwFetch });
-      const signing = await importPkcs12(
-        new Uint8Array(Buffer.from(encoded, "base64")),
-        input.password,
-        {
-          trustedRoots: roots,
-          certificateStatus: (serial) => statusClient.certificateStatus(serial),
-        },
-      );
+      let signing: SigningCredential;
+      try {
+        signing = await importPkcs12(
+          new Uint8Array(Buffer.from(encoded, "base64")),
+          input.password,
+          {
+            trustedRoots: roots,
+            certificateStatus: (serial) =>
+              statusClient.certificateStatus(serial),
+          },
+        );
+      } catch (error) {
+        if (error instanceof VendorDeferredError) throw error;
+        throw new ConnectionError(
+          400,
+          "Certificate import failed. Check the .p12 file and its TQSL export password; leave Import password blank if none was set.",
+          "lotw_certificate_import_failed",
+        );
+      }
       let query: { username: string; password: string } | undefined;
       if (input.query) {
         const value = object(input.query);
@@ -525,10 +537,19 @@ export async function connectionRoute(
           })(),
         };
         const today = new Date().toISOString().slice(0, 10);
-        await new LotwClient(query, { fetcher: lotwFetch }).query({
-          startDate: today,
-          endDate: today,
-        });
+        try {
+          await new LotwClient(query, { fetcher: lotwFetch }).query({
+            startDate: today,
+            endDate: today,
+          });
+        } catch (error) {
+          if (error instanceof VendorDeferredError) throw error;
+          throw new ConnectionError(
+            400,
+            "Certificate file opened successfully, but LoTW login verification failed. Check your LoTW website username and password, or try again if LoTW is unavailable.",
+            "lotw_login_verification_failed",
+          );
+        }
       }
       // A signing certificate proves station authorization, not website account membership.
       // Preserve identity for certificate renewal without guessing an account association.
@@ -750,7 +771,10 @@ export async function connectionRoute(
         error.status,
       );
     if (error instanceof ConnectionError)
-      return json({ error: error.message }, error.status);
+      return json(
+        { error: error.message, ...(error.code ? { code: error.code } : {}) },
+        error.status,
+      );
     // Vendor exceptions, input parsing and crypto errors may embed secrets; never echo them.
     return json(
       {

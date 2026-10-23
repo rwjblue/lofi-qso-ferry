@@ -9,7 +9,11 @@ async function setup() {
   const { db, mf } = await database();
   const sql = (
     await Promise.all(
-      ["0002_auth.sql", "0007_invitations.sql"].map((file) =>
+      [
+        "0002_auth.sql",
+        "0007_invitations.sql",
+        "0012_admin_invitations.sql",
+      ].map((file) =>
         readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8"),
       ),
     )
@@ -561,7 +565,7 @@ test("invitation is rechecked and claimed atomically with passkey enrollment", a
     const another = new Browser(env);
     await another.refresh();
     assert.equal((await another.request("signup", { email })).status, 403);
-    await purgeAuth(env, Date.now() + 2 * 86_400_000);
+    await purgeAuth(env, Date.now() + 92 * 86_400_000);
     assert.equal(
       (
         await db

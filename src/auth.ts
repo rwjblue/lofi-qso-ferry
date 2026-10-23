@@ -8,7 +8,7 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from "@simplewebauthn/server";
-import { verificationEmail } from "./mail.ts";
+import { type MailContent, verificationEmail } from "./mail.ts";
 import {
   b64,
   boundedJson,
@@ -197,7 +197,18 @@ export async function purgeAuth(env: Env, now = Date.now()): Promise<void> {
     statement(env, "DELETE FROM signups WHERE expires_at<=?", now),
     statement(env, "DELETE FROM rate_limits WHERE reset_at<=?", now),
     statement(env, "DELETE FROM sessions WHERE expires_at<=?", now),
-    statement(env, "DELETE FROM invitations WHERE expires_at<=?", now),
+    // Keep recent expired/revoked grants and operator actions available for
+    // troubleshooting, with a bounded retention window.
+    statement(
+      env,
+      "DELETE FROM invitations WHERE expires_at<=?",
+      now - 90 * 86_400_000,
+    ),
+    statement(
+      env,
+      "DELETE FROM admin_audit WHERE at<=?",
+      now - 90 * 86_400_000,
+    ),
   ]);
 }
 export async function checkCsrf(request: Request, env: Env): Promise<void> {
@@ -318,16 +329,30 @@ async function sendCode(
     ).run();
     return;
   }
-  if (env.MAIL_FROM.includes("invalid"))
-    throw new AuthError(503, "Email delivery is not configured");
-  const content = {
-    to: [pending.email],
-    ...verificationEmail({
+  await sendEmail(
+    env,
+    pending.email,
+    verificationEmail({
       origin: env.ORIGIN,
       code,
       purpose: pending.purpose === "email" ? "email" : "signup",
     }),
-  };
+    pending.id,
+  );
+}
+
+/** A successful return means provider acceptance, never inbox delivery.
+ * Native send failures never fall back: a lost acknowledgement is ambiguous.
+ */
+export async function sendEmail(
+  env: Env,
+  email: string,
+  mail: MailContent,
+  id: string,
+): Promise<void> {
+  if (env.ENVIRONMENT === "local" || env.MAIL_FROM.includes("invalid"))
+    throw new AuthError(503, "Email delivery is not configured");
+  const content = { to: [email], ...mail };
   if (env.EMAIL) {
     try {
       // MAIL_FROM is operator configuration, not an arbitrary RFC 5322 header.
@@ -340,8 +365,7 @@ async function sendCode(
       await env.EMAIL.send({ ...content, from });
       return;
     } catch {
-      // A lost acknowledgement can still mean the email was sent. Invalidate
-      // this proof in beginEmail; never send a second copy through a fallback.
+      // A lost acknowledgement can still mean the email was sent.
       throw new AuthError(503, "Email delivery is temporarily unavailable");
     }
   }
@@ -354,7 +378,7 @@ async function sendCode(
       headers: {
         Authorization: `Bearer ${env.RESEND_API_KEY}`,
         "Content-Type": "application/json",
-        "Idempotency-Key": `ferry-${pending.id}`,
+        "Idempotency-Key": `ferry-${id}`,
       },
       body: JSON.stringify({
         ...content,

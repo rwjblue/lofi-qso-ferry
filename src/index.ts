@@ -1,9 +1,12 @@
 import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
+import { adminRoute } from "./admin.ts";
+import { isAdmin } from "./admin-access.ts";
 import { connectionRoute } from "./connections.ts";
 import { lotwVerification } from "./lotw-verification.ts";
 import { reviewRoute } from "./review.ts";
 import { boundedJson, keyring } from "./security.ts";
-import { deliveryGates, exportsEffective, tick } from "./service.ts";
+import { deliveryGates, exportsEffective } from "./service.ts";
+import { runScheduledTick } from "./scheduler-history.ts";
 import {
   defaultTemplate,
   destinationTemplates,
@@ -61,6 +64,8 @@ export default {
           Response.json({ error: "Sign in with a passkey" }, { status: 401 }),
         );
       if (request.method !== "GET") await checkCsrf(request, env);
+      const admin = await adminRoute(request, env, identity);
+      if (admin) return secured(admin);
       const connection = await connectionRoute(request, env, identity);
       if (connection) return secured(connection);
       const store = new Store(env.DB, keyring(env));
@@ -197,6 +202,7 @@ export default {
         return secured(
           Response.json({
             email: account?.email,
+            admin: await isAdmin(env, identity.tenant),
             quietMinutes: account?.quiet_minutes,
             counts: Object.fromEntries(counts.map((c) => [c.state, c.count])),
             activity,
@@ -295,7 +301,7 @@ export default {
     context: ExecutionContext,
   ) {
     context.waitUntil(
-      tick(env).then((result) => {
+      runScheduledTick(env).then((result) => {
         console.log(JSON.stringify({ event: "ferry_tick", ...result }));
       }),
     );

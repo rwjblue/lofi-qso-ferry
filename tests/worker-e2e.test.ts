@@ -395,6 +395,147 @@ test("production Worker does not expose fixture mailbox or enroll under local RP
   );
 });
 
+test("admin HTTP routes require the current owner account and fresh, CSRF-protected mutations", async (context) => {
+  const { mf, db, outbound } = await runtime();
+  context.after(() => mf.dispose());
+  const anonymous = new Client(mf);
+  const member = new Client(mf);
+  const admin = new Client(mf);
+  const paths = ["/api/admin/overview", "/api/admin/invitations"];
+  const mutations = ["/api/admin/invitations", "/api/admin/invitations/revoke"];
+  const invitation = { email: "invitee@example.test" };
+  for (const path of paths)
+    assert.equal((await anonymous.request(path)).status, 401);
+  for (const path of mutations)
+    assert.equal((await anonymous.request(path, invitation)).status, 401);
+
+  // The local part is case-sensitive: this verified account is not the owner.
+  await activate(member, "Me@rwjblue.com");
+  await activate(admin, "me@rwjblue.com");
+  const account = await db
+    .prepare("SELECT id FROM accounts WHERE email='me@rwjblue.com'")
+    .first<{ id: string }>();
+  assert.ok(account);
+  assert.equal((await member.request("/api/dashboard")).body.admin, false);
+  assert.equal((await admin.request("/api/dashboard")).body.admin, true);
+  for (const path of paths)
+    assert.equal((await member.request(path)).status, 403);
+  assert.equal(
+    (
+      await member.request(
+        `/api/admin/overview?admin=true&tenant=${account.id}`,
+        undefined,
+        { "X-Admin": "true", "X-User-Email": "me@rwjblue.com" },
+      )
+    ).status,
+    403,
+  );
+  for (const path of mutations)
+    assert.equal(
+      (
+        await member.request(path, {
+          ...invitation,
+          admin: true,
+          role: "admin",
+          tenant: account.id,
+          actorEmail: "me@rwjblue.com",
+        })
+      ).status,
+      403,
+    );
+
+  const secret = "admin-overview-must-not-expose-this";
+  await db
+    .prepare(
+      "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,config,created_at) VALUES(?,'private-source','lofi',?,'Synthetic source','disabled',?,0)",
+    )
+    .bind(
+      account.id,
+      secret,
+      JSON.stringify({ credential: secret, lastError: secret }),
+    )
+    .run();
+  await db
+    .prepare(
+      "INSERT INTO private_data(tenant,connection,id,kind,envelope,created_at) VALUES(?,'private-source','credential','credential',?,0)",
+    )
+    .bind(account.id, secret)
+    .run();
+  const overview = await admin.request("/api/admin/overview");
+  assert.equal(overview.status, 200, JSON.stringify(overview.body));
+  assert.equal(overview.headers.get("Cache-Control"), "no-store");
+  assert.equal((overview.body.accounts as { total: number }).total, 2);
+  assert.equal(
+    (overview.body.gates as { effective: boolean }).effective,
+    false,
+  );
+  assert.ok(!JSON.stringify(overview.body).includes(secret));
+  assert.doesNotMatch(
+    JSON.stringify(overview.body),
+    /"(?:token_hash|public_key|envelope|config|remote_identity|credential_version|code_hash|challenge_hash)"\s*:/,
+  );
+  assert.equal((await admin.request("/api/admin/invitations")).status, 200);
+
+  const invalidHeaders: Record<string, string>[] = [
+    { "X-CSRF-Token": "" },
+    { Origin: "https://evil.example" },
+  ];
+  for (const path of mutations)
+    for (const headers of invalidHeaders)
+      assert.equal(
+        (await admin.request(path, invitation, headers)).status,
+        403,
+      );
+  await db
+    .prepare("UPDATE sessions SET verified_at=? WHERE tenant=?")
+    .bind(Date.now() - 300_001, account.id)
+    .run();
+  for (const path of mutations) {
+    const stale = await admin.request(path, invitation);
+    assert.equal(stale.status, 403);
+    assert.equal(stale.body.code, "reauth_required");
+  }
+  assert.equal((await admin.request("/api/admin/overview")).status, 200);
+
+  // Authorization follows the current account, even with an existing session.
+  await db
+    .prepare("UPDATE accounts SET email='former-owner@example.test' WHERE id=?")
+    .bind(account.id)
+    .run();
+  assert.equal((await admin.request("/api/dashboard")).body.admin, false);
+  assert.equal((await admin.request("/api/admin/overview")).status, 403);
+  await db
+    .prepare(
+      "UPDATE accounts SET email='me@rwjblue.com',status='disabled' WHERE id=?",
+    )
+    .bind(account.id)
+    .run();
+  assert.equal((await admin.request("/api/admin/overview")).status, 401);
+  await db
+    .prepare("UPDATE accounts SET status='active' WHERE id=?")
+    .bind(account.id)
+    .run();
+  await db
+    .prepare("UPDATE sessions SET revoked_at=? WHERE tenant=?")
+    .bind(Date.now(), account.id)
+    .run();
+  for (const path of paths)
+    assert.equal((await admin.request(path)).status, 401);
+  for (const path of mutations)
+    assert.equal((await admin.request(path, invitation)).status, 401);
+  for (const table of ["invitations", "admin_audit"])
+    assert.equal(
+      (
+        await db
+          .prepare(`SELECT count(*) AS n FROM ${table}`)
+          .first<{ n: number }>()
+      )?.n,
+      0,
+      `${table} is unchanged by rejected mutations`,
+    );
+  assert.equal(outbound(), 0);
+});
+
 test("actual hosted Worker requires an invitation and saves preferences with no services", async (context) => {
   const { mf, db, outbound, messages } = await runtime("production", true);
   context.after(() => mf.dispose());

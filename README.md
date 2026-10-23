@@ -4,7 +4,7 @@ Automatic, one-way delivery of Ham2K LoFi contacts to QRZ and ARRL Logbook of Th
 
 Log in PoLo or HaLo, let the contact settle, and Ferry handles delivery and subsequent corrections. The service runs on Cloudflare Workers with D1, supports multiple independent users, and keeps a small delivery ledger instead of a permanent copy of everyone's logbook.
 
-**Status: v1 implemented and locally verified; production deployment and live exports remain gated.** The initial release is for the repository owner's use, with tenant isolation built in from the beginning. See the [rollout checklist](docs/rollout-checklist.md) for exact remaining inputs and verification boundaries.
+**Status: deployed read-only at [ferry.n1rwj.com](https://ferry.n1rwj.com); all vendor exports remain disabled.** The initial release is for the repository owner's use, with tenant isolation built in from the beginning. See the [rollout checklist](docs/rollout-checklist.md) for exact remaining inputs and verification boundaries.
 
 ## Product decisions
 
@@ -28,6 +28,12 @@ LoTW has no supported narrative destination for QRZ-style comments or POTA text.
 | [Templates](docs/templates.md)                       | HaLo compatibility, immutable versions, and preservation of adopted QRZ text         |
 | [Authentication](docs/authentication.md)             | Email confirmation, passkeys, sessions, and recovery boundaries                      |
 | [Credential security](docs/security.md)              | Encryption, key rotation, tenant isolation, and retention                            |
+
+## Use the read-only deployment
+
+Open [Ferry](https://ferry.n1rwj.com), create your account in your own browser, and enroll a passkey after confirming email. Register an independent backup passkey, then connect LoFi and QRZ to review history adoption. The permanent passkey RP is `ferry.n1rwj.com`. Signup uses a dedicated Cloudflare email sender; there is no email login or reset. No account was created on the owner's behalf during deployment verification.
+
+All vendor export gates remain closed. See [deployment evidence](docs/deployment.md) for resources, live checks and the redeploy command.
 
 ## Run locally
 

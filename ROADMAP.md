@@ -141,7 +141,7 @@ conservative gates; their live acceptance depends on that evidence. Prior QRZ
 identities remain retained until the narrow cleanup contract is live-proven.
 
 Milestone 7 has a reproducible local demo, dashboard and operational runbooks.
-Production deployment, complete read-only owner-history review, scoped first
+Production is now deployed read-only. Complete owner-history review, scoped first
 writes and measured monthly cost remain blocked on the exact inputs in the
 [rollout checklist](docs/rollout-checklist.md). The implementation does not replace
 those checks with mock success. See [PROGRESS.md](PROGRESS.md) for the current
@@ -205,3 +205,16 @@ passes **24 tests**. Workerd signing and D1 fixtures use the application's
 scheduler fairness, durable prior LoTW identities across dispatch crashes and
 stale confirmation inheritance. Startup profiling passed locally; these are not
 deployed resource or live acceptance measurements.
+
+## Read-only production deployment (2026-10-22)
+
+Deployed `f9856fdefa47` to [ferry.n1rwj.com](https://ferry.n1rwj.com) in the existing
+Cloudflare account, with a dedicated migrated D1, independent protected secrets,
+a native sender allowlist and disabled email-content previews. All vendor export
+gates remain closed. Production health, session/passkey options, mailbox denial,
+mobile rendering and actual signup-email delivery pass; no production account,
+connection, ledger row or attempt was created. The updated full check passes
+**149 tests**, and [CI passes](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39880597020).
+See [deployment evidence](docs/deployment.md) for the version and safe redeploy path.
+Owner enrollment, history review, source-boundary proof and scoped live-write
+contracts remain distinct acceptance checks.

@@ -2,28 +2,30 @@
 
 All checked-in environments disable exports. Local tests and synthetic signatures establish implementation behavior; live source replay, QRZ mutation preservation and ARRL acceptance still require the inputs below. Deployment alone must not change real logs.
 
+## Current production target
+
+On 2026-10-22 the operator selected `https://ferry.n1rwj.com`, with RP ID `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. Dedicated D1 `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) has all four migrations applied. The Worker `lofi-qso-ferry` is deployed read-only at the selected hostname. Its version, deployed revision and live endpoint checks are recorded in [deployment evidence](deployment.md).
+
+Production uses the native Cloudflare `EMAIL` binding restricted to `signup@ferry.n1rwj.com`, with that address in `MAIL_FROM`. Sending domain `ferry.n1rwj.com` (`e69af8ef82a140b38eeaef98d417ef30`) is enabled and its `preview_enabled=false` setting was read back. Cloudflare and Google DNS-over-HTTPS both resolved its bounce MX/SPF, DKIM and DMARC records; the parent domain's Fastmail MX records remain unchanged. One verification message was delivered to the owner’s Fastmail inbox through the live signup form. Personal passkey enrollment remains for the owner to complete in their own browser; no account was created during the smoke test.
+
+Independent `KEK_V1`, `AUTH_SECRET` and `EMAIL_CODE_SECRET` secrets have been provisioned. Their protected local backup is `~/.config/lofi-qso-ferry/production.secrets.json` (file mode `0600`, directory `0700`); 1Password CLI was signed out, so that backup remains necessary until secure secret-manager storage is completed. Never print its contents or commit it. Preserve these keys when resuming deployment rather than generating replacements.
+
+The production configuration keeps `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, `LIVE_WRITE_AUTHORIZATION` empty and `ROLLOUT_QSO_IDS_JSON=[]`. Production `workers.dev` and preview URLs are disabled. The staging placeholder is intentionally undeployed.
+
 ## Prepare a disabled deployment
 
-1. Select the permanent HTTPS hostname and set that exact `ORIGIN` and hostname-only `RP_ID` in the production environment of `wrangler.jsonc`. Choose it before real passkey enrollment. Use separate D1 databases, keys, RP/origins and cookies for local/staging/production.
-2. Create the Cloudflare production/staging D1 resources and replace the placeholder IDs. Keep `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false` and `LIVE_WRITE_AUTHORIZATION` empty, and `ROLLOUT_QSO_IDS_JSON=[]`. Configure the five-minute cron and review paid-plan CPU limits before certificate import.
-3. Select Resend for production verification mail. [Verify a sending domain](https://resend.com/docs/dashboard/domains/introduction), configure its required DNS records, set `MAIL_FROM`, and install a restricted `RESEND_API_KEY`. Use independent random `KEK_V1`, `AUTH_SECRET` and `EMAIL_CODE_SECRET` secrets. Generate/store them in the operator's secret manager; never commit or paste them into issue reports, command arguments or logs.
+1. Set the permanent HTTPS hostname as the exact `ORIGIN` and hostname-only `RP_ID` in the production environment of `wrangler.jsonc` before real passkey enrollment. The selected target above is already configured. Use separate D1 databases, keys, RP/origins and cookies for local/staging/production.
+2. For a new target, create its Cloudflare D1 resource and replace that environment's placeholder ID; do not recreate the prepared production database or deploy staging merely to complete this checklist. Keep `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false` and `LIVE_WRITE_AUTHORIZATION` empty, and `ROLLOUT_QSO_IDS_JSON=[]`. Configure the five-minute cron and review paid-plan CPU limits before certificate import.
+3. Configure native [Cloudflare Email Sending](https://developers.cloudflare.com/email-service/configuration/subdomains/) for a dedicated sending subdomain, set `MAIL_FROM`, and restrict the `EMAIL` binding with `allowed_sender_addresses`. Sending uses its own bounce/authentication records; leave existing inbound MX records intact. Disable activity-log email previews before sending signup codes. This target needs no Resend key. Other deployments without an `EMAIL` binding can use the optional [Resend sender path](https://resend.com/docs/dashboard/domains/introduction) with verified DNS and a restricted `RESEND_API_KEY`; a native send failure never triggers a second send through Resend. Use independent random `KEK_V1`, `AUTH_SECRET` and `EMAIL_CODE_SECRET` secrets with a protected backup. Never commit or paste them into issue reports, command arguments or logs.
 4. Populate `LOTW_TRUST_ROOTS_JSON` with independently verified LoTW issuing/root PEM certificates. Imported PKCS#12 issuers do not establish trust by themselves. Review [signing evidence](evidence-signing.md), current mode/location configuration, dependency advisories and representative deployed CPU/memory measurements. The default empty trust bundle permits encrypted inspection imports but blocks signing.
 5. Build, review the disabled configuration, migrate the intended remote database and deploy only when authorized:
 
 ```sh
 mise run check
-npx wrangler d1 create ferry-production
-# Copy the returned database ID into env.production.d1_databases.
-npx wrangler secret put KEK_V1 --env production
-npx wrangler secret put AUTH_SECRET --env production
-npx wrangler secret put EMAIL_CODE_SECRET --env production
-npx wrangler secret put RESEND_API_KEY --env production
-npx wrangler d1 migrations apply ferry-production --env production --remote
-npx wrangler deploy --env production --dry-run
-npx wrangler deploy --env production
+mise run deploy-readonly
 ```
 
-The `secret put` commands prompt securely. Production creation/migration/deployment commands above are operator instructions, not evidence they were run. Confirm `/health` reports exports disabled, and test production email delivery and passkey ceremonies at the permanent origin. Record deployed revision, database IDs, RP/origin, dependency versions and evidence dates without secrets.
+For a new target, provision each required application secret with `npx wrangler secret put SECRET_NAME --env production`, which prompts securely, before deployment. Only the optional Resend path needs its API key. The guarded task builds assets, checks all export gates are closed, applies outstanding migrations to the dedicated database and deploys production. It refuses an open gate or an unconfigured production origin/database. The resource record above and [deployment evidence](deployment.md) identify the completed deployment. Confirm `/health` reports exports disabled, and test production email delivery and passkey ceremonies at the permanent origin. Record deployed revision, database IDs, RP/origin, dependency versions and evidence dates without secrets.
 
 ## Connect and adopt read-only
 
@@ -37,7 +39,7 @@ A genuinely new destination atomically requests a bounded source backfill stream
 
 ## First writes and expansion
 
-Required inputs are: Cloudflare deployment authority and resource IDs; the permanent hostname; verified Resend sender/API key; independently stored application secrets; the approved LoFi account and replay/cutover evidence; QRZ book key/identity/range plus a deliberately designated test contact/book; LoTW `.p12` import password and verified trust/status chain; optional LoTW query credentials; supported callsign/location/mode configuration; and explicit authorization naming the first genuinely new contacts and permitted destinations.
+Required inputs are: Cloudflare deployment authority and resource IDs; the permanent hostname; a verified configured transactional sender; independently stored application secrets; the approved LoFi account and replay/cutover evidence; QRZ book key/identity/range plus a deliberately designated test contact/book; LoTW `.p12` import password and verified trust/status chain; optional LoTW query credentials; supported callsign/location/mode configuration; and explicit authorization naming the first genuinely new contacts and permitted destinations.
 
 Set `ROLLOUT_QSO_IDS_JSON` to the exact authorized source QSO UUIDs for the first writes; the default empty array permits none. The explicit `["*"]` scope enables normal coverage only after scoped evidence and authorization. Preparation and dispatch both enforce the scope. Keep a small identifiable scope for the first writes. Verify QRZ INSERT/duplicate/REPLACE identity and narrative preservation on the designated test record. Verify one real Worker-signed LoTW upload reaches the queue, then separately observe its exact supported projection in readback. Confirmation is additional evidence. Record contact IDs/source generations, destination mappings, certificate/configuration versions, deployed revision, timing and redacted outcomes. Expand automatic coverage only after reviewing these results and the adopted-history exceptions. Template changes alone never authorize historical work; existing bindings remain pinned at durable export preparation.
 
@@ -94,8 +96,8 @@ Keep backup retention explicit in the operator's storage policy. This repository
 
 ## Capacity and cost evidence
 
-Checked 2026-10-22: [Workers Paid](https://developers.cloudflare.com/workers/platform/pricing/) has a $5 account monthly minimum, including 10 million requests and 30 million CPU ms; overages are $0.30/million requests and $0.02/million CPU ms. [D1 Paid](https://developers.cloudflare.com/d1/platform/pricing/) includes 25 billion rows read, 50 million written and 5 GB; overages are $0.001/million read, $1/million written and $0.75/GB-month. These allowances are account-wide; existing services consume part of them.
+Checked 2026-10-22: [Workers Paid](https://developers.cloudflare.com/workers/platform/pricing/) has a $5 account monthly minimum, including 10 million requests and 30 million CPU ms; overages are $0.30/million requests and $0.02/million CPU ms. [D1 Paid](https://developers.cloudflare.com/d1/platform/pricing/) includes 25 billion rows read, 50 million written and 5 GB; overages are $0.001/million read, $1/million written and $0.75/GB-month. These allowances are account-wide; existing services consume part of them. [Email Sending Paid](https://developers.cloudflare.com/email-service/platform/pricing/) includes 3,000 outbound emails per account per month, then $0.35 per 1,000; sending to verified account destinations does not consume that quota. Model email overage as `max(quota_counted_emails-3000,0)/1000*0.35`, rather than assuming this project receives a separate allowance.
 
-For a 30-day month, a five-minute cron schedules 8,640 invocations. Measure dashboard/API invocations, per-cycle CPU, certificate-import CPU, source rows, adopted/backfilled/changed contacts, retries, scanned/written D1 rows and average storage. Request and CPU overage cost is `max(requests-10M,0)/1M*0.30 + max(CPU_ms-30M,0)/1M*0.02`, plus the account plan, D1 and the selected [Resend plan](https://resend.com/pricing). Count verification/change emails separately from LoFi's own approval emails. Do not call the service free based on a small contact count.
+For a 30-day month, a five-minute cron schedules 8,640 invocations. Measure dashboard/API invocations, per-cycle CPU, certificate-import CPU, source rows, adopted/backfilled/changed contacts, retries, scanned/written D1 rows and average storage. Request and CPU overage cost is `max(requests-10M,0)/1M*0.30 + max(CPU_ms-30M,0)/1M*0.02`, plus the account plan, D1 and [Cloudflare Email Service usage](https://developers.cloudflare.com/email-service/platform/pricing/) for this target, or the selected [Resend plan](https://resend.com/pricing) for deployments using that fallback. Count verification/change emails separately from LoFi's own approval emails. Do not call the service free based on a small contact count.
 
 [Worker limits](https://developers.cloudflare.com/workers/platform/limits/) include 128 MB per isolate, distinct CPU and wall time, and a 15-minute cron wall limit. Inspect deployed invocation CPU/wall metrics and memory errors. Final local bundle, startup-profile and signing timings are recorded in [signing evidence](evidence-signing.md); they do not measure deployed billed CPU or peak memory. No production monthly usage or invoice has been measured. Collect representative deployed evidence and set an appropriate CPU limit before enabling exports.

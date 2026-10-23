@@ -7,6 +7,7 @@ import {
   HISTORY_INVENTORY_TTL,
   type HistoryInventoryInput,
   historyCandidates,
+  historyCandidatesBatch,
   historyInventoryGuard,
   pruneHistoryInventory,
 } from "../src/history-inventory.ts";
@@ -198,6 +199,253 @@ test("QRZ resumes bounded pages, completes modification catch-up, and reuses enc
     );
   } finally {
     await mf.dispose();
+  }
+});
+
+async function inventoryCohort(kind: "qrz" | "lotw", size = 20) {
+  const h = await fixture(kind);
+  const inputs: HistoryInventoryInput[] = [];
+  for (let index = 0; index < size; index++) {
+    const qso = index ? `batch-${index}` : h.input.qso;
+    const generation = `g${index + 1}`;
+    await h.store.observe(
+      { ...h.key, qso },
+      generation,
+      `hash-${index}`,
+      30,
+      false,
+    );
+    inputs.push({
+      ...h.input,
+      qso,
+      generation,
+      record: { ...record, CALL: `K1BATCH${index}` },
+    });
+  }
+  const records = inputs.map((input, index) => ({
+    ...input.record,
+    ...(kind === "qrz" ? { APP_QRZLOG_LOGID: String(index + 1) } : {}),
+  }));
+  let fetches = 0;
+  const options = {
+    now: h.now,
+    vendorNow: h.now,
+    fetcher: async (_: RequestInfo | URL, init?: RequestInit) => {
+      fetches++;
+      if (kind === "lotw") return lotwResponse(records);
+      const filters = new URLSearchParams(String(init?.body)).get("OPTION")!;
+      return qrzResponse(filters.includes("MODSINCE:") ? [] : records);
+    },
+  };
+  return { ...h, inputs, options, fetches: () => fetches };
+}
+
+test("twenty warm contacts share inventory reads in three RPCs per destination with identical fences", async (t) => {
+  let totalCalls = 0;
+  for (const kind of ["qrz", "lotw"] as const) {
+    await t.test(kind, async () => {
+      const h = await inventoryCohort(kind);
+      try {
+        await historyCandidates(h.store, h.inputs[0], h.options);
+        if (kind === "qrz")
+          await historyCandidates(h.store, h.inputs[0], h.options);
+        const fetched = h.fetches();
+        const measured = measuredDatabase(h.store.db);
+        const counted = new Store(measured.database, h.store.keys);
+        const results = await historyCandidatesBatch(counted, h.inputs, {
+          ...h.options,
+          fetcher: async () =>
+            assert.fail("warm cohort fetched vendor history"),
+        });
+        assert.equal(measured.metrics.calls, 3);
+        assert.equal(measured.metrics.statements, 7);
+        totalCalls += measured.metrics.calls;
+        assert.equal(results.length, 20);
+        for (let index = 0; index < results.length; index++) {
+          assert.equal(results[index].state, "ready");
+          assert.equal(results[index].records.length, 1);
+          assert.equal(
+            results[index].records[0].CALL,
+            h.inputs[index].record.CALL,
+          );
+          assert.equal(results[index].fetched, false);
+          const single = await historyCandidates(
+            h.store,
+            h.inputs[index],
+            h.options,
+          );
+          assert.deepEqual(results[index].records, single.records);
+          assert.deepEqual(results[index].fence, single.fence);
+        }
+        assert.equal(h.fetches(), fetched);
+      } finally {
+        await h.mf.dispose();
+      }
+    });
+  }
+  assert.equal(totalCalls, 6);
+});
+
+test("cold cohorts advance one shared partition at a time and account for each fetch once", async (t) => {
+  for (const kind of ["qrz", "lotw"] as const) {
+    await t.test(kind, async () => {
+      const h = await inventoryCohort(kind);
+      try {
+        let results = await historyCandidatesBatch(
+          h.store,
+          h.inputs,
+          h.options,
+        );
+        assert.equal(h.fetches(), 1);
+        assert.equal(results.filter((result) => result.fetched).length, 1);
+        assert.equal(results.filter((result) => result.progressed).length, 1);
+        if (kind === "qrz") {
+          assert(results.every((result) => result.state === "pending"));
+          results = await historyCandidatesBatch(h.store, h.inputs, h.options);
+          assert.equal(h.fetches(), 2);
+          assert.equal(results.filter((result) => result.fetched).length, 1);
+        }
+        assert(results.every((result) => result.state === "ready"));
+        assert.equal(
+          results.flatMap((result) => result.completedPartitions).length,
+          1,
+        );
+        assert(
+          results.every(
+            (result, index) =>
+              result.records[0].CALL === h.inputs[index].record.CALL,
+          ),
+        );
+      } finally {
+        await h.mf.dispose();
+      }
+    });
+  }
+});
+
+test("inventory batches reject mixed read scopes and enforce each member generation", async () => {
+  const h = await inventoryCohort("lotw", 2);
+  try {
+    await historyCandidatesBatch(h.store, h.inputs, h.options);
+    const original = h.inputs[1];
+    const variants = [
+      {
+        ...original,
+        source: { ...original.source, tenant: "other" },
+        destination: { ...original.destination, tenant: "other" },
+      },
+      { ...original, source: { ...original.source, id: "other" } },
+      { ...original, destination: { ...original.destination, id: "other" } },
+      {
+        ...original,
+        destination: { ...original.destination, credential_version: "new" },
+      },
+      {
+        ...original,
+        destination: {
+          ...original.destination,
+          config: JSON.stringify({ readAccess: false }),
+        },
+      },
+      {
+        ...original,
+        record: { ...original.record, STATION_CALLSIGN: "OTHER" },
+      },
+    ];
+    for (const variant of variants)
+      await assert.rejects(
+        historyCandidatesBatch(h.store, [h.inputs[0], variant], h.options),
+        /mixes read scopes/,
+      );
+    await assert.rejects(
+      historyCandidatesBatch(h.store, Array(21).fill(h.inputs[0]), h.options),
+      /exceeds twenty/,
+    );
+    assert.deepEqual(await historyCandidatesBatch(h.store, [], h.options), []);
+    const results = await historyCandidatesBatch(
+      h.store,
+      [h.inputs[0], { ...original, generation: "stale" }],
+      h.options,
+    );
+    assert.equal(results[0].state, "ready");
+    assert.equal(results[1].state, "pending");
+    assert.deepEqual(results[1].records, []);
+    assert.match(results[1].reason!, /changed/);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("batch final validation rejects revocation, generation, scope and retained-evidence races", async (t) => {
+  const mutations = [
+    [
+      "source credential",
+      "UPDATE private_data SET revoked_at=1 WHERE connection='source' AND kind='credential'",
+    ],
+    [
+      "destination credential",
+      "UPDATE private_data SET revoked_at=1 WHERE connection='destination' AND kind='credential'",
+    ],
+    [
+      "destination scope",
+      "UPDATE connections SET config=json_set(config,'$.readAccess',0) WHERE id='destination'",
+    ],
+    [
+      "source identity",
+      "UPDATE connections SET remote_identity='changed' WHERE id='source'",
+    ],
+    [
+      "one generation",
+      "UPDATE ledger SET generation='changed' WHERE qso='batch-1'",
+    ],
+    [
+      "page revoked",
+      "UPDATE private_data SET revoked_at=1 WHERE kind='history_inventory'",
+    ],
+    [
+      "page expired",
+      "UPDATE private_data SET expires_at=1 WHERE kind='history_inventory'",
+    ],
+    [
+      "epoch replaced",
+      "UPDATE partitions SET evidence=json_set(evidence,'$.epoch','changed')",
+    ],
+    ["partition evicted", "DELETE FROM partitions"],
+  ] as const;
+  for (const [name, sql] of mutations) {
+    await t.test(name, async () => {
+      const h = await inventoryCohort("lotw", 2);
+      try {
+        await historyCandidatesBatch(h.store, h.inputs, h.options);
+        let calls = 0;
+        const db = new Proxy(h.store.db, {
+          get(target, property) {
+            if (property === "batch")
+              return async (statements: D1PreparedStatement[]) => {
+                const result = await target.batch(statements);
+                if (++calls === 2) await h.store.statement(sql).run();
+                return result;
+              };
+            const value = Reflect.get(target, property, target);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        const results = await historyCandidatesBatch(
+          new Store(db, h.store.keys),
+          h.inputs,
+          {
+            ...h.options,
+            fetcher: async () => assert.fail("race triggered vendor fetch"),
+          },
+        );
+        if (name === "one generation") assert.equal(results[0].state, "ready");
+        else assert.notEqual(results[0].state, "ready");
+        assert.notEqual(results[1].state, "ready");
+        assert.deepEqual(results[1].records, []);
+      } finally {
+        await h.mf.dispose();
+      }
+    });
   }
 });
 test("rejected QRZ modification catch-up discards old evidence and requires a complete fresh verification pass", async () => {
@@ -891,6 +1139,13 @@ test("LoTW adaptive splitting finishes the requested leaf and reuses it without 
       false,
     );
     assert.equal(calls, 4);
+    const shared = await historyCandidatesBatch(store, [input, input], {
+      ...options,
+      fetcher: async () => assert.fail("split leaf was fetched again"),
+    });
+    assert(shared.every((value) => value.state === "ready"));
+    assert.deepEqual(shared[0].records, result.records);
+    assert.deepEqual(shared[0].fence, result.fence);
   } finally {
     await mf.dispose();
   }
@@ -1017,6 +1272,16 @@ test("QRZ coverage includes the full minute-precision radius across a weekly bou
     assert.equal(result.state, "ready");
     assert.equal(result.records.length, 1);
     assert.equal(result.records[0].APP_QRZLOG_LOGID, "1");
+    const shared = await historyCandidatesBatch(store, [current, current], {
+      ...options,
+      fetcher: async () => assert.fail("weekly boundary was fetched again"),
+    });
+    assert(shared.every((value) => value.state === "ready"));
+    assert.equal(shared[0].fence?.partitions.length, 2);
+    assert.deepEqual(shared[0].records, result.records);
+    assert.deepEqual(shared[0].fence, result.fence);
+    shared[0].records[0].CALL = "MUTATED";
+    assert.equal(shared[1].records[0].CALL, record.CALL);
   } finally {
     await mf.dispose();
   }
@@ -1186,5 +1451,148 @@ test("inventory adoption guard evaluates current credentials, expiry and retaine
     );
   } finally {
     await mf.dispose();
+  }
+});
+
+test("batch comparison bounds aggregate plaintext and allows remaining contacts to finish separately", async () => {
+  const h = await inventoryCohort("lotw");
+  try {
+    const inputs = h.inputs.map((input) => ({ ...input, record }));
+    const large = {
+      ...record,
+      ...Object.fromEntries(
+        [
+          "MY_STATE",
+          "MY_CNTY",
+          "MY_DXCC",
+          "MY_LAT",
+          "MY_LON",
+          "MY_CQ_ZONE",
+          "MY_ITU_ZONE",
+          "MY_IOTA",
+        ].map((field) => [field, "x".repeat(256)]),
+      ),
+    };
+    const options = {
+      ...h.options,
+      fetcher: async () =>
+        lotwResponse(Array.from({ length: 250 }, () => large)),
+    };
+    assert.equal(
+      (await historyCandidates(h.store, inputs[0], options)).state,
+      "ready",
+    );
+    const warm = {
+      ...options,
+      fetcher: async () => assert.fail("large cache was refetched"),
+    };
+    const results = await historyCandidatesBatch(h.store, inputs, warm);
+    const waiting = inputs.filter(
+      (_, index) => results[index].state === "pending",
+    );
+    assert(waiting.length > 0 && waiting.length < inputs.length);
+    const bytes = results
+      .flatMap((result) => result.records)
+      .reduce(
+        (size, value) =>
+          size + new TextEncoder().encode(JSON.stringify(value)).length,
+        0,
+      );
+    assert(bytes <= 8 * 1024 * 1024);
+    for (const result of results) {
+      if (result.state === "pending") {
+        assert.match(result.reason!, /batch comparison budget/);
+        assert.deepEqual(result.records, []);
+        assert.equal(result.fence, undefined);
+      } else assert.equal(result.records.length, 250);
+    }
+    const remaining = await historyCandidatesBatch(h.store, waiting, warm);
+    assert(remaining.every((result) => result.state === "ready"));
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("cold batch shares missing read capability without misclassifying sibling generations", async () => {
+  const h = await inventoryCohort("lotw", 3);
+  try {
+    await h.store
+      .statement(
+        "DELETE FROM private_data WHERE connection='destination' AND kind='credential'",
+      )
+      .run();
+    await (
+      await h.store.putPrivate("a", "destination", "v1", "credential", {
+        identity: "submission-only",
+      })
+    ).run();
+    const results = await historyCandidatesBatch(
+      h.store,
+      [h.inputs[0], h.inputs[1], { ...h.inputs[2], generation: "stale" }],
+      {
+        ...h.options,
+        fetcher: async () =>
+          assert.fail("submission-only credentials made a request"),
+      },
+    );
+    assert(
+      results
+        .slice(0, 2)
+        .every(
+          (result) =>
+            result.state === "unavailable" &&
+            !result.readAccess &&
+            result.records.length === 0,
+        ),
+    );
+    assert.equal(results[2].state, "pending");
+    assert.match(results[2].reason!, /changed/);
+    assert.equal(h.fetches(), 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("cold batch yields before starting another partition after the caller budget expires", async () => {
+  const h = await inventoryCohort("lotw", 2);
+  try {
+    const inputs = [
+      h.inputs[0],
+      {
+        ...h.inputs[1],
+        record: { ...h.inputs[1].record, QSO_DATE: "20261029" },
+      },
+    ];
+    let fetches = 0;
+    const results = await historyCandidatesBatch(h.store, inputs, {
+      ...h.options,
+      shouldContinue: () => fetches === 0,
+      fetcher: async () => {
+        fetches++;
+        return lotwResponse([inputs[0].record]);
+      },
+    });
+    assert.equal(fetches, 1);
+    assert.equal(results[0].state, "ready");
+    assert.equal(results[0].fetched, true);
+    assert.equal(results[1].state, "pending");
+    assert.equal(results[1].fetched, false);
+    assert.deepEqual(results[1].records, []);
+    assert.equal(
+      (await h.store.statement("SELECT COUNT(*) n FROM partitions").first())!.n,
+      1,
+    );
+    const withheld = await historyCandidatesBatch(h.store, [inputs[1]], {
+      ...h.options,
+      shouldContinue: () => false,
+      fetcher: async () => assert.fail("exhausted budget started a fetch"),
+    });
+    assert.equal(withheld[0].state, "pending");
+    assert.equal(
+      (await h.store.statement("SELECT COUNT(*) n FROM partitions").first())!.n,
+      1,
+    );
+  } finally {
+    await h.mf.dispose();
   }
 });

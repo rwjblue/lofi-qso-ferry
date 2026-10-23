@@ -6,7 +6,12 @@ import type {
   AdminInvitationResult,
   AdminInvitations,
 } from "./admin-invitation-types.ts";
-import type { AdminOverview } from "./admin-types.ts";
+import type { AdminOverview, AdminPriority } from "./admin-types.ts";
+import {
+  trendSegments,
+  workloadChange,
+  workloadStatus,
+} from "./browser-admin-workload.ts";
 import {
   ApiError,
   type BrowserSession,
@@ -101,6 +106,242 @@ function table(
   target.replaceChildren(wrap);
 }
 
+function svgNode<K extends keyof SVGElementTagNameMap>(
+  tag: K,
+  attributes: Record<string, string | number> = {},
+  text = "",
+) {
+  const value = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [name, attribute] of Object.entries(attributes))
+    value.setAttribute(name, String(attribute));
+  value.textContent = text;
+  return value;
+}
+
+function renderTrend(data: AdminOverview, priority: AdminPriority) {
+  const trend = data.workload.trend;
+  const target = element(`trend-${priority}`);
+  target.replaceChildren(node("h3", priorityName(priority)));
+  const change = workloadChange(trend, priority);
+  if (change) {
+    const direction =
+      change.ready === 0
+        ? "unchanged"
+        : `${count(Math.abs(change.ready))} ${change.ready > 0 ? "more" : "fewer"}`;
+    target.append(
+      node(
+        "p",
+        `Ready: ${count(change.first.ready)} → ${count(change.last.ready)} (${direction}). Held: ${count(change.first.held)} → ${count(change.last.held)}. Blocked: ${count(change.first.blocked)} → ${count(change.last.blocked)}.`,
+        "small",
+      ),
+    );
+  }
+  const segments = trendSegments(trend, priority);
+  const samples = segments.flat();
+  if (!samples.length) {
+    target.append(
+      node(
+        "p",
+        "No classified backlog samples yet. New scheduler runs will record ready, held and blocked counts.",
+        "admin-note",
+      ),
+    );
+    return;
+  }
+  if (samples.length === 1)
+    target.append(
+      node("p", "One sample recorded; a trend needs at least two.", "small"),
+    );
+  const first = trend.points[0].at;
+  const last = trend.points.at(-1)?.at ?? first;
+  const maximum = Math.max(
+    1,
+    ...samples.flatMap(({ counts }) => [
+      counts.ready,
+      counts.held,
+      counts.blocked,
+    ]),
+  );
+  const x = (at: number) =>
+    54 + ((at - first) / Math.max(1, last - first)) * 476;
+  const y = (value: number) => 168 - (value / maximum) * 140;
+  const chart = svgNode("svg", {
+    viewBox: "0 0 550 205",
+    role: "img",
+    "aria-labelledby": `trend-title-${priority} trend-description-${priority}`,
+    class: "admin-trend-chart",
+  });
+  chart.append(
+    svgNode(
+      "title",
+      { id: `trend-title-${priority}` },
+      `${priorityName(priority)} backlog`,
+    ),
+    svgNode(
+      "desc",
+      { id: `trend-description-${priority}` },
+      "Source records ready, held and blocked in the sampled period. Gaps indicate missing samples. Exact counts and timestamps are in the backlog samples table below.",
+    ),
+  );
+  for (const value of [0, maximum / 2, maximum]) {
+    const position = y(value);
+    chart.append(
+      svgNode("line", {
+        x1: 54,
+        x2: 530,
+        y1: position,
+        y2: position,
+        class: "trend-grid",
+      }),
+      svgNode(
+        "text",
+        { x: 44, y: position + 4, "text-anchor": "end", class: "trend-label" },
+        count(Math.round(value)),
+      ),
+    );
+  }
+  for (const key of ["ready", "held", "blocked"] as const) {
+    for (const segment of segments) {
+      chart.append(
+        svgNode("polyline", {
+          points: segment
+            .map((point) => `${x(point.at)},${y(point.counts[key])}`)
+            .join(" "),
+          class: `trend-line trend-${key}`,
+        }),
+      );
+      for (const point of segment)
+        chart.append(
+          svgNode("circle", {
+            cx: x(point.at),
+            cy: y(point.counts[key]),
+            r: 2.5,
+            class: `trend-dot trend-${key}`,
+          }),
+        );
+    }
+  }
+  const time = (at: number) =>
+    new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  chart.append(
+    svgNode("text", { x: 54, y: 196, class: "trend-label" }, time(first)),
+    svgNode(
+      "text",
+      { x: 530, y: 196, "text-anchor": "end", class: "trend-label" },
+      time(last),
+    ),
+  );
+  target.append(chart);
+}
+
+function renderWorkload(data: AdminOverview) {
+  const { workload } = data;
+  const status = workloadStatus(data);
+  element("workload-title").textContent = status.title;
+  element("workload-detail").textContent = status.detail;
+  element("workload-status").classList.toggle("admin-warning", status.warning);
+  table(
+    "source-backlog",
+    ["Traffic", "Ready", "Held", "Blocked", "Expired"],
+    workload.source.map((row) => [
+      cell(
+        priorityName(row.priority),
+        row.oldestRetainedAt === null
+          ? "No retained input"
+          : `Oldest retained input: ${age(row.oldestRetainedAt, data.generatedAt)}`,
+      ),
+      count(row.ready),
+      count(row.held),
+      count(row.blocked),
+      count(row.expired),
+    ]),
+    "No outstanding source work.",
+  );
+  element("source-retention").textContent =
+    `${count(data.backlog.source.reduce((total, row) => total + row.expiring24h, 0))} source records expire within the next 24 hours. Retained input age measures time since the buffered input was stored, not how long a contact has been stuck. Expired records need fresh source data before processing.`;
+  for (const [id, reasons, empty] of [
+    ["held-reasons", workload.heldReasons, "No held source work."],
+    ["blocked-reasons", workload.blockedReasons, "No blocked source work."],
+  ] as const)
+    table(
+      id,
+      ["Reason", "Traffic", "Source records"],
+      reasons.map((row) => [
+        row.label,
+        priorityName(row.priority),
+        count(row.count),
+      ]),
+      empty,
+    );
+  const { trend, deliveries } = workload;
+  const coverage = `${count(trend.sampleCount)} of ${count(trend.expectedSamples)} expected scheduler snapshots available`;
+  element("trend-coverage").textContent =
+    `${coverage}.${trend.lastAt === null ? "" : ` Latest sample: ${age(trend.lastAt, data.generatedAt)} (${date(trend.lastAt)}).`}${trend.stale ? " Recent sampling is incomplete or out of date." : ""}${trend.truncated ? " Only the newest 2,000 scheduler records are included; older samples in this window may be missing." : ""}${trend.maxGapMs === null ? "" : ` Largest sampling gap: ${Math.round(trend.maxGapMs / 60_000)} minutes.`}`;
+  for (const priority of ["live", "background"] as const)
+    renderTrend(data, priority);
+  table(
+    "backlog-samples",
+    [
+      "Sampled",
+      "Live: ready / held / blocked",
+      "Imports: ready / held / blocked",
+    ],
+    trend.points.map((point) => [
+      date(point.at),
+      ...(["live", "background"] as const).map((priority) => {
+        const counts = point[priority];
+        return counts === null
+          ? "No classified sample"
+          : `${count(counts.ready)} / ${count(counts.held)} / ${count(counts.blocked)}`;
+      }),
+    ]),
+    "No backlog samples available.",
+  );
+  const hours = deliveries.windowMs / 3_600_000;
+  element("delivery-window").textContent = `Last ${hours} hours`;
+  table(
+    "delivery-throughput",
+    ["Destination", "Completed deliveries", "Average / hour"],
+    [
+      [
+        "QRZ accepted",
+        count(deliveries.qrz),
+        (deliveries.qrz / hours).toLocaleString(undefined, {
+          maximumFractionDigits: 1,
+        }),
+      ],
+      [
+        "LoTW confirmed by readback",
+        count(deliveries.lotw),
+        (deliveries.lotw / hours).toLocaleString(undefined, {
+          maximumFractionDigits: 1,
+        }),
+      ],
+      [
+        "Total",
+        count(deliveries.total),
+        (deliveries.total / hours).toLocaleString(undefined, {
+          maximumFractionDigits: 1,
+        }),
+      ],
+    ],
+    "No completed deliveries in this period.",
+  );
+  element("delivery-context").textContent =
+    `Last completed delivery in this period: ${age(deliveries.lastCompletedAt, data.generatedAt)}. ${count(deliveries.submittedOutstanding)} LoTW submissions await readback. ${count(deliveries.adoptedExisting)} existing destination records are currently adopted; these are not new deliveries.`;
+  table(
+    "delivery-buckets",
+    ["Hour ending", "QRZ accepted", "LoTW readback", "Total completed"],
+    deliveries.buckets.map((bucket) => [
+      date(bucket.at),
+      count(bucket.qrz),
+      count(bucket.lotw),
+      count(bucket.total),
+    ]),
+    "No completed deliveries in this period.",
+  );
+}
+
 const { request: api } = createApiClient(async () => {
   message("Verify your passkey to change invitations.");
   const begin = await api<{
@@ -138,26 +379,28 @@ function renderOverview(data: AdminOverview) {
   const now = data.generatedAt;
   const metrics = element("admin-metrics");
   metrics.replaceChildren();
-  const sourceCount = (priority: string) =>
-    data.backlog.source.find((row) => row.priority === priority)?.pending ?? 0;
+  const sourceCount = (key: "ready" | "held" | "blocked") =>
+    data.workload.source.reduce((total, row) => total + row[key], 0);
   for (const [label, value, detail] of [
     [
-      "Last scheduler start",
-      age(data.scheduler.lastStartedAt, now),
-      data.scheduler.lastCompletedAt === null
-        ? "No completion recorded"
-        : `Completed ${age(data.scheduler.lastCompletedAt, now).toLowerCase()}`,
-    ],
-    ["Live source work", count(sourceCount("live")), "Pending source contacts"],
-    [
-      "Background source work",
-      count(sourceCount("background")),
-      "Pending import contacts",
+      "Ready source records",
+      count(sourceCount("ready")),
+      "No known hold · worker validation still applies",
     ],
     [
-      "Time budget stops · 24h",
-      count(data.scheduler.totals24h.deadlineRuns),
-      `${count(data.scheduler.totals24h.failed)} failed runs · ${count(data.scheduler.totals24h.errors)} processing errors`,
+      "Held source records",
+      count(sourceCount("held")),
+      "Waiting on a prerequisite, quiet time or review",
+    ],
+    [
+      "Blocked source records",
+      count(sourceCount("blocked")),
+      "Source data needs review",
+    ],
+    [
+      "Completed deliveries · 24h",
+      count(data.workload.deliveries.total),
+      "Confirmed destination contacts · excludes submissions",
     ],
   ]) {
     const metric = node("div", "", "admin-metric");
@@ -196,7 +439,7 @@ function renderOverview(data: AdminOverview) {
         "admin-notice admin-warning",
       ),
     );
-  if (!data.gates.effective)
+  if (!data.gates.effective && data.scheduler.stale)
     notices.append(
       node(
         "p",
@@ -204,22 +447,9 @@ function renderOverview(data: AdminOverview) {
         "admin-notice",
       ),
     );
-  table(
-    "source-backlog",
-    ["Traffic", "Pending", "Blocked", "Expired"],
-    data.backlog.source.map((row) => [
-      cell(
-        priorityName(row.priority),
-        row.oldestRetainedAt === null
-          ? "No retained input age"
-          : `Oldest retained input: ${age(row.oldestRetainedAt, now)}`,
-      ),
-      count(row.pending),
-      count(row.blocked),
-      cell(count(row.expired), `${count(row.expiring24h)} expire within 24h`),
-    ]),
-    "No pending source work.",
-  );
+  renderWorkload(data);
+  element("scheduler-freshness").textContent =
+    `Last start: ${age(data.scheduler.lastStartedAt, now)}. Last completed: ${age(data.scheduler.lastCompletedAt, now)}. ${count(data.scheduler.totals24h.deadlineRuns)} time-budget stops in the last 24 hours.`;
   const candidates = data.backlog.deliveryCandidates;
   element("delivery-candidates").textContent =
     `${count(candidates.due)} delivery candidates past quiet time · ${count(candidates.quiet)} still settling.${candidates.oldestDueAt === null ? "" : ` Oldest due: ${age(candidates.oldestDueAt, now)}.`} Other eligibility and rollout gates still apply.`;
@@ -279,12 +509,14 @@ function renderOverview(data: AdminOverview) {
   table(
     "attention",
     ["Area", "State", "Count"],
-    data.attention.map((row) => [
-      readable(row.area),
-      readable(row.state),
-      count(row.count),
-    ]),
-    "No attention states recorded in this snapshot.",
+    data.attention
+      .filter((row) => row.area !== "source")
+      .map((row) => [
+        readable(row.area),
+        readable(row.state),
+        count(row.count),
+      ]),
+    "No destination or delivery-attempt attention states in this snapshot.",
   );
   element("export-state").replaceChildren(
     pill(
@@ -325,7 +557,7 @@ function renderOverview(data: AdminOverview) {
       "Elapsed",
       "Work processed",
       "Errors / deferred",
-      "Source backlog: live / import",
+      "Stored pending source rows: live / import",
       "Due attempts: live / import",
     ],
     data.scheduler.recentRuns.map((run) => [

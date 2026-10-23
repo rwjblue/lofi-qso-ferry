@@ -137,6 +137,104 @@ header a {
 .admin-note {
   margin: 0.9rem 0;
 }
+.admin-workload-status {
+  padding: 1.25rem 1.4rem;
+  border: 1px solid #c4ddd2;
+  border-left: 4px solid #277d69;
+  border-radius: 10px;
+  background: #eaf2ee;
+}
+.admin-workload-status h2 {
+  margin: 0.45rem 0;
+  font-size: 1.3rem;
+}
+.admin-workload-status p {
+  margin: 0.5rem 0 0;
+  max-width: 80ch;
+}
+.admin-workload-status.admin-warning {
+  border-color: #e7c994;
+}
+.admin-reason-columns {
+  margin: 1.4rem 0;
+  grid-template-columns: 1fr 1fr;
+}
+.admin-reason-columns > section {
+  min-width: 0;
+}
+.admin-trends {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+.admin-trends > section {
+  min-width: 0;
+}
+.admin-trends h3 {
+  margin-top: 1rem;
+}
+.admin-trends p {
+  min-height: 3rem;
+  margin-bottom: 0.2rem;
+}
+.admin-trend-chart {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+.admin-trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  font-size: 0.8rem;
+}
+.admin-trend-legend span {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.admin-trend-legend span::before {
+  content: "";
+  width: 1.3rem;
+  border-top: 3px solid #146c68;
+}
+.admin-trend-legend .legend-held::before {
+  border-color: #a06c15;
+  border-top-style: dashed;
+}
+.admin-trend-legend .legend-blocked::before {
+  border-color: #a33f4b;
+  border-top-style: dotted;
+}
+.trend-grid {
+  stroke: #d8e2de;
+  stroke-width: 1;
+}
+.trend-label {
+  fill: #526d6b;
+  font-size: 13px;
+  font-family: inherit;
+}
+.trend-line {
+  fill: none;
+  stroke-width: 2.5;
+}
+.trend-ready {
+  stroke: #146c68;
+}
+.trend-held {
+  stroke: #a06c15;
+  stroke-dasharray: 7 4;
+}
+.trend-blocked {
+  stroke: #a33f4b;
+  stroke-dasharray: 2 4;
+}
+.trend-dot {
+  fill: white;
+  stroke-width: 2;
+  stroke-dasharray: none;
+}
 .admin-gate,
 .admin-vendor {
   padding: 0.75rem 0;
@@ -206,6 +304,27 @@ header a {
 .admin-main .table-wrap {
   margin: 0.8rem 0;
 }
+#source-backlog table {
+  min-width: 470px;
+  table-layout: fixed;
+}
+#source-backlog td:first-child {
+  width: 40%;
+}
+#source-backlog th:first-child {
+  width: 40%;
+}
+#held-reasons table,
+#blocked-reasons table {
+  min-width: 450px;
+}
+#held-reasons td:first-child,
+#blocked-reasons td:first-child {
+  min-width: 190px;
+}
+#delivery-throughput table {
+  min-width: 420px;
+}
 .admin-search {
   max-width: 310px;
   width: 100%;
@@ -213,6 +332,9 @@ header a {
 }
 .admin-search input {
   margin-bottom: 0;
+}
+.admin-scroll-hint {
+  display: none;
 }
 .admin-explainer {
   background: #edf5ef;
@@ -247,7 +369,8 @@ header a {
   border: 0;
 }
 @media (max-width: 800px) {
-  .admin-columns {
+  .admin-columns,
+  .admin-trends {
     grid-template-columns: 1fr;
   }
   .admin-metrics {
@@ -255,6 +378,10 @@ header a {
   }
 }
 @media (max-width: 480px) {
+  .admin-scroll-hint {
+    display: block;
+    margin: 0.5rem 0;
+  }
   .admin-heading {
     gap: 0.5rem;
   }

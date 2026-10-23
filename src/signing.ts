@@ -3,6 +3,7 @@
  * SHA-1 is required by this legacy wire protocol, never for application hashes.
  */
 import forge from "node-forge";
+import { normalizeLotwStationGrid } from "./lotw-grid.ts";
 
 const OID = {
   call: "1.3.6.1.4.1.12348.1.1",
@@ -10,7 +11,7 @@ const OID = {
   last: "1.3.6.1.4.1.12348.1.3",
   dxcc: "1.3.6.1.4.1.12348.1.4",
 };
-export const SIGNING_CONFIGURATION = "ferry-lotw-v2-us-ca-1";
+export const SIGNING_CONFIGURATION = "ferry-lotw-v2-us-ca-2";
 export type CertificateStatus =
   | "unrevoked"
   | "revoked"
@@ -338,10 +339,7 @@ function stationFields(station: LotwStation): Record<string, string> {
     DXCC: String(station.dxcc),
   };
   if (station.grid) {
-    const grid = station.grid.toUpperCase();
-    if (!/^[A-R]{2}[0-9]{2}(?:[A-X]{2})?$/.test(grid))
-      fail("Unsupported station grid");
-    fields.GRIDSQUARE = grid;
+    fields.GRIDSQUARE = normalizeLotwStationGrid(station.grid);
   }
   if (station.cqZone !== undefined) {
     if (

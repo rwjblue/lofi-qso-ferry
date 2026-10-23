@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
+import { createVerify } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { createVerify } from "node:crypto";
 import forge from "node-forge";
 import {
   buildSignedTq8,
   canonicalSigningData,
   importPkcs12,
-  lotwMode,
-  signCanonical,
   type LotwContact,
   type LotwStation,
+  lotwMode,
+  SIGNING_CONFIGURATION,
+  signCanonical,
 } from "../src/signing.ts";
+
 const fixture = (name: string) =>
   readFileSync(new URL(`../fixtures/signing/${name}`, import.meta.url));
 const vector: {
@@ -264,6 +266,48 @@ test("canonical vector matches independent OpenSSL signature bytes and verifies"
   assert.equal(decoded, artifact.text);
   assert.match(decoded, /<SIGN_LOTW_V2.0:344:6>/);
   assert.match(decoded, /<GRIDSQUARE:6>FN31PR/);
+});
+test("eight-character station grid is preserved in the signed payload and independent signature vector", async () => {
+  const credential = await importPkcs12(
+    fixture("current.p12"),
+    "ferry-fixture",
+    importOptions,
+  );
+  const station = Object.freeze({ ...vector.station, grid: "fn31pr12" });
+  const canonical = "5FN31PR128TOLLANDCT20MK1ABC14.074FT82026-10-2212:34:56Z";
+  // openssl dgst -sha1 -sign fixtures/signing/key.pem; exact ASCII, no newline.
+  const signature =
+    "mg3e2CUea3QtG5/mk4lbD3zqgmULmOVmyQYmVWclg37zLOjOkfpNcIc3GaXRz2MWt/4gsPU4py0zOwpIfIOS105FyXKeWf9L4pt1OZLshjbyLIDnfXXnIuUb1LUj84bgUo/4B/vCFsu4AXjHzGcy9XjZtxOy+fmysZ3DCam5u7ax9WyUa+48zhzwuOR363fPuC4hNcMv03D9A5IvTnh5/VJTz6Wu+pAw6BVZpVGQk8sGt/eHASlA4/o2rWPmvTcy9NUPYlh7ivquUK4sRraJjOd7YqA2G/1XmfW6meSWRYGDU+ZWHsvaP+sD1vYyJYPUuMJC1aGbdr8S++cfR0EacQ==";
+  assert.equal(canonicalSigningData(station, vector.contact), canonical);
+  assert.equal(
+    await signCanonical(credential.privateKeyPkcs8, canonical),
+    signature,
+  );
+  for (const [data, valid] of [
+    [canonical, true],
+    [canonical.replace("FN31PR12", "FN31PR"), false],
+    [canonical.replace("FN31PR12", "FN31PR13"), false],
+  ] as const) {
+    const verifier = createVerify("RSA-SHA1");
+    verifier.update(data);
+    assert.equal(
+      verifier.verify(fixture("certificate.pem"), signature, "base64"),
+      valid,
+    );
+  }
+  const artifact = await buildSignedTq8(
+    credential,
+    station,
+    [vector.contact],
+    now,
+  );
+  assert.equal(artifact.configurationVersion, SIGNING_CONFIGURATION);
+  assert.equal(SIGNING_CONFIGURATION, "ferry-lotw-v2-us-ca-2");
+  assert.deepEqual(artifact.canonicalData, [canonical]);
+  assert.match(artifact.text, /<GRIDSQUARE:8>FN31PR12\n/);
+  assert.ok(artifact.text.includes(signature));
+  assert.doesNotMatch(artifact.text, /GRIDSQUARE_EXT|<GRIDSQUARE:6>/);
+  assert.equal(station.grid, "fn31pr12");
 });
 test("signer requires fresh unrevoked status, correct station and authorized QSO dates", async () => {
   const credential = await importPkcs12(

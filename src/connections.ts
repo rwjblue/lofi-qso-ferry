@@ -10,8 +10,8 @@ import { lofiAccountEmail, lofiAccountLabel } from "./lofi-identity.ts";
 import { LotwClient, LotwLoginError } from "./lotw.ts";
 import {
   type LotwLoginVerification,
-  lotwVerification,
   lotwReadyForUpload,
+  lotwVerification,
 } from "./lotw-verification.ts";
 import { type QrzBook, QrzClient } from "./qrz.ts";
 import {
@@ -25,6 +25,7 @@ import { defaultTemplate as accountDefaultTemplate } from "./settings.ts";
 import {
   importPkcs12,
   type LotwStation,
+  SIGNING_CONFIGURATION,
   type SigningCredential,
 } from "./signing.ts";
 import { type Connection, Store } from "./store.ts";
@@ -693,7 +694,7 @@ export async function connectionRoute(
         readAccess: Boolean(query),
         ...(loginVerification ? { loginVerification } : {}),
         certificates: signingCredentials.map(publicCertificate),
-        signingConfiguration: "ferry-lotw-v2-us-ca-1",
+        signingConfiguration: SIGNING_CONFIGURATION,
       };
       const verification = lotwVerification(config);
       const status = lotwReadyForUpload(config)

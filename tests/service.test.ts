@@ -70,7 +70,7 @@ test("an idle drain polls a completed source and processes each contact only onc
     assert.equal(result.attempts, 0);
     assert.equal(h.calls.sourceSync, 1);
     assert.equal(h.calls.reread, 1);
-    assert.equal(h.calls.qrzReads, 1);
+    assert.equal(h.calls.qrzReads, 2); // Shared base inventory plus modification catch-up.
     assert.equal(h.calls.lotwQueries, 1);
   } finally {
     wallClock.mock.restore();
@@ -385,6 +385,7 @@ test("retained background history reconciles after source polling and before a s
     const result = await tick(h.env, fetcher, wall);
     assert.deepEqual(phases, [
       "source-poll",
+      "qrz-readback",
       "qrz-readback",
       "lotw-readback",
       "background-rescan",
@@ -850,9 +851,9 @@ test("new forward arrivals precede historical reconciliation, even with old QSO 
     };
     const second = await tick(h.env, observed, FIXTURE_NOW + 300000);
     assert.equal(second.errors, 0);
-    // The initial LoTW background allowance leaves q1 awaiting readback too.
-    assert.equal(second.contacts, 12);
-    assert.match(lookups[0]!, /CALL:N9LIVE/);
+    // Shared inventory settles the old contacts once; their review holds stay quiet.
+    assert.equal(second.contacts, 1);
+    assert.match(lookups[0]!, /BETWEEN:202[01]-/);
     assert(await h.store.ledger({ ...key("destination"), qso: "offline-new" }));
     assert.equal(
       await count(
@@ -925,7 +926,7 @@ test("successive fair rounds drain live and historical attempts in one invocatio
   }
 });
 
-test("live delivery keeps request capacity instead of accumulating prepared uploads", async () => {
+test("live delivery progresses within bounded vendor and database turns", async () => {
   const h = await schedulerFixture();
   const scopedReadback: typeof fetch = async (input, init) => {
     const response = await h.fetcher(input, init);
@@ -976,9 +977,28 @@ test("live delivery keeps request capacity instead of accumulating prepared uplo
     );
     const due = await tick(h.env, scopedReadback, FIXTURE_NOW + 36 * 60000);
     assert.equal(due.errors, 0);
-    assert.equal(due.stopReason, "idle");
+    assert(["idle", "database_budget"].includes(due.stopReason));
     assert(h.calls.lotwUploads > 0);
-    assert(due.deferred > 0);
+    if (due.stopReason === "database_budget") {
+      assert(due.throughput!.database.calls >= 850);
+      assert(due.throughput!.database.calls < 950);
+    }
+    let uploads = h.calls.lotwUploads;
+    for (let turn = 1; turn <= 3 && h.calls.lotwUploads < 10; turn++) {
+      const resumed = await tick(
+        h.env,
+        scopedReadback,
+        FIXTURE_NOW + (36 + turn * 5) * 60000,
+      );
+      assert.equal(resumed.errors, 0);
+      assert(h.calls.lotwUploads > uploads);
+      uploads = h.calls.lotwUploads;
+      const budget = await h.store
+        .statement("SELECT requests FROM vendor_requests WHERE vendor='lotw'")
+        .first<{ requests: number }>();
+      assert((budget?.requests ?? 0) <= 40);
+    }
+    assert.equal(h.calls.lotwUploads, 10);
     assert.equal(
       await count(
         h,
@@ -987,10 +1007,6 @@ test("live delivery keeps request capacity instead of accumulating prepared uplo
       ),
       0,
     );
-    const budget = await h.store
-      .statement("SELECT requests FROM vendor_requests WHERE vendor='lotw'")
-      .first<{ requests: number }>();
-    assert.equal(budget?.requests, 40);
   } finally {
     await h.mf.dispose();
   }
@@ -1163,5 +1179,109 @@ test("expired history resumes through background repair without resetting forwar
     assert.equal(JSON.parse(repair!.cursor).rescanComplete, true);
   } finally {
     await h.mf.dispose();
+  }
+});
+
+test("twenty historical contacts share inventory and unchanged review holds stay quiet", async () => {
+  const h = await schedulerFixture();
+  try {
+    h.qrzRecords[0].TIME_ON = h.qrzRecords[0].TIME_ON!.slice(0, 4);
+    h.lotwRecords[0].MY_GRIDSQUARE = "FN31";
+    for (let index = 1; index < 20; index++) {
+      const call = `K1SCALE${index}`;
+      h.changes.qsos.push({
+        ...h.qso,
+        uuid: `scale-${index}`,
+        operation: null,
+        their: { call },
+        our: { stationCall: "W1AW", grid: "FN31AA", dxccCode: 291 },
+        syncedAtMillis: 110 + index,
+      });
+      h.qrzRecords.push({
+        ...h.qrzRecords[0],
+        CALL: call,
+        APP_QRZLOG_LOGID: String(500 + index),
+      });
+      h.lotwRecords.push({ ...h.lotwRecords[0], CALL: call });
+    }
+    const first = await tick(h.env, h.fetcher, FIXTURE_NOW);
+    assert.equal(first.errors, 0);
+    assert.equal(first.contacts, 20);
+    assert.equal(first.throughput?.classifiedDestinations, 40);
+    assert.equal(first.throughput?.inventoryFetches, 3);
+    assert((first.throughput?.inventoryCacheHits ?? 0) >= 38);
+    assert.equal(h.calls.qrzReads, 2);
+    assert.equal(h.calls.lotwQueries, 1);
+    assert.equal(await count(h, "ledger", "state='history_ambiguous'"), 40);
+    const reads = [h.calls.qrzReads, h.calls.lotwQueries];
+    const next = await tick(h.env, h.fetcher, FIXTURE_NOW + 300000);
+    assert.equal(next.contacts, 0);
+    assert.deepEqual([h.calls.qrzReads, h.calls.lotwQueries], reads);
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+    assert.equal(h.calls.lotwUploads, 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("source changes during shared history cannot commit a stale association", async () => {
+  for (const mutation of [
+    null,
+    "UPDATE cursors SET generation=generation+1 WHERE tenant='a' AND connection='source' AND stream='context'",
+    "UPDATE source_work SET revision='concurrent-revision' WHERE tenant='a' AND source='source' AND id='q1' AND kind='qso'",
+    "UPDATE source_work SET expires_at=0 WHERE tenant='a' AND source='source' AND id='event-race' AND kind='qso'",
+    "UPDATE private_data SET expires_at=0 WHERE tenant='a' AND connection='source' AND kind='source' AND id=(SELECT private_id FROM source_work WHERE tenant='a' AND source='source' AND id='event-race' AND kind='qso')",
+    "UPDATE private_data SET revoked_at=1 WHERE tenant='a' AND connection='source' AND kind='source' AND id=(SELECT private_id FROM source_work WHERE tenant='a' AND source='source' AND id='event-race' AND kind='qso')",
+    "DELETE FROM private_data WHERE tenant='a' AND connection='source' AND kind='source' AND id=(SELECT private_id FROM source_work WHERE tenant='a' AND source='source' AND id='event-race' AND kind='qso')",
+  ]) {
+    const h = await schedulerFixture();
+    try {
+      const event = {
+        uuid: "event-race",
+        operation: h.qso.operation,
+        band: "event",
+        startAtMillis: Number(h.qso.startAtMillis) - 1000,
+        event: { event: "break", operation: { grid: "FN32BB" } },
+        syncedAtMillis: 102,
+      };
+      h.changes.qsos.push(event);
+      h.qrzRecords[0].MY_GRIDSQUARE = "FN32BB";
+      h.lotwRecords[0].MY_GRIDSQUARE = "FN32BB";
+      let changed = false;
+      const concurrent: typeof fetch = async (input, init) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/v1/operations/op-fixture/qsos") {
+          const response = await h.fetcher(input, init);
+          const page = (await response.json()) as {
+            qsos: unknown[];
+          };
+          page.qsos.push(event);
+          return Response.json(page);
+        }
+        if (!changed && url.hostname === "logbook.qrz.com") {
+          changed = true;
+          if (mutation) await h.store.statement(mutation).run();
+        }
+        return h.fetcher(input, init);
+      };
+      const result = await tick(h.env, concurrent, FIXTURE_NOW);
+      assert(changed);
+      assert.equal(result.errors, 0);
+      for (const destination of ["destination", "lotw"]) {
+        const ledger = await h.store.ledger(key(destination));
+        if (mutation) assert.equal(ledger?.remote_id, null, mutation);
+        else {
+          assert(ledger?.remote_id, "valid retained event context adopts");
+          assert.equal(ledger.state, "adopted_existing");
+        }
+      }
+      assert.equal(result.throughput?.adoptedDestinations, mutation ? 0 : 2);
+      assert.equal(await count(h, "attempts"), 0);
+      assert.equal(h.calls.qrzWrites, 0);
+      assert.equal(h.calls.lotwUploads, 0);
+    } finally {
+      await h.mf.dispose();
+    }
   }
 });

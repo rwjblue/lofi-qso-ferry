@@ -310,8 +310,21 @@ export async function schedulerFixture() {
       if (url.pathname === "/lotwuser/lotwreport.adi") {
         calls.lotwQueries++;
         if (errors.lotw) throw new Error("synthetic LoTW outage");
+        const query = url.searchParams;
+        const selected = lotwRecords.filter(
+          (record) =>
+            (!query.get("qso_owncall") ||
+              record.STATION_CALLSIGN?.toUpperCase() ===
+                query.get("qso_owncall")!.toUpperCase()) &&
+            (!query.get("qso_callsign") ||
+              record.CALL?.toUpperCase() ===
+                query.get("qso_callsign")!.toUpperCase()) &&
+            record.QSO_DATE! >=
+              query.get("qso_startdate")!.replaceAll("-", "") &&
+            record.QSO_DATE! <= query.get("qso_enddate")!.replaceAll("-", ""),
+        );
         return new Response(
-          `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:${String(lotwRecords.length).length}>${lotwRecords.length}<EOH>${lotwRecords.map(serializeAdifRecord).join("")}<APP_LOTW_EOF>`,
+          `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:${String(selected.length).length}>${selected.length}<EOH>${selected.map(serializeAdifRecord).join("")}<APP_LOTW_EOF>`,
         );
       }
       if (url.pathname === "/lotw/upload") {

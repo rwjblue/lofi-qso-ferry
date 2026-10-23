@@ -571,7 +571,7 @@ export async function connectionRoute(
         const results = await store.db.batch([
           sessionGuard(store, identity, now),
           store.statement(
-            "UPDATE connections SET config=json_set(config,'$.loginVerification',json(?)),status=CASE WHEN status IN('disabled','paused') THEN status WHEN ?='verified' THEN CASE WHEN status='active' THEN status ELSE ? END WHEN ?='rejected' THEN 'needs_verification' ELSE status END WHERE tenant=? AND id=? AND credential_version=? AND status!='revoked'",
+            "UPDATE connections SET config=json_set(config,'$.loginVerification',json(?)),status=CASE WHEN status IN('disabled','paused') THEN status WHEN ?='verified' THEN CASE WHEN status='active' THEN status ELSE ? END WHEN ?='rejected' THEN 'needs_verification' ELSE status END WHERE tenant=? AND id=? AND credential_version=? AND status!='revoked' RETURNING id",
             JSON.stringify(loginVerification),
             loginVerification.status,
             verifiedStatus,
@@ -585,7 +585,7 @@ export async function connectionRoute(
             identity.tenant,
           ),
         ]);
-        if (results[1].meta.changes !== 1)
+        if (results[1].results.length !== 1)
           throw new ConnectionError(
             409,
             "LoTW credentials changed during verification. Refresh and check again.",

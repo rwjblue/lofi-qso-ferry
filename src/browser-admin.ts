@@ -566,7 +566,7 @@ function renderOverview(data: AdminOverview) {
         run.status,
         run.stopReason === null
           ? "Stop reason not recorded"
-          : `${run.rounds} rounds · ${run.stopReason === "deadline" ? "time budget reached" : "idle"}`,
+          : `${run.rounds} rounds · ${run.stopReason === "deadline" ? "time budget reached" : run.stopReason === "database_budget" ? "database budget reached" : "idle"}`,
       ),
       run.durationMs === null ? "—" : `${(run.durationMs / 1000).toFixed(1)}s`,
       cell(

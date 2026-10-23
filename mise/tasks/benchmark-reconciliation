@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Benchmark indexed reconciliation scheduling with 4k and 200k synthetic local contacts"
+set -euo pipefail
+npx tsx scripts/benchmark-reconciliation.ts "$@"

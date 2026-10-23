@@ -1,3 +1,4 @@
+import { measuredDatabase, type DatabaseMetrics } from "./database-metrics.ts";
 import { establishCutovers, proveNewAfterCutover } from "./cutover.ts";
 import { rotatePrivateData, purgeResolvedSource } from "./maintenance.ts";
 import { purgeAuth } from "./auth.ts";
@@ -17,6 +18,18 @@ import {
   pollSource,
   rereadOperation,
 } from "./intake.ts";
+import {
+  historyCandidates,
+  historyInventoryGuard,
+  pruneHistoryInventory,
+} from "./history-inventory.ts";
+import {
+  finishReconciliationWork,
+  reconciliationCheckDue,
+  recordReconciliationCheck,
+  syncReconciliationPolicy,
+} from "./reconciliation-work.ts";
+import type { IntakeContact } from "./intake.ts";
 import { LotwClient, LotwLoginError } from "./lotw.ts";
 import { refreshLotwCertificates } from "./lotw-maintenance.ts";
 import type { Contact } from "./projection.ts";
@@ -97,12 +110,13 @@ async function reconcileContact(
   store: Store,
   source: Connection,
   destination: Connection,
-  contact: Contact,
+  contact: IntakeContact,
   gates: DeliveryGates,
   fetcher: typeof fetch,
   now: number,
   priority: VendorPriority,
   vendorNow: number | undefined,
+  metrics: ThroughputMetrics,
 ) {
   const key: LedgerKey = {
     tenant: source.tenant,
@@ -138,60 +152,97 @@ async function reconcileContact(
       "Source fields cannot be represented in ADIF; review contact",
     );
   }
-  let raw: {
-    apiKey?: string;
-    query?: { username: string; password: string };
-  } | null;
-  try {
-    raw = destination.credential_version
-      ? await store.private<typeof raw>(
-          key.tenant,
-          destination.id,
-          destination.credential_version,
-          "credential",
-        )
-      : null;
-  } catch {
-    throw new ReconciliationError(
-      "Saved destination credentials could not be opened; review connection",
-    );
+  if (!(await reconciliationCheckDue(store, key, contact.generation, now)))
+    return;
+  const input = {
+    source,
+    destination,
+    qso: contact.id,
+    record,
+    generation: contact.generation,
+  };
+  const options = { fetcher, now: vendorNow, priority, vendorNow };
+  let inventory = await historyCandidates(store, input, options);
+  if (inventory.fetched) metrics.inventoryFetches++;
+  // Complete a small QRZ base/catch-up pair within one contact turn. Large
+  // partitions resume in later turns; this never loops through an entire book.
+  if (inventory.state === "pending" && inventory.progressed) {
+    inventory = await historyCandidates(store, input, options);
+    if (inventory.fetched) metrics.inventoryFetches++;
   }
-  let remote: Record<string, string>[] = [];
-  let readAccess = false;
-  if (destination.kind === "qrz" && raw?.apiKey) {
-    remote = await new QrzClient(raw.apiKey, {
-      fetch: vendorFetch(store, "qrz", fetcher, { priority, now: vendorNow }),
-    }).findNeighborhood(record);
-    readAccess = true;
-  } else if (destination.kind === "lotw" && raw?.query) {
-    const date = new Date(contact.startAtMillis).toISOString().slice(0, 10);
-    remote = (
-      await new LotwClient(raw.query, {
-        fetcher: vendorFetch(store, "lotw", fetcher, {
-          priority,
-          now: vendorNow,
-        }),
-      }).query({
-        startDate: date,
-        endDate: date,
-        stationCallsign: contact.stationCall,
-        workedCallsign: contact.call,
-      })
-    ).records;
-    readAccess = true;
+  if (inventory.state === "ready" && !inventory.fetched)
+    metrics.inventoryCacheHits++;
+  let remote = inventory.records;
+  let readAccess = inventory.readAccess;
+  let freshCheckComplete = false;
+  if (
+    inventory.state === "ready" &&
+    remote.length === 0 &&
+    exportsEffective(gates)
+  ) {
+    let raw: {
+      apiKey?: string;
+      query?: { username: string; password: string };
+    } | null;
+    try {
+      raw = destination.credential_version
+        ? await store.private<typeof raw>(
+            key.tenant,
+            destination.id,
+            destination.credential_version,
+            "credential",
+          )
+        : null;
+    } catch {
+      throw new ReconciliationError(
+        "Saved destination credentials could not be opened; review connection",
+      );
+    }
+    if (destination.kind === "qrz" && raw?.apiKey) {
+      remote = await new QrzClient(raw.apiKey, {
+        fetch: vendorFetch(store, "qrz", fetcher, { priority, now: vendorNow }),
+      }).findNeighborhood(record);
+      readAccess = true;
+      freshCheckComplete = true;
+    } else if (destination.kind === "lotw" && raw?.query) {
+      const date = new Date(contact.startAtMillis).toISOString().slice(0, 10);
+      remote = (
+        await new LotwClient(raw.query, {
+          fetcher: vendorFetch(store, "lotw", fetcher, {
+            priority,
+            now: vendorNow,
+          }),
+        }).query({
+          startDate: date,
+          endDate: date,
+          stationCallsign: contact.stationCall,
+          workedCallsign: contact.call,
+        })
+      ).records;
+      readAccess = true;
+      freshCheckComplete = true;
+    }
   }
   const evidence: ReconciliationEvidence = {
     destination: destination.kind as "qrz" | "lotw",
     capturedGeneration: contact.generation,
     currentGeneration: contact.generation,
     readAccess,
-    inventoryComplete: readAccess,
-    catchupComplete: true,
-    freshCheckComplete: readAccess,
+    inventoryComplete: inventory.state === "ready",
+    catchupComplete: inventory.state === "ready",
+    freshCheckComplete,
+    inventoryPositiveOnly: true,
     provenNewAfterCutover:
       gates.sourceBoundaryVerified && (await proveNewAfterCutover(store, key)),
   };
   let outcome = classifyHistory(record, remote, evidence);
+  if (inventory.state === "pending")
+    outcome = {
+      ...outcome,
+      state: "inventory_pending",
+      reason:
+        inventory.reason ?? "Shared destination inventory is still loading",
+    };
   if (
     outcome.state === "missing_current_identity" &&
     !gates.sourceBoundaryVerified
@@ -202,16 +253,63 @@ async function reconcileContact(
       reason:
         "Source replay/cutover evidence is not yet verified; absence cannot authorize backfill",
     };
-  await adoptHistory(
+  const commitTime = vendorNow ?? Date.now();
+  const inventoryFence = inventory.fence
+    ? historyInventoryGuard(key, inventory.fence, commitTime)
+    : { sql: inventory.state === "ready" ? "0" : "1", params: [] };
+  const commitGuard = {
+    sql: `${inventoryFence.sql} AND EXISTS(SELECT 1 FROM reconciliation_work r JOIN source_work w ON w.tenant=r.tenant AND w.source=r.source AND w.id=r.qso AND w.kind='qso' JOIN private_data p ON p.tenant=w.tenant AND p.connection=w.source AND p.id=w.private_id AND p.kind='source' JOIN cursors c ON c.tenant=r.tenant AND c.connection=r.source AND c.stream='context' WHERE r.tenant=? AND r.source=? AND r.qso=? AND r.version=? AND w.state IN('pending','waiting') AND w.expires_at>? AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) AND c.generation=? AND json_extract(c.cursor,'$.complete')=1 AND (? IS NULL OR EXISTS(SELECT 1 FROM source_work o JOIN private_data op ON op.tenant=o.tenant AND op.connection=o.source AND op.id=o.private_id AND op.kind='source' WHERE o.tenant=w.tenant AND o.source=w.source AND o.id=? AND o.kind='operation' AND o.state='context' AND o.expires_at>? AND op.revoked_at IS NULL AND (op.expires_at IS NULL OR op.expires_at>?) AND NOT EXISTS(SELECT 1 FROM source_work e LEFT JOIN private_data ep ON ep.tenant=e.tenant AND ep.connection=e.source AND ep.id=e.private_id AND ep.kind='source' WHERE e.tenant=o.tenant AND e.source=o.source AND e.operation_id=o.id AND e.kind='qso' AND e.is_event=1 AND e.deleted=0 AND (e.expires_at<=? OR ep.id IS NULL OR ep.revoked_at IS NOT NULL OR (ep.expires_at IS NOT NULL AND ep.expires_at<=?))))))`,
+    params: [
+      ...inventoryFence.params,
+      key.tenant,
+      key.source,
+      key.qso,
+      contact.reconciliationVersion ?? -1,
+      commitTime,
+      commitTime,
+      contact.contextGeneration,
+      contact.operationId,
+      contact.operationId,
+      commitTime,
+      commitTime,
+      commitTime,
+      commitTime,
+    ],
+  };
+  const adopted = await adoptHistory(
     store,
     key,
     contact.generation,
     outcome,
-    now,
+    commitTime,
     outcome.state === "adopted_existing" && destination.kind === "qrz"
       ? await sourceFingerprint(contact, "qrz", true)
       : undefined,
+    commitGuard,
   );
+  if (adopted.applied) {
+    metrics.classifiedDestinations++;
+    if (outcome.state === "adopted_existing") metrics.adoptedDestinations++;
+    await recordReconciliationCheck(
+      store,
+      key,
+      contact.generation,
+      outcome,
+      now,
+      contact.reconciliationVersion,
+    );
+  }
+}
+export interface ThroughputMetrics {
+  sourceRecords: number;
+  rescanPages: number;
+  rereadPages: number;
+  classifiedDestinations: number;
+  adoptedDestinations: number;
+  inventoryFetches: number;
+  inventoryCacheHits: number;
+  stageMs: Record<string, number>;
+  database: DatabaseMetrics;
 }
 /** Drain fair rounds until idle or out of time, with fenced source cycles. */
 export async function tick(
@@ -224,10 +322,45 @@ export async function tick(
   const now = currentTime();
   const nowAtStart = now;
   const deadline = startedAt + 90_000;
-  const expired = () => Date.now() >= deadline;
+  const metered = measuredDatabase(env.DB);
+  // Leave request headroom for a bounded in-flight operation and cleanup.
+  // A checkpoint sends many statements in one D1 request; retain both counts.
+  const expired = () => Date.now() >= deadline || metered.metrics.calls >= 850;
+  const throughput: ThroughputMetrics = {
+    sourceRecords: 0,
+    rescanPages: 0,
+    rereadPages: 0,
+    classifiedDestinations: 0,
+    adoptedDestinations: 0,
+    inventoryFetches: 0,
+    inventoryCacheHits: 0,
+    stageMs: {},
+    database: metered.metrics,
+  };
+  const measure = async <T>(
+    stage: string,
+    work: () => Promise<T>,
+  ): Promise<T> => {
+    const start = Date.now();
+    try {
+      return await work();
+    } finally {
+      throughput.stageMs[stage] =
+        (throughput.stageMs[stage] ?? 0) + Math.max(0, Date.now() - start);
+    }
+  };
   await purgeAuth(env, now);
-  const store = new Store(env.DB, keyring(env));
+  const store = new Store(metered.database, keyring(env));
   const gates = deliveryGates(env);
+  await syncReconciliationPolicy(
+    store,
+    JSON.stringify({
+      sourceBoundaryVerified: gates.sourceBoundaryVerified,
+      exportsEffective: exportsEffective(gates),
+      allowedQsoIds: gates.allowedQsoIds,
+    }),
+  );
+  await pruneHistoryInventory(store, now);
   await expireSource(store, now);
   await store.recover(now);
   await rotatePrivateData(store);
@@ -252,8 +385,9 @@ export async function tick(
     exportsEnabled: exportsEffective(gates),
     rounds: 0,
     elapsedMs: 0,
-    stopReason: "idle" as "idle" | "deadline",
+    stopReason: "idle" as "idle" | "deadline" | "database_budget",
   };
+  throughput.stageMs.startup = Math.max(0, Date.now() - startedAt);
   const completedPolls = new Set<string>();
   const completedRescans = new Map<string, Set<string>>();
   const stoppedRereads = new Set<string>();
@@ -280,25 +414,29 @@ export async function tick(
       if (expired()) return 0;
       await establishCutovers(store, source, gates, currentTime());
       if (expired()) return 0;
-      const batch = await pendingContactBatch(
-        store,
-        source,
-        1,
-        currentTime(),
-        priority,
-        undefined,
-        nowAtStart,
-        readyContextOnly,
+      const batch = await measure("projection", () =>
+        pendingContactBatch(
+          store,
+          source,
+          priority === "live" ? 1 : 20,
+          currentTime(),
+          priority,
+          undefined,
+          nowAtStart,
+          readyContextOnly,
+        ),
       );
       progress += batch.selected;
+      const destinations = batch.contacts.length
+        ? (await store.connections(source.tenant)).filter(
+            (c) => c.kind !== "lofi" && c.status === "active",
+          )
+        : [];
       for (const contact of batch.contacts) {
         if (expired()) break;
         const now = currentTime();
         try {
           result.contacts++;
-          const destinations = (await store.connections(source.tenant)).filter(
-            (c) => c.kind !== "lofi" && c.status === "active",
-          );
           const routed = (["qrz", "lotw"] as const).flatMap((kind) => {
             const matches = destinations.filter(
               (c) => c.kind === kind && routeMatches(c, contact),
@@ -340,16 +478,19 @@ export async function tick(
             const destination = candidates[0];
             let preparing = false;
             try {
-              await reconcileContact(
-                store,
-                source,
-                destination,
-                contact,
-                gates,
-                fetcher,
-                now,
-                priority,
-                clock,
+              await measure("history", () =>
+                reconcileContact(
+                  store,
+                  source,
+                  destination,
+                  contact,
+                  gates,
+                  fetcher,
+                  now,
+                  priority,
+                  clock,
+                  throughput,
+                ),
               );
               if (expired()) break;
               // Read-only adoption must retain its actual history diagnosis.
@@ -408,6 +549,14 @@ export async function tick(
         } catch (error) {
           if (error instanceof VendorDeferredError) result.deferred++;
           else result.errors++;
+        } finally {
+          await finishReconciliationWork(
+            store,
+            source,
+            contact.id,
+            contact.reconciliationVersion,
+            currentTime(),
+          );
         }
       }
       return batch.selected;
@@ -416,14 +565,17 @@ export async function tick(
     try {
       if (pollTurn) {
         try {
-          const page = await pollSource(
-            store,
-            source,
-            fetcher,
-            currentTime(),
-            "sync",
-            clock ?? null,
+          const page = await measure("sourcePoll", () =>
+            pollSource(
+              store,
+              source,
+              fetcher,
+              currentTime(),
+              "sync",
+              clock ?? null,
+            ),
           );
+          throughput.sourceRecords += page.records;
           result.sources += page.pages;
           progress += page.pages;
           if (page.complete || page.pages === 0 || page.records === 0)
@@ -456,14 +608,18 @@ export async function tick(
           : null;
       if (rescan)
         try {
-          const page = await pollSource(
-            store,
-            source,
-            fetcher,
-            currentTime(),
-            rescan.stream,
-            clock ?? null,
+          const page = await measure("sourceRescan", () =>
+            pollSource(
+              store,
+              source,
+              fetcher,
+              currentTime(),
+              rescan.stream,
+              clock ?? null,
+            ),
           );
+          throughput.rescanPages += page.pages;
+          throughput.sourceRecords += page.records;
           progress += page.pages;
           if (page.complete || page.pages === 0 || page.records === 0)
             rescans.add(rescan.stream);
@@ -475,15 +631,18 @@ export async function tick(
       if (expired()) return progress;
       if (!stoppedRereads.has(rereadKey)) {
         try {
-          const reread = await rereadOperation(
-            store,
-            source,
-            fetcher,
-            currentTime(),
-            priority,
-            clock ?? null,
-            nowAtStart,
+          const reread = await measure("contextReread", () =>
+            rereadOperation(
+              store,
+              source,
+              fetcher,
+              currentTime(),
+              priority,
+              clock ?? null,
+              nowAtStart,
+            ),
           );
+          throughput.rereadPages += reread.pages;
           progress += reread.pages;
         } catch (error) {
           stoppedRereads.add(rereadKey);
@@ -658,8 +817,14 @@ export async function tick(
       if (error instanceof VendorDeferredError) result.deferred++;
       else result.errors++;
     }
-  await purgeResolvedSource(store);
+  await measure("cleanup", () => purgeResolvedSource(store));
   result.elapsedMs = Math.max(0, Date.now() - startedAt);
-  result.stopReason = expired() ? "deadline" : "idle";
-  return result;
+  result.stopReason =
+    metered.metrics.calls >= 850
+      ? "database_budget"
+      : expired()
+        ? "deadline"
+        : "idle";
+  const measured: { throughput?: ThroughputMetrics } = { throughput };
+  return { ...result, ...measured };
 }

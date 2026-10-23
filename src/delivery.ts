@@ -452,7 +452,7 @@ async function unchangedProjection(
     return false;
   const result = await store
     .statement(
-      "UPDATE ledger SET baseline_hash=source_hash,state=CASE WHEN remote_id IS NOT NULL THEN 'observed' ELSE state END,reason=CASE WHEN reason=? THEN reason ELSE NULL END,updated_at=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND sent_hash=?",
+      "UPDATE ledger SET baseline_hash=source_hash,state=CASE WHEN remote_id IS NOT NULL THEN 'observed' ELSE state END,reason=CASE WHEN reason=? THEN reason ELSE NULL END,updated_at=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND sent_hash=? RETURNING qso",
       LOTW_PRIOR_IDENTITY_NOTICE,
       now,
       key.tenant,
@@ -463,7 +463,7 @@ async function unchangedProjection(
       projectionHash,
     )
     .run();
-  return result.meta.changes === 1;
+  return result.results.length === 1;
 }
 /** Prepare one immutable attempt; no template change can call this without source work. */
 export async function prepareDue(

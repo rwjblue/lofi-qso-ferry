@@ -12,6 +12,7 @@ import {
   type ReconciliationEvidence,
 } from "../src/reconcile.ts";
 import { database, seed } from "./helpers.ts";
+import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 const source = {
   STATION_CALLSIGN: "N0TEST/P",
   CALL: "W1AW",
@@ -891,6 +892,103 @@ test("precision review outcomes persist as holds without a remote association or
         .first<{ n: number }>())!.n,
       0,
     );
+  } finally {
+    await mf.dispose();
+  }
+});
+
+test("complete retained inventory adopts positive matches but never establishes absence", async () => {
+  const retained = {
+    ...evidence,
+    freshCheckComplete: false,
+    inventoryPositiveOnly: true,
+  };
+  assert.equal(
+    classifyHistory(source, [remote], retained).state,
+    "adopted_existing",
+  );
+  assert.equal(
+    classifyHistory(source, [], retained).state,
+    "inventory_pending",
+  );
+  assert.equal(
+    classifyHistory(source, [remote], { ...retained, inventoryComplete: false })
+      .state,
+    "inventory_pending",
+  );
+  assert.equal(
+    classifyHistory(source, [remote], { ...retained, catchupComplete: false })
+      .state,
+    "inventory_pending",
+  );
+  assert.equal(
+    classifyHistory(source, [remote], { ...retained, currentGeneration: "new" })
+      .state,
+    "inventory_pending",
+  );
+  const { mf, store } = await database();
+  try {
+    await applyAdditionalMigrations(store.db);
+    const key = await seed(store);
+    await store.observe(key, "g1", "hash", 30, false, 0);
+    assert.equal(
+      (
+        await adoptHistory(
+          store,
+          key,
+          "g1",
+          {
+            state: "missing_current_identity",
+            reason: null,
+            evidence: retained,
+          },
+          1,
+        )
+      ).applied,
+      false,
+    );
+    assert.equal(
+      (
+        await adoptHistory(
+          store,
+          key,
+          "g1",
+          classifyHistory(source, [remote], retained),
+          2,
+        )
+      ).reason,
+      "inventory_commit_guard_required",
+    );
+    assert.equal(
+      (
+        await adoptHistory(
+          store,
+          key,
+          "g1",
+          classifyHistory(source, [remote], retained),
+          2,
+          undefined,
+          { sql: "0", params: [] },
+        )
+      ).applied,
+      false,
+    );
+    assert.equal(
+      (
+        await adoptHistory(
+          store,
+          key,
+          "g1",
+          classifyHistory(source, [remote], retained),
+          2,
+          undefined,
+          { sql: "1", params: [] },
+        )
+      ).applied,
+      true,
+    );
+    assert.equal((await store.ledger(key))?.remote_id, "100");
+    assert.equal((await store.ledger(key))?.sent_hash, null);
   } finally {
     await mf.dispose();
   }

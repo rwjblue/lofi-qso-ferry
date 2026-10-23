@@ -20,6 +20,7 @@ import { purgeResolvedSource } from "../src/maintenance.ts";
 import { sourceFingerprint } from "../src/projection.ts";
 import { adoptHistory } from "../src/reconcile.ts";
 import { seal } from "../src/security.ts";
+import { Store } from "../src/store.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
 import { database, seed } from "./helpers.ts";
 
@@ -98,6 +99,7 @@ async function setup() {
         "0005_cutover.sql",
         "0009_vendor_requests.sql",
         "0010_source_priority.sql",
+        "0018_reconciliation_work.sql",
       ].map((file) =>
         readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8"),
       ),
@@ -147,6 +149,43 @@ async function work(
       kind,
     )
     .first<Work & { processed_at: number }>();
+}
+
+function countedStore(store: Store) {
+  const calls: { method: string; sql?: string; statements?: number }[] = [];
+  const originals = new WeakMap<D1PreparedStatement, D1PreparedStatement>();
+  const statement = (value: D1PreparedStatement, sql: string) => {
+    const wrapped = new Proxy(value, {
+      get(target, property) {
+        if (property === "bind")
+          return (...values: unknown[]) =>
+            statement(target.bind(...values), sql);
+        const member = Reflect.get(target, property);
+        if (["first", "all", "run", "raw"].includes(String(property)))
+          return (...args: unknown[]) => {
+            calls.push({ method: String(property), sql });
+            return member.apply(target, args);
+          };
+        return typeof member === "function" ? member.bind(target) : member;
+      },
+    });
+    originals.set(wrapped, value);
+    return wrapped;
+  };
+  const db = new Proxy(store.db, {
+    get(target, property) {
+      if (property === "prepare")
+        return (sql: string) => statement(target.prepare(sql), sql);
+      if (property === "batch")
+        return (statements: D1PreparedStatement[]) => {
+          calls.push({ method: "batch", statements: statements.length });
+          return target.batch(statements.map((s) => originals.get(s) ?? s));
+        };
+      const member = Reflect.get(target, property);
+      return typeof member === "function" ? member.bind(target) : member;
+    },
+  });
+  return { store: new Store(db, store.keys), calls };
 }
 
 test("synced test operations remain retained without destination work while ordinary contacts continue", async (t) => {
@@ -200,10 +239,16 @@ test("synced test operations remain retained without destination work while ordi
       record,
     );
     assert.equal(await store.ledger({ ...state.key, qso: record.uuid }), null);
-    assert.deepEqual(
-      await pendingContacts(store, source, 40, now + 4, undefined, record.uuid),
-      [],
-      "classified test contacts are not selected for reconciliation again",
+    assert.equal(
+      (
+        await store
+          .statement(
+            "SELECT eligible FROM reconciliation_work WHERE tenant='a' AND source='source' AND qso=?",
+            record.uuid,
+          )
+          .first<{ eligible: number }>()
+      )?.eligible,
+      0,
     );
   }
   assert.equal(
@@ -598,6 +643,460 @@ test("test classification migration revisits retained holds and guards already c
     );
     assert.equal(await store.ledger({ ...state.key, qso: id }), null);
   }
+});
+
+test("page intake RPC counts stay bounded for polling, replay and operation rereads", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const contacts = Array.from({ length: 25 }, (_, index) => ({
+    ...qso,
+    uuid: `bulk-${index}`,
+    syncedAtMillis: 200 + index,
+  }));
+  const measured = countedStore(store);
+  await pollSource(
+    measured.store,
+    source,
+    async () => response([op], contacts),
+    now,
+  );
+  t.diagnostic(`polling 26 records: ${measured.calls.length} database calls`);
+  assert.equal(measured.calls.length, 7);
+  assert.equal(measured.calls.filter((c) => c.method === "batch").length, 1);
+  assert.equal(
+    measured.calls.filter((c) => c.sql?.includes("AS replay_resolved")).length,
+    1,
+  );
+  measured.calls.length = 0;
+  await rereadOperation(
+    measured.store,
+    source,
+    async () => operationResponse(contacts),
+    now + 1,
+  );
+  t.diagnostic(`rereading 25 records: ${measured.calls.length} database calls`);
+  assert.equal(measured.calls.length, 9);
+  await store
+    .statement(
+      "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,baseline_hash,state,due_at,updated_at) SELECT tenant,source,id,'destination','g','h','h','adopted_existing',0,0 FROM source_work WHERE kind='qso'",
+    )
+    .run();
+  await purgeResolvedSource(store);
+  measured.calls.length = 0;
+  await pollSource(
+    measured.store,
+    source,
+    async () => response([], contacts),
+    now + 2,
+    "repair",
+  );
+  t.diagnostic(
+    `replaying 25 resolved records: ${measured.calls.length} database calls`,
+  );
+  assert.equal(measured.calls.length, 7);
+  assert.equal(
+    (
+      await store
+        .statement(
+          "SELECT COUNT(*) n FROM private_data WHERE kind='source' AND id IN(SELECT private_id FROM source_work WHERE kind='qso')",
+        )
+        .first<{ n: number }>()
+    )?.n,
+    0,
+  );
+  assert.equal(
+    (
+      await store
+        .statement(
+          "SELECT COUNT(*) n FROM source_work WHERE kind='qso' AND state='archived'",
+        )
+        .first<{ n: number }>()
+    )?.n,
+    25,
+  );
+});
+
+test("retained batches share operation ciphertext reads while preserving complete projection", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const contacts = Array.from({ length: 20 }, (_, index) => ({
+    ...qso,
+    uuid: `bulk-${index}`,
+  }));
+  await pollSource(
+    store,
+    source,
+    async () => response([op], [...contacts, boundary]),
+    now,
+  );
+  await rereadOperation(
+    store,
+    source,
+    async () => operationResponse([...contacts, boundary]),
+    now + 1,
+  );
+  await store
+    .statement("UPDATE source_work SET state='context' WHERE is_event=1")
+    .run();
+  const measured = countedStore(store);
+  const batch = await pendingContactBatch(
+    measured.store,
+    source,
+    20,
+    now + 2,
+    "background",
+    undefined,
+    now + 2,
+  );
+  t.diagnostic(
+    `projecting 20 contacts with a shared operation/event: ${measured.calls.length} database calls`,
+  );
+  assert.equal(batch.selected, 20);
+  assert.equal(batch.contacts.length, 20);
+  assert(batch.contacts.every((contact) => contact.grid === "FN32BB"));
+  assert.equal(
+    batch.contacts[0].reconciliationVersion,
+    (
+      await store
+        .statement(
+          "SELECT version FROM reconciliation_work WHERE tenant='a' AND source='source' AND qso=?",
+          batch.contacts[0].id,
+        )
+        .first<{ version: number }>()
+    )?.version,
+  );
+  assert.equal(measured.calls.length, 5);
+  assert.equal(measured.calls.filter((c) => c.method === "batch").length, 1);
+  assert.equal(
+    measured.calls.filter((c) =>
+      c.sql?.includes("FROM source_work w LEFT JOIN private_data"),
+    ).length,
+    1,
+  );
+});
+
+test("full forward pages prefetch bounded metadata without splitting the atomic checkpoint", async (t) => {
+  const { store, source, now, mf } = await setup();
+  t.after(() => mf.dispose());
+  await pollSource(store, source, async () => response([], []), now);
+  const operations = Array.from({ length: 100 }, (_, index) => ({
+    ...op,
+    uuid: `operation-${index}`,
+  }));
+  const contacts = Array.from({ length: 100 }, (_, index) => ({
+    ...loose,
+    uuid: `contact-${index}`,
+  }));
+  const measured = countedStore(store);
+  const result = await pollSource(
+    measured.store,
+    source,
+    async (_input, init) => {
+      const request = JSON.parse(String(init?.body));
+      assert.equal(request.meta.sync.operations.limit, 100);
+      assert.equal(request.meta.sync.qsos.limit, 100);
+      return response(operations, contacts);
+    },
+    now + 1,
+  );
+  assert.equal(result.records, 200);
+  assert.equal(measured.calls.length, 8);
+  assert.equal(
+    measured.calls.filter((c) => c.sql?.includes("AS replay_resolved")).length,
+    2,
+  );
+  const checkpoints = measured.calls.filter((c) => c.method === "batch");
+  assert.equal(checkpoints.length, 1);
+  assert.equal(checkpoints[0].statements, 1307);
+  t.diagnostic(
+    `full forward page: ${measured.calls.length} database calls, ${checkpoints[0].statements} statements in one atomic checkpoint`,
+  );
+});
+
+test("prefetched replay resolution remains destination specific and rejects unresolved attempts", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  await pollSource(store, source, async () => response([], [loose]), now);
+  await store
+    .statement(
+      "INSERT INTO connections(tenant,id,kind,remote_identity,label,created_at) VALUES('a','other','qrz','other','other',0)",
+    )
+    .run();
+  for (const [destination, ledgerState] of [
+    ["destination", "adopted_existing"],
+    ["other", "history_mismatch"],
+  ])
+    await store
+      .statement(
+        "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,baseline_hash,state,due_at,updated_at) VALUES('a','source','loose-1',?,'g','h','h',?,0,0)",
+        destination,
+        ledgerState,
+      )
+      .run();
+  const expire = async () => {
+    await store
+      .statement(
+        "DELETE FROM private_data WHERE tenant='a' AND connection='source' AND kind='source'",
+      )
+      .run();
+    await store
+      .statement(
+        "UPDATE source_work SET expires_at=0,state='archived' WHERE tenant='a' AND source='source' AND id='loose-1'",
+      )
+      .run();
+  };
+  await expire();
+  await pollSource(
+    store,
+    source,
+    async () => response([], [loose]),
+    now + 1,
+    "rescan:destination",
+  );
+  assert.equal(
+    (await work(state, "loose-1"))?.state,
+    "archived",
+    "the resolved destination can skip a replay despite another destination's hold",
+  );
+  await pollSource(
+    store,
+    source,
+    async () => response([], [loose]),
+    now + 2,
+    "repair",
+  );
+  assert.equal(
+    (await work(state, "loose-1"))?.state,
+    "pending",
+    "global repair requires every destination to be resolved",
+  );
+  await expire();
+  await store
+    .statement(
+      "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a','unresolved','source','loose-1','destination','g','payload','hash','v1',0,'h')",
+    )
+    .run();
+  await store
+    .statement(
+      "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','unresolved','uncertain',0,0)",
+    )
+    .run();
+  await store
+    .statement("DELETE FROM cursors WHERE stream='rescan:destination'")
+    .run();
+  await pollSource(
+    store,
+    source,
+    async () => response([], [loose]),
+    now + 3,
+    "rescan:destination",
+  );
+  assert.equal(
+    (await work(state, "loose-1"))?.state,
+    "pending",
+    "an unresolved attempt prevents skipping the resolved ledger's replay",
+  );
+});
+
+test("page metadata overlays repeated UUIDs in server order and keeps record kinds independent", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const first = { ...loose, uuid: "same", syncedAtMillis: 100 };
+  const newer = { ...first, notes: "current", syncedAtMillis: 300 };
+  await pollSource(
+    store,
+    source,
+    async () =>
+      response(
+        [{ ...op, uuid: "same" }],
+        [
+          first,
+          { ...first, syncedAtMillis: 200 },
+          newer,
+          { ...first, syncedAtMillis: 250 },
+          newer,
+        ],
+      ),
+    now,
+  );
+  const saved = await work(state, "same");
+  assert.equal(saved?.synced_at, 300);
+  assert.equal(
+    (
+      await store.private<SourceRecord>(
+        "a",
+        "source",
+        saved!.private_id,
+        "source",
+      )
+    )?.notes,
+    "current",
+  );
+  assert.equal((await work(state, "same", "operation"))?.synced_at, 100);
+  assert.equal(
+    (
+      await store
+        .statement("SELECT COUNT(*) n FROM private_data WHERE kind='source'")
+        .first<{ n: number }>()
+    )?.n,
+    2,
+  );
+  assert.equal(
+    (
+      await store
+        .statement("SELECT COUNT(*) n FROM source_births WHERE qso='same'")
+        .first<{ n: number }>()
+    )?.n,
+    1,
+  );
+  const cursor = await store
+    .statement("SELECT * FROM cursors WHERE stream='sync'")
+    .first();
+  await assert.rejects(
+    pollSource(
+      store,
+      source,
+      async () =>
+        response(
+          [],
+          [
+            { ...loose, uuid: "rollback", syncedAtMillis: 400 },
+            { ...newer, notes: "conflicting tie" },
+          ],
+        ),
+      now + 1,
+    ),
+    /conflicting_server_timestamp/,
+  );
+  assert.equal(await work(state, "rollback"), null);
+  assert.deepEqual(
+    await store.statement("SELECT * FROM cursors WHERE stream='sync'").first(),
+    cursor,
+  );
+  assert.equal(
+    (
+      await store
+        .statement("SELECT COUNT(*) n FROM private_data WHERE kind='source'")
+        .first<{ n: number }>()
+    )?.n,
+    2,
+  );
+});
+
+test("prefetched source versions still reject a concurrent writer atomically", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  await pollSource(store, source, async () => response([], [loose]), now);
+  const cursor = await store
+    .statement("SELECT * FROM cursors WHERE stream='sync'")
+    .first();
+  const raced = new Store(store.db, store.keys);
+  const putPrivate = raced.putPrivate.bind(raced);
+  let changed = false;
+  raced.putPrivate = async (...args: Parameters<Store["putPrivate"]>) => {
+    if (!changed && args[3] === "source") {
+      changed = true;
+      await store
+        .statement(
+          "UPDATE source_work SET revision='concurrent',synced_at=999 WHERE tenant='a' AND source='source' AND id='loose-1' AND kind='qso'",
+        )
+        .run();
+    }
+    return putPrivate(...args);
+  };
+  await assert.rejects(
+    pollSource(
+      raced,
+      source,
+      async () =>
+        response(
+          [],
+          [{ ...loose, notes: "stale change", syncedAtMillis: 200 }],
+        ),
+      now + 1,
+    ),
+    /source row changed/,
+  );
+  assert.equal((await work(state, "loose-1"))?.revision, "concurrent");
+  assert.deepEqual(
+    await store.statement("SELECT * FROM cursors WHERE stream='sync'").first(),
+    cursor,
+  );
+  assert.equal(
+    (
+      await store
+        .statement("SELECT COUNT(*) n FROM private_data WHERE kind='source'")
+        .first<{ n: number }>()
+    )?.n,
+    1,
+  );
+  assert.equal(
+    (
+      await store
+        .statement("SELECT COUNT(*) n FROM source_write_guards")
+        .first<{ n: number }>()
+    )?.n,
+    0,
+  );
+});
+
+test("page metadata and retained ciphertext reads stay tenant scoped for colliding IDs", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  await seed(store, "b");
+  const foreign = { ...loose, our: { stationCall: "K2ABC", grid: "FN33DD" } };
+  await (
+    await store.putPrivate(
+      "b",
+      "source",
+      "collision",
+      "source",
+      foreign,
+      now + 60000,
+    )
+  ).run();
+  await store
+    .statement(
+      "INSERT INTO source_work(tenant,source,id,kind,operation_id,private_id,revision,expires_at,synced_at) VALUES('b','source','loose-1','qso',NULL,'collision','foreign',?,999)",
+      now + 60000,
+    )
+    .run();
+  await pollSource(store, source, async () => response([], [loose]), now);
+  const local = await work(state, "loose-1");
+  const body = await store.private("a", "source", local!.private_id, "source");
+  await (
+    await store.putPrivate(
+      "a",
+      "source",
+      "collision",
+      "source",
+      body,
+      now + 60000,
+    )
+  ).run();
+  await store
+    .statement(
+      "UPDATE source_work SET private_id='collision' WHERE tenant='a' AND id='loose-1'",
+    )
+    .run();
+  const contacts = await pendingContacts(store, source, 20, now + 1);
+  assert.equal(contacts.length, 1);
+  assert.equal(contacts[0].stationCall, "N0CALL");
+  assert.equal(contacts[0].grid, "FN42CC");
+  assert.equal(
+    (
+      await store
+        .statement("SELECT revision FROM source_work WHERE tenant='b'")
+        .first<{ revision: string }>()
+    )?.revision,
+    "foreign",
+  );
 });
 
 test("general-log station migration requeues only retained projection holds without changing export evidence", async (t) => {

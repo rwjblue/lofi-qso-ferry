@@ -454,7 +454,14 @@ test("scheduled wrapper invokes the real idle scheduler without a test runner", 
   const h = await setup();
   try {
     const result = await runScheduledTick(h.env);
-    const { elapsedMs, ...counters } = result;
+    const { elapsedMs, throughput, ...counters } = result;
+    assert(throughput && throughput.database.calls > 0);
+    const saved = await h.store
+      .statement(
+        "SELECT throughput_json FROM scheduler_runs WHERE status='completed' ORDER BY started_at DESC LIMIT 1",
+      )
+      .first<{ throughput_json: string }>();
+    assert.deepEqual(JSON.parse(saved!.throughput_json), throughput);
     assert(elapsedMs >= 0);
     assert.deepEqual(counters, {
       sources: 0,

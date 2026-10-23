@@ -149,7 +149,7 @@ export async function refreshLotwCertificates(
         });
       const updated = await store
         .statement(
-          "UPDATE connections SET config=json_set(json_remove(config,'$.trustCheckedAt','$.trustSourceAttemptedAt'),'$.certificates',json(?),'$.certificateCheckedAt',?),status=CASE WHEN status IN('disabled','paused') THEN status WHEN ?=1 AND COALESCE(json_extract(config,'$.loginVerification.status'),'')!='rejected' THEN 'active' ELSE 'needs_verification' END WHERE tenant=? AND id=? AND kind='lotw' AND status IN('active','needs_verification','disabled','paused') AND credential_version=? AND EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=connections.tenant AND p.connection=connections.id AND p.id=connections.credential_version AND p.kind='credential' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)) AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?)",
+          "UPDATE connections SET config=json_set(json_remove(config,'$.trustCheckedAt','$.trustSourceAttemptedAt'),'$.certificates',json(?),'$.certificateCheckedAt',?),status=CASE WHEN status IN('disabled','paused') THEN status WHEN ?=1 AND COALESCE(json_extract(config,'$.loginVerification.status'),'')!='rejected' THEN 'active' ELSE 'needs_verification' END WHERE tenant=? AND id=? AND kind='lotw' AND status IN('active','needs_verification','disabled','paused') AND credential_version=? AND EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=connections.tenant AND p.connection=connections.id AND p.id=connections.credential_version AND p.kind='credential' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)) AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?) RETURNING id",
           JSON.stringify(certificates),
           commitTime,
           valid ? 1 : 0,
@@ -164,7 +164,7 @@ export async function refreshLotwCertificates(
           commitTime,
         )
         .run();
-      result.updated += updated.meta.changes;
+      result.updated += updated.results.length;
     } catch {
       result.errors++;
       const failedAt = options.now ?? Date.now();

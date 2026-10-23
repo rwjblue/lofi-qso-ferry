@@ -39,7 +39,7 @@ export async function runScheduledTick(
     // Missing telemetry must not misrepresent completed delivery work as failed.
   }
   await env.DB.prepare(
-    "UPDATE scheduler_runs SET finished_at=?,duration_ms=?,status='completed',rounds=?,stop_reason=?,source_pages=?,contact_turns=?,attempt_turns=?,errors=?,deferred=?,source_live=?,source_background=?,attempts_due_live=?,attempts_due_background=?,work_live_ready=?,work_live_held=?,work_live_blocked=?,work_background_ready=?,work_background_held=?,work_background_blocked=? WHERE id=?",
+    "UPDATE scheduler_runs SET finished_at=?,duration_ms=?,status='completed',rounds=?,stop_reason=?,source_pages=?,contact_turns=?,attempt_turns=?,errors=?,deferred=?,source_live=?,source_background=?,attempts_due_live=?,attempts_due_background=?,work_live_ready=?,work_live_held=?,work_live_blocked=?,work_background_ready=?,work_background_held=?,work_background_blocked=?,throughput_json=? WHERE id=?",
   )
     .bind(
       finishedAt,
@@ -61,6 +61,7 @@ export async function runScheduledTick(
       backlog?.workBackground?.ready ?? null,
       backlog?.workBackground?.held ?? null,
       backlog?.workBackground?.blocked ?? null,
+      JSON.stringify(result.throughput ?? {}),
       id,
     )
     .run();

@@ -7,24 +7,95 @@ logbook writes or treat a partial inventory as absence.
 
 ## Implementation status
 
-The immediate repairs are signed on `main`: canonical general-log station
+The larger throughput implementation is locally validated and awaits production
+deployment. Batched intake/context access, indexed due-work selection, durable
+exception retry scheduling, shared encrypted history and scheduler telemetry are
+implemented. The release/CI evidence for this work must be recorded separately
+from the earlier production observations below. Exports remain disabled.
+
+The earlier immediate repairs are signed on `main`: canonical general-log station
 projection and scoped reprojection migration `32758f5`, precision review
 explanations `789d652`, and cleanup query repair `fa822ba`. Local full checks
 passed 391 tests; a final LoTW diagnostic correction for an unrelated neighbor
 then passed the 35-test QRZ/reconciliation suite and TypeScript/lint checks.
 Release [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39974178346) passed all 392 tests and required checks. Revision `cf34ac0a82e4f3f845b058684a04128f91c0b147` was deployed at `2026-10-23T15:04:09.293Z` as Worker `40a3c20e-81f8-45a7-9350-2e99767c241c`, with 100% traffic and every export gate independently verified closed. At 15:04:50 UTC, all fifteen migrations were applied, the one affected source row was pending with its old diagnostic cleared, and export attempts remained zero. Existing history holds are not automatically approved by these changes.
 
-The batching, indexed ready-work selection, shared inventory, durable jobs and
-capacity acceptance work below remain unimplemented. No claim of completed
-reconciliation or 200,000-contact readiness follows from the cleanup benchmark.
+Durable queue continuations, larger production-verified source pages, complete
+exception review and end-to-end capacity acceptance remain open. No claim of
+completed reconciliation, a 200,000-contact SLA or first-write readiness follows
+from the local results.
 
-## First production observation
+### Locally validated throughput changes
+
+Source-page processing reads prior metadata and resolution state in batches,
+then preserves one atomic checkpoint. A bounded contact batch shares retained
+operation/event data while still validating complete context and each contact's
+projection. The comparable local D1 RPC counts are:
+
+| Fixture                                             | Previous calls | Batched calls |
+| --------------------------------------------------- | -------------: | ------------: |
+| Poll one operation and 25 contacts                  |             32 |             7 |
+| Reread 25 operation contacts                        |             33 |             9 |
+| Replay 25 contacts                                  |             56 |             7 |
+| Project 20 contacts sharing operation/event context |            102 |             5 |
+
+Indexed due-work metadata replaces the backlog-wide sort. Successful
+per-destination classifications are remembered against the source generation and
+work version. Stable review holds wait 24 hours; incomplete inventories and
+loading work retry after five minutes. Relevant source/context, route,
+credential and eligibility-policy changes invalidate the affected decisions.
+Retention-only extensions and routine credential rewraps do not clear holds.
+Live priority, tenant fencing, expiry, processing cutoff and stale-version
+rejection remain covered by local tests. These scheduling hints do not replace
+the full source, route, evidence and export guards.
+
+`mise run benchmark-reconciliation` builds local synthetic D1 fixtures and
+selects 100 contacts without vendor calls:
+
+| Contacts | Rows read | Selection | Selection after almost all background work is held |
+| -------- | --------: | --------: | -------------------------------------------------: |
+| 4,000    |       200 |   7.68 ms |                                            5.95 ms |
+| 200,000  |       200 |   7.63 ms |                                            6.22 ms |
+
+Both held-work selections also read 200 rows. This is a repeatable query-level
+measurement, not a full source import, history reconciliation or production
+throughput benchmark.
+
+Destination history is now shared through encrypted four-hour partitions
+covering up to a week. QRZ inventories use a base scan plus modification catch-up
+and replace indexed identities as newer evidence arrives. LoTW splits oversized
+date ranges down to a day and holds a still-oversized day for targeted review.
+Retention is bounded to 2 MiB per partition, 128 MiB per source/destination and
+2,048 partitions per source/destination, with bounded pages and candidate reads.
+Incomplete, expired or revoked coverage cannot produce usable completed
+inventory. Cached absence retains a hold; it never supplies the fresh targeted
+identity check required before a future export. Completion of an inventory does
+not currently wake an older stable hold; its 24-hour retry is the backstop.
+
+The local scheduler integration fixture classifies 20 contacts into 40 stable
+destination review holds with three history requests: two QRZ requests for
+base/catch-up and one LoTW query. The next tick processes zero contacts and makes
+zero additional history reads. Both ticks create zero attempts and perform zero
+vendor writes. This proves reuse and suppression of unchanged work for that
+fixture, without approving any exception.
+
+Background processing selects batches of 20; live processing remains one
+contact at a time to reserve write capacity. The scheduler yields at a
+90-second or 850-D1-call soft budget; already-started work may finish afterward.
+Telemetry records stage duration, D1 RPC and SQL-statement counts, destination
+classifications, inventory fetches and cache hits. Vendor request allowances
+are unchanged. New queue triggers also required direct `RETURNING` results for
+guarded update counts, because D1 aggregate change counts include trigger writes;
+the affected delivery, verification, maintenance and restore paths have local
+regression coverage.
+
+## Earlier production observation (before throughput changes)
 
 At 15:08:05 UTC, the first completed post-release run (started 15:05:50) took
 96,730 ms, with two contact turns, one canonical source page, zero errors and
 zero deferrals. The immediately preceding run took 132,572 ms for two turns.
 This one-run comparison is consistent with less cleanup overhead; contact
-throughput remains two turns per run and sustained draining is not established.
+throughput was still two turns per run and sustained draining was not established.
 Classified work was 1,820 ready, 2,314 held and zero blocked. The cleared callsign
 hold was requeued, not independently proven reconciled. New precision-specific
 reasons were stored for one QRZ and two LoTW rows, all still review holds.
@@ -72,7 +143,7 @@ unfinished. There were 134 completed operation contexts and 734 unexpired
 context-held contacts. Cron can advance those dependencies, but cannot resolve
 the station-coverage decisions or establish missing precision evidence.
 
-## Observed throughput and structural limits
+## Investigation baseline and remaining source limits
 
 The five completed runs from 14:05 through 14:25 UTC each examined two contacts.
 They took 128.8–140.7 seconds, exceeding the scheduler's 90-second soft deadline
@@ -100,11 +171,11 @@ estimates. Current source-contact payloads expire after seven days, so the
 observed rate risks reread/expiry churn even for the owner's log. Increasing a
 cron deadline or request allowance alone is not an adequate scaling plan.
 
-The current service reads destination history separately for each source
-contact. A 200,000-contact log therefore needs at least 200,000 LoTW queries
-under that design. Shared, bounded destination partitions and local matching
-are required to make request count depend on inventory pages/date partitions
-rather than contact count.
+At investigation time the service read destination history separately for each
+source contact. A 200,000-contact log therefore needed at least 200,000 LoTW
+queries under that design. The new shared partitions and local matching remove
+that per-contact request requirement for reusable retained history; production
+reuse and complete source/destination capacity still need measurement.
 
 ## Reproduced database costs
 
@@ -134,31 +205,34 @@ A real-D1 regression checks bounded rows read for 4,000 unresolved contacts;
 semantic tests preserve unresolved/mixed-destination work, stale baselines,
 outstanding attempts, operations/events and tenant/source boundaries.
 
-Production functions exercised against local Miniflare also show a new
+Before batching, production functions exercised against local Miniflare showed a new
 25-contact source page uses 31 sequential database calls, and an unchanged
 unresolved 25-contact rescan uses 56 calls, including 25 prior-row reads and 25
-resolution checks. A one-contact exception fixture uses 90 calls on the first
-scheduler tick and 79 on the next; both vendors are queried again without a
+resolution checks. A one-contact exception fixture used 90 calls on the first
+scheduler tick and 79 on the next; both vendors were queried again without a
 source change. With a real backlog, oldest-processed ordering rotates these
-holds behind other contacts, but no durable review/retry condition prevents
-later unnecessary reads.
+holds behind other contacts, but there was no durable review/retry condition to
+prevent later unnecessary reads. The new comparable intake and stable-hold
+measurements are recorded above.
 
-The ready-contact selector still scans/sorts eligible work to return one row:
+The previous ready-contact selector scanned/sorted eligible work to return one row:
 local 4,000-contact queries took 21–51 ms and 200,000-contact queries took
-1.36–1.58 seconds per selection. Removing the cleanup problem does not remove
-that scaling cost or the per-contact vendor request floor.
+1.36–1.58 seconds per selection. The indexed selector now has bounded local
+rows-read evidence at both sizes; it still needs production validation alongside
+the rest of the pipeline.
 
 Source ingestion also has a structural floor: current background pages contain
 25 contacts and share four LoFi requests per five minutes. Even one pass over
 200,000 contacts therefore needs at least 6.9 days before operation rereads and
 two destination-triggered source rescans. The adapter allows requesting up to
-200 records, but that larger page size needs live verification and database
-batching first. At 200 records and the same request budget, one pass alone still
+200 records, but the configured source page size remains 25. Database batching is
+implemented; the larger page size still needs live verification. At 200 records
+and the same request budget, one pass alone still
 needs about 20.8 hours. Shared source coverage must replace redundant full
 passes where the source contract permits; a one-day end-to-end target cannot
 be claimed from destination batching alone.
 
-## Implementation order and acceptance
+## Remaining implementation and acceptance order
 
 1. **Correct and explain the discovered exceptions.** Support canonical own-call
    data for the affected general-log shape. Distinguish lower timestamp/grid
@@ -167,30 +241,30 @@ be claimed from destination batching alone.
    complete review interface remains needed. Provide paginated, tenant-scoped review with full
    contact identifiers and the relevant source/candidate differences; the
    current recent-activity list is not a complete review workflow.
-2. **Measure and remove database amplification.** Record bounded per-stage
-   durations, database call/row counts, source records/pages, and unique
-   per-destination classifications. Batch page metadata reads and checkpoint
-   writes, validate larger LoFi pages, share source coverage across destinations,
-   reuse operation context within a bounded processing batch, and
-   separate maintenance from fair contact work. Preserve generation checks,
-   fences, canonical freshness polling and live-traffic reservations.
-3. **Stop retrying unchanged review decisions as ordinary work.** Persist
-   evidence version, last outcome and next retry/invalidation condition.
-   Source/context/route/credential changes must invalidate the right decisions;
-   transient failures back off independently. A stable precision or routing
-   hold must not consume a vendor read every scheduler pass.
-4. **Reconcile shared encrypted inventory partitions.** Page QRZ history and
-   query bounded LoTW date/station partitions once, then match many retained
-   sources locally. Split oversized partitions, checkpoint progress atomically,
-   distinguish incomplete coverage from absence, preserve neighboring collision
-   coverage and catch-up reads, and retain a fresh targeted check before any
-   future first write. Purge temporary indexes after durable results; preserve
-   compact exception evidence and durable identity claims. Move bounded page and
-   partition jobs to a durable queue with idempotent, fenced commits and fair
-   live reserves; retain cron as a watchdog. Queue redelivery must not duplicate
-   vendor work, as [Cloudflare delivery guarantees](https://developers.cloudflare.com/queues/reference/delivery-guarantees/)
+2. **Deploy and measure the implemented throughput path.** Keep every export
+   gate closed. Verify sustained classification progress, inventory reuse,
+   stable-hold retry suppression, source freshness and live fairness using the
+   new stage/D1/classification telemetry. Record the deployed revision,
+   migrations, release checks and production samples separately from earlier
+   evidence. Track unique completed outcomes rather than counting repeated
+   contact turns as progress.
+3. **Remove the remaining source-capacity floor.** Validate larger LoFi pages
+   against the live contract and share source coverage across destinations where
+   safe. Background pages remain 25 contacts; batching alone does not remove the
+   6.9-day lower bound for one 200,000-contact source pass. Preserve generation
+   checks, fences, canonical freshness polling and live reservations.
+4. **Add durable continuations and targeted inventory wakeups.** Shared
+   partitions and durable indexed due-work metadata are implemented, but
+   Cloudflare Queue jobs are not. Move bounded page/partition continuations to a
+   durable queue with idempotent, fenced commits and fair live reserves; retain
+   cron as a watchdog. Wake only contacts covered by newly completed inventory
+   rather than clearing every stable hold for a destination. The current
+   24-hour retry remains the backstop. Queue redelivery must not duplicate vendor
+   work, as [Cloudflare delivery guarantees](https://developers.cloudflare.com/queues/reference/delivery-guarantees/)
    specify at-least-once delivery.
-5. **Prove capacity before broader rollout.** Benchmark 4,000 and 200,000
+5. **Prove complete capacity before broader rollout.** The indexed-selection
+   benchmark and 20-contact integration fixture are complete; full 4,000 and
+   200,000-contact end-to-end benchmarks remain open. Exercise
    synthetic contacts with realistic operation/event density, repeated calls,
    precision differences, edits, tombstones, failures and multiple tenants.
    Measure first-pass completion, unique classifications per minute, live-work

@@ -26,11 +26,13 @@ export async function lockRestoredDatabase(database: D1Database): Promise<{
   blockedAttempts: number;
 }> {
   const result = await database.batch(
-    restoreLockStatements().map((sql) => database.prepare(sql)),
+    restoreLockStatements().map((sql, index) =>
+      database.prepare([0, 2, 5].includes(index) ? `${sql} RETURNING 1` : sql),
+    ),
   );
   return {
-    lockedAccounts: result[0].meta.changes,
-    disabledConnections: result[2].meta.changes,
-    blockedAttempts: result[5].meta.changes,
+    lockedAccounts: result[0].results.length,
+    disabledConnections: result[2].results.length,
+    blockedAttempts: result[5].results.length,
   };
 }

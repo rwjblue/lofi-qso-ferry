@@ -15,6 +15,7 @@ import {
   projectContact,
   sourceFingerprint,
 } from "./projection.ts";
+import { selectReconciliationWork } from "./reconciliation-work.ts";
 import {
   canonical,
   type Envelope,
@@ -28,6 +29,7 @@ import type { VendorPriority } from "./vendor-requests.ts";
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
 export interface IntakeContact extends Contact {
   contextGeneration: number;
+  reconciliationVersion?: number;
 }
 export interface Work {
   tenant: string;
@@ -45,6 +47,60 @@ export interface Work {
   seen_epoch: string | null;
   deleted: number;
   priority: VendorPriority;
+}
+
+type SourceVersion = Pick<
+  Work,
+  | "id"
+  | "kind"
+  | "synced_at"
+  | "revision"
+  | "expires_at"
+  | "priority"
+  | "operation_id"
+  | "is_event"
+>;
+interface PageMetadata {
+  records: Map<string, SourceVersion>;
+  resolved: Set<string>;
+}
+const sourceKey = (kind: Work["kind"], id: string) => `${kind}:${id}`;
+
+/** Fetch only this page's metadata, then track its ordered writes in memory. */
+async function pageMetadata(
+  store: Store,
+  connection: Connection,
+  groups: readonly (readonly [Work["kind"], SourceRecord[]])[],
+  replayDestination?: string | null,
+): Promise<PageMetadata> {
+  const keys = groups.flatMap(([kind, records]) =>
+    records.map((raw) => [kind, String(raw.uuid)]),
+  );
+  const metadata: PageMetadata = { records: new Map(), resolved: new Set() };
+  // JSON bindings avoid D1's parameter ceiling; chunking bounds each read even
+  // when a source unexpectedly returns more than the requested page size.
+  for (let offset = 0; offset < keys.length; offset += 100) {
+    const rows = (
+      await store
+        .statement(
+          `SELECT w.id,w.kind,w.synced_at,w.revision,w.expires_at,w.priority,w.operation_id,w.is_event,${
+            replayDestination === undefined
+              ? "0"
+              : "w.kind='qso' AND EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=w.tenant AND l.source=w.source AND l.qso=w.id AND (?4 IS NULL OR l.destination=?4)) AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=w.tenant AND l.source=w.source AND l.qso=w.id AND (?4 IS NULL OR l.destination=?4) AND (l.state NOT IN('adopted_existing','delivered','observed','source_deleted') OR l.source_hash IS NOT l.baseline_hash)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=w.tenant AND a.source=w.source AND a.qso=w.id AND (?4 IS NULL OR a.destination=?4) AND s.state NOT IN('delivered','observed','rejected','cancelled'))"
+          } AS replay_resolved FROM source_work w WHERE w.tenant=?1 AND w.source=?2 AND (w.kind,w.id) IN(SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(?3))`,
+          connection.tenant,
+          connection.id,
+          JSON.stringify(keys.slice(offset, offset + 100)),
+          ...(replayDestination === undefined ? [] : [replayDestination]),
+        )
+        .all<SourceVersion & { replay_resolved: number }>()
+    ).results;
+    for (const row of rows) {
+      metadata.records.set(sourceKey(row.kind, row.id), row);
+      if (row.replay_resolved) metadata.resolved.add(row.id);
+    }
+  }
+  return metadata;
 }
 
 /** Arrival provenance drives scheduling; the QSO's date does not. */
@@ -215,10 +271,23 @@ export async function pollSource(
     }
     const checkpointGuard = sourceGuard(store, connection);
     const work: D1PreparedStatement[] = [checkpointGuard.sql];
-    for (const [kind, rows] of [
+    const groups = [
       ["operation", page.operations],
       ["qso", page.qsos],
-    ] as const)
+    ] as const;
+    const replayDestination =
+      stream === "repair"
+        ? null
+        : stream.startsWith("rescan:")
+          ? stream.slice(7)
+          : undefined;
+    const metadata = await pageMetadata(
+      store,
+      connection,
+      groups,
+      replayDestination,
+    );
+    for (const [kind, rows] of groups)
       for (const raw of rows) {
         if (kind === "qso")
           work.push(
@@ -241,14 +310,11 @@ export async function pollSource(
             connection,
             kind,
             raw,
+            metadata,
             now,
             undefined,
             priority,
-            stream === "repair"
-              ? null
-              : stream.startsWith("rescan:")
-                ? stream.slice(7)
-                : undefined,
+            replayDestination,
           )),
         );
       }
@@ -333,6 +399,81 @@ export async function pendingContacts(
   return (await pendingContactBatch(store, source, limit, now, priority, qso))
     .contacts;
 }
+
+interface RetainedPayload {
+  envelope: string | null;
+  payload_expires_at: number | null;
+}
+async function openSourcePayload(
+  store: Store,
+  source: Pick<Connection, "tenant" | "id">,
+  id: string,
+  payload: RetainedPayload | undefined,
+): Promise<SourceRecord | null> {
+  if (
+    !payload?.envelope ||
+    (payload.payload_expires_at !== null &&
+      payload.payload_expires_at <= Date.now())
+  )
+    return null;
+  return open<SourceRecord>(
+    JSON.parse(payload.envelope) as Envelope,
+    {
+      tenant: source.tenant,
+      connection: source.id,
+      id,
+      kind: "source",
+      purpose: "storage",
+    },
+    store.keys,
+  );
+}
+
+async function operationContext(
+  store: Store,
+  source: Connection,
+  id: string,
+  now: number,
+) {
+  // One joined read per distinct operation replaces the dependency query and
+  // a separate private-data read for every base/event of every contact.
+  const dependencies = (
+    await store
+      .statement(
+        "SELECT w.*,p.envelope,p.expires_at AS payload_expires_at FROM source_work w LEFT JOIN private_data p ON p.tenant=w.tenant AND p.connection=w.source AND p.id=w.private_id AND p.kind='source' AND p.revoked_at IS NULL WHERE w.tenant=? AND w.source=? AND w.operation_id=? AND (w.kind='operation' OR w.is_event=1)",
+        source.tenant,
+        source.id,
+        id,
+      )
+      .all<Work & RetainedPayload>()
+  ).results;
+  let operation: SourceRecord | null = null;
+  const events: SourceRecord[] = [];
+  let expiresAt = Infinity;
+  for (const dependency of dependencies) {
+    if (dependency.kind === "qso" && dependency.deleted) continue;
+    if (dependency.expires_at <= now)
+      throw new Error("operation_context_expired");
+    const value = await openSourcePayload(
+      store,
+      source,
+      dependency.private_id,
+      dependency,
+    );
+    if (!value) throw new Error("operation_context_unavailable");
+    expiresAt = Math.min(expiresAt, dependency.payload_expires_at ?? Infinity);
+    if (dependency.kind === "operation") operation = value;
+    else if (isEventRecord(value)) events.push(value);
+  }
+  if (
+    !operation ||
+    dependencies.some((d) => d.kind === "operation" && d.state !== "context") ||
+    isSourceDeleted(operation)
+  )
+    throw new Error("operation_context_unavailable");
+  return { operation, events, expiresAt };
+}
+
 export async function pendingContactBatch(
   store: Store,
   source: Connection,
@@ -355,45 +496,54 @@ export async function pendingContactBatch(
     !(JSON.parse(context.cursor) as { complete: boolean }).complete
   )
     return { contacts: [], selected: 0 };
-  // Prefer usable retained context to known operation holds; an optional early
-  // pass leaves held rows untouched until rereads get their turn. This is only
-  // a scheduling hint: projection still validates every payload and event.
-  const readyContext = `(w.deleted=1 OR w.is_event=1 OR w.operation_id IS NULL OR EXISTS(SELECT 1 FROM source_work o JOIN private_data p ON p.tenant=o.tenant AND p.connection=o.source AND p.id=o.private_id AND p.kind='source' WHERE o.tenant=w.tenant AND o.source=w.source AND o.id=w.operation_id AND o.kind='operation' AND o.state='context' AND o.deleted=0 AND o.expires_at>? AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)))`;
-  const rows = (
-    await store
-      .statement(
-        `SELECT w.* FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='qso' AND w.state IN('pending','waiting') AND w.expires_at>? ${priority ? `AND ${liveWorkSql("w")}=${priority === "live" ? 1 : 0}` : ""} ${qso === undefined ? "" : "AND w.id=?"} ${processedBefore === undefined ? "" : "AND w.processed_at<?"} ${readyContextOnly ? `AND ${readyContext}` : ""} ORDER BY ${liveWorkSql("w")} DESC,${readyContext} DESC,w.processed_at,w.id LIMIT ?`,
-        source.tenant,
-        source.id,
-        now,
-        ...(qso === undefined ? [] : [qso]),
-        ...(processedBefore === undefined ? [] : [processedBefore]),
-        ...(readyContextOnly ? [now, now] : []),
-        now,
-        now,
-        limit,
-      )
-      .all<Work>()
-  ).results;
-  const contacts: IntakeContact[] = [];
-  for (const row of rows) {
-    if (processedBefore !== undefined)
+  // Indexed scheduling hints never substitute for the complete ciphertext and
+  // event validation below, or the projection guard when a caller observes it.
+  const rows = await selectReconciliationWork(store, source, {
+    limit,
+    now,
+    priority,
+    qso,
+    processedBefore,
+    readyContextOnly,
+  });
+  const payloads = new Map<string, RetainedPayload>();
+  for (let offset = 0; offset < rows.length; offset += 100) {
+    const saved = (
       await store
         .statement(
+          "SELECT id,envelope,expires_at AS payload_expires_at FROM private_data WHERE tenant=? AND connection=? AND kind='source' AND revoked_at IS NULL AND id IN(SELECT value FROM json_each(?))",
+          source.tenant,
+          source.id,
+          JSON.stringify(
+            rows.slice(offset, offset + 100).map((r) => r.private_id),
+          ),
+        )
+        .all<RetainedPayload & { id: string }>()
+    ).results;
+    for (const payload of saved) payloads.set(payload.id, payload);
+  }
+  if (processedBefore !== undefined && rows.length)
+    await store.db.batch(
+      rows.map((row) =>
+        store.statement(
           "UPDATE source_work SET processed_at=? WHERE tenant=? AND source=? AND id=? AND kind='qso' AND revision=?",
           now,
           row.tenant,
           row.source,
           row.id,
           row.revision,
-        )
-        .run();
+        ),
+      ),
+    );
+  const contexts = new Map<string, ReturnType<typeof operationContext>>();
+  const contacts: IntakeContact[] = [];
+  for (const row of rows) {
     try {
-      const raw = await store.private<SourceRecord>(
-        row.tenant,
-        row.source,
+      const raw = await openSourcePayload(
+        store,
+        source,
         row.private_id,
-        "source",
+        payloads.get(row.private_id),
       );
       if (!raw) throw new Error("source_payload_expired");
       if (isSourceDeleted(raw)) {
@@ -453,45 +603,29 @@ export async function pendingContactBatch(
         continue;
       }
       let operation: SourceRecord | null = null;
-      const events: SourceRecord[] = [];
+      let events: SourceRecord[] = [];
       if (row.operation_id) {
-        const dependencies = (
-          await store
-            .statement(
-              "SELECT * FROM source_work WHERE tenant=? AND source=? AND operation_id=? AND (kind='operation' OR is_event=1)",
-              row.tenant,
-              row.source,
-              row.operation_id,
-            )
-            .all<Work>()
-        ).results;
-        for (const dependency of dependencies) {
-          if (dependency.kind === "qso" && dependency.deleted) continue;
-          if (dependency.expires_at <= now)
-            throw new Error("operation_context_expired");
-          const value = await store.private<SourceRecord>(
-            row.tenant,
-            row.source,
-            dependency.private_id,
-            "source",
-          );
-          if (!value) throw new Error("operation_context_unavailable");
-          if (dependency.kind === "operation") operation = value;
-          else if (isEventRecord(value)) events.push(value);
+        let saved = contexts.get(row.operation_id);
+        if (!saved) {
+          saved = operationContext(store, source, row.operation_id, now);
+          contexts.set(row.operation_id, saved);
         }
-        if (
-          !operation ||
-          dependencies.some(
-            (d) => d.kind === "operation" && d.state !== "context",
-          ) ||
-          isSourceDeleted(operation)
-        )
+        const value = await saved;
+        if (value.expiresAt <= Date.now())
           throw new Error("operation_context_unavailable");
+        operation = value.operation;
+        events = value.events;
       }
       const contact = await projectContact(raw, operation, events, {
         operationComplete: true,
       });
-      contacts.push({ ...contact, contextGeneration: context.generation });
+      contacts.push({
+        ...contact,
+        contextGeneration: context.generation,
+        ...(row.reconciliation_version === undefined
+          ? {}
+          : { reconciliationVersion: row.reconciliation_version }),
+      });
     } catch (error) {
       const reason =
         error instanceof Error && /^[a-z_]+$/.test(error.message)
@@ -806,6 +940,7 @@ async function sourceStatements(
   connection: Connection,
   kind: "operation" | "qso",
   raw: SourceRecord,
+  metadata: PageMetadata,
   now: number,
   epoch?: string,
   incomingPriority: VendorPriority = "background",
@@ -815,15 +950,8 @@ async function sourceStatements(
   const syncedAt = Number(raw.syncedAtMillis);
   if (!Number.isSafeInteger(syncedAt) || syncedAt < 0)
     throw new Error("missing_server_watermark");
-  const previous = await store
-    .statement(
-      "SELECT * FROM source_work WHERE tenant=? AND source=? AND id=? AND kind=?",
-      connection.tenant,
-      connection.id,
-      id,
-      kind,
-    )
-    .first<Work>();
+  const key = sourceKey(kind, id);
+  const previous = metadata.records.get(key);
   const { syncedAtMillis: _stamp, ...inputs } = raw;
   const revision = await sha256(canonical(inputs));
   if (
@@ -862,21 +990,13 @@ async function sourceStatements(
     replayDestination !== undefined &&
     kind === "qso" &&
     !isEventRecord(raw) &&
-    previous?.revision === revision
+    previous?.revision === revision &&
+    metadata.resolved.has(id)
   ) {
-    const resolved = await store
-      .statement(
-        "SELECT 1 resolved WHERE EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND (?4 IS NULL OR l.destination=?4)) AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND (?4 IS NULL OR l.destination=?4) AND (l.state NOT IN('adopted_existing','delivered','observed','source_deleted') OR l.source_hash IS NOT l.baseline_hash)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=?1 AND a.source=?2 AND a.qso=?3 AND (?4 IS NULL OR a.destination=?4) AND s.state NOT IN('delivered','observed','rejected','cancelled'))",
-        connection.tenant,
-        connection.id,
-        id,
-        replayDestination,
-      )
-      .first();
-    if (resolved) return seen();
+    return seen();
   }
   if (previous && previous.revision === revision && previous.expires_at > now) {
-    if (syncedAt > previous.synced_at)
+    if (syncedAt > previous.synced_at) {
       statements.push(
         store.statement(
           "UPDATE source_work SET synced_at=? WHERE tenant=? AND source=? AND id=? AND kind=?",
@@ -887,6 +1007,8 @@ async function sourceStatements(
           kind,
         ),
       );
+      metadata.records.set(key, { ...previous, synced_at: syncedAt });
+    }
     return seen();
   }
   const priority: VendorPriority =
@@ -971,6 +1093,19 @@ async function sourceStatements(
   statements.push(
     store.statement("DELETE FROM source_write_guards WHERE id=?", guard.id),
   );
+  // A later occurrence in the same page must guard against this staged value,
+  // not the pre-page snapshot. The whole ordered checkpoint still commits or
+  // rolls back together if an independent source writer wins the first guard.
+  metadata.records.set(key, {
+    id,
+    kind,
+    synced_at: syncedAt,
+    revision,
+    expires_at: expires,
+    priority,
+    operation_id: op,
+    is_event: event ? 1 : 0,
+  });
   return statements;
 }
 /** Bounded full-operation reread, with durable page membership and safe replay. */
@@ -1052,6 +1187,9 @@ export async function rereadOperation(
     );
     const guard = sourceGuard(store, connection, operation);
     const work: D1PreparedStatement[] = [guard.sql];
+    const metadata = await pageMetadata(store, connection, [
+      ["qso", page.qsos],
+    ]);
     for (const raw of page.qsos) {
       work.push(
         recordBirth(
@@ -1071,6 +1209,7 @@ export async function rereadOperation(
           connection,
           "qso",
           raw,
+          metadata,
           now,
           state.epoch,
         )),

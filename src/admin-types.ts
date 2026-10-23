@@ -68,7 +68,7 @@ export interface AdminSchedulerRun {
   durationMs: number | null;
   status: "running" | "completed" | "failed";
   rounds: number | null;
-  stopReason: "idle" | "deadline" | null;
+  stopReason: "idle" | "deadline" | "database_budget" | null;
   /** Successful canonical source pages, not unique sources or QSO records. */
   sourcePages: number;
   /** Includes reconsideration of retained contacts on subsequent cron runs. */

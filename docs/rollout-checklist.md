@@ -35,14 +35,14 @@ Source review separately includes eight test contacts and one blocked contact.
 Waiting for cron advances available inventory and retry work; it does not approve
 ambiguous identities, lower-precision locations or missing routes.
 
-| Readiness item            | Evidence and remaining work                                                                                                                                                                                                       |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered. A second key is recommended, not an export gate; operator recovery remains possible. Secure secret-manager backup remains unconfirmed. |
-| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.           |
-| Source boundary           | Local replay, tombstone and cutover guards are implemented. Exhaustive UUID/tombstone coverage and the live replay/retention contract are not established. A completed cursor alone is insufficient.                              |
-| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.          |
-| LoTW station location     | Lossless eight-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Historical lower-precision associations and live ARRL acceptance remain unproved.                              |
-| First vendor writes       | No first-write trial is authorized or performed. Prepare exact source UUIDs, destination identities, projected fields and expected readback before requesting it.                                                                 |
+| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                          |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed. |
+| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                              |
+| Source boundary           | Local replay, tombstone and cutover guards are implemented. Exhaustive UUID/tombstone coverage and the live replay/retention contract are not established. A completed cursor alone is insufficient.                                                                                                                 |
+| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                             |
+| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Historical lower-precision associations and live ARRL acceptance remain unproved.                                                                                                     |
+| First vendor writes       | No first-write trial is authorized or performed. Prepare exact source UUIDs, destination identities, projected fields and expected readback before requesting it.                                                                                                                                                    |
 
 ## Finish reconciliation and review exceptions
 
@@ -80,10 +80,27 @@ connection. The 22:19 UTC audit confirms both destination rescans complete and n
 A naturally whole-second contact does not waive it. Never alter a source timestamp
 merely to bypass a safety check.
 
+The later [independent comparison and live replay](evidence-lofi.md#observed-local-and-live-comparisons)
+found every local HaLo UUID in Ferry and matched two ordinary tombstones across
+two complete operation reads. Thirteen additional Ferry contacts are absent from
+the local database and its QSO backups; their cause is unresolved. Purged records,
+event replay, forward-only changes, cursor aging and server retention still need
+evidence. No deletion or source repair was inferred from the local difference.
+
 ## First-export trial packet
 
 Prepare this restricted packet before asking for live-write authorization. Keep
 private contact details out of repository documentation.
+
+The [read-only trial audit](../scripts/export-trial-audit.ts) accepts one explicit
+contact, current revision/generation and normal projected destination identities.
+It checks source/context/credential freshness, quiet period, ledger bindings,
+unresolved attempts and identity ownership using a SELECT. It always reports
+`writesAuthorized: false`; it neither signs nor stages a delivery. In the 23:34 UTC
+live sample, both routes passed the current metadata and ownership checks but
+neither had an eligible first-insert classification. That contact remains held.
+Its six-character source grid and fractional timestamp were preserved; the audit
+does not impose eight-character grids on other users or contacts.
 1. Record the signed deployed revision, closed-gate readback and completed source
    boundary evidence. Verify access to the existing production encryption-key
    backup; do not rotate or recreate keys. A second independent passkey is

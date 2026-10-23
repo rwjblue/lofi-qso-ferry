@@ -141,6 +141,18 @@ Successful stable review classifications wait 24 hours before another routine ch
 
 Read-only history uses shared encrypted partitions covering up to a week, with a four-hour lifetime. QRZ completes its base pages and modification catch-up. If the catch-up is rejected, it atomically discards the partial pages, index and ciphertext, then requires a new full date-range verification pass with valid response framing. This fallback never treats a rejected or empty ambiguous response as absence. LoTW splits oversized date ranges down to a day and leaves an oversized single day for targeted review. Local candidate lookup can reuse completed positive evidence across contacts. Partial, expired, revoked or changed inventory cannot authorize adoption, and cached absence remains a hold rather than proof for an export. A fresh targeted identity check is still required before a future write. Partition leases, generation/version checks and scoped commit guards remain enforced even when a cached result is used.
 
+QRZ's exact `FAIL`, `COUNT=0`, absent-ADIF/REASON response has the fixed diagnostic
+`qrz_ambiguous_empty_selection`. For base and verification partitions, it records
+a fifteen-minute retry hold under the existing scope/credential/source/lease
+guards, capped by the unchanged cache expiry. Later contacts sharing that
+partition remain inventory-pending without another vendor read, records or an
+adoption fence. Due retries resume from the saved cursor; successful progress
+clears the hold. Modification catch-up retains its existing verification fallback.
+Lower error counts during a hold are not completed reconciliation. The bounded
+[QRZ diagnostic](../scripts/qrz-read-diagnostic.ts) confirmed populated controls
+succeed while the selected range and its count-only query fail with zero count;
+that observation still cannot authorize remote absence.
+
 A completed canonical source poll is not repeated in the same invocation; incomplete pages can continue while request and time budgets permit. Operation context is read at most once per operation per invocation. Contact turns are marked against an invocation cutoff, so waiting records are not selected again, and delivery/readback attempts are deferred at least five minutes after their turn. Waiting contacts and attempts therefore cannot consume repeated rounds without new eligible work. The scheduler stops without sleeping when it has no work left. Initial scans, destination rescans and repair scans request 25 rows per side/page; forward sync and operation context needed by live contacts request 100. LoTW confirmation refreshes also use the background budget.
 
 Priority follows durable arrival/change provenance, not the QSO date. An offline upload of an old-dated contact arriving through forward sync gets live priority. A meaningful forward correction promotes historical work; reconciliation baselines, timestamp-only replays and destination rescans do not. Each prepared attempt pins its traffic class through submission and readback. The first source inventory still requires complete canonical operation/segment context before any contact can be exported; prioritization does not bypass coverage or cutover checks. Imports may take hours or days, and the 25-row background source pages are a separate bound from the 20-contact processing batch. If unresolved source payloads expire while waiting, a separate resumable background repair scan reacquires current inputs without resetting forward sync. Resolved unchanged contacts are skipped on repair, and expired unresolved metadata stays visible until reread.

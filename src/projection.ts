@@ -1,7 +1,8 @@
 import { type AdifRecord, serializeAdifRecord } from "./adif.ts";
 import { ClubLogError, clublogRecord } from "./clublog.ts";
-import type { DestinationKind } from "./providers.ts";
 import type { SourceRecord } from "./lofi.ts";
+import type { DestinationKind } from "./providers.ts";
+import { WavelogError, wavelogRecord } from "./wavelog.ts";
 
 export interface Contact {
   id: string;
@@ -486,6 +487,22 @@ const sourceFingerprints: Record<
   DestinationKind,
   (contact: Contact, remotePreserved: boolean) => Promise<string>
 > = {
+  wavelog: async (contact) => {
+    try {
+      return projectionHash({
+        version: "wavelog-source-v1",
+        record: wavelogRecord({ ...contact, deleted: false }),
+        deleted: contact.deleted,
+      });
+    } catch (error) {
+      if (!(error instanceof WavelogError)) throw error;
+      const { context: _context, generation: _generation, ...fields } = contact;
+      return projectionHash({
+        version: "wavelog-source-unmapped-v1",
+        ...fields,
+      });
+    }
+  },
   qrz: qrzSourceFingerprint,
   lotw: lotwSourceFingerprint,
   clublog: async (contact) => {

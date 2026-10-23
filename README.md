@@ -1,6 +1,6 @@
 # LoFi QSO Ferry
 
-Automatic, one-way delivery of Ham2K LoFi contacts to QRZ, ARRL Logbook of The World (LoTW), and Club Log.
+Automatic, one-way delivery of Ham2K LoFi contacts to QRZ, ARRL Logbook of The World (LoTW), Club Log, and Wavelog.
 
 Log in PoLo or HaLo, let the contact settle, and Ferry handles delivery and subsequent corrections. The service runs on Cloudflare Workers with D1, supports multiple independent users, and keeps a small delivery ledger instead of a permanent copy of everyone's logbook.
 
@@ -68,7 +68,7 @@ mise exec -- npm run dev -- --test-scheduled
 
 Open `http://localhost:8787`. Signup uses a browser-bound local mailbox and a discoverable passkey. Setup creates local secrets only if absent and migrates local D1; no vendor credentials are needed. The demo exercises the actual bundled Worker and realistic vendor fixtures without external writes. See [local development](docs/local-development.md) for focused checks and [operations](docs/operations.md) for deployment, recovery and export gates.
 
-The dashboard manages one current connection per optional service (LoFi, QRZ, LoTW, and Club Log), immutable QRZ template versions, passkeys and the 20–60 minute quiet period. Its read-only review shows retained LoFi contacts, scan/context progress, station/location and current-template previews before enabling delivery. Source counts and destination reconciliation counts are separate. Cron processes contacts automatically, including operation/segment corrections, without an operation-release step. Signing runs inside the Worker; submission, observed acceptance and confirmation remain separate states.
+The dashboard manages one current connection per optional service (LoFi, QRZ, LoTW, Club Log, and Wavelog), immutable QRZ template versions, passkeys and the 20–60 minute quiet period. Its read-only review shows retained LoFi contacts, scan/context progress, station/location and current-template previews before enabling delivery. Source counts and destination reconciliation counts are separate. Cron processes contacts automatically, including operation/segment corrections, without an operation-release step. Signing runs inside the Worker; submission, observed acceptance and confirmation remain separate states.
 
 [Live read-only evidence](docs/evidence-live-readonly.md) verifies bounded existing-account reads from LoFi, QRZ and LoTW. These reads do not establish complete historical absence or mutation compatibility. No existing log was modified. Production exports require verified source boundaries, rollout checks, explicit live-write authorization and a scoped QSO allowlist. All checked-in environments disable exports.
 
@@ -79,3 +79,5 @@ The roadmap distinguishes completed implementation from blocked vendor, hardware
 [MIT](LICENSE). Reused upstream code must retain its own required notices; the MIT-licensed HaLo SDK and the separately licensed HaLo application/exporter are not interchangeable licensing scopes.
 
 Club Log requires a server application key and each user’s Club Log email, application password, and exact log callsign. Its adapter reads history before exporting, and uploads new contacts under the same rollout gates. Changes to a contact’s identity can upload a new record after fresh checks, retaining the previous remote record with a visible notice. Changes to other fields on the same identity require manual review; Ferry does not delete or replace Club Log history. See [operations](docs/operations.md#club-log).
+
+Wavelog uses an operator-approved HTTPS instance, an API v2 token, and an owned callsign logbook. Ferry can create matching station locations from complete source metadata, adopt compatible history, and import and verify new contacts. Corrections to mapped contacts require review. Its passive import policy leaves existing Wavelog automation unchanged. See the [Wavelog plan](docs/wavelog-plan.md) and [pinned API evidence](docs/evidence-wavelog.md).

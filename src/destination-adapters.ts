@@ -7,16 +7,29 @@ import {
   matchClublogHistory,
 } from "./clublog.ts";
 import { LotwClient } from "./lotw.ts";
-import { contactAdif, sourceFingerprint, type Contact } from "./projection.ts";
+import { type Contact, contactAdif, sourceFingerprint } from "./projection.ts";
 import { type DestinationKind, providerDefinitions } from "./providers.ts";
 import { matchQrzHistory, QrzClient, type QrzMatch } from "./qrz.ts";
 import { canonical, sha256 } from "./security.ts";
 import { lotwMode } from "./signing.ts";
+import {
+  matchWavelogHistory,
+  WavelogClient,
+  WavelogError,
+  wavelogRecord,
+  wavelogRemoteIdentity,
+  wavelogStation,
+} from "./wavelog.ts";
+import {
+  discoverWavelogStation,
+  WavelogProvisioningError,
+} from "./wavelog-stations.ts";
 
 export interface HistoryReadOptions {
   fetcher: typeof fetch;
   clublogApiKey?: string;
   config?: Record<string, unknown>;
+  wavelogAllowedBaseUrls?: readonly string[];
 }
 export interface DestinationAdapter {
   kind: DestinationKind;
@@ -232,6 +245,79 @@ export const destinationAdapters: Readonly<
     matchHistory: matchClublogHistory,
     remoteIdentity: clublogRemoteIdentity,
     reservationIdentity: clublogRemoteIdentity,
+  },
+  wavelog: {
+    kind: "wavelog",
+    capabilities: providerDefinitions.wavelog.capabilities,
+    routeMatches: (config, contact) =>
+      config.stationCallsign === contact.stationCall,
+    project: wavelogRecord,
+    fingerprint: (contact) => sourceFingerprint(contact, "wavelog"),
+    requestScope: (config) =>
+      typeof config.baseUrl === "string" ? config.baseUrl : undefined,
+    async readHistory(credential, contact, record, options) {
+      const raw = credential as { baseUrl?: string; token?: string } | null;
+      if (!raw?.baseUrl || !raw.token)
+        return { records: [], readAccess: false };
+      const config = options.config ?? {};
+      if (
+        raw.baseUrl !== config.baseUrl ||
+        config.stationCallsign !== contact.stationCall ||
+        !Number.isSafeInteger(config.logbookId) ||
+        Number(config.logbookId) <= 0
+      )
+        throw new WavelogError("blocked", "credential_route_changed");
+      const client = new WavelogClient(
+        { baseUrl: raw.baseUrl, token: raw.token },
+        {
+          fetcher: options.fetcher,
+          allowedBaseUrls: options.wavelogAllowedBaseUrls ?? [],
+        },
+      );
+      const logbook = await client.getLogbook(Number(config.logbookId));
+      const station = await discoverWavelogStation(
+        client,
+        wavelogStation(contact),
+      );
+      if (!station) return { records: [], readAccess: true };
+      if (!logbook.station_ids.includes(station.id))
+        throw new WavelogProvisioningError(
+          "wavelog_existing_station_requires_link",
+        );
+      return {
+        records: (await client.findQsos(station.id, record)).map(
+          (item) => item.record,
+        ),
+        readAccess: true,
+      };
+    },
+    matchHistory(source, records) {
+      if (
+        records.some(
+          (record) =>
+            !/^[1-9]\d*$/.test(record.APP_WAVELOG_ID ?? "") ||
+            !Number.isSafeInteger(Number(record.APP_WAVELOG_ID)),
+        )
+      )
+        return {
+          state: "history_ambiguous",
+          reason: "wavelog_qso_id_unverified",
+        };
+      return matchWavelogHistory(
+        source,
+        records.map((record) => ({
+          id: Number(record.APP_WAVELOG_ID),
+          stationId: 0,
+          record,
+        })),
+      );
+    },
+    remoteIdentity: async (record) =>
+      /^[1-9]\d*$/.test(record.APP_WAVELOG_ID ?? "") &&
+      Number.isSafeInteger(Number(record.APP_WAVELOG_ID))
+        ? record.APP_WAVELOG_ID
+        : null,
+    reservationIdentity: wavelogRemoteIdentity,
   },
 };
 

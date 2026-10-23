@@ -19,7 +19,7 @@ import {
   previewStatus,
   vendorName,
 } from "./browser-dashboard.ts";
-import { lofiAccountLabel, LOFI_CLIENT_NAME } from "./lofi-identity.ts";
+import { LOFI_CLIENT_NAME, lofiAccountLabel } from "./lofi-identity.ts";
 import type { ReviewResponse } from "./review-types.ts";
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -239,7 +239,9 @@ async function updateCredentials(connection: ConnectionSummary) {
       ? ["bookId", "stationCallsign", "startDate", "endDate"]
       : connection.kind === "clublog"
         ? ["callsign"]
-        : ["username"];
+        : connection.kind === "wavelog"
+          ? ["baseUrl", "stationCallsign", "logbookId"]
+          : ["username"];
   for (const field of fields) {
     const input = form.elements.namedItem(field);
     const value =
@@ -248,8 +250,11 @@ async function updateCredentials(connection: ConnectionSummary) {
         : field === "callsign"
           ? existing.config.stationCallsign
           : existing.config[field];
-    if (input instanceof HTMLInputElement && typeof value === "string")
-      input.value = value;
+    if (
+      input instanceof HTMLInputElement &&
+      (typeof value === "string" || typeof value === "number")
+    )
+      input.value = String(value);
   }
   details.hidden = false;
   details.open = true;
@@ -1002,6 +1007,19 @@ form("clublog", async (data) => {
     callsign: text(data, "callsign"),
   });
   element<HTMLFormElement>("clublog").reset();
+  message(result.message);
+  await load();
+});
+form("wavelog", async (data) => {
+  const result = await api<{ message: string }>("/api/connections/wavelog", {
+    baseUrl: text(data, "baseUrl"),
+    token: text(data, "token"),
+    stationCallsign: text(data, "stationCallsign"),
+    logbookId: Number(text(data, "logbookId")),
+    autoCreateStations: data.get("autoCreateStations") === "on",
+    outboundPolicy: data.get("outboundPolicy") === "on" ? "ferry" : null,
+  });
+  element<HTMLFormElement>("wavelog").reset();
   message(result.message);
   await load();
 });

@@ -37,7 +37,7 @@ const contact = () =>
 
 test("registered destinations preserve account routing while source and unknown kinds cannot route", async () => {
   const projected = await contact();
-  assert.deepEqual(destinationKinds, ["qrz", "lotw", "clublog"]);
+  assert.deepEqual(destinationKinds, ["qrz", "lotw", "clublog", "wavelog"]);
   for (const kind of destinationKinds) {
     assert.equal(destinationAdapter(kind).kind, kind);
     assert.equal(providerDefinitions[kind].role, "destination");
@@ -46,6 +46,20 @@ test("registered destinations preserve account routing while source and unknown 
   assert.equal(isDestinationKind("toString"), false);
   const connection = (kind: string, config: unknown) =>
     ({ kind, config: JSON.stringify(config) }) as Connection;
+  assert.equal(
+    routeMatches(
+      connection("wavelog", { stationCallsign: "N0CALL/P" }),
+      projected,
+    ),
+    true,
+  );
+  assert.equal(
+    routeMatches(
+      connection("wavelog", { stationCallsign: "N0CALL" }),
+      projected,
+    ),
+    false,
+  );
   assert.equal(
     routeMatches(
       connection("clublog", { stationCallsign: "N0CALL/P" }),

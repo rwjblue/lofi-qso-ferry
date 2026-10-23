@@ -16,6 +16,7 @@ export const VENDOR_POLICIES: Readonly<Record<Vendor, Readonly<VendorPolicy>>> =
     qrz: { windowMs: 300_000, total: 120, background: 24 },
     lotw: { windowMs: 300_000, total: 40, background: 8 },
     clublog: { windowMs: 300_000, total: 40, background: 8 },
+    wavelog: { windowMs: 300_000, total: 120, background: 60 },
   };
 
 export class VendorDeferredError extends Error {

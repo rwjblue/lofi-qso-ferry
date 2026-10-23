@@ -20,7 +20,6 @@ export interface SigningCredential {
   version: string;
   privateKeyPkcs8: string;
   certificatePem: string;
-  chainPem: string[];
   serial: string;
   callsign: string;
   dxcc: number;
@@ -28,12 +27,10 @@ export interface SigningCredential {
   validTo: string;
   qsoFrom: string;
   qsoTo: string | null;
-  trusted: boolean;
   status: CertificateStatus;
   statusCheckedAt: string | null;
 }
 export interface ImportOptions {
-  trustedRoots?: string[];
   now?: Date;
   version?: string;
   certificateStatus?: (serial: string) => Promise<CertificateStatus>;
@@ -195,154 +192,7 @@ export function validCallsign(value: string): boolean {
     (!value.startsWith("1") || /^1[AMS]/.test(value))
   );
 }
-/** Forge 1.4.0 has a permissive RSA DigestInfo verifier (GHSA-86w9-cpqp-85rv).
- * Never call its certificate signature verifier. Platform WebCrypto verifies the
- * exact DER TBS certificate with a strict PKCS#1 verifier instead.
- */
-export async function verifyCertificateSignature(
-  child: forge.pki.Certificate,
-  parent: forge.pki.Certificate,
-): Promise<boolean> {
-  const hashes: Record<string, string> = {
-    "1.2.840.113549.1.1.5": "SHA-1",
-    "1.2.840.113549.1.1.11": "SHA-256",
-    "1.2.840.113549.1.1.12": "SHA-384",
-    "1.2.840.113549.1.1.13": "SHA-512",
-  };
-  const hash = hashes[child.signatureOid];
-  if (
-    !hash ||
-    child.siginfo.algorithmOid !== child.signatureOid ||
-    typeof child.signature !== "string"
-  )
-    return false;
-  const spki = forge.asn1
-    .toDer(forge.pki.publicKeyToAsn1(parent.publicKey))
-    .getBytes();
-  const key = await crypto.subtle.importKey(
-    "spki",
-    bytes(spki),
-    { name: "RSASSA-PKCS1-v1_5", hash },
-    false,
-    ["verify"],
-  );
-  const tbs = forge.asn1.toDer(child.tbsCertificate).getBytes();
-  return crypto.subtle.verify(
-    "RSASSA-PKCS1-v1_5",
-    key,
-    bytes(child.signature),
-    bytes(tbs),
-  );
-}
-async function verifyTrustedChain(
-  leaf: forge.pki.Certificate,
-  input: forge.pki.Certificate[],
-  rootPems: string[],
-  now: Date,
-): Promise<boolean> {
-  try {
-    if (rootPems.length > 8) return false;
-    const roots = rootPems.map((pem) => forge.pki.certificateFromPem(pem));
-    const fingerprint = (cert: forge.pki.Certificate): string =>
-      forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
-    const trusted = new Set(roots.map(fingerprint));
-    const candidates = [...input.filter((cert) => cert !== leaf), ...roots];
-    const allowedCritical = new Set(["2.5.29.19", "2.5.29.15"]);
-    const supportedConstraints = (cert: forge.pki.Certificate) =>
-      !cert.extensions.some(
-        (ext) => ext.critical && !allowedCritical.has(ext.id),
-      );
-    let visited = 0;
-    const walk = async (
-      child: forge.pki.Certificate,
-      depth: number,
-      seen: Set<string>,
-    ): Promise<boolean> => {
-      if (depth >= 8 || ++visited > 64) return false;
-      const id = fingerprint(child);
-      if (seen.has(id)) return false;
-      // Exact, explicitly configured CA anchors are trust inputs, not members
-      // of the prospective certification path (RFC 5280 section 6.1.1).
-      if (trusted.has(id)) return child !== leaf;
-      if (
-        now < child.validity.notBefore ||
-        now > child.validity.notAfter ||
-        !supportedConstraints(child)
-      )
-        return false;
-      const path = new Set([...seen, id]);
-      const issuers = [
-        ...new Map(
-          candidates
-            .filter((parent) => child.isIssuer(parent))
-            .map((parent) => [fingerprint(parent), parent]),
-        ).values(),
-      ];
-      // Prefer anchors, but allow alternate paths for renewed certificates
-      // sharing an issuer name and key. A unique issuer DN is not required.
-      issuers.sort(
-        (left, right) =>
-          Number(trusted.has(fingerprint(right))) -
-          Number(trusted.has(fingerprint(left))),
-      );
-      for (const parent of issuers) {
-        const basic: unknown = parent.getExtension("basicConstraints");
-        const usage: unknown = parent.getExtension("keyUsage");
-        if (
-          !basic ||
-          typeof basic !== "object" ||
-          !("cA" in basic) ||
-          basic.cA !== true ||
-          !supportedConstraints(parent)
-        )
-          continue;
-        if (
-          "pathLenConstraint" in basic &&
-          typeof basic.pathLenConstraint === "number" &&
-          depth > basic.pathLenConstraint
-        )
-          continue;
-        if (
-          usage &&
-          (typeof usage !== "object" ||
-            !("keyCertSign" in usage) ||
-            usage.keyCertSign !== true)
-        )
-          continue;
-        if (
-          (await verifyCertificateSignature(child, parent)) &&
-          (await walk(parent, depth + 1, path))
-        )
-          return true;
-      }
-      return false;
-    };
-    return await walk(leaf, 0, new Set());
-  } catch {
-    return false;
-  }
-}
-/** Recheck normalized public certificates against the current trust policy.
- * Previously saved trust booleans and uploaded issuers never establish trust.
- */
-export async function verifySigningCredentialTrust(
-  credential: Pick<SigningCredential, "certificatePem" | "chainPem">,
-  roots: string[],
-  now = new Date(),
-): Promise<boolean> {
-  try {
-    if (!Number.isFinite(now.getTime()) || credential.chainPem.length > 7)
-      return false;
-    const leaf = forge.pki.certificateFromPem(credential.certificatePem);
-    const chain = credential.chainPem.map((pem) =>
-      forge.pki.certificateFromPem(pem),
-    );
-    return await verifyTrustedChain(leaf, [leaf, ...chain], roots, now);
-  } catch {
-    return false;
-  }
-}
-/** Parses only. Unknown trust or revocation may be saved but cannot be signed. */
+/** Parse the container and its signing constraints; LoTW validates the issuer on upload. */
 export async function importPkcs12(
   input: Uint8Array,
   password: string,
@@ -415,15 +265,6 @@ export async function importPkcs12(
   if (qsoTo && qsoTo < qsoFrom)
     fail("Invalid certificate QSO date authorization");
   const now = options.now ?? new Date();
-  let trusted = false;
-  if (options.trustedRoots?.length) {
-    trusted = await verifyTrustedChain(
-      cert,
-      certificates,
-      options.trustedRoots,
-      now,
-    );
-  }
   const status = options.certificateStatus
     ? await options.certificateStatus(
         BigInt(`0x${cert.serialNumber}`).toString(),
@@ -435,9 +276,6 @@ export async function importPkcs12(
       forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(key)),
     ),
     certificatePem: forge.pki.certificateToPem(cert),
-    chainPem: certificates
-      .filter((item) => item !== cert)
-      .map((item) => forge.pki.certificateToPem(item)),
     serial: BigInt(`0x${cert.serialNumber}`).toString(),
     callsign,
     dxcc: Number(dxccText),
@@ -445,7 +283,6 @@ export async function importPkcs12(
     validTo: cert.validity.notAfter.toISOString(),
     qsoFrom,
     qsoTo,
-    trusted,
     status,
     statusCheckedAt: options.certificateStatus ? now.toISOString() : null,
   };
@@ -685,14 +522,17 @@ export async function buildSignedTq8(
   if (!contacts.length || contacts.length > 100)
     fail("Signed batch must contain 1–100 contacts");
   if (
-    !credential.trusted ||
     credential.status !== "unrevoked" ||
     !credential.statusCheckedAt ||
+    !Number.isFinite(Date.parse(credential.statusCheckedAt)) ||
     now.getTime() - Date.parse(credential.statusCheckedAt) > 86_400_000 ||
     Date.parse(credential.statusCheckedAt) > now.getTime() + 60_000
   )
-    fail("Certificate trust and fresh unrevoked status are required");
+    fail("Fresh unrevoked certificate status is required");
   if (
+    !Number.isFinite(now.getTime()) ||
+    !Number.isFinite(Date.parse(credential.validFrom)) ||
+    !Number.isFinite(Date.parse(credential.validTo)) ||
     now < new Date(credential.validFrom) ||
     now > new Date(credential.validTo)
   )

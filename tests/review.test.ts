@@ -210,7 +210,7 @@ test("LoTW readiness explains saved verification evidence without vendor reads, 
   const certificate = {
     validFrom: new Date(h.now - 86_400_000).toISOString(),
     validTo: new Date(h.now + 86_400_000).toISOString(),
-    trusted: true,
+    trusted: false,
     status: "unrevoked",
     statusCheckedAt: new Date(h.now - 1).toISOString(),
   };
@@ -232,9 +232,9 @@ test("LoTW readiness explains saved verification evidence without vendor reads, 
         JSON.stringify(config),
       )
       .run();
-  const readiness = async (trustRootsJson = "[]") => {
+  const readiness = async () => {
     const before = await snapshot(h);
-    const result = await reviewSource(h.store, "a", { trustRootsJson }, h.now);
+    const result = await reviewSource(h.store, "a", {}, h.now);
     assert.deepEqual(await snapshot(h), before);
     assert.doesNotMatch(
       JSON.stringify(result),
@@ -244,16 +244,26 @@ test("LoTW readiness explains saved verification evidence without vendor reads, 
     assert(lotw);
     return lotw;
   };
-  const missingTrust = await readiness();
-  assert.equal(missingTrust.status, "attention");
-  assert.match(missingTrust.message, /trust is not configured on the server/);
+  const imported = await readiness();
+  assert.equal(imported.status, "ready");
+  assert.match(imported.message, /preflight checks passed/);
+  assert.match(imported.message, /LoTW validates the certificate on upload/);
+  assert.doesNotMatch(imported.message, /trust|roots|issuer/);
 
   await h.store
     .statement(
       "UPDATE connections SET status='active' WHERE tenant='a' AND id='lotw'",
     )
     .run();
-  assert.equal((await readiness("bundled")).status, "ready");
+  assert.equal((await readiness()).status, "ready");
+
+  await h.store
+    .statement(
+      "UPDATE connections SET config=? WHERE tenant='a' AND id='lotw'",
+      JSON.stringify({ ...config, readAccess: false }),
+    )
+    .run();
+  assert.equal((await readiness()).status, "ready");
 
   await h.store
     .statement(
@@ -273,7 +283,7 @@ test("LoTW readiness explains saved verification evidence without vendor reads, 
       }),
     )
     .run();
-  const failed = await readiness("bundled");
+  const failed = await readiness();
   assert.equal(failed.status, "attention");
   assert.match(failed.message, /LoTW rejected/);
   assert.match(failed.message, /at least 24 hours old/);
@@ -286,7 +296,7 @@ test("LoTW readiness explains saved verification evidence without vendor reads, 
   const paused = await readiness();
   assert.equal(paused.status, "paused");
   assert.match(paused.message, /connection is paused/);
-  assert.doesNotMatch(paused.message, /rejected|trust is not configured/);
+  assert.doesNotMatch(paused.message, /rejected|trust|roots/);
 
   await h.store
     .statement(

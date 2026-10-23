@@ -360,19 +360,17 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
     const { importPkcs12 } = await import("../src/signing.ts");
     const fixture = async (name: string) =>
       readFile(new URL(`../fixtures/signing/${name}`, import.meta.url));
-    const trustRoots = [(await fixture("root.pem")).toString()];
     const signingNow = Date.parse("2027-01-01T00:00:00Z");
     const signing = await importPkcs12(
       await fixture("current.p12"),
       "ferry-fixture",
       {
-        trustedRoots: [(await fixture("root.pem")).toString()],
         now: new Date(signingNow),
         certificateStatus: async () => "unrevoked",
         version: "fixture-v1",
       },
     );
-    signing.trusted = false; // Imported before roots were available.
+    const historicalSigning = { ...signing, trusted: false, chainPem: [] }; // Extra legacy fields do not prevent use.
     await h.store
       .statement(
         "UPDATE connections SET kind='lotw',config=? WHERE id='destination'",
@@ -386,7 +384,7 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       .run();
     await (
       await h.store.putPrivate("a", "destination", "v1", "credential", {
-        signingCredentials: [signing],
+        signingCredentials: [historicalSigning],
         query: { username: "synthetic", password: "synthetic" },
       })
     ).run();
@@ -459,14 +457,13 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       key,
       item,
       { ...gates, exportsEnabled: false },
-      { fetcher, now: signingNow, trustRoots },
+      { fetcher, now: signingNow },
     );
     assert.equal(disabled.reason, "exports_disabled_before_signing");
     assert.equal(network, 0);
     const prepared = await prepareDue(h.store, key, item, gates, {
       fetcher,
       now: signingNow,
-      trustRoots,
     });
     assert(prepared.attemptId);
     const payload = await h.store.private<{
@@ -490,7 +487,6 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       (
         await dispatchAttempt(h.store, "a", prepared.attemptId, gates, {
           fetcher,
-          trustRoots,
           now: signingNow + 1,
         })
       ).state,
@@ -511,7 +507,6 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       (
         await dispatchAttempt(h.store, "a", prepared.attemptId, gates, {
           fetcher,
-          trustRoots,
           now: retry!.due_at + 1,
         })
       ).state,
@@ -586,7 +581,6 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
     record.QSL_RCVD = "Y";
     const corrected = await prepareDue(h.store, key, changed, gates, {
       fetcher,
-      trustRoots,
       now: correctedNow,
     });
     assert(corrected.attemptId);
@@ -608,7 +602,6 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       (
         await dispatchAttempt(h.store, "a", corrected.attemptId, gates, {
           fetcher,
-          trustRoots,
           now: correctedNow + 2,
         })
       ).state,
@@ -1194,26 +1187,24 @@ test("prepared narrative context exposes HaLo contact aliases and frozen operati
   }
 });
 
-test("withdrawn LoTW trust anchors reject a prepared signed artifact before upload", async () => {
+test("LoTW certificate expiry after preparation rejects a signed artifact before upload", async () => {
   const h = await deliveryDatabase();
   try {
     const key = await seed(h.store);
     const { importPkcs12 } = await import("../src/signing.ts");
     const fixture = (name: string) =>
       readFile(new URL(`../fixtures/signing/${name}`, import.meta.url));
-    const trustRoots = [(await fixture("root.pem")).toString()];
     const signingNow = Date.parse("2027-01-01T00:00:00Z");
     const signing = await importPkcs12(
       await fixture("current.p12"),
       "ferry-fixture",
       {
-        trustedRoots: trustRoots,
         now: new Date(signingNow),
         certificateStatus: async () => "unrevoked",
-        version: "fixture-trust-withdrawal",
+        version: "fixture-expiry",
       },
     );
-    assert.equal(signing.trusted, true);
+    signing.validTo = new Date(signingNow + 1_000).toISOString();
     await h.store
       .statement(
         "UPDATE connections SET kind='lotw',config=? WHERE id='destination'",
@@ -1283,7 +1274,6 @@ test("withdrawn LoTW trust anchors reject a prepared signed artifact before uplo
     const prepared = await prepareDue(h.store, key, item, gates, {
       fetcher,
       now: signingNow,
-      trustRoots,
     });
     assert.equal(prepared.state, "prepared");
     assert(prepared.attemptId);
@@ -1298,18 +1288,18 @@ test("withdrawn LoTW trust anchors reject a prepared signed artifact before uplo
       [...Buffer.from(payload!.tq8, "base64").subarray(0, 2)],
       [0x1f, 0x8b],
     );
-    const requestsBeforeWithdrawal = requests;
+    const requestsBeforeExpiry = requests;
     const rejected = await dispatchAttempt(
       h.store,
       "a",
       prepared.attemptId,
       gates,
-      { fetcher, now: signingNow + 1, trustRoots: [] },
+      { fetcher, now: signingNow + 1_001 },
     );
     assert.equal(rejected.state, "rejected");
-    assert.equal(rejected.reason, "lotw_certificate_untrusted");
+    assert.equal(rejected.reason, "lotw_certificate_not_currently_valid");
     assert.equal(uploads, 0);
-    assert.equal(requests, requestsBeforeWithdrawal);
+    assert.equal(requests, requestsBeforeExpiry);
     assert.equal(
       (
         await h.store

@@ -43,7 +43,6 @@ async function setup() {
     ACTIVE_KEK_VERSION: "1",
     KEK_V1: keys.keys["1"],
     RESEND_API_KEY: "",
-    LOTW_TRUST_ROOTS_JSON: "[]",
     MAIL_FROM: "LoFi QSO Ferry <ferry@example.invalid>",
     EXPORTS_ENABLED: "false",
     ROLLOUT_CHECKS_PASSED: "false",

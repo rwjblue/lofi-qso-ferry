@@ -282,11 +282,10 @@ function renderConnection(connection: ConnectionSummary, previous = false) {
     const labels = {
       login: "LoTW website login",
       certificate: "Certificate import",
-      trust: "Certificate trust",
-      certificate_status: "Certificate status",
+      certificate_status: "ARRL certificate status",
     };
     const statuses = {
-      ok: "Verified",
+      ok: "Passed",
       warning: "Needs attention",
       error: "Failed",
       unknown: "Not checked",

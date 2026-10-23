@@ -2,7 +2,7 @@ export const vendorKinds = ["lofi", "qrz", "lotw"] as const;
 export type VendorKind = (typeof vendorKinds)[number];
 
 export interface LotwVerificationCheck {
-  id: "login" | "certificate" | "trust" | "certificate_status";
+  id: "login" | "certificate" | "certificate_status";
   status: "ok" | "warning" | "error" | "unknown";
   message: string;
   checkedAt?: string;

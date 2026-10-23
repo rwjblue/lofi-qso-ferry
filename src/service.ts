@@ -18,12 +18,7 @@ import {
   rereadOperation,
 } from "./intake.ts";
 import { LotwClient } from "./lotw.ts";
-import {
-  effectiveLotwTrustRoots,
-  refreshLotwTrustRoots,
-} from "./lotw-trust-cache.ts";
 import { refreshLotwCertificates } from "./lotw-maintenance.ts";
-import { lotwTrustRoots } from "./lotw-trust.ts";
 import type { Contact } from "./projection.ts";
 import { sourceFingerprint } from "./projection.ts";
 import { QrzClient } from "./qrz.ts";
@@ -191,14 +186,6 @@ export async function tick(
   const currentTime = () => clock ?? Date.now();
   const now = currentTime();
   const nowAtStart = now;
-  let trustRoots: string[] = [];
-  let invalidLotwTrust = false;
-  try {
-    trustRoots = lotwTrustRoots(env.LOTW_TRUST_ROOTS_JSON);
-  } catch {
-    // Invalid LoTW trust must deny LoTW signing without stopping other vendors.
-    invalidLotwTrust = true;
-  }
   const deadline = startedAt + 90_000;
   const expired = () => Date.now() >= deadline;
   await purgeAuth(env, now);
@@ -207,31 +194,11 @@ export async function tick(
   await expireSource(store, now);
   await store.recover(now);
   await rotatePrivateData(store);
-  const trustPolicy = invalidLotwTrust ? "[]" : env.LOTW_TRUST_ROOTS_JSON;
-  const trustRefresh = await refreshLotwTrustRoots(store, trustPolicy, {
-    fetcher,
-    ...(clock === undefined ? {} : { now: clock }),
-  });
-  trustRoots = trustRefresh.roots;
   const deps = {
     fetcher,
-    trustRoots,
-    currentTrustRoots: () => effectiveLotwTrustRoots(store, trustPolicy),
-    refreshTrustRoots: async () =>
-      (
-        await refreshLotwTrustRoots(store, trustPolicy, {
-          fetcher,
-          force: true,
-          ...(clock === undefined ? {} : { now: clock }),
-        })
-      ).roots,
     ...(clock === undefined ? {} : { now: clock }),
   };
-  const certificateRefresh = await refreshLotwCertificates(
-    store,
-    trustPolicy,
-    deps,
-  );
+  const certificateRefresh = await refreshLotwCertificates(store, deps);
   const sources = (
     await store
       .statement(
@@ -243,12 +210,8 @@ export async function tick(
     sources: 0,
     contacts: 0,
     attempts: 0,
-    errors:
-      certificateRefresh.errors +
-      Number(invalidLotwTrust) +
-      Number(trustRefresh.status === "unavailable"),
-    deferred:
-      certificateRefresh.deferred + Number(trustRefresh.status === "deferred"),
+    errors: certificateRefresh.errors,
+    deferred: certificateRefresh.deferred,
     exportsEnabled: exportsEffective(gates),
     rounds: 0,
     elapsedMs: 0,

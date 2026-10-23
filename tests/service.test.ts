@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { serializeAdifRecord } from "../src/adif.ts";
-import { readFile } from "node:fs/promises";
 import { tick } from "../src/service.ts";
 import { seed } from "./helpers.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
@@ -14,22 +13,21 @@ const key = (destination: string) => ({
   destination,
 });
 
-test("scheduler discovers ARRL root rotation once and reuses the shared daily cache", async () => {
+test("scheduler refreshes certificate status without downloading trust roots", async () => {
   const h = await schedulerFixture();
   try {
-    h.env.LOTW_TRUST_ROOTS_JSON = "bundled";
-    let downloads = 0;
+    await h.store
+      .statement(
+        "UPDATE connections SET status='needs_verification',config=json_set(config,'$.certificates[0].trusted',json('false')) WHERE kind='lotw'",
+      )
+      .run();
+    let rootDownloads = 0;
     const fetcher: typeof fetch = async (input, init) => {
-      if (new URL(String(input)).pathname !== "/lotwuser/certs.tq6")
-        return h.fetcher(input, init);
-      downloads++;
-      const root = await readFile(
-        new URL("../fixtures/signing/root.pem", import.meta.url),
-        "utf8",
-      );
-      return new Response(
-        `<tqsldata><tqslcerts><rootcert>${root}</rootcert></tqslcerts></tqsldata>`,
-      );
+      if (new URL(String(input)).pathname === "/lotwuser/certs.tq6") {
+        rootDownloads++;
+        throw new Error("Root discovery must be removed");
+      }
+      return h.fetcher(input, init);
     };
     const first = await tick(h.env, fetcher, FIXTURE_NOW);
     assert.equal(first.errors, 0);
@@ -38,9 +36,12 @@ test("scheduler discovers ARRL root rotation once and reuses the shared daily ca
       (item) => item.kind === "lotw",
     )!;
     assert.equal(connection.status, "active");
-    assert.equal(JSON.parse(connection.config).certificates[0].trusted, true);
+    assert.equal(
+      JSON.parse(connection.config).certificates[0].trusted,
+      undefined,
+    );
     await tick(h.env, fetcher, FIXTURE_NOW + 5 * 60_000);
-    assert.equal(downloads, 1);
+    assert.equal(rootDownloads, 0);
     assert.equal(h.calls.lotwUploads, 0);
     assert.equal(h.calls.qrzWrites, 0);
   } finally {
@@ -73,43 +74,6 @@ test("an idle drain polls a completed source and processes each contact only onc
     assert.equal(h.calls.lotwQueries, 1);
   } finally {
     wallClock.mock.restore();
-    await h.mf.dispose();
-  }
-});
-test("invalid LoTW trust denies signing while source sync and QRZ delivery continue", async () => {
-  const h = await schedulerFixture();
-  try {
-    h.env.LOTW_TRUST_ROOTS_JSON = "invalid-json";
-    const initial = await tick(h.env, h.fetcher, FIXTURE_NOW);
-    assert.equal(initial.errors, 1);
-    assert.equal(initial.contacts, 1);
-    assert.equal(h.calls.sourceSync, 1);
-    assert(h.calls.qrzReads > 0);
-    assert.equal(
-      (await h.store.ledger(key("destination")))?.state,
-      "adopted_existing",
-    );
-    assert.equal(
-      (await h.store.connection("a", "lotw"))?.status,
-      "needs_verification",
-    );
-    assert.equal(
-      JSON.parse((await h.store.connection("a", "lotw"))!.config)
-        .certificates[0].trusted,
-      false,
-    );
-    h.enable();
-    h.operation.grid = "FN32BB";
-    h.operation.syncedAtMillis = 200;
-    h.changes.operations.push(h.operation);
-    await tick(h.env, h.fetcher, FIXTURE_NOW + 5 * 60000);
-    const sent = await tick(h.env, h.fetcher, FIXTURE_NOW + 36 * 60000);
-    assert.equal(sent.errors, 1);
-    assert.equal(h.calls.qrzWrites, 1);
-    assert.equal(h.calls.lotwUploads, 0);
-    assert.equal(h.tq8Texts.length, 0);
-    assert.equal(await count(h, "attempts", "destination='lotw'"), 0);
-  } finally {
     await h.mf.dispose();
   }
 });

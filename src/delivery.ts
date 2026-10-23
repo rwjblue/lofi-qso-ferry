@@ -4,7 +4,6 @@ import {
   serializeAdifRecord,
 } from "./adif.ts";
 import { LotwClient, observeLotwContact } from "./lotw.ts";
-import { lotwTrustRoots } from "./lotw-trust.ts";
 import type { Contact } from "./projection.ts";
 import {
   mergeQrzCorrection,
@@ -24,7 +23,6 @@ import {
   type LotwContact,
   type LotwStation,
   type SigningCredential,
-  verifySigningCredentialTrust,
 } from "./signing.ts";
 import {
   type Connection,
@@ -55,30 +53,19 @@ export interface DeliveryDependencies {
   now?: number;
   sign?: typeof buildSignedTq8;
   priority?: VendorPriority;
-  trustRoots?: string[];
-  currentTrustRoots?: () => Promise<string[]>;
-  refreshTrustRoots?: () => Promise<string[]>;
 }
-async function currentCertificateTrust(
+function certificateCurrentlyValid(
   credential: SigningCredential,
-  deps: DeliveryDependencies,
   now: number,
-): Promise<boolean> {
-  const roots = deps.currentTrustRoots
-    ? await deps.currentTrustRoots()
-    : (deps.trustRoots ?? lotwTrustRoots("bundled"));
-  if (await verifySigningCredentialTrust(credential, roots, new Date(now)))
-    return true;
-  if (
-    !deps.refreshTrustRoots ||
-    Date.parse(credential.validFrom) > now ||
-    Date.parse(credential.validTo) <= now
-  )
-    return false;
-  return verifySigningCredentialTrust(
-    credential,
-    await deps.refreshTrustRoots(),
-    new Date(now),
+): boolean {
+  const validFrom = Date.parse(credential.validFrom);
+  const validTo = Date.parse(credential.validTo);
+  return (
+    Number.isFinite(now) &&
+    Number.isFinite(validFrom) &&
+    Number.isFinite(validTo) &&
+    validFrom <= now &&
+    now <= validTo
   );
 }
 interface QrzCredential {
@@ -731,9 +718,11 @@ export async function prepareDue(
         reason: "lotw_certificate_selection_ambiguous_or_missing",
       };
     const selected = eligibleCertificates[0];
-    const trusted = await currentCertificateTrust(selected, deps, now);
-    if (!trusted)
-      return { state: "blocked", reason: "lotw_certificate_untrusted" };
+    if (!certificateCurrentlyValid(selected, now))
+      return {
+        state: "blocked",
+        reason: "lotw_certificate_not_currently_valid",
+      };
     const status = await client.certificateStatus(selected.serial);
     if (status !== "unrevoked")
       return { state: "blocked", reason: `lotw_certificate_${status}` };
@@ -755,7 +744,6 @@ export async function prepareDue(
       };
     const signing = {
       ...selected,
-      trusted,
       status,
       statusCheckedAt: new Date(now).toISOString(),
     };
@@ -1021,13 +1009,7 @@ export async function dispatchAttempt(
           reason: "lotw_certificate_version_unavailable",
         };
       }
-      if (
-        !(await currentCertificateTrust(
-          certificate,
-          deps,
-          deps.now ?? Date.now(),
-        ))
-      ) {
+      if (!certificateCurrentlyValid(certificate, deps.now ?? Date.now())) {
         await store.resolve(
           tenant,
           id,
@@ -1036,7 +1018,10 @@ export async function dispatchAttempt(
           null,
           deps.now ?? Date.now(),
         );
-        return { state: "rejected", reason: "lotw_certificate_untrusted" };
+        return {
+          state: "rejected",
+          reason: "lotw_certificate_not_currently_valid",
+        };
       }
       const certificateStatus = await client.certificateStatus(
         certificate.serial,

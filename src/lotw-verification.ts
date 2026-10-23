@@ -1,5 +1,3 @@
-import { lotwTrustRoots } from "./lotw-trust.ts";
-
 /** Public verification summaries only; no credentials or vendor requests. */
 export interface LotwLoginVerification {
   status: "verified" | "rejected" | "unavailable";
@@ -7,7 +5,7 @@ export interface LotwLoginVerification {
 }
 
 export interface LotwVerificationCheck {
-  id: "login" | "certificate" | "trust" | "certificate_status";
+  id: "login" | "certificate" | "certificate_status";
   status: "ok" | "warning" | "error" | "unknown";
   message: string;
   checkedAt?: string;
@@ -130,51 +128,7 @@ function certificateCheck(
     id: "certificate",
     status: "ok",
     message:
-      "The certificate and matching private key were imported, and the certificate dates are valid. This does not verify a QSO upload.",
-  };
-}
-
-function trustCheck(
-  certificates: Record<string, unknown>[],
-  trustRootsJson: string,
-): LotwVerificationCheck {
-  let roots: string[];
-  try {
-    roots = lotwTrustRoots(trustRootsJson);
-  } catch {
-    return {
-      id: "trust",
-      status: "error",
-      message:
-        "LoTW certificate trust configuration is invalid on the server. The Ferry operator must repair it before signing.",
-    };
-  }
-  if (!roots.length)
-    return {
-      id: "trust",
-      status: "warning",
-      message:
-        "LoTW certificate trust is not configured on the server. The Ferry operator must add verified LoTW trust roots before signing.",
-    };
-  if (!certificates.length)
-    return {
-      id: "trust",
-      status: "unknown",
-      message:
-        "LoTW server trust roots are configured. Import a certificate to check its issuer.",
-    };
-  if (certificates.some((certificate) => certificate.trusted !== true))
-    return {
-      id: "trust",
-      status: "warning",
-      message:
-        "The imported certificate issuer could not be verified. Ferry automatically refreshes ARRL trust roots when a working LoTW website login is available. Check the LoTW login and retry; persistent failures need operator review.",
-    };
-  return {
-    id: "trust",
-    status: "ok",
-    message:
-      "Certificate issuer trust was verified against Ferry's LoTW trust anchors. ARRL roots and saved certificates are rechecked automatically.",
+      "The certificate and matching private key were imported, and the certificate dates are valid. LoTW validates the certificate on upload; these checks do not verify upload acceptance.",
   };
 }
 
@@ -238,14 +192,14 @@ function statusCheck(
     id: "certificate_status",
     status: "ok",
     message:
-      "ARRL reported every imported certificate as unrevoked within the last 24 hours. This does not verify a QSO upload.",
+      "ARRL reported every imported certificate serial as unrevoked within the last 24 hours. This status lookup does not authenticate the certificate or verify upload acceptance.",
     ...date,
   };
 }
 
 export function lotwVerification(
   config: Record<string, unknown>,
-  options: { trustRootsJson: string; now?: number },
+  options: { now?: number } = {},
 ): LotwVerificationCheck[] {
   const now = options.now ?? Date.now();
   const certificates = Array.isArray(config.certificates)
@@ -254,7 +208,16 @@ export function lotwVerification(
   return [
     loginCheck(config, now),
     certificateCheck(certificates, now),
-    trustCheck(certificates, options.trustRootsJson),
     statusCheck(certificates, now),
   ];
+}
+
+/** Preflight only. LoTW decides whether to accept a signed upload. */
+export function lotwReadyForUpload(
+  config: Record<string, unknown>,
+  now = Date.now(),
+): boolean {
+  return lotwVerification(config, { now }).every((check) =>
+    check.id === "login" ? check.status !== "error" : check.status === "ok",
+  );
 }

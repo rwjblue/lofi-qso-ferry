@@ -45,7 +45,6 @@ async function runtime(environment = "local", emailFixture = false) {
         KEK_V1: Buffer.alloc(32, 7).toString("base64url"),
         RESEND_API_KEY: "",
         MAIL_FROM: "fixture@example.invalid",
-        LOTW_TRUST_ROOTS_JSON: "[]",
         EXPORTS_ENABLED: "false",
         ROLLOUT_CHECKS_PASSED: "false",
         SOURCE_BOUNDARY_VERIFIED: "false",

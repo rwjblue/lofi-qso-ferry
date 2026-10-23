@@ -13,7 +13,6 @@ const fixture = (name: string) =>
 
 async function signingFixture() {
   return importPkcs12(await fixture("current.p12"), "ferry-fixture", {
-    trustedRoots: [(await fixture("root.pem")).toString()],
     now: new Date(NOW),
     certificateStatus: async () => "unrevoked",
   });
@@ -28,7 +27,6 @@ function publicCertificate(certificate: SigningCredential) {
     validTo: certificate.validTo,
     qsoFrom: certificate.qsoFrom,
     qsoTo: certificate.qsoTo,
-    trusted: certificate.trusted,
     status: certificate.status,
     statusCheckedAt: certificate.statusCheckedAt,
   };
@@ -79,7 +77,6 @@ async function harness() {
     await seed(h.store);
     return {
       ...h,
-      roots: JSON.stringify([(await fixture("root.pem")).toString()]),
       signing: await signingFixture(),
     };
   } catch (error) {
@@ -88,14 +85,20 @@ async function harness() {
   }
 }
 
-test("automatic trust refresh verifies saved certificates without reimporting or rewriting keys", async () => {
+test("certificate refresh ignores legacy trust flags without reimporting or rewriting keys", async () => {
   const h = await harness();
   try {
-    await save(h.store, "lotw", { ...h.signing, trusted: false });
+    const legacy = { ...h.signing, trusted: false };
+    await save(h.store, "lotw", legacy);
+    await h.store
+      .statement(
+        "UPDATE connections SET config=json_set(config,'$.certificates[0].trusted',json('false'),'$.trustCheckedAt',123,'$.trustSourceAttemptedAt',123) WHERE id='lotw'",
+      )
+      .run();
     const before = await h.store
       .statement("SELECT envelope FROM private_data WHERE connection='lotw'")
       .first<{ envelope: string }>();
-    const result = await refreshLotwCertificates(h.store, h.roots, {
+    const result = await refreshLotwCertificates(h.store, {
       now: NOW,
       fetcher: async () => {
         throw new Error("Fresh certificate status must not need the network");
@@ -111,12 +114,10 @@ test("automatic trust refresh verifies saved certificates without reimporting or
     assert.equal(connection.status, "active");
     assert.equal(connection.credential_version, "v1");
     const config = JSON.parse(connection.config);
-    assert.equal(config.certificates[0].trusted, true);
-    assert.equal(
-      config.certificates[0].trustCheckedAt,
-      new Date(NOW).toISOString(),
-    );
-    assert.equal(config.trustCheckedAt, NOW);
+    assert.equal(config.certificates[0].trusted, undefined);
+    assert.equal(config.trustCheckedAt, undefined);
+    assert.equal(config.trustSourceAttemptedAt, undefined);
+    assert.equal(config.certificateCheckedAt, NOW);
     assert.equal(config.retained, "connection setting");
     assert.equal(config.loginVerification.status, "verified");
     assert.doesNotMatch(
@@ -132,50 +133,13 @@ test("automatic trust refresh verifies saved certificates without reimporting or
   }
 });
 
-test("saved certificates automatically discover a newly issued ARRL root without a release or reimport", async () => {
-  const h = await harness();
-  try {
-    await save(h.store, "lotw", { ...h.signing, trusted: false });
-    const before = await h.store
-      .statement("SELECT envelope FROM private_data WHERE connection='lotw'")
-      .first<{ envelope: string }>();
-    let downloads = 0;
-    const result = await refreshLotwCertificates(h.store, "bundled", {
-      now: NOW,
-      fetcher: async (input) => {
-        const url = new URL(String(input));
-        assert.equal(url.origin, "https://lotw.arrl.org");
-        assert.equal(url.pathname, "/lotwuser/certs.tq6");
-        downloads++;
-        return new Response(
-          `<tqsldata><tqslcerts><rootcert>${(await fixture("root.pem")).toString()}</rootcert></tqslcerts></tqsldata>`,
-        );
-      },
-    });
-    assert.equal(downloads, 1);
-    assert.equal(result.errors, 0);
-    const connection = (await h.store.connection("a", "lotw"))!;
-    assert.equal(connection.status, "active");
-    assert.equal(connection.credential_version, "v1");
-    assert.equal(JSON.parse(connection.config).certificates[0].trusted, true);
-    assert.deepEqual(
-      await h.store
-        .statement("SELECT envelope FROM private_data WHERE connection='lotw'")
-        .first<{ envelope: string }>(),
-      before,
-    );
-  } finally {
-    await h.mf.dispose();
-  }
-});
-
-test("trust refresh preserves paused and revoked connections and never overrides a rejected login", async () => {
+test("certificate refresh preserves paused and revoked connections and never overrides a rejected login", async () => {
   const h = await harness();
   try {
     for (const status of ["disabled", "paused", "revoked"])
       await save(h.store, status, h.signing, { status });
     await save(h.store, "rejected", h.signing, { login: "rejected" });
-    const result = await refreshLotwCertificates(h.store, h.roots, {
+    const result = await refreshLotwCertificates(h.store, {
       now: NOW,
     });
     assert.equal(result.checked, 3);
@@ -187,22 +151,9 @@ test("trust refresh preserves paused and revoked connections and never overrides
     );
     assert.equal(
       JSON.parse((await h.store.connection("a", "revoked"))!.config)
-        .trustCheckedAt,
+        .certificateCheckedAt,
       undefined,
     );
-  } finally {
-    await h.mf.dispose();
-  }
-});
-
-test("removing trust roots demotes an active connection using actual certificate verification", async () => {
-  const h = await harness();
-  try {
-    await save(h.store, "lotw", h.signing, { status: "active" });
-    await refreshLotwCertificates(h.store, "[]", { now: NOW });
-    const connection = (await h.store.connection("a", "lotw"))!;
-    assert.equal(connection.status, "needs_verification");
-    assert.equal(JSON.parse(connection.config).certificates[0].trusted, false);
   } finally {
     await h.mf.dispose();
   }
@@ -212,7 +163,7 @@ test("certificate status refresh is cached for twelve hours and revocation preve
   const h = await harness();
   let calls = 0;
   try {
-    await save(h.store, "lotw", { ...h.signing, trusted: false });
+    await save(h.store, "lotw", h.signing);
     const options = {
       now: NOW,
       fetcher: (async (input) => {
@@ -223,10 +174,10 @@ test("certificate status refresh is cached for twelve hours and revocation preve
         return new Response("<Status>Revoked</Status>");
       }) as typeof fetch,
     };
-    await refreshLotwCertificates(h.store, h.roots, options);
+    await refreshLotwCertificates(h.store, options);
     assert.equal(calls, 0);
     options.now += 12 * 60 * 60 * 1000;
-    await refreshLotwCertificates(h.store, h.roots, options);
+    await refreshLotwCertificates(h.store, options);
     assert.equal(calls, 1);
     const connection = (await h.store.connection("a", "lotw"))!;
     assert.equal(connection.status, "needs_verification");
@@ -236,23 +187,22 @@ test("certificate status refresh is cached for twelve hours and revocation preve
       certificate.statusCheckedAt,
       new Date(options.now).toISOString(),
     );
-    await refreshLotwCertificates(h.store, h.roots, options);
+    await refreshLotwCertificates(h.store, options);
     assert.equal(calls, 1);
   } finally {
     await h.mf.dispose();
   }
 });
 
-test("vendor deferrals keep cooldowns and still record local trust without claiming fresh status", async () => {
+test("vendor deferrals keep cooldowns without claiming fresh certificate status", async () => {
   const h = await harness();
   let calls = 0;
   try {
     await save(h.store, "lotw", {
       ...h.signing,
-      trusted: false,
       statusCheckedAt: new Date(NOW - 2 * 86_400_000).toISOString(),
     });
-    const result = await refreshLotwCertificates(h.store, h.roots, {
+    const result = await refreshLotwCertificates(h.store, {
       now: NOW,
       fetcher: async () => {
         calls++;
@@ -272,7 +222,7 @@ test("vendor deferrals keep cooldowns and still record local trust without claim
     const connection = (await h.store.connection("a", "lotw"))!;
     assert.equal(connection.status, "needs_verification");
     const certificate = JSON.parse(connection.config).certificates[0];
-    assert.equal(certificate.trusted, true);
+    assert.equal(certificate.trusted, undefined);
     assert.equal(
       certificate.statusCheckedAt,
       new Date(NOW - 2 * 86_400_000).toISOString(),
@@ -297,27 +247,26 @@ test("bounded oldest-first refresh reaches later tenants without duplicating fre
     await save(h.store, "first", h.signing);
     await save(h.store, "second", h.signing, { tenant: "b" });
     const options = { now: NOW, limit: 1 };
-    await refreshLotwCertificates(h.store, h.roots, options);
+    await refreshLotwCertificates(h.store, options);
     assert.equal((await h.store.connection("a", "first"))?.status, "active");
     assert.equal(
       (await h.store.connection("b", "second"))?.status,
       "needs_verification",
     );
-    await refreshLotwCertificates(h.store, h.roots, options);
+    await refreshLotwCertificates(h.store, options);
     assert.equal((await h.store.connection("b", "second"))?.status, "active");
   } finally {
     await h.mf.dispose();
   }
 });
 
-test("local trust checks continue after the bounded status budget is spent", async () => {
+test("certificate refresh continues after the bounded status budget is spent", async () => {
   const h = await harness();
   let calls = 0;
   try {
     for (const id of ["first", "second", "third"])
       await save(h.store, id, {
         ...h.signing,
-        trusted: false,
         statusCheckedAt: null,
       });
     const options = {
@@ -327,20 +276,20 @@ test("local trust checks continue after the bounded status budget is spent", asy
         return new Response("<Status>Unrevoked</Status>");
       },
     };
-    const result = await refreshLotwCertificates(h.store, h.roots, options);
+    const result = await refreshLotwCertificates(h.store, options);
     assert.equal(result.checked, 3);
     assert.equal(calls, 2);
     for (const id of ["first", "second", "third"])
       assert.equal(
         JSON.parse((await h.store.connection("a", id))!.config).certificates[0]
           .trusted,
-        true,
+        undefined,
       );
     assert.equal(
       (await h.store.connection("a", "third"))?.status,
       "needs_verification",
     );
-    await refreshLotwCertificates(h.store, h.roots, options);
+    await refreshLotwCertificates(h.store, options);
     assert.equal(calls, 3);
     assert.equal((await h.store.connection("a", "third"))?.status, "active");
   } finally {
@@ -357,7 +306,7 @@ test("a credential replacement or revoke during refresh cannot receive stale ver
           ...h.signing,
           statusCheckedAt: null,
         });
-        const result = await refreshLotwCertificates(h.store, h.roots, {
+        const result = await refreshLotwCertificates(h.store, {
           now: NOW,
           fetcher: async () => {
             if (action === "replace")
@@ -391,7 +340,7 @@ test("a credential replacement or revoke during refresh cannot receive stale ver
         const config = JSON.parse(connection.config);
         if (action === "replace" || action === "revoke") {
           assert.equal(result.updated, 0);
-          assert.equal(config.trustCheckedAt, undefined);
+          assert.equal(config.certificateCheckedAt, undefined);
           assert.equal(
             connection.credential_version,
             action === "replace" ? "v2" : null,

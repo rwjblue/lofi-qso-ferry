@@ -1,10 +1,10 @@
-import { readFile, readdir } from "node:fs/promises";
-import { gunzipSync } from "node:zlib";
 import assert from "node:assert/strict";
+import { readdir, readFile } from "node:fs/promises";
+import { gunzipSync } from "node:zlib";
 import {
+  type AdifRecord,
   parseAdif,
   serializeAdifRecord,
-  type AdifRecord,
 } from "../src/adif.ts";
 import type { SourceRecord } from "../src/lofi.ts";
 import { importPkcs12 } from "../src/signing.ts";
@@ -52,7 +52,6 @@ export function fixtureEnvironment(db: D1Database): Env {
     EXPORTS_ENABLED: "false",
     LIVE_WRITE_AUTHORIZATION: "",
     MAIL_FROM: "ferry@example.test",
-    LOTW_TRUST_ROOTS_JSON: "[]",
     ACTIVE_KEK_VERSION: "1",
     ROLLOUT_CHECKS_PASSED: "false",
     SOURCE_BOUNDARY_VERIFIED: "false",
@@ -128,14 +127,10 @@ export async function schedulerFixture() {
     const qrzMutations: AdifRecord[] = [];
     const fixture = async (name: string) =>
       readFile(new URL(`../fixtures/signing/${name}`, import.meta.url));
-    env.LOTW_TRUST_ROOTS_JSON = JSON.stringify([
-      (await fixture("root.pem")).toString(),
-    ]);
     const credential = await importPkcs12(
       await fixture("current.p12"),
       "ferry-fixture",
       {
-        trustedRoots: [(await fixture("root.pem")).toString()],
         now: new Date(FIXTURE_NOW),
         version: "scheduler-signing-v1",
         certificateStatus: async () => "unrevoked",

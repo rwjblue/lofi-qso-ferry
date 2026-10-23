@@ -1,7 +1,7 @@
 import { templateContext } from "./delivery.ts";
 import type { Work } from "./intake.ts";
 import type { SourceRecord } from "./lofi.ts";
-import { lotwVerification } from "./lotw-verification.ts";
+import { lotwReadyForUpload, lotwVerification } from "./lotw-verification.ts";
 import {
   isEventRecord,
   isSourceDeleted,
@@ -412,7 +412,6 @@ export async function reviewSource(
     source?: string;
     destination?: string;
     limit?: number;
-    trustRootsJson?: string;
   } = {},
   now = Date.now(),
 ): Promise<ReviewResponse> {
@@ -552,10 +551,7 @@ export async function reviewSource(
         );
         const warnings = new Set(
           current.flatMap((connection) =>
-            lotwVerification(jsonObject(connection.config), {
-              trustRootsJson: options.trustRootsJson ?? "[]",
-              now,
-            })
+            lotwVerification(jsonObject(connection.config), { now })
               .filter(
                 (check) =>
                   check.status === "warning" || check.status === "error",
@@ -563,15 +559,18 @@ export async function reviewSource(
               .map((check) => check.message),
           ),
         );
-        if (warnings.size) {
-          status = "attention";
-          message = [...warnings].join(" ");
-        } else if (status === "attention") {
-          message =
-            "LoTW needs certificate verification before signing. Review the connection checks.";
-        } else if (status === "paused") {
+        if (status === "paused") {
           message =
             "The LoTW connection is paused. Resume it before checking delivery readiness.";
+        } else {
+          const ready = current.every((connection) =>
+            lotwReadyForUpload(jsonObject(connection.config), now),
+          );
+          status = ready ? "ready" : "attention";
+          const summary = ready
+            ? "LoTW certificate preflight checks passed. LoTW validates the certificate on upload; these checks do not verify upload acceptance."
+            : "LoTW needs certificate or login checks before signing. Review the connection checks.";
+          message = [summary, ...warnings].join(" ");
         }
       }
       return { kind: kind as "lofi" | "qrz" | "lotw", status, message };
@@ -598,7 +597,6 @@ export async function reviewRoute(
   request: Request,
   store: Store,
   tenant: string,
-  options: { trustRootsJson?: string } = {},
 ): Promise<Response | null> {
   const url = new URL(request.url);
   if (url.pathname !== "/api/review") return null;
@@ -614,7 +612,6 @@ export async function reviewRoute(
       throw new ReviewError(400, "Review limit must be 1–20");
     return Response.json(
       await reviewSource(store, tenant, {
-        trustRootsJson: options.trustRootsJson,
         ...(url.searchParams.has("source")
           ? { source: url.searchParams.get("source") ?? "" }
           : {}),

@@ -1,13 +1,5 @@
 import { LotwClient } from "./lotw.ts";
-import {
-  effectiveLotwTrustRoots,
-  refreshLotwTrustRoots,
-} from "./lotw-trust-cache.ts";
-import {
-  type CertificateStatus,
-  type SigningCredential,
-  verifySigningCredentialTrust,
-} from "./signing.ts";
+import type { CertificateStatus, SigningCredential } from "./signing.ts";
 import type { Connection, Store } from "./store.ts";
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
 
@@ -22,8 +14,6 @@ interface PublicCertificate {
   validTo: string;
   qsoFrom: string;
   qsoTo: string | null;
-  trusted: boolean;
-  trustCheckedAt: string;
   status: CertificateStatus;
   statusCheckedAt: string | null;
 }
@@ -37,25 +27,18 @@ function checkedTime(value: unknown, now: number): number | null {
 /** Refresh only public evidence. Keys and credential versions remain unchanged. */
 export async function refreshLotwCertificates(
   store: Store,
-  trustRootsJson: string,
   options: {
     fetcher?: typeof fetch;
     now?: number;
     limit?: number;
-    trustRoots?: string[];
-    refreshTrustRoots?: () => Promise<string[]>;
   } = {},
 ) {
-  let roots =
-    options.trustRoots ??
-    (await effectiveLotwTrustRoots(store, trustRootsJson));
-  let refreshedRoots = false;
   const now = options.now ?? Date.now();
   const limit = Math.max(1, Math.min(20, options.limit ?? 20));
   const connections = (
     await store
       .statement(
-        "SELECT c.* FROM connections c JOIN private_data p ON p.tenant=c.tenant AND p.connection=c.id AND p.id=c.credential_version AND p.kind='credential' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) WHERE c.kind='lotw' AND c.status IN('active','needs_verification','disabled','paused') ORDER BY COALESCE(json_extract(c.config,'$.trustCheckedAt'),0),c.tenant,c.id LIMIT ?",
+        "SELECT c.* FROM connections c JOIN private_data p ON p.tenant=c.tenant AND p.connection=c.id AND p.id=c.credential_version AND p.kind='credential' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) WHERE c.kind='lotw' AND c.status IN('active','needs_verification','disabled','paused') ORDER BY COALESCE(json_extract(c.config,'$.certificateCheckedAt'),0),c.tenant,c.id LIMIT ?",
         now,
         limit,
       )
@@ -135,34 +118,6 @@ export async function refreshLotwCertificates(
             statusRequests = 0;
           }
         }
-        let trusted = await verifySigningCredentialTrust(
-          certificate,
-          roots,
-          new Date(now),
-        );
-        if (
-          !trusted &&
-          !refreshedRoots &&
-          trustRootsJson === "bundled" &&
-          Date.parse(certificate.validFrom) <= now &&
-          Date.parse(certificate.validTo) > now
-        ) {
-          refreshedRoots = true;
-          roots = options.refreshTrustRoots
-            ? await options.refreshTrustRoots()
-            : (
-                await refreshLotwTrustRoots(store, trustRootsJson, {
-                  fetcher: options.fetcher,
-                  now: options.now,
-                  force: true,
-                })
-              ).roots;
-          trusted = await verifySigningCredentialTrust(
-            certificate,
-            roots,
-            new Date(now),
-          );
-        }
         certificates.push({
           callsign: certificate.callsign,
           dxcc: certificate.dxcc,
@@ -171,8 +126,6 @@ export async function refreshLotwCertificates(
           validTo: certificate.validTo,
           qsoFrom: certificate.qsoFrom,
           qsoTo: certificate.qsoTo,
-          trusted,
-          trustCheckedAt: new Date(now).toISOString(),
           status,
           statusCheckedAt,
         });
@@ -187,7 +140,6 @@ export async function refreshLotwCertificates(
             commitTime,
           );
           return (
-            certificate.trusted &&
             Date.parse(certificate.validFrom) <= commitTime &&
             Date.parse(certificate.validTo) > commitTime &&
             certificate.status === "unrevoked" &&
@@ -197,7 +149,7 @@ export async function refreshLotwCertificates(
         });
       const updated = await store
         .statement(
-          "UPDATE connections SET config=json_set(config,'$.certificates',json(?),'$.trustCheckedAt',?),status=CASE WHEN status IN('disabled','paused') THEN status WHEN ?=1 AND COALESCE(json_extract(config,'$.loginVerification.status'),'')!='rejected' THEN 'active' ELSE 'needs_verification' END WHERE tenant=? AND id=? AND kind='lotw' AND status IN('active','needs_verification','disabled','paused') AND credential_version=? AND EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=connections.tenant AND p.connection=connections.id AND p.id=connections.credential_version AND p.kind='credential' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)) AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?)",
+          "UPDATE connections SET config=json_set(json_remove(config,'$.trustCheckedAt','$.trustSourceAttemptedAt'),'$.certificates',json(?),'$.certificateCheckedAt',?),status=CASE WHEN status IN('disabled','paused') THEN status WHEN ?=1 AND COALESCE(json_extract(config,'$.loginVerification.status'),'')!='rejected' THEN 'active' ELSE 'needs_verification' END WHERE tenant=? AND id=? AND kind='lotw' AND status IN('active','needs_verification','disabled','paused') AND credential_version=? AND EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=connections.tenant AND p.connection=connections.id AND p.id=connections.credential_version AND p.kind='credential' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)) AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?)",
           JSON.stringify(certificates),
           commitTime,
           valid ? 1 : 0,
@@ -218,7 +170,7 @@ export async function refreshLotwCertificates(
       const failedAt = options.now ?? Date.now();
       await store
         .statement(
-          "UPDATE connections SET config=json_set(config,'$.trustCheckedAt',?),status=CASE WHEN status IN('disabled','paused') THEN status ELSE 'needs_verification' END WHERE tenant=? AND id=? AND credential_version=? AND status IN('active','needs_verification','disabled','paused') AND EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=connections.tenant AND p.connection=connections.id AND p.id=connections.credential_version AND p.kind='credential' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)) AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?)",
+          "UPDATE connections SET config=json_set(config,'$.certificateCheckedAt',?),status=CASE WHEN status IN('disabled','paused') THEN status ELSE 'needs_verification' END WHERE tenant=? AND id=? AND credential_version=? AND status IN('active','needs_verification','disabled','paused') AND EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=connections.tenant AND p.connection=connections.id AND p.id=connections.credential_version AND p.kind='credential' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)) AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?)",
           now,
           connection.tenant,
           connection.id,

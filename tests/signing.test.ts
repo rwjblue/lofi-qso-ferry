@@ -9,7 +9,6 @@ import {
   importPkcs12,
   lotwMode,
   signCanonical,
-  verifyCertificateSignature,
   type LotwContact,
   type LotwStation,
 } from "../src/signing.ts";
@@ -23,7 +22,6 @@ const vector: {
 } = JSON.parse(fixture("vector.json").toString());
 const now = new Date("2027-01-01T00:00:00Z");
 const importOptions = {
-  trustedRoots: [fixture("root.pem").toString()],
   now,
   certificateStatus: async () => "unrevoked" as const,
   version: "synthetic-v1",
@@ -57,14 +55,13 @@ function authorizationContainer(overrides: Record<string, string | null> = {}) {
   );
 }
 
-test("legacy RC2/3DES and modern AES PKCS12 import verify MAC, matching RSA, dates and trusted chain", async () => {
+test("legacy RC2/3DES and modern AES PKCS12 import verify MAC, matching RSA and certificate constraints without a CA list", async () => {
   for (const name of ["legacy.p12", "current.p12"]) {
     const credential = await importPkcs12(
       fixture(name),
       "ferry-fixture",
       importOptions,
     );
-    assert.equal(credential.trusted, true);
     assert.equal(credential.callsign, "W1AW");
     assert.equal(credential.dxcc, 291);
     assert.equal(credential.qsoFrom, "2020-01-01");
@@ -73,7 +70,7 @@ test("legacy RC2/3DES and modern AES PKCS12 import verify MAC, matching RSA, dat
     assert.match(credential.privateKeyPkcs8, /BEGIN PRIVATE KEY/);
   }
 });
-test("blank-password PKCS12 imports raw ARRL authorization text without granting trust", async () => {
+test("blank-password PKCS12 imports raw ARRL authorization text without asserting issuer acceptance", async () => {
   for (const qsoTo of ["2030-12-31", null]) {
     const credential = await importPkcs12(
       authorizationContainer({ [authorizationOids.last]: qsoTo }),
@@ -84,7 +81,8 @@ test("blank-password PKCS12 imports raw ARRL authorization text without granting
     assert.equal(credential.dxcc, 291);
     assert.equal(credential.qsoFrom, "2020-01-01");
     assert.equal(credential.qsoTo, qsoTo);
-    assert.equal(credential.trusted, false);
+    assert.equal("trusted" in credential, false);
+    assert.equal("chainPem" in credential, false);
     assert.equal(credential.status, "unknown");
   }
 });
@@ -206,6 +204,25 @@ test("missing and mismatched keys and missing integrity MAC are rejected", async
     /MAC is required/,
   );
 });
+test("certificate key usage must permit digital signatures", async () => {
+  const cert = forge.pki.certificateFromPem(
+    fixture("certificate.pem").toString(),
+  );
+  const key = forge.pki.privateKeyFromPem(fixture("key.pem").toString());
+  cert.setExtensions([
+    ...cert.extensions.filter((extension) => extension.name !== "keyUsage"),
+    { name: "keyUsage", keyEncipherment: true },
+  ]);
+  cert.sign(key, forge.md.sha256.create());
+  const container = Buffer.from(
+    forge.asn1.toDer(forge.pkcs12.toPkcs12Asn1(key, [cert], "")).getBytes(),
+    "binary",
+  );
+  await assert.rejects(
+    importPkcs12(container, "", { now }),
+    /not authorized for digital signatures/,
+  );
+});
 test("canonical vector matches independent OpenSSL signature bytes and verifies", async () => {
   const credential = await importPkcs12(
     fixture("current.p12"),
@@ -230,8 +247,9 @@ test("canonical vector matches independent OpenSSL signature bytes and verifies"
     ),
     true,
   );
+  const historicalCredential = { ...credential, trusted: false, chainPem: [] };
   const artifact = await buildSignedTq8(
-    credential,
+    historicalCredential,
     vector.station,
     [vector.contact],
     now,
@@ -247,18 +265,19 @@ test("canonical vector matches independent OpenSSL signature bytes and verifies"
   assert.match(decoded, /<SIGN_LOTW_V2.0:344:6>/);
   assert.match(decoded, /<GRIDSQUARE:6>FN31PR/);
 });
-test("signer requires fresh verified trust/status, correct station and authorized QSO dates", async () => {
+test("signer requires fresh unrevoked status, correct station and authorized QSO dates", async () => {
   const credential = await importPkcs12(
     fixture("current.p12"),
     "ferry-fixture",
     importOptions,
   );
   for (const delta of [
-    { trusted: false },
     { status: "unknown" as const },
     { status: "revoked" as const },
     { status: "superseded" as const },
     { statusCheckedAt: null },
+    { statusCheckedAt: "invalid" },
+    { statusCheckedAt: "2027-01-01T00:02:00Z" },
     { statusCheckedAt: "2026-12-29T00:00:00Z" },
   ]) {
     await assert.rejects(
@@ -268,7 +287,7 @@ test("signer requires fresh verified trust/status, correct station and authorize
         [vector.contact],
         now,
       ),
-      /trust/,
+      /Fresh unrevoked certificate status/,
     );
   }
   await assert.rejects(
@@ -298,15 +317,22 @@ test("signer requires fresh verified trust/status, correct station and authorize
     ),
     /outside certificate/,
   );
-  await assert.rejects(
-    buildSignedTq8(
-      credential,
-      vector.station,
-      [vector.contact],
-      new Date("2040-01-01T00:00:00Z"),
-    ),
-    /trust|valid/,
-  );
+  for (const dates of [
+    { validFrom: "2027-01-02T00:00:00Z" },
+    { validTo: "2026-12-31T23:59:59Z" },
+    { validFrom: "invalid" },
+    { validTo: "invalid" },
+  ]) {
+    await assert.rejects(
+      buildSignedTq8(
+        { ...credential, ...dates },
+        vector.station,
+        [vector.contact],
+        now,
+      ),
+      /not currently valid/,
+    );
+  }
   await assert.rejects(
     buildSignedTq8(
       credential,
@@ -330,53 +356,6 @@ test("signer requires fresh verified trust/status, correct station and authorize
     /versioned configuration/,
   );
 });
-test("strict platform verifier rejects nested DigestAlgorithm garbage accepted by Forge advisory", async () => {
-  const cert = forge.pki.certificateFromPem(
-    fixture("certificate.pem").toString(),
-  );
-  const key = forge.pki.privateKeyFromPem(fixture("key.pem").toString());
-  const digest = forge.md.sha256.create();
-  digest.update(forge.asn1.toDer(cert.tbsCertificate).getBytes());
-  const asn = forge.asn1;
-  const algorithm = asn.create(asn.Class.UNIVERSAL, asn.Type.SEQUENCE, true, [
-    asn.create(
-      asn.Class.UNIVERSAL,
-      asn.Type.OID,
-      false,
-      asn.oidToDer(forge.pki.oids.sha256!).getBytes(),
-    ),
-    asn.create(asn.Class.UNIVERSAL, asn.Type.NULL, false, ""),
-    asn.create(
-      asn.Class.UNIVERSAL,
-      asn.Type.OCTETSTRING,
-      false,
-      "untrusted garbage",
-    ),
-  ]);
-  const nested = asn.create(asn.Class.UNIVERSAL, asn.Type.SEQUENCE, true, [
-    algorithm,
-    asn.create(
-      asn.Class.UNIVERSAL,
-      asn.Type.OCTETSTRING,
-      false,
-      digest.digest().getBytes(),
-    ),
-  ]);
-  const signature = key.sign(asn.toDer(nested).getBytes(), "NONE");
-  cert.signature = signature;
-  assert.ok("verify" in cert.publicKey);
-  assert.equal(
-    cert.publicKey.verify(digest.digest().getBytes(), signature),
-    true,
-    "reproduce upstream vulnerable verifier",
-  );
-  assert.equal(
-    await verifyCertificateSignature(cert, cert),
-    false,
-    "production path uses strict WebCrypto",
-  );
-});
-
 test("excessive PKCS12 MAC iterations fail before entering synchronous KDF", async () => {
   const asn = forge.asn1.fromDer(
     forge.util.createBuffer(fixture("current.p12").toString("binary")),

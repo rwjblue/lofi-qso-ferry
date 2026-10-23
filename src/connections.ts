@@ -8,12 +8,9 @@ import {
 import { LoFiClient, type LoFiCredentials } from "./lofi.ts";
 import { LotwClient, LotwLoginError } from "./lotw.ts";
 import {
-  effectiveLotwTrustRoots,
-  refreshLotwTrustRoots,
-} from "./lotw-trust-cache.ts";
-import {
   type LotwLoginVerification,
   lotwVerification,
+  lotwReadyForUpload,
 } from "./lotw-verification.ts";
 import { type QrzBook, QrzClient } from "./qrz.ts";
 import {
@@ -28,7 +25,6 @@ import {
   importPkcs12,
   type LotwStation,
   type SigningCredential,
-  verifySigningCredentialTrust,
 } from "./signing.ts";
 import { type Connection, Store } from "./store.ts";
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
@@ -317,7 +313,7 @@ export async function saveVerifiedConnection(
   ]);
   return { id, version };
 }
-function safeConnection(connection: Connection, trustRootsJson: string) {
+function safeConnection(connection: Connection) {
   const config = JSON.parse(connection.config);
   return {
     id: connection.id,
@@ -332,7 +328,7 @@ function safeConnection(connection: Connection, trustRootsJson: string) {
         : {}),
     },
     ...(connection.kind === "lotw"
-      ? { lotwVerification: lotwVerification(config, { trustRootsJson }) }
+      ? { lotwVerification: lotwVerification(config) }
       : {}),
     cutover: connection.cutover,
     credentialConfigured: Boolean(connection.credential_version),
@@ -376,7 +372,7 @@ export async function connectionRoute(
     if (request.method === "GET" && path === "/api/connections")
       return json({
         connections: (await store.connections(identity.tenant)).map(
-          (connection) => safeConnection(connection, env.LOTW_TRUST_ROOTS_JSON),
+          safeConnection,
         ),
       });
     if (request.method !== "POST")
@@ -567,11 +563,7 @@ export async function connectionRoute(
       if (connection?.credential_version) {
         const now = Date.now();
         const config = { ...JSON.parse(connection.config), loginVerification };
-        const checks = lotwVerification(config, {
-          trustRootsJson: env.LOTW_TRUST_ROOTS_JSON,
-          now,
-        });
-        const verifiedStatus = checks.every((check) => check.status === "ok")
+        const verifiedStatus = lotwReadyForUpload(config, now)
           ? "active"
           : "needs_verification";
         const results = await store.db.batch([
@@ -608,12 +600,6 @@ export async function connectionRoute(
         throw new ConnectionError(400, "Invalid PKCS#12 base64");
       if (typeof input.password !== "string" || input.password.length > 1024)
         throw new ConnectionError(400, "Invalid PKCS#12 password");
-      let roots: string[];
-      try {
-        roots = await effectiveLotwTrustRoots(store, env.LOTW_TRUST_ROOTS_JSON);
-      } catch {
-        throw new ConnectionError(503, "LoTW trust configuration is invalid");
-      }
       const lotwFetch = vendorFetch(store, "lotw", services.fetcher, {
         priority: "live",
       });
@@ -624,7 +610,6 @@ export async function connectionRoute(
           new Uint8Array(Buffer.from(encoded, "base64")),
           input.password,
           {
-            trustedRoots: roots,
             certificateStatus: (serial) =>
               statusClient.certificateStatus(serial),
           },
@@ -652,23 +637,8 @@ export async function connectionRoute(
           );
         }
       }
-      if (!signing.trusted && env.LOTW_TRUST_ROOTS_JSON === "bundled") {
-        const refreshed = await refreshLotwTrustRoots(
-          store,
-          env.LOTW_TRUST_ROOTS_JSON,
-          {
-            credentials: query,
-            fetcher: services.fetcher,
-            force: true,
-          },
-        );
-        signing.trusted = await verifySigningCredentialTrust(
-          signing,
-          refreshed.roots,
-        );
-      }
-      // A signing certificate proves station authorization, not website account membership.
-      // Preserve identity for certificate renewal without guessing an account association.
+      // Keep station metadata separate from website account membership.
+      // LoTW makes the authoritative certificate decision when it processes an upload.
       const stationIdentity = `station:${signing.callsign}:${signing.dxcc}`;
       const remoteIdentity = query
         ? `query:${query.username}`
@@ -716,11 +686,6 @@ export async function connectionRoute(
         callsign: credential.callsign,
         dxcc: credential.dxcc,
       }));
-      const status = signingCredentials.every(
-        (credential) => credential.trusted && credential.status === "unrevoked",
-      )
-        ? "active"
-        : "needs_verification";
       const config = {
         stations,
         readAccess: Boolean(query),
@@ -728,9 +693,10 @@ export async function connectionRoute(
         certificates: signingCredentials.map(publicCertificate),
         signingConfiguration: "ferry-lotw-v2-us-ca-1",
       };
-      const verification = lotwVerification(config, {
-        trustRootsJson: env.LOTW_TRUST_ROOTS_JSON,
-      });
+      const verification = lotwVerification(config);
+      const status = lotwReadyForUpload(config)
+        ? "active"
+        : "needs_verification";
       const saved = await saveVerifiedConnection(
         store,
         identity.tenant,
@@ -758,7 +724,7 @@ export async function connectionRoute(
           lotwVerification: verification,
           message:
             status === "active"
-              ? "Certificate verified. Historical eligibility and rollout gates still apply."
+              ? "Certificate imported and local checks passed. LoTW will validate the certificate when an upload is processed. Historical eligibility and rollout gates still apply."
               : `Certificate saved. ${verification
                   .filter((check) => check.status !== "ok")
                   .map((check) => check.message)
@@ -795,13 +761,7 @@ export async function connectionRoute(
           "Credentials expired; remove them and reconnect",
         );
       const status =
-        connection.kind === "lotw" &&
-        (!Array.isArray(config.certificates) ||
-          !config.certificates.length ||
-          !config.certificates.every(
-            (certificate: { trusted?: boolean; status?: string }) =>
-              certificate.trusted && certificate.status === "unrevoked",
-          ))
+        connection.kind === "lotw" && !lotwReadyForUpload(config)
           ? "needs_verification"
           : "active";
       const now = Date.now();
@@ -905,7 +865,7 @@ export async function connectionRoute(
       {
         code: "connection_verification_failed",
         error:
-          "Connection could not be verified. Check credentials, approval, trust configuration and vendor availability.",
+          "Connection could not be verified. Check credentials, approval and vendor availability.",
       },
       400,
     );
@@ -920,7 +880,6 @@ function publicCertificate(signing: SigningCredential) {
     validTo: signing.validTo,
     qsoFrom: signing.qsoFrom,
     qsoTo: signing.qsoTo,
-    trusted: signing.trusted,
     status: signing.status,
     statusCheckedAt: signing.statusCheckedAt,
   };

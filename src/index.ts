@@ -69,9 +69,7 @@ export default {
       const connection = await connectionRoute(request, env, identity);
       if (connection) return secured(connection);
       const store = new Store(env.DB, keyring(env));
-      const review = await reviewRoute(request, store, identity.tenant, {
-        trustRootsJson: env.LOTW_TRUST_ROOTS_JSON,
-      });
+      const review = await reviewRoute(request, store, identity.tenant);
       if (review) return secured(review);
       if (request.method === "GET" && url.pathname === "/api/dashboard") {
         const account = await store
@@ -130,7 +128,6 @@ export default {
                       !Array.isArray(parsed)
                       ? (parsed as Record<string, unknown>)
                       : {},
-                    { trustRootsJson: env.LOTW_TRUST_ROOTS_JSON },
                   ),
                 }
               : {}),

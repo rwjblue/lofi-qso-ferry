@@ -5,13 +5,15 @@ This roadmap is the handoff for implementation in this repository. Checked items
 ## Next milestones (2026-10-23)
 
 Core feature paths, owner enrollment and service linking are implemented. Production remains read-only. The immediate work is to resolve the reconciliation backlog and prove rollout readiness; linking credentials and waiting for cron do not establish that readiness. Fractional-timestamp exports also need durable outbound identity claims before they can be enabled safely.
-1. **Finish the reconciliation compatibility and capacity work.** Four investigations identified minute-only QRZ history, compatible lower-precision LoTW grids, a general-log `our.call` projection defect, five legitimate station-routing holds, and database/query amplification. Two contact turns per five-minute run is not an acceptable draining plan: even perfect use of the current eight LoTW background reads per window would require about 87 days for 200,000 contacts with per-contact queries. Deploy and verify the narrow projection/diagnostic/cleanup fixes, then batch database work and share bounded destination inventory partitions. Prove sustained unique classifications at 4,000 and 200,000 contacts, complete source context/rescans, and review remaining exceptions. See the [investigation and ordered capacity plan](docs/reconciliation-investigation.md). Waiting for cron alone does not complete these steps.
+1. **Finish the reconciliation compatibility and capacity work.** Four investigations identified minute-only QRZ history, compatible lower-precision LoTW grids, a general-log `our.call` projection defect, five legitimate station-routing holds, and database/query amplification. Two contact turns per five-minute run is not an acceptable draining plan: even perfect use of the current eight LoTW background reads per window would require about 87 days for 200,000 contacts with per-contact queries. Verify sustained progress after the deployed projection/diagnostic/cleanup fixes, then batch database work and share bounded destination inventory partitions. Prove sustained unique classifications at 4,000 and 200,000 contacts, complete source context/rescans, and review remaining exceptions. See the [investigation and ordered capacity plan](docs/reconciliation-investigation.md). Waiting for cron alone does not complete these steps.
 2. **Establish the source contract and remaining personal checks.** Complete exhaustive LoFi UUID/tombstone inventory and replay/cutover evidence; verify an independent backup passkey, secret backup and representative deployed signing/resource behavior. Preserve `SOURCE_BOUNDARY_VERIFIED=false` until supported by that evidence.
 3. **Complete outbound identity collision protection.** Implement durable identity claims for both QRZ and LoTW before fractional-timestamp exports can enter the canary. Establish a separate precision-aware historical-association policy and the outbound policy for eight-character source grids; diagnostic review holds do not authorize truncation or adoption. Adoption reservations and quarantine now protect competing source contacts in local tests; that protection does not provide outbound claims or make a later edit exportable through a collision.
 4. **Run explicitly authorized first writes.** Select exact new source UUIDs and destinations, prove QRZ mutation/narrative/location behavior and Worker-signed LoTW acceptance through readback, and record the deployed revision and results. Keep prior QRZ identities retained until cleanup is separately proven safe.
 5. **Expand automatic coverage, then improve operations.** After reviewing the canary and historical exceptions, explicitly expand scope. Measure cost and exercise restore/revocation before broader use. Workload classification, backlog trends and completed-delivery history have shipped. Remaining operator improvements are ordered in the [admin roadmap](docs/admin.md#follow-ups-in-order): queue age and opt-in alerts, support drill-down, capacity tuning, then controlled operations.
 
-The immediate fixes are implemented in signed commits `32758f5` (general-log station projection and scoped retry migration), `789d652` (precision-specific review holds), and `fa822ba` (cleanup query scaling). Local checks passed 391 tests plus 35 focused tests after the final diagnostic refinement. Release CI/deployment remain pending; the larger batching, inventory and review-interface work is still needed. See the [implementation status](docs/reconciliation-investigation.md#implementation-status).
+The immediate fixes are implemented in signed commits `32758f5` (general-log station projection and scoped retry migration), `789d652` (precision-specific review holds), and `fa822ba` (cleanup query scaling). Local checks passed 391 tests plus 35 focused tests after the final diagnostic refinement. All 392 tests and required checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39974178346), and revision `cf34ac0` is deployed with all gates closed. The larger batching, inventory and review-interface work is still needed. See the [implementation status](docs/reconciliation-investigation.md#implementation-status).
+
+The first post-release run at 15:05:50 UTC completed in 96,730 ms versus 132,572 ms for the preceding run, with zero errors and deferrals. It still examined only two contacts. The 15:08:05 snapshot records 1,820 ready, 2,314 held and zero blocked, with the callsign input requeued and the new precision diagnoses appearing as review holds. Attempts and cutovers remain zero. One shorter run does not establish sustained progress; the batching and shared-inventory work remains the next priority.
 
 The 2026-10-23 follow-up found 10 QRZ ambiguities and eight current LoTW grid mismatches. Three QRZ samples had a single otherwise matching identity with minute-only time; two LoTW samples had the matching six-character prefix of an eight-character source grid. These samples identify compatibility patterns, not proof for every held record. The general-log station field is present as canonical `our.call`, so that hold needs a parser fix rather than a user edit. Four other contacts use stations outside the personal routes and one uses a test suffix; cron cannot invent appropriate destination coverage. Exact contact details remain outside repository documentation.
 
@@ -170,14 +172,15 @@ dashboard has been exercised in Chromium at desktop and 390px mobile widths with
 a virtual passkey. Production exports remain disabled. No live INSERT, REPLACE,
 DELETE or LoTW upload occurred.
 
-The latest release is `634517d0de72002c585da4815bf728ccbd182b13`, deployed as
-Worker `bb37da72-5aad-42a5-a5b7-29503787b0c8` at `2026-10-23T13:59:38.831Z`.
-All 377 tests and required checks passed locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39965786804).
-Live version and health checks confirm 100% traffic on this version and all five
-gates closed. The 14:04:02 UTC D1 snapshot confirms fourteen migrations, zero
-attempts and zero cutovers, with limited processing recovery in one run. Owner
-enrollment and LoFi/QRZ/LoTW linking are complete. Sustained progress and complete
-owner-history acceptance remain outstanding.
+The latest release is `cf34ac0a82e4f3f845b058684a04128f91c0b147`, deployed as
+Worker `40a3c20e-81f8-45a7-9350-2e99767c241c` at `2026-10-23T15:04:09.293Z`.
+All 392 tests and required checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39974178346);
+local full and focused validation also passed. Live version and health checks
+confirm 100% traffic and all five gates closed. The 15:04:50 UTC D1 snapshot
+confirms fifteen migrations, zero attempts and the affected general-log source
+row requeued. Owner enrollment and LoFi/QRZ/LoTW linking are complete. Sustained
+progress, shared inventory at scale, precision policy and complete owner-history
+acceptance remain outstanding.
 See [deployment evidence](docs/deployment.md).
 
 Milestone 0 has bounded live read evidence for all three vendors, local signing

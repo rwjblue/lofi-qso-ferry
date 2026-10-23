@@ -12,12 +12,23 @@ projection and scoped reprojection migration `32758f5`, precision review
 explanations `789d652`, and cleanup query repair `fa822ba`. Local full checks
 passed 391 tests; a final LoTW diagnostic correction for an unrelated neighbor
 then passed the 35-test QRZ/reconciliation suite and TypeScript/lint checks.
-Release CI and production deployment are the next verification steps. Existing
-history holds are not automatically approved by these changes.
+Release [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39974178346) passed all 392 tests and required checks. Revision `cf34ac0a82e4f3f845b058684a04128f91c0b147` was deployed at `2026-10-23T15:04:09.293Z` as Worker `40a3c20e-81f8-45a7-9350-2e99767c241c`, with 100% traffic and every export gate independently verified closed. At 15:04:50 UTC, all fifteen migrations were applied, the one affected source row was pending with its old diagnostic cleared, and export attempts remained zero. Existing history holds are not automatically approved by these changes.
 
 The batching, indexed ready-work selection, shared inventory, durable jobs and
 capacity acceptance work below remain unimplemented. No claim of completed
 reconciliation or 200,000-contact readiness follows from the cleanup benchmark.
+
+## First production observation
+
+At 15:08:05 UTC, the first completed post-release run (started 15:05:50) took
+96,730 ms, with two contact turns, one canonical source page, zero errors and
+zero deferrals. The immediately preceding run took 132,572 ms for two turns.
+This one-run comparison is consistent with less cleanup overhead; contact
+throughput remains two turns per run and sustained draining is not established.
+Classified work was 1,820 ready, 2,314 held and zero blocked. The cleared callsign
+hold was requeued, not independently proven reconciled. New precision-specific
+reasons were stored for one QRZ and two LoTW rows, all still review holds.
+Export attempts and source cutovers both remained zero.
 
 ## Exception findings
 

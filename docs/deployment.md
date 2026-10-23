@@ -306,3 +306,43 @@ required before enabling exports.
 Production still had zero attempts and zero cutovers, every export gate stayed
 closed, and all verification queries wrote zero rows. No real QSO was signed,
 inserted, replaced, deleted or uploaded.
+
+
+## Reconciliation investigation release (2026-10-23)
+
+Deployed signed revision `cf34ac0a82e4f3f845b058684a04128f91c0b147` as Worker
+`40a3c20e-81f8-45a7-9350-2e99767c241c`, created at `2026-10-23T15:04:09.293Z`.
+Deployment `4e6b6270-2424-4a2d-b642-fecae559a7a2` assigns it 100% of traffic.
+The [CI run](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39974178346) passed all 392 tests and required checks.
+Local full validation passed 391 tests before a final diagnostic refinement;
+all 35 focused QRZ/reconciliation tests and TypeScript/lint then passed.
+
+This release contains the narrow canonical general-log station fix and migration
+`32758f5`, precision-specific review reasons `789d652`, cleanup optimization
+`fa822ba`, and the capacity investigation/roadmap `cf34ac0`. Independent review
+checked migration/deletion scope and caught an unrelated-neighbor diagnostic
+case, fixed before release. Existing history is still held where precision or
+coverage is insufficient; no comparison or outbound identity guard was relaxed.
+
+`mise run deploy-readonly` applied migration 0016 and deployed the Worker without
+changing secrets. Preflight SELECT found exactly one eligible source hold; the
+15:04:50 UTC readback confirms fifteen migrations, that input pending with no
+old callsign reason, and zero export attempts. Version readback confirms all
+five gates closed, with healthy `/health` and `exportsEnabled=false`. Bundle
+size is 1,659.23 KiB raw / 318.87 KiB gzip; reported startup is 32 ms.
+
+The [investigation](reconciliation-investigation.md) records local cleanup and
+4,000/200,000-contact scale measurements, request-budget floors, source/context
+amplification and remaining batching/inventory work. These are not production
+throughput or completed reconciliation claims. No real QSO was signed,
+inserted, replaced, deleted or uploaded.
+
+At 15:08:05 UTC, the first completed post-release run (started 15:05:50) took
+96,730 ms, with two contact turns, one canonical source page, zero errors and
+zero deferrals. The immediately preceding run took 132,572 ms for two turns.
+This one-run comparison is consistent with less cleanup overhead; contact
+throughput remains two turns per run and sustained draining is not established.
+Classified work was 1,820 ready, 2,314 held and zero blocked. The cleared callsign
+hold was requeued, not independently proven reconciled. New precision-specific
+reasons were stored for one QRZ and two LoTW rows, all still review holds.
+Export attempts and source cutovers both remained zero.

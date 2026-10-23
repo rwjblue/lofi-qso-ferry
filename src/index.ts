@@ -1,5 +1,6 @@
 import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
 import { connectionRoute } from "./connections.ts";
+import { reviewRoute } from "./review.ts";
 import { boundedJson, keyring } from "./security.ts";
 import { deliveryGates, exportsEffective, tick } from "./service.ts";
 import {
@@ -62,6 +63,8 @@ export default {
       const connection = await connectionRoute(request, env, identity);
       if (connection) return secured(connection);
       const store = new Store(env.DB, keyring(env));
+      const review = await reviewRoute(request, store, identity.tenant);
+      if (review) return secured(review);
       if (request.method === "GET" && url.pathname === "/api/dashboard") {
         const account = await store
           .statement(

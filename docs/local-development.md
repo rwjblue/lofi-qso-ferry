@@ -27,6 +27,14 @@ curl --fail http://localhost:8787/__scheduled
 
 The health response reports the deployment export gate. The dashboard shows pending work and exceptions. Normal logging has no operation-release control; eligible changes settle for 30 minutes by default (configurable from 20 to 60). A cron tick polls bounded source pages and processes a bounded contact/attempt set.
 
+The dashboard's top counts describe the LoFi source index seen so far; destination adoption/delivery counts appear separately under Delivery activity. Read-only contact review works with no QRZ or LoTW connection, reads only retained encrypted source data, and previews the selected saved template without creating an attempt or retaining extra raw data. Refresh review preserves unsaved editor/settings values. Run its contained fixture checks without vendor credentials:
+
+```sh
+mise exec -- npx tsx --test tests/review.test.ts tests/browser-dashboard.test.ts
+```
+
+Those tests check segment-aware station/location/reference/comment projection, tenant boundaries, retention and byte-for-byte database equality across review calls. Full `mise run check` also exercises the actual Worker HTTP route, single-service connection races and operation-read fairness. Fixture success establishes local behavior; it does not establish live source replay or vendor-write acceptance.
+
 ## Reproducible focused flows
 
 ```sh

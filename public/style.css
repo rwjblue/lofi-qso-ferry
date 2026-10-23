@@ -58,6 +58,11 @@ h2 {
   margin: 0 0 1rem;
   letter-spacing: -0.02em;
 }
+h3 {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: -0.02em;
+}
 .eyebrow {
   font-size: 0.7rem;
   font-weight: 800;
@@ -266,6 +271,138 @@ summary {
 .connection b {
   display: block;
 }
+.service + .service {
+  border-top: 1px solid var(--line);
+  margin-top: 1.4rem;
+  padding-top: 1.4rem;
+}
+.service-heading,
+.contact-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.7rem;
+}
+.service-heading h3 {
+  font-size: 1.15rem;
+}
+.connection {
+  overflow-wrap: anywhere;
+}
+.connection-note {
+  margin: 0.1rem 0 0.7rem;
+}
+.connection-actions {
+  gap: 0.45rem;
+  margin: 0.8rem 0 0.25rem;
+}
+.connection-actions button {
+  padding: 0.5rem 0.7rem;
+  font-size: 0.8rem;
+}
+.connection-error {
+  color: #8e3933;
+}
+.ledger-explainer {
+  margin-bottom: 0.8rem;
+}
+.review-panel > .title-row h2 {
+  margin: 0.3rem 0 0;
+  font-size: 1.35rem;
+}
+.readiness {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 1.2rem 0;
+}
+.readiness-item {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0.9rem;
+}
+.readiness-item b {
+  display: block;
+}
+.readiness-item p {
+  margin-bottom: 0;
+}
+.source-progress {
+  padding: 1.2rem;
+  margin: 1rem 0;
+  border-radius: 10px;
+  background: #f1f7f3;
+}
+.source-counts {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+}
+.source-counts b,
+.source-counts span {
+  display: block;
+}
+.source-counts b {
+  font-size: 1.6rem;
+  font-variant-numeric: tabular-nums;
+}
+.source-counts span {
+  font-size: 0.78rem;
+  color: #617672;
+}
+.review-template {
+  margin: 1.4rem 0;
+  max-width: 40rem;
+}
+.review-contacts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+.contact-review {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 1rem;
+  overflow-wrap: anywhere;
+}
+.contact-review > p {
+  margin: 0.35rem 0;
+}
+.preview-fields {
+  margin: 0.7rem 0;
+  padding: 0.8rem;
+  background: #f5f8f6;
+  border-radius: 7px;
+}
+.preview-fields dt {
+  color: #617672;
+  font-size: 0.72rem;
+  font-weight: 650;
+}
+.preview-fields dd {
+  margin: 0.15rem 0 0.65rem;
+  font-size: 0.88rem;
+  white-space: pre-wrap;
+}
+.preview-fields dd:last-child {
+  margin-bottom: 0;
+}
+.contact-review .retention {
+  margin-top: 0.8rem;
+  font-size: 0.72rem;
+}
+.status-attention,
+.status-needs_verification {
+  background: #fff1d5;
+  color: #825b19;
+}
+.status-paused,
+.status-disabled,
+.status-revoked,
+.status-not_connected {
+  background: #eef1f0;
+  color: #617672;
+}
 .badge {
   display: inline-block;
   padding: 0.15rem 0.5rem;
@@ -345,6 +482,13 @@ select:focus-visible {
   .columns {
     grid-template-columns: 1fr;
     gap: 0;
+  }
+  .readiness,
+  .review-contacts {
+    grid-template-columns: 1fr;
+  }
+  .source-counts {
+    gap: 1rem;
   }
   .metrics {
     grid-template-columns: 1fr 1fr;

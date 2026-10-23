@@ -234,3 +234,14 @@ Deployed follow-up revision `58a965d7c54d`, Worker version `0bf32d19-13c7-43da-b
 ## Connection passkey freshness follow-up
 
 The LoFi approval form now obtains a fresh passkey assertion automatically when needed, with preserved input and no connection request on cancellation. Auth/CSRF failures are distinct from scrubbed vendor errors; only a known pre-dispatch freshness failure can retry once. Concurrent session/account-switch and passkey-ceremony boundaries have focused coverage. Actual local Worker/Chromium tests exercise real signatures and contained vendor requests. All 180 tests, formatting, strict lint, types and the Worker build pass. Deployed `cbe9e63af1bf` as Worker `6a580035-ad08-4e35-9fa5-5d09fe5f9baf`; live asset/origin-error/closed-gate checks pass. The owner completes the actual passkey and vendor approval after refreshing Ferry. See [progress](PROGRESS.md).
+
+## Read-only source review and connection controls
+
+- [x] Explain vendor-provided LoFi account names; use friendly service/status labels and one current optional connection of each kind. Preserve existing extra/removed connection history and same-identity renewals.
+- [x] Enforce new-connection policy before vendor requests and atomically during credential saves; safely replace pending LoFi approvals and resume paused connections without promoting unverified LoTW credentials.
+- [x] Show source counts at the top, separate destination activity counts, initial scan/context progress, last successful page, retained contact samples and effective station/location/reference/current-comment previews.
+- [x] Keep review reads tenant scoped, bounded and free of vendor calls or database mutation; explicitly preserve adopted narrative and pinned template policy. No preview can prepare, sign or export a contact.
+- [x] Skip operation tombstones, fairly rotate failed/partial context reads and fence stale failure diagnostics. Preserve coverage and retry evidence.
+- [x] Pass full formatting/lint/types/build and all **196 tests**, including real D1 race/retention/no-mutation checks. Actual isolated Worker/Chromium passkey signup/link/pause/resume/review confirms the expected comment, duplicate rejection, preserved unsaved edits, mobile375px without overflow, and zero attempts/outbox/vendor exports.
+
+The owner has now completed real LoFi linking. Aggregate live metadata confirms initial source ingestion; no destination was connected at that check, so an empty delivery ledger was expected. The dashboard now provides useful source review independently. Deployment verification follows in [progress](PROGRESS.md); all live-write and exhaustive source-boundary acceptance checks remain separate.

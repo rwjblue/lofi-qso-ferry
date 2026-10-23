@@ -1,14 +1,14 @@
 import {
+  type AdifRecord,
   normalizeAdifValue,
   serializeAdifRecord,
-  type AdifRecord,
 } from "./adif.ts";
 import { LotwClient, observeLotwContact } from "./lotw.ts";
 import type { Contact } from "./projection.ts";
 import {
+  mergeQrzCorrection,
   QrzClient,
   QrzError,
-  mergeQrzCorrection,
   sameQrzIdentity,
 } from "./qrz.ts";
 import {
@@ -25,9 +25,9 @@ import {
   type SigningCredential,
 } from "./signing.ts";
 import {
-  LOTW_PRIOR_IDENTITY_NOTICE,
   type Connection,
   type LedgerKey,
+  LOTW_PRIOR_IDENTITY_NOTICE,
   type LotwIdentityEvidence,
   type Store,
 } from "./store.ts";
@@ -188,7 +188,7 @@ export function contactAdif(contact: Contact): AdifRecord {
   serializeAdifRecord(record);
   return record;
 }
-function templateContext(
+export function templateContext(
   contact: Contact,
   now: number,
 ): Record<string, TemplateValue> {

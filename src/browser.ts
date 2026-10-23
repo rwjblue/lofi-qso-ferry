@@ -11,6 +11,15 @@ import {
   WebAuthnAbortService,
 } from "@simplewebauthn/browser";
 import { createApiClient } from "./browser-api.ts";
+import {
+  type ConnectionSummary,
+  connectionGroups,
+  connectionStatus,
+  ledgerEmptyMessage,
+  previewStatus,
+  vendorName,
+} from "./browser-dashboard.ts";
+import type { ReviewResponse } from "./review-types.ts";
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const value = document.getElementById(id);
@@ -18,7 +27,6 @@ const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
   return value as T;
 };
 let signupId = "";
-let lofiId = "";
 let emailId = "";
 let messageSequence = 0;
 let authIntent = 0;
@@ -149,14 +157,7 @@ interface Dashboard {
   defaultTemplate?: NarrativeTemplate;
   destinationTemplates?: (NarrativeTemplate & { destination: string })[];
   counts: Record<string, number>;
-  connections: {
-    id: string;
-    kind: string;
-    label: string;
-    status: string;
-    last_error?: string | null;
-    last_poll_at: number | null;
-  }[];
+  connections: ConnectionSummary[];
   activity: {
     qso: string;
     destination: string;
@@ -184,7 +185,469 @@ function node<K extends keyof HTMLElementTagNameMap>(
   if (className) output.className = className;
   return output;
 }
+function action(label: string, callback: () => Promise<void>) {
+  const button = node("button", label, "secondary");
+  button.addEventListener("click", () => {
+    button.disabled = true;
+    void run(async () => {
+      try {
+        await callback();
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  return button;
+}
+
+async function updateCredentials(connection: ConnectionSummary) {
+  const response = await api<{
+    connections: { id: string; config: Record<string, unknown> }[];
+  }>("/api/connections");
+  const existing = response.connections.find((row) => row.id === connection.id);
+  if (!existing)
+    throw new Error("This connection has changed. Refresh and try again.");
+  const details = element<HTMLDetailsElement>(`connect-${connection.kind}`);
+  const form = element<HTMLFormElement>(connection.kind);
+  form.reset();
+  const fields =
+    connection.kind === "qrz"
+      ? ["bookId", "stationCallsign", "startDate", "endDate"]
+      : ["username"];
+  for (const field of fields) {
+    const input = form.elements.namedItem(field);
+    const value =
+      field === "username"
+        ? existing.config.queryUsername
+        : existing.config[field];
+    if (input instanceof HTMLInputElement && typeof value === "string")
+      input.value = value;
+  }
+  details.hidden = false;
+  details.open = true;
+  element(`connect-${connection.kind}-title`).textContent =
+    `Update ${vendorName(connection.kind)} credentials`;
+  element(`connect-${connection.kind}-help`).textContent =
+    "Update credentials for this same connected account. To link a different account, remove the current credentials first. Historical delivery records stay available.";
+  details.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const first = form.querySelector("input");
+  first?.focus();
+}
+
+function renderConnection(connection: ConnectionSummary, previous = false) {
+  const item = node("div", "", "connection");
+  item.append(
+    node(
+      "b",
+      connection.kind === "lofi"
+        ? `LoFi account · ${connection.label}`
+        : connection.label,
+    ),
+    node(
+      "span",
+      connectionStatus(connection.status),
+      `badge status-${connection.status}`,
+    ),
+  );
+  if (connection.kind === "lofi" && connection.status !== "approval_pending")
+    item.append(
+      node("p", "Account name reported by LoFi.", "small connection-note"),
+    );
+  if (connection.last_error)
+    item.append(node("p", connection.last_error, "small connection-error"));
+  if (connection.last_poll_at)
+    item.append(
+      node(
+        "p",
+        `Last poll attempt ${new Date(connection.last_poll_at).toLocaleString()}`,
+        "small",
+      ),
+    );
+  if (previous) {
+    item.append(
+      node(
+        "p",
+        "Credentials removed. Historical delivery records are retained.",
+        "small",
+      ),
+    );
+    return item;
+  }
+  const actions = node("div", "", "actions connection-actions");
+  if (connection.status === "approval_pending") {
+    item.append(
+      node(
+        "p",
+        "Approve the request from Ham2K in your email, then finish linking.",
+        "small",
+      ),
+    );
+    actions.append(
+      action("Finish linking", async () => {
+        await api("/api/connections/lofi/finish", { id: connection.id });
+        await load();
+      }),
+    );
+  } else if (
+    connection.status === "disabled" ||
+    connection.status === "paused"
+  ) {
+    actions.append(
+      action("Resume", async () => {
+        await api("/api/connections/enable", { id: connection.id });
+        await load();
+      }),
+    );
+  } else {
+    actions.append(
+      action("Pause", async () => {
+        await api("/api/connections/disable", { id: connection.id });
+        await load();
+      }),
+    );
+  }
+  if (connection.kind !== "lofi" && connection.status !== "approval_pending")
+    actions.append(
+      action("Update credentials", () => updateCredentials(connection)),
+    );
+  actions.append(
+    action(
+      connection.status === "approval_pending"
+        ? "Cancel linking"
+        : "Remove credentials",
+      async () => {
+        await api("/api/connections/revoke", { id: connection.id });
+        await load();
+      },
+    ),
+  );
+  item.append(actions);
+  return item;
+}
+
+function renderConnections(data: Dashboard) {
+  const connections = element("connections");
+  for (const group of connectionGroups(data.connections)) {
+    // Move the existing forms before replacing cards so their event handlers survive.
+    const details = element<HTMLDetailsElement>(`connect-${group.kind}`);
+    element("connection-forms").append(details);
+  }
+  connections.replaceChildren();
+  for (const group of connectionGroups(data.connections)) {
+    const section = node("section", "", "service");
+    const heading = node("div", "", "service-heading");
+    heading.append(
+      node("h3", vendorName(group.kind)),
+      node("span", group.kind === "lofi" ? "Source" : "Destination", "small"),
+    );
+    section.append(heading);
+    const details = element<HTMLDetailsElement>(`connect-${group.kind}`);
+    details.hidden = group.current.length > 0;
+    details.open = false;
+    element(`connect-${group.kind}-title`).textContent =
+      `Connect ${vendorName(group.kind)}`;
+    element(`connect-${group.kind}-help`).textContent =
+      group.kind === "lofi"
+        ? "Link your LoFi account to begin a read-only scan of your source contacts."
+        : "Verify your account before Ferry reviews existing destination history.";
+    if (group.current.length > 1)
+      section.append(
+        node(
+          "p",
+          `${group.current.length} existing connections are retained. Review each route before enabling delivery.`,
+          "notice",
+        ),
+      );
+    for (const connection of group.current)
+      section.append(renderConnection(connection));
+    if (!group.current.length)
+      section.append(node("p", "Not connected", "small"));
+    section.append(details);
+    if (group.previous.length) {
+      const previous = node("details", "");
+      previous.append(
+        node("summary", `Previous connections (${group.previous.length})`),
+      );
+      for (const connection of group.previous)
+        previous.append(renderConnection(connection, true));
+      section.append(previous);
+    }
+    connections.append(section);
+  }
+}
+
+let reviewRequest = 0;
+let dashboardLoad = 0;
+function renderMetrics(
+  id: string,
+  values: readonly (readonly [string, number | string])[],
+) {
+  const metrics = element(id);
+  metrics.replaceChildren();
+  for (const [label, count] of values) {
+    const metric = node("div", "", "metric");
+    metric.append(node("b", String(count)), node("span", label));
+    metrics.append(metric);
+  }
+}
+function clearReview() {
+  ++reviewRequest;
+  element<HTMLButtonElement>("review-refresh").disabled = false;
+  for (const id of ["readiness", "source-progress", "review-contacts"])
+    element(id).replaceChildren();
+  element("review-status").textContent = "Loading source progress…";
+  element("review-template-notice").textContent = "";
+  element("review-retention").textContent = "";
+  element("review-empty").hidden = true;
+  renderMetrics("metrics", [
+    ["Contacts seen", "—"],
+    ["Live operations", "—"],
+    ["Available details", "—"],
+    ["Services need attention", "—"],
+  ]);
+  element("source-metrics-explainer").textContent =
+    "Loading source scan progress…";
+}
+async function refreshReview() {
+  const request = ++reviewRequest;
+  const button = element<HTMLButtonElement>("review-refresh");
+  button.disabled = true;
+  element("review-status").textContent = "Loading retained source contacts…";
+  try {
+    const destination = element<HTMLSelectElement>("review-destination").value;
+    const query = destination
+      ? `?destination=${encodeURIComponent(destination)}`
+      : "";
+    const data = await api<ReviewResponse>(`/api/review${query}`);
+    if (request !== reviewRequest) return;
+    renderReview(data);
+  } catch (error) {
+    if (request !== reviewRequest) return;
+    element("review-status").textContent =
+      error instanceof Error
+        ? error.message
+        : "Read-only review is unavailable. Try again shortly.";
+  } finally {
+    if (request === reviewRequest) button.disabled = false;
+  }
+}
+
+function renderReview(data: ReviewResponse) {
+  renderMetrics("metrics", [
+    [
+      "Contacts seen",
+      data.sources.reduce((count, source) => count + source.counts.contacts, 0),
+    ],
+    [
+      "Live operations",
+      data.sources.reduce(
+        (count, source) => count + source.counts.operations,
+        0,
+      ),
+    ],
+    [
+      "Available details",
+      data.sources.reduce(
+        (count, source) => count + source.counts.reviewable,
+        0,
+      ),
+    ],
+    [
+      "Services need attention",
+      data.readiness.filter((item) => item.status === "attention").length,
+    ],
+  ]);
+  const scanning = data.sources.some(
+    (source) =>
+      !source.initialScanComplete ||
+      !source.contextComplete ||
+      source.counts.pendingOperations > 0,
+  );
+  element("source-metrics-explainer").textContent = !data.sources.length
+    ? "Connect LoFi to see source contacts here. Destination delivery activity is shown separately below."
+    : `${scanning ? "Source scan in progress. " : ""}Counts show live source records seen so far, excluding deleted records and non-contact events. Available details are limited by retention.${data.sourcesTruncated ? " Only the displayed source connections are counted." : ""}`;
+  element("review-status").textContent =
+    `Updated ${new Date(data.generatedAt).toLocaleString()}. This review reads retained data; it does not prepare or deliver contacts.`;
+  const readiness = element("readiness");
+  readiness.replaceChildren();
+  for (const item of data.readiness) {
+    const row = node("div", "", "readiness-item");
+    row.append(
+      node("b", vendorName(item.kind)),
+      node(
+        "span",
+        item.status.replaceAll("_", " "),
+        `badge status-${item.status}`,
+      ),
+      node("p", item.message, "small"),
+    );
+    readiness.append(row);
+  }
+  const sources = element("source-progress");
+  sources.replaceChildren();
+  for (const source of data.sources) {
+    const card = node("div", "", "source-progress");
+    card.append(
+      node("h3", `LoFi account · ${source.label}`),
+      node("p", source.message, "small"),
+    );
+    const counts = node("div", "", "source-counts");
+    for (const [label, value] of [
+      ["Live operations", source.counts.operations],
+      ["Contacts seen", source.counts.contacts],
+      ["Available for review", source.counts.reviewable],
+    ] as const) {
+      const count = node("div", "");
+      count.append(node("b", String(value)), node("span", label));
+      counts.append(count);
+    }
+    card.append(counts);
+    card.append(
+      node(
+        "p",
+        "Counts reflect the source index seen so far. Contacts exclude non-contact events and deleted records; available details are limited by retention.",
+        "small",
+      ),
+    );
+    card.append(
+      node(
+        "p",
+        `${source.initialScanComplete ? "Initial contact scan complete" : "Initial contact scan in progress"} · ${source.contextComplete && source.counts.pendingOperations === 0 ? "Operation and location context complete" : "Operation and location context still loading"}`,
+        "small",
+      ),
+    );
+    if (source.counts.pendingOperations || source.counts.operationReadFailures)
+      card.append(
+        node(
+          "p",
+          `${source.counts.pendingOperations} operation context reads pending · ${source.counts.operationReadFailures} reads need retry. Previews wait for complete contact context.`,
+          "small",
+        ),
+      );
+    if (source.lastSuccessAt)
+      card.append(
+        node(
+          "p",
+          `Last successful source page ${new Date(source.lastSuccessAt).toLocaleString()}`,
+          "small",
+        ),
+      );
+    const excluded = [
+      source.counts.events ? `${source.counts.events} non-contact events` : "",
+      source.counts.tombstones
+        ? `${source.counts.tombstones} deleted records`
+        : "",
+      source.counts.expired ? `${source.counts.expired} expired payloads` : "",
+    ].filter(Boolean);
+    if (excluded.length)
+      card.append(
+        node("p", `Shown separately: ${excluded.join(" · ")}.`, "small"),
+      );
+    sources.append(card);
+  }
+  if (!data.sources.length)
+    sources.append(
+      node(
+        "p",
+        "Connect LoFi to scan source contacts. Existing destination history is reviewed separately before any delivery.",
+        "small",
+      ),
+    );
+  if (data.sourcesTruncated)
+    sources.append(
+      node(
+        "p",
+        "This bounded review shows only the first source connections.",
+        "small",
+      ),
+    );
+  element("review-template-notice").textContent = data.template.notice;
+  const contacts = element("review-contacts");
+  contacts.replaceChildren();
+  for (const contact of data.recentContacts) {
+    const card = node("article", "", "contact-review");
+    const heading = node("div", "", "contact-heading");
+    heading.append(
+      node("h3", contact.call ?? "Contact details unavailable"),
+      node(
+        "span",
+        [contact.band, contact.mode].filter(Boolean).join(" · "),
+        "small",
+      ),
+    );
+    card.append(heading);
+    if (contact.at)
+      card.append(node("p", new Date(contact.at).toLocaleString(), "small"));
+    const context = [
+      contact.stationCall ? `Station ${contact.stationCall}` : "",
+      contact.grid,
+      contact.operationName ??
+        (contact.operationId ? "Operation context loading" : ""),
+    ].filter(Boolean);
+    if (context.length) card.append(node("p", context.join(" · "), "small"));
+    const references = [
+      ...(contact.ownParks ?? []).map((park) => `Own ${park}`),
+      ...(contact.workedParks ?? []).map((park) => `Worked ${park}`),
+    ];
+    if (references.length)
+      card.append(node("p", references.join(" · "), "small"));
+    card.append(
+      node("span", previewStatus(contact.templateStatus), "badge"),
+      node("p", `Review state: ${contact.state.replaceAll("_", " ")}`, "small"),
+    );
+    if (contact.templateStatus === "remote_preserved")
+      card.append(
+        node(
+          "p",
+          "The existing QRZ narrative stays unchanged. Current templates do not rewrite adopted history.",
+          "small",
+        ),
+      );
+    if (contact.preview) {
+      if (contact.templateStatus === "pinned")
+        card.append(
+          node(
+            "p",
+            "This hypothetical current template output does not replace the contact’s pinned version.",
+            "small",
+          ),
+        );
+      const fields = node("dl", "", "preview-fields");
+      for (const [field, label] of [
+        ["COMMENT", "Comment"],
+        ["NOTES", "Notes"],
+        ["QSLMSG", "QSL message"],
+      ] as const) {
+        if (contact.preview[field] !== undefined)
+          fields.append(
+            node("dt", label),
+            node("dd", contact.preview[field] || "(empty)"),
+          );
+      }
+      card.append(fields);
+    }
+    if (contact.reason)
+      card.append(node("p", contact.reason.replaceAll("_", " "), "small"));
+    if (contact.pinnedTemplateVersion)
+      card.append(
+        node("p", `Pinned version ${contact.pinnedTemplateVersion}`, "small"),
+      );
+    card.append(
+      node(
+        "p",
+        `Source details retained until ${new Date(contact.retainedUntil).toLocaleString()}.`,
+        "small retention",
+      ),
+    );
+    contacts.append(card);
+  }
+  element("review-empty").hidden = data.recentContacts.length > 0;
+  element("review-retention").textContent =
+    `Recent source contact details expire after ${data.retention.contactsDays} days; operation context expires after ${data.retention.contextDays} days. This is a bounded review, not a full copy of your log.`;
+}
 async function load() {
+  const request = ++dashboardLoad;
+  clearReview();
   const entering = !element("welcome").hidden;
   const session = await api<{
     authenticated: boolean;
@@ -192,9 +655,11 @@ async function load() {
     email?: string;
     signupAllowed?: boolean;
   }>("/api/auth/session");
+  if (request !== dashboardLoad) return;
   element("welcome").hidden = session.authenticated;
   element("dashboard").hidden = !session.authenticated;
   if (!session.authenticated) {
+    ++reviewRequest;
     element("account").textContent = "";
     const openSignup = session.signupAllowed === true;
     const joinPanel = element<HTMLDetailsElement>("join-panel");
@@ -214,13 +679,14 @@ async function load() {
     return;
   }
   const data = await api<Dashboard>("/api/dashboard");
+  if (request !== dashboardLoad) return;
   element("account").textContent = data.email;
   element("export-banner").textContent = data.exportsEnabled
     ? "Automatic delivery is enabled. Existing history is adopted before any eligible backfill."
     : "Read-only rollout: production exports are disabled. Connections and history can be reviewed safely.";
   if (entering) window.scrollTo({ top: 0 });
   const counts = data.counts;
-  const metrics = element("metrics");
+  const metrics = element("delivery-metrics");
   metrics.replaceChildren();
   for (const [label, count] of [
     ["History adopted", counts.adopted_existing ?? 0],
@@ -251,8 +717,7 @@ async function load() {
     metric.append(node("b", String(count)), node("span", label));
     metrics.append(metric);
   }
-  const connections = element("connections");
-  connections.replaceChildren();
+  renderConnections(data);
   const templateDestination = element<HTMLSelectElement>(
     "template-destination",
   );
@@ -266,58 +731,30 @@ async function load() {
       (template) => [template.destination, template] as const,
     ),
   ]);
+  const reviewDestination = element<HTMLSelectElement>("review-destination");
+  const selectedReview = reviewDestination.value;
+  reviewDestination.replaceChildren();
+  for (const [value, label] of [
+    ["", "Automatic · connected QRZ or account default"],
+    ["account_default", "Saved account default"],
+  ]) {
+    const option = node("option", label ?? "");
+    option.value = value ?? "";
+    reviewDestination.append(option);
+  }
   for (const connection of data.connections) {
-    const item = node("div", "", "connection");
-    item.append(
-      node("b", `${connection.kind.toUpperCase()} · ${connection.label}`),
-      node("span", connection.status.replaceAll("_", " "), "badge"),
-    );
-    if (connection.last_error)
-      item.append(node("p", connection.last_error, "small"));
-    if (connection.last_poll_at)
-      item.append(
-        node(
-          "p",
-          `Last checked ${new Date(connection.last_poll_at).toLocaleString()}`,
-          "small",
-        ),
-      );
-    const disable = node("button", "Disable", "secondary");
-    disable.addEventListener("click", () => {
-      void run(async () => {
-        await api("/api/connections/disable", { id: connection.id });
-        await load();
-      });
-    });
-    if (connection.status === "approval_pending") {
-      const finish = node("button", "Check LoFi approval", "secondary");
-      finish.addEventListener("click", () => {
-        void run(async () => {
-          await api("/api/connections/lofi/finish", { id: connection.id });
-          await load();
-        });
-      });
-      item.append(finish);
-    }
-    item.append(disable);
-    const revoke = node("button", "Remove credentials", "secondary");
-    revoke.addEventListener("click", () => {
-      void run(async () => {
-        await api("/api/connections/revoke", { id: connection.id });
-        await load();
-      });
-    });
-    item.append(revoke);
-    connections.append(item);
-    if (connection.kind === "qrz") {
-      const option = document.createElement("option");
+    if (connection.kind !== "qrz" || connection.status === "revoked") continue;
+    for (const select of [templateDestination, reviewDestination]) {
+      const option = node("option", connection.label);
       option.value = connection.id;
-      option.textContent = connection.label;
-      templateDestination.append(option);
+      select.append(option);
     }
   }
-  if (!data.connections.length)
-    connections.append(node("p", "No services connected yet.", "small"));
+  reviewDestination.value = [...reviewDestination.options].some(
+    (option) => option.value === selectedReview,
+  )
+    ? selectedReview
+    : "";
   templateDestination.value = [...templateDestination.options].some(
     (option) => option.value === selectedDestination,
   )
@@ -328,14 +765,12 @@ async function load() {
   activity.replaceChildren();
   for (const row of data.activity) {
     const tr = document.createElement("tr");
+    const destinationKind = data.connections.find(
+      (connection) => connection.id === row.destination,
+    )?.kind;
     tr.append(
       node("td", row.qso.slice(0, 12)),
-      node(
-        "td",
-        data.connections
-          .find((c) => c.id === row.destination)
-          ?.kind.toUpperCase() ?? "—",
-      ),
+      node("td", destinationKind ? vendorName(destinationKind) : "—"),
       node(
         "td",
         row.state.replaceAll("_", " ") + (row.confirmed ? " · confirmed" : ""),
@@ -355,6 +790,7 @@ async function load() {
     activity.append(tr);
   }
   element("empty").hidden = data.activity.length > 0;
+  element("empty").textContent = ledgerEmptyMessage(data.connections);
   const quietPeriod =
     element<HTMLFormElement>("settings").elements.namedItem("quietMinutes");
   if (quietPeriod instanceof HTMLSelectElement) {
@@ -366,6 +802,7 @@ async function load() {
     }
     quietPeriod.value = saved;
   }
+  void refreshReview();
   const keys = element("keys");
   keys.replaceChildren();
   for (const key of data.passkeys) {
@@ -426,6 +863,10 @@ form("verify", async (data) => {
   );
 });
 bind("refresh", load);
+bind("review-refresh", refreshReview);
+element("review-destination").addEventListener("change", () => {
+  void refreshReview();
+});
 bind("reauth", async () => {
   await ceremony("reauth");
   await load();
@@ -436,6 +877,8 @@ bind("add-key", async () => {
   await load();
 });
 bind("logout", async () => {
+  clearReview();
+  ++dashboardLoad;
   await api("/api/auth/logout", {});
   await load();
 });
@@ -443,13 +886,11 @@ form("lofi-start", async (data) => {
   const result = await api<{ id: string }>("/api/connections/lofi/start", {
     email: text(data, "email"),
   });
-  lofiId = result.id;
-  element("lofi-finish").hidden = false;
-  message("Check your email for the Ham2K approval request.");
-});
-form("lofi-finish", async () => {
-  await api("/api/connections/lofi/finish", { id: lofiId });
+  if (!result.id) throw new Error("LoFi did not return a pending connection.");
   await load();
+  message(
+    "Check your email for the Ham2K approval request, then choose Finish linking.",
+  );
 });
 form("qrz", async (data) => {
   await api("/api/connections/qrz", {

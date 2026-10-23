@@ -222,6 +222,7 @@ test("actual Worker HTTP flow verifies passkeys, isolates tenants, preserves tem
   const a = new Client(mf);
   const b = new Client(mf);
   assert.equal((await a.request("/api/dashboard")).status, 401);
+  assert.equal((await a.request("/api/review")).status, 401);
   const identityA = await activate(a, "worker-a@example.test");
   const identityB = await activate(b, "worker-b@example.test");
   const accountA = (
@@ -251,6 +252,20 @@ test("actual Worker HTTP flow verifies passkeys, isolates tenants, preserves tem
     identityA.key.id,
   );
   assert.ok(!JSON.stringify(dashboard.body).includes(identityB.key.id));
+  const review = await a.request("/api/review");
+  assert.equal(review.status, 200);
+  assert.equal(review.body.readOnly, true);
+  assert.equal(review.headers.get("Cache-Control"), "no-store");
+  assert.deepEqual(review.body.sources, []);
+  assert.deepEqual(review.body.recentContacts, []);
+  assert.equal((await a.request("/api/review", {})).status, 405);
+  await db
+    .prepare(
+      "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,created_at) VALUES(?,'source-b','lofi','private-b','Other tenant source','disabled',0)",
+    )
+    .bind(accountB)
+    .run();
+  assert.equal((await a.request("/api/review?source=source-b")).status, 404);
   assert.equal(
     (await a.request("/api/settings", { quietMinutes: 45 })).status,
     200,

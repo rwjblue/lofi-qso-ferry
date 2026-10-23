@@ -28,13 +28,20 @@ LoTW has no supported narrative destination for QRZ-style comments or POTA text.
 | [Existing-history reconciliation](docs/bootstrap.md) | Read-only adoption, missing records, cutover, and incomplete evidence                |
 | [Templates](docs/templates.md)                       | HaLo compatibility, immutable versions, and preservation of adopted QRZ text         |
 | [Authentication](docs/authentication.md)             | Email confirmation, passkeys, sessions, and recovery boundaries                      |
+| [Admin console](docs/admin.md)                       | Operational metrics, invitations, access boundaries, and prioritized follow-ups      |
 | [Credential security](docs/security.md)              | Encryption, key rotation, tenant isolation, and retention                            |
 
 ## Use the read-only deployment
 
 Open [Ferry](https://ferry.n1rwj.com) and sign in with your passkey. Hosted enrollment is invite only: invited users follow `/join`, confirm the exact invited email address and create a passkey in their own browser. Register an independent backup passkey, then connect only the services you use. No individual service is required to save account settings or template preferences. The permanent passkey RP is `ferry.n1rwj.com`; there is no email login or reset.
 
-The operator can invite someone using the existing Cloudflare CLI login:
+After deploying the admin release and its migrations, `me@rwjblue.com` sees an
+**Admin** link to `/admin`. It includes scheduler history, live/import backlog,
+vendor budgets, source freshness, account summaries and invitation management.
+Invitation changes require recent passkey verification. See the
+[admin proposal and operating notes](docs/admin.md).
+
+The operator can also invite someone using the existing Cloudflare CLI login:
 
 ```sh
 mise run invite -- person@example.com
@@ -42,7 +49,7 @@ mise run invite -- person@example.com
 mise run invite -- --dry-run person@example.com
 ```
 
-Invitations expire after seven days and are claimed atomically when the passkey account is created. Use the exact address, including local-part case and plus tags. The task refuses existing accounts and claimed invitations; an intentional rerun renews an unused invitation and sends another message. See [operations](docs/operations.md) for delivery uncertainty and access boundaries.
+Invitations expire after seven days and are claimed atomically when the passkey account is created. Use the exact address, including local-part case and plus tags. The task refuses existing accounts and claimed invitations; an intentional rerun renews an eligible unused invitation and sends another message after a 60-second cooldown. An uncertain prior send requires revoking the pending invitation before sending again. Apply the admin migrations before using the updated CLI. See [operations](docs/operations.md) for delivery uncertainty and access boundaries.
 
 All vendor export gates remain closed. See [deployment evidence](docs/deployment.md) for resources, live checks and the redeploy command.
 

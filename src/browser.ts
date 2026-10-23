@@ -154,6 +154,7 @@ async function ceremony(path: string, label?: string) {
 }
 interface Dashboard {
   email: string;
+  admin: boolean;
   quietMinutes: number;
   exportsEnabled: boolean;
   defaultTemplate?: NarrativeTemplate;
@@ -736,6 +737,7 @@ async function load() {
   if (request !== dashboardLoad) return;
   element("welcome").hidden = session.authenticated;
   element("dashboard").hidden = !session.authenticated;
+  element("admin-link").hidden = true;
   if (!session.authenticated) {
     ++reviewRequest;
     element("account").textContent = "";
@@ -759,6 +761,7 @@ async function load() {
   const data = await api<Dashboard>("/api/dashboard");
   if (request !== dashboardLoad) return;
   element("account").textContent = data.email;
+  element("admin-link").hidden = !data.admin;
   element("export-banner").textContent = data.exportsEnabled
     ? "Automatic delivery is enabled. Existing history is adopted before any eligible backfill."
     : "Read-only rollout: production exports are disabled. Connections and history can be reviewed safely.";

@@ -42,6 +42,11 @@ header {
   font-size: 0.85rem;
   overflow-wrap: anywhere;
 }
+#admin-link {
+  color: #d7eddf;
+  font-size: 0.85rem;
+  margin-left: auto;
+}
 main {
   max-width: 1120px;
   margin: auto;

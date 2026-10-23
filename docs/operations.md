@@ -29,7 +29,21 @@ For a new target, provision each required application secret with `npx wrangler 
 
 ## Invite a user
 
-Hosted enrollment is invite only; existing accounts keep passkey-only sign-in. Use the authenticated Cloudflare CLI and the project task:
+Hosted enrollment is invite only; existing accounts keep passkey-only sign-in.
+After deploying this admin release, the sole administrator `me@rwjblue.com` can
+send and revoke invitations from `/admin`, with fresh passkey verification and
+a 90-day audit of web actions. The console also shows scheduler history, live
+and background workload, source freshness, vendor budgets and export gates.
+See the [admin proposal](admin.md) for metric definitions and follow-ups.
+
+Apply `0011_admin_metrics.sql` and `0012_admin_invitations.sql` before deploying
+this release or using its invite CLI. Scheduler history starts with deployment;
+seven days of run metadata are retained. Pushing commits does not apply these
+migrations or deploy the Worker; `mise run deploy-readonly` builds both browser
+entry points, applies migrations and deploys with the existing export gates
+closed when deployment is requested.
+
+The authenticated Cloudflare CLI remains available through the project task:
 
 ```sh
 mise run invite -- person@example.com
@@ -38,9 +52,9 @@ mise run invite -- --dry-run person@example.com
 
 The normal command grants a seven-day, exact-email invitation in `ferry-production` and sends a branded invitation through the configured native Cloudflare sender. It uses the project production account/database/sender, shell-free query arguments and an exact returned-grant check; no application secret, admin web endpoint or bearer invite token is needed. The preview command renders `.wrangler/invite-preview/invitation.html` without any remote operation, access grant or email send.
 
-The ordinary `/join` link opens the enrollment form. The recipient must enter the exact invited address, confirm its six-digit email code and enroll a passkey. Local-part case and plus tags are preserved; only the email domain is normalized. Expired or claimed invitations cannot enroll, and account/key/session creation claims the invitation atomically. No connected vendor is required. The task refuses existing accounts and claimed invitations. To renew an unused invitation, intentionally rerun the command; this also sends a new message.
+The ordinary `/join` link opens the enrollment form. The recipient must enter the exact invited address, confirm its six-digit email code and enroll a passkey. Local-part case and plus tags are preserved; only the email domain is normalized. Expired, revoked or claimed invitations cannot enroll, and account/key/session creation claims the invitation atomically. No connected vendor is required. The task refuses existing accounts and claimed invitations. To renew an eligible unused invitation, intentionally rerun the command after its 60-second recipient cooldown; this also sends a new message. Both CLI and web sends share that cooldown and block renewal of an active invitation with uncertain mail status. Web sends additionally allow at most 20 attempts per admin per hour.
 
-CLI acceptance does not prove inbox delivery. If submission fails or its result is uncertain, the granted invitation remains usable at `/join`; the task reports that boundary and never retries automatically. Inspect provider delivery metadata or confirm receipt before deciding to rerun. A permanent-bounce warning is treated as failure even though the current Wrangler CLI exits zero. Do not automate repeated invitations. Expired metadata is removed by scheduled auth cleanup, and restore quarantine removes all restored invitations.
+Provider acceptance does not prove inbox delivery. If submission fails or its result is uncertain, the granted invitation remains usable at `/join` unless it was revoked or claimed concurrently; the task reports that boundary and never retries automatically. Inspect provider delivery metadata or confirm receipt before deciding to resend. Revoke a pending uncertain invitation in admin before intentionally sending another, still observing the cooldown. A permanent-bounce warning is treated as failure even though the current Wrangler CLI exits zero. Do not automate repeated invitations. CLI actions update invitation/mail status but do not create web audit events. Expired and revoked invitation metadata is retained for 90 days after expiry; web audit events are retained for 90 days. Scheduled auth cleanup enforces retention, and restore quarantine removes all restored invitations.
 
 ## Connect and adopt read-only
 

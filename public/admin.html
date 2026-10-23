@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#102e35"><title>Admin · LoFi QSO Ferry</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/admin.css"><script type="module" src="/admin.js"></script></head>
+<body>
+<header><a class="brand" href="/" aria-label="LoFi QSO Ferry home"><span aria-hidden="true">≈</span> LoFi QSO Ferry</a><a class="admin-home" href="/">Back to my dashboard <span aria-hidden="true">↗</span></a></header>
+<main class="admin-main">
+<div class="admin-heading"><div><div class="eyebrow">FERRY CONTROL ROOM</div><h1>Keep the ferry moving.</h1><p class="lead">A view across the service, from live sync to the next invitation.</p></div><span class="admin-badge">Admin</span></div>
+<p id="admin-message" class="admin-notice" role="status" aria-live="polite">Checking your admin access…</p>
+<noscript><p>Enable JavaScript to load operational metrics. <a href="/">Return to your dashboard</a>.</p></noscript>
+<div id="admin-content" hidden>
+<div class="admin-toolbar"><nav class="admin-nav" aria-label="Admin pages"><a href="#overview" aria-current="page">Overview</a><a href="#people">People &amp; connections</a><a href="#invitations">Invitations</a></nav><div class="admin-refresh"><span id="snapshot-time" class="small"></span><button id="refresh-admin" type="button" class="secondary">Refresh</button></div></div>
+<section id="overview" class="admin-page" aria-labelledby="overview-title">
+<h2 id="overview-title" class="visually-hidden">Service overview</h2>
+<div id="health-notices"></div>
+<div id="admin-metrics" class="admin-metrics"></div>
+<div class="admin-columns"><section class="panel"><div class="admin-section-heading"><h2>Work waiting</h2><span class="small">Current snapshot</span></div><div id="source-backlog"></div><p class="small">Source rows can wait for quiet time, context, or destination review. Processing turns are not unique deliveries.</p><div id="delivery-candidates" class="admin-note"></div><details><summary>Unresolved delivery attempts</summary><div id="attempt-backlog"></div></details></section>
+<section class="panel"><h2>Vendor headroom</h2><p class="small">Shared application limits for this five-minute window. Background requests also count against the total.</p><div id="vendor-budgets"></div></section></div>
+<div class="admin-columns"><section class="panel"><h2>Needs attention</h2><div id="attention"></div><p class="small">These categories may overlap. Inspect the account’s connection and review state before taking action.</p></section><section class="panel"><div class="admin-section-heading"><h2>Export readiness</h2><span id="export-state" class="admin-pill"></span></div><div id="export-gates"></div><p class="small">Rollout gates are read-only here. A disabled gate can intentionally hold delivery work.</p></section></div>
+<section class="panel"><div class="admin-section-heading"><h2>Scheduler history</h2><span class="small">Last 24 hours</span></div><p id="run-summary" class="small"></p><div id="scheduler-runs"></div><p class="small">Elapsed time is wall time, not CPU time. Source pages count successful reads; contact and attempt turns are not unique deliveries. Idle means this run found no further progress; held work may remain. Errors, vendor deferrals and time-budget stops are separate. Recent backlog samples help show whether work is draining. History begins when this release is deployed and is retained for seven days.</p></section>
+</section>
+<section id="people" class="admin-page" aria-labelledby="people-title" hidden>
+<div class="admin-section-heading"><div><h2 id="people-title">People &amp; connections</h2><p class="small">Account access and source progress, without private contact contents.</p></div><label class="admin-search">Filter these lists<input id="people-filter" type="search" placeholder="Email, service or connection" autocomplete="off"></label></div>
+<section class="panel"><h2>Accounts</h2><p id="accounts-limit" class="small"></p><div id="accounts-table"></div></section>
+<section class="panel"><h2>Connections</h2><p id="connections-limit" class="small"></p><div id="connections-table"></div><p class="small">A successful source page does not prove an entire log is current. “Last attempt” can advance even when a poll fails. Connection errors are summarized without exposing vendor responses.</p></section>
+</section>
+<section id="invitations" class="admin-page" aria-labelledby="invitations-title" hidden>
+<div class="admin-columns invitation-columns"><section class="panel"><div class="eyebrow">INVITE ONLY</div><h2 id="invitations-title">Bring someone aboard.</h2><p>Send a seven-day invitation to an exact email address. They’ll confirm their email and create a passkey to join.</p><form id="invite-form"><label for="invite-email">Email address</label><input id="invite-email" name="email" type="email" maxlength="254" required autocomplete="email" autocapitalize="none" spellcheck="false" placeholder="operator@example.com"><button type="submit">Send invitation</button></form><p class="small">Sending again intentionally renews an eligible invitation. Existing accounts cannot be invited again. You may be asked to verify your passkey.</p></section>
+<aside class="panel admin-explainer"><h2>A clear handoff.</h2><p>Mail marked “accepted” was accepted by the provider; inbox delivery is not confirmed.</p><p>If delivery is uncertain, the invitation remains valid. Share the join address with the invitee, or revoke it before intentionally sending a new invitation.</p><p><a id="join-address" href="/join">Open the join page ↗</a></p><p class="small">Revoking an unused invitation prevents enrollment. It does not remove an account that has already joined.</p></aside></div>
+<section class="panel"><h2>Invitations</h2><p id="invitations-limit" class="small"></p><div id="invitations-table"></div></section>
+<section class="panel"><h2>Invitation audit</h2><p class="small">Actions taken in this admin console. CLI invitations update the invitation list but do not create audit events here.</p><p id="audit-limit" class="small"></p><div id="audit-table"></div></section>
+</section>
+</div>
+</main><footer>LoFi QSO Ferry · Operator tools for a quieter crossing.</footer>
+</body></html>

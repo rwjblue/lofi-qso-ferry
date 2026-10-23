@@ -8,3 +8,4 @@ dist/
 coverage/
 test-results/
 public/app.js
+public/admin.js

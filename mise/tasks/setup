@@ -12,4 +12,5 @@ JS
 fi
 npm run types
 npx esbuild src/browser.ts --bundle --minify --format=esm --outfile=public/app.js
+npx esbuild src/browser-admin.ts --bundle --minify --format=esm --outfile=public/admin.js
 npx wrangler d1 migrations apply ferry-local --local --env=

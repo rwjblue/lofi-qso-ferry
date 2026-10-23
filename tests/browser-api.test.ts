@@ -42,6 +42,29 @@ function fixture(recent = false) {
   };
 }
 
+test("admin invitations require fresh verification and never replay uncertain acceptance", async () => {
+  const state = fixture();
+  let verifications = 0;
+  const client = createApiClient(async () => {
+    verifications++;
+    assert.equal(state.mutations().length, 0);
+    state.session.recent = true;
+    state.session.csrf = "verified-admin-csrf";
+  }, state.fetcher);
+  state.respond(() =>
+    Response.json({ invitation: { mailStatus: "uncertain" } }, { status: 202 }),
+  );
+  await client.request("/api/auth/session");
+  const result = await client.request<{ invitation: { mailStatus: string } }>(
+    "/api/admin/invitations",
+    { email: "friend@example.test" },
+  );
+  assert.equal(result.invitation.mailStatus, "uncertain");
+  assert.equal(verifications, 1);
+  assert.equal(state.mutations().length, 1);
+  assert.equal(state.mutations()[0].csrf, "verified-admin-csrf");
+});
+
 test("a stale protected action verifies a passkey before sending exactly one captured payload with fresh CSRF", async () => {
   const state = fixture();
   let verifications = 0;

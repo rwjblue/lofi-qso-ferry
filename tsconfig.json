@@ -17,5 +17,5 @@
     "worker-configuration.d.ts",
     "scripts/**/*.ts"
   ],
-  "exclude": ["src/browser.ts"]
+  "exclude": ["src/browser.ts", "src/browser-admin.ts"]
 }

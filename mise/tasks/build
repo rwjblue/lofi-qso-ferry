@@ -2,4 +2,5 @@
 #MISE description="Bundle dashboard and validate Worker without deploying"
 set -euo pipefail
 npx esbuild src/browser.ts --bundle --minify --format=esm --outfile=public/app.js
+npx esbuild src/browser-admin.ts --bundle --minify --format=esm --outfile=public/admin.js
 npx wrangler deploy --env= --dry-run --outdir dist

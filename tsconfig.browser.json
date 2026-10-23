@@ -11,5 +11,5 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["src/browser.ts"]
+  "include": ["src/browser.ts", "src/browser-admin.ts"]
 }

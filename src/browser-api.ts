@@ -17,6 +17,7 @@ function protectedAction(path: string, body: unknown): boolean {
   return (
     body !== undefined &&
     (path.startsWith("/api/connections/") ||
+      path.startsWith("/api/admin/") ||
       path.startsWith("/api/auth/passkeys/") ||
       path === "/api/auth/email" ||
       path === "/api/auth/email/verify")

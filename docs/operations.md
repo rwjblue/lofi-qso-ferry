@@ -4,7 +4,7 @@ All checked-in environments disable exports. Local tests and synthetic signature
 
 ## Current production target
 
-On 2026-10-22 the operator selected `https://ferry.n1rwj.com`, with RP ID `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. Dedicated D1 `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) has all six migrations applied. The Worker `lofi-qso-ferry` is deployed read-only at the selected hostname. Its version, deployed revision and live endpoint checks are recorded in [deployment evidence](deployment.md).
+On 2026-10-22 the operator selected `https://ferry.n1rwj.com`, with RP ID `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. Dedicated D1 `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) has all seven migrations applied. The Worker `lofi-qso-ferry` is deployed read-only at the selected hostname. Its version, deployed revision and live endpoint checks are recorded in [deployment evidence](deployment.md).
 
 Production uses the native Cloudflare `EMAIL` binding restricted to `signup@ferry.n1rwj.com`, with that address in `MAIL_FROM`. Sending domain `ferry.n1rwj.com` (`e69af8ef82a140b38eeaef98d417ef30`) is enabled and its `preview_enabled=false` setting was read back. Cloudflare and Google DNS-over-HTTPS both resolved its bounce MX/SPF, DKIM and DMARC records; the parent domain's Fastmail MX records remain unchanged. One verification message was delivered to the owner’s Fastmail inbox through the live signup form. The initial smoke test created no account. Hosted enrollment is now invite only; existing users retain their passkeys and sessions.
 

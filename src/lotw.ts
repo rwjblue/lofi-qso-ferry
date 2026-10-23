@@ -10,6 +10,15 @@ import {
 const QUERY_ENDPOINT = "https://lotw.arrl.org/lotwuser/lotwreport.adi";
 const UPLOAD_ENDPOINT = "https://lotw.arrl.org/lotw/upload";
 const MAX_RESPONSE = 2 * 1024 * 1024;
+export class LotwLoginError extends Error {
+  constructor(readonly reason: "credentials" | "unavailable") {
+    super(
+      reason === "credentials"
+        ? "LoTW rejected the website login or readback access"
+        : "LoTW login verification is temporarily unavailable",
+    );
+  }
+}
 function untrustedResponse(response: Response): boolean {
   return (
     response.redirected ||
@@ -131,6 +140,24 @@ export class LotwClient {
     this.exportsEnabled = options.exportsEnabled === true;
   }
   private readonly exportsEnabled: boolean;
+  /** Read-only login proof, independent of a certificate or export permission. */
+  async verifyLogin(): Promise<void> {
+    const today = new Date().toISOString().slice(0, 10);
+    try {
+      await this.query({
+        startDate: today,
+        endDate: today,
+        receivedSince: today,
+      });
+    } catch (error) {
+      if (
+        error instanceof VendorDeferredError ||
+        error instanceof LotwLoginError
+      )
+        throw error;
+      throw new LotwLoginError("unavailable");
+    }
+  }
   async query(partition: LotwQuery): Promise<LotwReport> {
     if (!this.credentials)
       throw new Error("LoTW query credentials are not configured");
@@ -185,9 +212,21 @@ export class LotwClient {
     }
     if (untrustedResponse(response) || !response.ok) {
       await response.body?.cancel();
+      if (response.status === 401 || response.status === 403)
+        throw new LotwLoginError("credentials");
       throw new Error("LoTW query unavailable; coverage remains incomplete");
     }
-    return parseLotwReport(await boundedResponse(response));
+    const body = await boundedResponse(response);
+    // ARRL documents HTML failure responses. Only explicit authentication
+    // failures identify rejected credentials; maintenance HTML is unavailable.
+    if (
+      !/<EOH>/i.test(body) &&
+      /\b(?:invalid|incorrect)\s+(?:username|password|login|credentials)\b|\b(?:login|logon|authentication)\s+failed\b|\busername\s*(?:\/|or|and|and\/or)\s*password\s+(?:incorrect|invalid)\b/i.test(
+        body.replace(/<[^>]*>/g, " "),
+      )
+    )
+      throw new LotwLoginError("credentials");
+    return parseLotwReport(body);
   }
   async certificateStatus(serial: string): Promise<CertificateStatus> {
     if (!/^\d{1,50}$/.test(serial)) return "unknown";

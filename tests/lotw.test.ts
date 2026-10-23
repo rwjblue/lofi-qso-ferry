@@ -5,6 +5,7 @@ import { serializeAdifRecord, type AdifRecord } from "../src/adif.ts";
 import {
   boundedResponse,
   LotwClient,
+  LotwLoginError,
   observeLotwContact,
   parseLotwReport,
   parseUploadResponse,
@@ -51,6 +52,7 @@ test("LoTW preserves typed transport deferrals for query, certificate status and
     client.query({ startDate: "2026-10-22", endDate: "2026-10-22" }),
     (error) => error === deferred,
   );
+  await assert.rejects(client.verifyLogin(), (error) => error === deferred);
   await assert.rejects(
     client.certificateStatus("123"),
     (error) => error === deferred,
@@ -59,6 +61,79 @@ test("LoTW preserves typed transport deferrals for query, certificate status and
     client.submit(new Uint8Array([0x1f, 0x8b]), { liveWriteAuthorized: true }),
     (error) => error === deferred,
   );
+});
+
+test("LoTW login verification uses a bounded read without a certificate or upload", async () => {
+  let requests = 0;
+  const client = new LotwClient(
+    { username: "synthetic-account", password: " synthetic-secret " },
+    {
+      fetcher: async (input, init) => {
+        requests++;
+        const url = new URL(String(input));
+        assert.equal(url.pathname, "/lotwuser/lotwreport.adi");
+        assert.equal(init?.method ?? "GET", "GET");
+        assert.equal(init?.redirect, "manual");
+        assert.equal(url.searchParams.get("login"), "synthetic-account");
+        assert.equal(url.searchParams.get("password"), " synthetic-secret ");
+        const today = new Date().toISOString().slice(0, 10);
+        for (const field of ["qso_startdate", "qso_enddate", "qso_qsorxsince"])
+          assert.equal(url.searchParams.get(field), today);
+        return new Response(report([]));
+      },
+    },
+  );
+  await client.verifyLogin();
+  assert.equal(requests, 1);
+});
+
+test("LoTW login verification distinguishes explicit rejection from unavailable readback", async (t) => {
+  for (const [name, status, body, reason] of [
+    ["unauthorized", 401, "sensitive vendor details", "credentials"],
+    ["denied access", 403, "sensitive vendor details", "credentials"],
+    ["HTML login failure", 200, "<html>Login failed</html>", "credentials"],
+    [
+      "ARRL HTML incorrect credentials",
+      200,
+      "<html><b>Username/password</b> incorrect</html>",
+      "credentials",
+    ],
+    [
+      "HTML invalid password",
+      200,
+      "<html>Invalid password</html>",
+      "credentials",
+    ],
+    ["maintenance", 503, "sensitive vendor details", "unavailable"],
+    ["unexpected HTML", 200, "<html>Try again later</html>", "unavailable"],
+    ["redirect", 302, "sensitive vendor details", "unavailable"],
+    [
+      "truncated report",
+      200,
+      report([]).replace("<APP_LoTW_EOF>", ""),
+      "unavailable",
+    ],
+    ["transport", 0, "", "unavailable"],
+  ] as const) {
+    await t.test(name, async () => {
+      const client = new LotwClient(
+        { username: "synthetic-account", password: "synthetic-secret" },
+        {
+          fetcher: async (input) => {
+            if (!status)
+              throw new Error(`sensitive transport details: ${input}`);
+            return new Response(body, { status });
+          },
+        },
+      );
+      await assert.rejects(client.verifyLogin(), (error: unknown) => {
+        assert(error instanceof LotwLoginError);
+        assert.equal(error.reason, reason);
+        assert(!/synthetic|sensitive|lotwreport/.test(error.message));
+        return true;
+      });
+    });
+  }
 });
 
 test("LoTW report inventories accepted unconfirmed QSOs with own location and server receive cursor", () => {

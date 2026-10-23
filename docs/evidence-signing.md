@@ -16,7 +16,7 @@ The actual local workerd process (Miniflare, compatibility 2026-10-22, `nodejs_c
 
 The integrated Worker also passed `npx wrangler check startup --env=`. Wrangler reported 1,534.84 KiB raw and 290.24 KiB gzip for the complete bundle. Its local startup profile covered a 80.4 ms window, with 73.4 ms sampled: 49.1 ms active (including 0.0 ms garbage collection), 24.3 ms idle and 29 samples. These are local profile observations, **not deployed billed CPU, peak-memory measurements or LoTW acceptance evidence**. Worker clocks stop during synchronous code; wall time and sampled startup activity cannot substitute for deployed import/batch resource measurements. Deployed Worker CPU/peak-memory and larger representative batch measurements remain required before enabling production writes.
 
-`node-forge@1.4.0` has [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv), with no fixed published version at investigation time. Production code never uses Forge RSA/certificate signature verification. It verifies exact DER certificate TBS bytes with strict platform WebCrypto instead. A focused regression constructs the nested DigestAlgorithm garbage accepted by Forge and proves that the production verifier rejects it. Forge is used for ASN.1/PKCS#12 MAC/decryption and key extraction; dependency updates still require review. Trusted roots come from deployment configuration, never imported PKCS#12 trust claims.
+`node-forge@1.4.0` has [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv), with no fixed published version at investigation time. Production code never uses Forge RSA/certificate signature verification. It verifies exact DER certificate TBS bytes with strict platform WebCrypto instead. A focused regression constructs the nested DigestAlgorithm garbage accepted by Forge and proves that the production verifier rejects it. Forge is used for ASN.1/PKCS#12 MAC/decryption and key extraction; dependency updates still require review. Trusted roots come from the reviewed bootstrap bundle and ARRL's authenticated HTTPS root distribution, or an explicit deployment override; imported PKCS#12 trust claims never establish authority.
 
 ## Submission and readback
 
@@ -28,7 +28,7 @@ Readback frequency has five decimal MHz places (10 Hz); finer transmitted precis
 
 ## Remaining live inputs and checks
 
-- Configure and independently verify the LoTW issuing/root certificate trust bundle. A certificate-only `.tq6` is insufficient; signing requires a matching `.p12` private key.
+- Verify the [managed ARRL root refresh](lotw-trust.md) using a working LoTW website login. A certificate-only `.tq6` is insufficient; signing requires a matching `.p12` private key.
 - Import the owner's LoTW `.p12` through a freshly passkey-verified session. The original password is used only for import. Confirm the status endpoint and issuer chain with that certificate, and verify supersession/revocation behavior.
 - Optional LoTW website username/password allow full accepted-history adoption and uncertain-result readback. Without them prior history stays unverified.
 - Deploy the disabled-export Worker, measure billed CPU/memory for import and representative signing batches, and compare a designated synthetic/reference signing vector with native TQSL if available.

@@ -1,11 +1,18 @@
 # LoTW certificate trust
 
-Ferry ships reviewed ARRL trust anchors. All checked-in environments use
-`LOTW_TRUST_ROOTS_JSON=bundled`; users do not supply or configure CA certificates.
+Ferry starts with reviewed ARRL trust anchors and automatically discovers new
+roots from ARRL's authenticated HTTPS certificate download. All checked-in
+environments use `LOTW_TRUST_ROOTS_JSON=bundled`, enabling the release bundle plus
+the managed public-root cache. Users do not supply or configure CA certificates.
 An imported `.p12` supplies a leaf and possible intermediate certificates, never
-new trust anchors. An explicit JSON PEM array overrides the release bundle for
-private deployments; `[]` deliberately disables trust and invalid overrides fail
-closed for LoTW.
+new trust anchors. An explicit JSON PEM array overrides both the release bundle
+and automatic discovery for private deployments; `[]` deliberately disables trust
+and invalid overrides fail closed for LoTW.
+
+System CA trust authenticates the HTTPS connection to `lotw.arrl.org`. LoTW's
+private signing CA is a separate authority for callsign certificates. Ferry uses
+the platform's normal HTTPS verification to obtain those public signing roots
+directly from ARRL, then validates the LoTW certificate chain against them.
 
 ## Provenance
 
@@ -40,17 +47,43 @@ remain current. CA constraints, signing usage, unknown critical extensions and
 every path signature are checked. An uploaded self-signed CA is never trusted.
 
 [Wavelog's LoTW importer](https://github.com/wavelog/wavelog/blob/7f8eef4de94c674f73c6859ed4e0b0247f68dcd9/application/controllers/Lotw.php#L399-L488)
-opens the PKCS#12 and extracts certificate data without a manually configured CA
-list. Ferry additionally verifies issuer signatures against its release bundle.
+opens the PKCS#12 and extracts certificate data without a signing-CA trust list.
+PHP's [`openssl_pkcs12_read`](https://www.php.net/manual/en/function.openssl-pkcs12-read.php)
+parses a container; it does not validate its issuer chain. Wavelog checks leaf
+dates and ARRL serial status, signs the upload, and leaves final acceptance to
+LoTW. Its HTTPS client uses the normal server CA store. Ferry additionally
+verifies signing-certificate issuer signatures against its managed ARRL roots.
 
 ## Updates and saved connections
 
-Update the versioned bundle as release data when ARRL rotates its roots. Obtain
-new roots from ARRL's authenticated HTTPS certificate download, verify their CA
-properties and signatures, review fingerprints, and update the pinned data,
-bundle version and regression test together. Never approve a root merely because
-it appears in a user upload, a matching issuer name, or a successful serial-status
-lookup. TQSL's source fallback bundle alone can lag current ARRL issuance.
+Scheduled maintenance refreshes the root cache daily using one working saved
+LoTW website login. It can also request a refresh for a previously unrecognized
+issuer during import, saved-certificate verification, signing or dispatch. A
+shared database lease prevents duplicate requests; forced refreshes are at least
+five minutes apart. Vendor request budgets and `Retry-After` cooldowns still
+apply. The endpoint is fixed to ARRL HTTPS, redirects are refused, and the
+platform's normal TLS certificate verification remains enabled.
+
+Only explicit `rootcert` entries from a complete, bounded ARRL response may add
+trust. Each must be a supported RSA CA with a valid self-signature and recognized
+critical constraints. Compressed responses are limited to 256 KiB and decoded XML
+to 1 MiB. DTDs, custom entities, malformed XML and unexpected responses fail
+closed. The response's account certificates and credentials are discarded; only
+canonical public roots and fixed source/check metadata are cached.
+
+Failed refreshes retain the last good roots and the release fallback. HTTP or
+parsing failures back off for an hour; vendor cooldowns can extend that delay.
+The cache is additive because a per-account download is not a complete global
+removal manifest. Omission from one download cannot silently remove an old root.
+An operator can restrict trust explicitly with the JSON override if a root must
+be withdrawn. New supported ARRL roots require no Ferry release or user reimport.
+At least one working LoTW website login is needed to discover new roots; users
+without readback access can use roots already obtained through another account.
+
+Never approve a root merely because it appears in a user upload, a matching
+issuer name, or a successful serial-status lookup. TQSL's source fallback bundle
+alone can lag current ARRL issuance. The bundled anchors remain a reviewed
+bootstrap fallback rather than the sole source of future roots.
 
 Every scheduled run rechecks a bounded, oldest-first batch of saved certificate
 chains against current anchors. It refreshes ARRL status after twelve hours, with

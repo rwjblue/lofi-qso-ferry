@@ -1,5 +1,8 @@
 import { LotwClient } from "./lotw.ts";
-import { lotwTrustRoots } from "./lotw-trust.ts";
+import {
+  effectiveLotwTrustRoots,
+  refreshLotwTrustRoots,
+} from "./lotw-trust-cache.ts";
 import {
   type CertificateStatus,
   type SigningCredential,
@@ -35,9 +38,18 @@ function checkedTime(value: unknown, now: number): number | null {
 export async function refreshLotwCertificates(
   store: Store,
   trustRootsJson: string,
-  options: { fetcher?: typeof fetch; now?: number; limit?: number } = {},
+  options: {
+    fetcher?: typeof fetch;
+    now?: number;
+    limit?: number;
+    trustRoots?: string[];
+    refreshTrustRoots?: () => Promise<string[]>;
+  } = {},
 ) {
-  const roots = lotwTrustRoots(trustRootsJson);
+  let roots =
+    options.trustRoots ??
+    (await effectiveLotwTrustRoots(store, trustRootsJson));
+  let refreshedRoots = false;
   const now = options.now ?? Date.now();
   const limit = Math.max(1, Math.min(20, options.limit ?? 20));
   const connections = (
@@ -123,6 +135,34 @@ export async function refreshLotwCertificates(
             statusRequests = 0;
           }
         }
+        let trusted = await verifySigningCredentialTrust(
+          certificate,
+          roots,
+          new Date(now),
+        );
+        if (
+          !trusted &&
+          !refreshedRoots &&
+          trustRootsJson === "bundled" &&
+          Date.parse(certificate.validFrom) <= now &&
+          Date.parse(certificate.validTo) > now
+        ) {
+          refreshedRoots = true;
+          roots = options.refreshTrustRoots
+            ? await options.refreshTrustRoots()
+            : (
+                await refreshLotwTrustRoots(store, trustRootsJson, {
+                  fetcher: options.fetcher,
+                  now: options.now,
+                  force: true,
+                })
+              ).roots;
+          trusted = await verifySigningCredentialTrust(
+            certificate,
+            roots,
+            new Date(now),
+          );
+        }
         certificates.push({
           callsign: certificate.callsign,
           dxcc: certificate.dxcc,
@@ -131,11 +171,7 @@ export async function refreshLotwCertificates(
           validTo: certificate.validTo,
           qsoFrom: certificate.qsoFrom,
           qsoTo: certificate.qsoTo,
-          trusted: await verifySigningCredentialTrust(
-            certificate,
-            roots,
-            new Date(now),
-          ),
+          trusted,
           trustCheckedAt: new Date(now).toISOString(),
           status,
           statusCheckedAt,

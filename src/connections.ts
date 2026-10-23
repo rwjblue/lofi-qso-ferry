@@ -7,7 +7,10 @@ import {
 } from "./auth.ts";
 import { LoFiClient, type LoFiCredentials } from "./lofi.ts";
 import { LotwClient, LotwLoginError } from "./lotw.ts";
-import { lotwTrustRoots } from "./lotw-trust.ts";
+import {
+  effectiveLotwTrustRoots,
+  refreshLotwTrustRoots,
+} from "./lotw-trust-cache.ts";
 import {
   type LotwLoginVerification,
   lotwVerification,
@@ -25,6 +28,7 @@ import {
   importPkcs12,
   type LotwStation,
   type SigningCredential,
+  verifySigningCredentialTrust,
 } from "./signing.ts";
 import { type Connection, Store } from "./store.ts";
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
@@ -606,7 +610,7 @@ export async function connectionRoute(
         throw new ConnectionError(400, "Invalid PKCS#12 password");
       let roots: string[];
       try {
-        roots = lotwTrustRoots(env.LOTW_TRUST_ROOTS_JSON);
+        roots = await effectiveLotwTrustRoots(store, env.LOTW_TRUST_ROOTS_JSON);
       } catch {
         throw new ConnectionError(503, "LoTW trust configuration is invalid");
       }
@@ -647,6 +651,21 @@ export async function connectionRoute(
               : "lotw_login_unavailable",
           );
         }
+      }
+      if (!signing.trusted && env.LOTW_TRUST_ROOTS_JSON === "bundled") {
+        const refreshed = await refreshLotwTrustRoots(
+          store,
+          env.LOTW_TRUST_ROOTS_JSON,
+          {
+            credentials: query,
+            fetcher: services.fetcher,
+            force: true,
+          },
+        );
+        signing.trusted = await verifySigningCredentialTrust(
+          signing,
+          refreshed.roots,
+        );
       }
       // A signing certificate proves station authorization, not website account membership.
       // Preserve identity for certificate renewal without guessing an account association.

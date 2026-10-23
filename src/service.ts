@@ -18,6 +18,10 @@ import {
   rereadOperation,
 } from "./intake.ts";
 import { LotwClient } from "./lotw.ts";
+import {
+  effectiveLotwTrustRoots,
+  refreshLotwTrustRoots,
+} from "./lotw-trust-cache.ts";
 import { refreshLotwCertificates } from "./lotw-maintenance.ts";
 import { lotwTrustRoots } from "./lotw-trust.ts";
 import type { Contact } from "./projection.ts";
@@ -195,11 +199,6 @@ export async function tick(
     // Invalid LoTW trust must deny LoTW signing without stopping other vendors.
     invalidLotwTrust = true;
   }
-  const deps = {
-    fetcher,
-    trustRoots,
-    ...(clock === undefined ? {} : { now: clock }),
-  };
   const deadline = startedAt + 90_000;
   const expired = () => Date.now() >= deadline;
   await purgeAuth(env, now);
@@ -208,9 +207,29 @@ export async function tick(
   await expireSource(store, now);
   await store.recover(now);
   await rotatePrivateData(store);
+  const trustPolicy = invalidLotwTrust ? "[]" : env.LOTW_TRUST_ROOTS_JSON;
+  const trustRefresh = await refreshLotwTrustRoots(store, trustPolicy, {
+    fetcher,
+    ...(clock === undefined ? {} : { now: clock }),
+  });
+  trustRoots = trustRefresh.roots;
+  const deps = {
+    fetcher,
+    trustRoots,
+    currentTrustRoots: () => effectiveLotwTrustRoots(store, trustPolicy),
+    refreshTrustRoots: async () =>
+      (
+        await refreshLotwTrustRoots(store, trustPolicy, {
+          fetcher,
+          force: true,
+          ...(clock === undefined ? {} : { now: clock }),
+        })
+      ).roots,
+    ...(clock === undefined ? {} : { now: clock }),
+  };
   const certificateRefresh = await refreshLotwCertificates(
     store,
-    invalidLotwTrust ? "[]" : env.LOTW_TRUST_ROOTS_JSON,
+    trustPolicy,
     deps,
   );
   const sources = (
@@ -224,8 +243,12 @@ export async function tick(
     sources: 0,
     contacts: 0,
     attempts: 0,
-    errors: certificateRefresh.errors + Number(invalidLotwTrust),
-    deferred: certificateRefresh.deferred,
+    errors:
+      certificateRefresh.errors +
+      Number(invalidLotwTrust) +
+      Number(trustRefresh.status === "unavailable"),
+    deferred:
+      certificateRefresh.deferred + Number(trustRefresh.status === "deferred"),
     exportsEnabled: exportsEffective(gates),
     rounds: 0,
     elapsedMs: 0,

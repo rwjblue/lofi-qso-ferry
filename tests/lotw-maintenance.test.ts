@@ -132,6 +132,43 @@ test("automatic trust refresh verifies saved certificates without reimporting or
   }
 });
 
+test("saved certificates automatically discover a newly issued ARRL root without a release or reimport", async () => {
+  const h = await harness();
+  try {
+    await save(h.store, "lotw", { ...h.signing, trusted: false });
+    const before = await h.store
+      .statement("SELECT envelope FROM private_data WHERE connection='lotw'")
+      .first<{ envelope: string }>();
+    let downloads = 0;
+    const result = await refreshLotwCertificates(h.store, "bundled", {
+      now: NOW,
+      fetcher: async (input) => {
+        const url = new URL(String(input));
+        assert.equal(url.origin, "https://lotw.arrl.org");
+        assert.equal(url.pathname, "/lotwuser/certs.tq6");
+        downloads++;
+        return new Response(
+          `<tqsldata><tqslcerts><rootcert>${(await fixture("root.pem")).toString()}</rootcert></tqslcerts></tqsldata>`,
+        );
+      },
+    });
+    assert.equal(downloads, 1);
+    assert.equal(result.errors, 0);
+    const connection = (await h.store.connection("a", "lotw"))!;
+    assert.equal(connection.status, "active");
+    assert.equal(connection.credential_version, "v1");
+    assert.equal(JSON.parse(connection.config).certificates[0].trusted, true);
+    assert.deepEqual(
+      await h.store
+        .statement("SELECT envelope FROM private_data WHERE connection='lotw'")
+        .first<{ envelope: string }>(),
+      before,
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
 test("trust refresh preserves paused and revoked connections and never overrides a rejected login", async () => {
   const h = await harness();
   try {

@@ -56,6 +56,30 @@ export interface DeliveryDependencies {
   sign?: typeof buildSignedTq8;
   priority?: VendorPriority;
   trustRoots?: string[];
+  currentTrustRoots?: () => Promise<string[]>;
+  refreshTrustRoots?: () => Promise<string[]>;
+}
+async function currentCertificateTrust(
+  credential: SigningCredential,
+  deps: DeliveryDependencies,
+  now: number,
+): Promise<boolean> {
+  const roots = deps.currentTrustRoots
+    ? await deps.currentTrustRoots()
+    : (deps.trustRoots ?? lotwTrustRoots("bundled"));
+  if (await verifySigningCredentialTrust(credential, roots, new Date(now)))
+    return true;
+  if (
+    !deps.refreshTrustRoots ||
+    Date.parse(credential.validFrom) > now ||
+    Date.parse(credential.validTo) <= now
+  )
+    return false;
+  return verifySigningCredentialTrust(
+    credential,
+    await deps.refreshTrustRoots(),
+    new Date(now),
+  );
 }
 interface QrzCredential {
   apiKey: string;
@@ -707,11 +731,7 @@ export async function prepareDue(
         reason: "lotw_certificate_selection_ambiguous_or_missing",
       };
     const selected = eligibleCertificates[0];
-    const trusted = await verifySigningCredentialTrust(
-      selected,
-      deps.trustRoots ?? lotwTrustRoots("bundled"),
-      new Date(now),
-    );
+    const trusted = await currentCertificateTrust(selected, deps, now);
     if (!trusted)
       return { state: "blocked", reason: "lotw_certificate_untrusted" };
     const status = await client.certificateStatus(selected.serial);
@@ -1002,10 +1022,10 @@ export async function dispatchAttempt(
         };
       }
       if (
-        !(await verifySigningCredentialTrust(
+        !(await currentCertificateTrust(
           certificate,
-          deps.trustRoots ?? lotwTrustRoots("bundled"),
-          new Date(deps.now ?? Date.now()),
+          deps,
+          deps.now ?? Date.now(),
         ))
       ) {
         await store.resolve(

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { serializeAdifRecord } from "../src/adif.ts";
+import { readFile } from "node:fs/promises";
 import { tick } from "../src/service.ts";
 import { seed } from "./helpers.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
@@ -11,6 +12,40 @@ const key = (destination: string) => ({
   source: "source",
   qso: "q1",
   destination,
+});
+
+test("scheduler discovers ARRL root rotation once and reuses the shared daily cache", async () => {
+  const h = await schedulerFixture();
+  try {
+    h.env.LOTW_TRUST_ROOTS_JSON = "bundled";
+    let downloads = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).pathname !== "/lotwuser/certs.tq6")
+        return h.fetcher(input, init);
+      downloads++;
+      const root = await readFile(
+        new URL("../fixtures/signing/root.pem", import.meta.url),
+        "utf8",
+      );
+      return new Response(
+        `<tqsldata><tqslcerts><rootcert>${root}</rootcert></tqslcerts></tqsldata>`,
+      );
+    };
+    const first = await tick(h.env, fetcher, FIXTURE_NOW);
+    assert.equal(first.errors, 0);
+    assert.equal(h.calls.sourceSync, 1);
+    const connection = (await h.store.connections("a")).find(
+      (item) => item.kind === "lotw",
+    )!;
+    assert.equal(connection.status, "active");
+    assert.equal(JSON.parse(connection.config).certificates[0].trusted, true);
+    await tick(h.env, fetcher, FIXTURE_NOW + 5 * 60_000);
+    assert.equal(downloads, 1);
+    assert.equal(h.calls.lotwUploads, 0);
+    assert.equal(h.calls.qrzWrites, 0);
+  } finally {
+    await h.mf.dispose();
+  }
 });
 async function count(
   h: Awaited<ReturnType<typeof schedulerFixture>>,

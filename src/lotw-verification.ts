@@ -168,13 +168,13 @@ function trustCheck(
       id: "trust",
       status: "warning",
       message:
-        "The imported certificate issuer could not be verified against the server's configured LoTW trust roots. The Ferry operator must review certificate trust before signing.",
+        "The imported certificate issuer could not be verified. Ferry automatically refreshes ARRL trust roots when a working LoTW website login is available. Check the LoTW login and retry; persistent failures need operator review.",
     };
   return {
     id: "trust",
     status: "ok",
     message:
-      "Certificate issuer trust was verified against Ferry's LoTW trust anchors. Saved certificates are rechecked automatically.",
+      "Certificate issuer trust was verified against Ferry's LoTW trust anchors. ARRL roots and saved certificates are rechecked automatically.",
   };
 }
 

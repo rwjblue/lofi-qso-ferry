@@ -135,6 +135,79 @@ async function savedLotwLogin(
   });
 }
 
+test("LoTW import learns a rotated issuer only from ARRL and retains safe fallback on outages", async (t) => {
+  const fixture = (name: string) =>
+    readFileSync(new URL(`../fixtures/signing/${name}`, import.meta.url));
+  for (const mode of ["updated", "outage", "disabled"] as const)
+    await t.test(mode, async (t) => {
+      const h = await setup();
+      t.after(() => h.mf.dispose());
+      h.env.LOTW_TRUST_ROOTS_JSON = mode === "disabled" ? "[]" : "bundled";
+      let rootDownloads = 0;
+      const response = await connectionRoute(
+        await request(
+          "/lotw",
+          {
+            p12: fixture("current.p12").toString("base64"),
+            password: "ferry-fixture",
+            query: {
+              username: "synthetic-root-refresh-account",
+              password: "private-root-refresh-password",
+            },
+          },
+          h.env,
+        ),
+        h.env,
+        identity,
+        {
+          fetcher: async (input, init) => {
+            assert.notEqual(init?.method, "POST");
+            const url = new URL(String(input));
+            assert.equal(url.origin, "https://lotw.arrl.org");
+            if (url.pathname === "/lotw/crl")
+              return new Response("<Status>Unrevoked</Status>");
+            if (url.pathname === "/lotwuser/lotwreport.adi")
+              return new Response(emptyLotwReport);
+            assert.equal(url.pathname, "/lotwuser/certs.tq6");
+            rootDownloads++;
+            return mode === "outage"
+              ? new Response("Maintenance", { status: 503 })
+              : new Response(
+                  `<tqsldata><tqslcerts><rootcert>${fixture("root.pem")}</rootcert><usercert>${fixture("certificate.pem")}</usercert></tqslcerts></tqsldata>`,
+                );
+          },
+        },
+      );
+      assert.equal(response?.status, 201, await response?.clone().text());
+      const result = (await response!.json()) as {
+        id: string;
+        status: string;
+        certificate: { trusted: boolean };
+      };
+      assert.equal(
+        result.status,
+        mode === "updated" ? "active" : "needs_verification",
+      );
+      assert.equal(result.certificate.trusted, mode === "updated");
+      assert.equal(rootDownloads, mode === "disabled" ? 0 : 1);
+      const cached = await h.store
+        .statement("SELECT roots_json,last_status FROM lotw_trust_cache")
+        .all();
+      assert.doesNotMatch(
+        JSON.stringify(cached.results),
+        /private-root-refresh-password|synthetic-root-refresh-account|PRIVATE KEY/,
+      );
+      assert.equal(
+        (
+          await h.store
+            .statement("SELECT COUNT(*) n FROM attempts")
+            .first<{ n: number }>()
+        )?.n,
+        0,
+      );
+    });
+});
+
 test("verified connection renewals retain logical destination and ledger, credentials stay encrypted and tenant scoped", async (t) => {
   const { store, db, mf } = await setup();
   t.after(() => mf.dispose());

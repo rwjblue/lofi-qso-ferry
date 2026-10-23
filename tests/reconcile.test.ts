@@ -4,17 +4,24 @@ import { contactReconciliationAdif, prepareDue } from "../src/delivery.ts";
 import { projectContact, sourceFingerprint } from "../src/projection.ts";
 import {
   adoptHistory,
+  adoptHistoryBatch,
   ADOPTION_CONFLICT_REASON,
   canonicalLotwIdentity,
   classifyHistory,
   lotwRemoteIdentity,
   reconcileQrzAttempt,
   type ReconciliationEvidence,
+  type HistoryAdoptionInput,
 } from "../src/reconcile.ts";
 import { database, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 import { measuredDatabase } from "../src/database-metrics.ts";
 import { Store } from "../src/store.ts";
+import {
+  reconciliationPreflightBatch,
+  reconciliationCheckStatement,
+  finishReconciliationWorkStatement,
+} from "../src/reconciliation-work.ts";
 const source = {
   STATION_CALLSIGN: "N0TEST/P",
   CALL: "W1AW",
@@ -66,6 +73,380 @@ test("adoption loads its tenant-bound ledger and destination in one RPC", async 
       (await adoptHistory(store, { ...key, source: "missing" }, "g1", outcome))
         .reason,
       "tenant_or_destination_missing",
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("single adoption cannot clear a mapping established after its metadata read", async () => {
+  const h = await database();
+  try {
+    const key = await seed(h.store);
+    await h.store.observe(key, "g1", "hash", 30);
+    let before: Awaited<ReturnType<Store["ledger"]>> = null;
+    const db = new Proxy(h.db, {
+      get(target, property) {
+        if (property === "batch")
+          return async (statements: D1PreparedStatement[]) => {
+            await h.store
+              .statement(
+                "UPDATE ledger SET remote_id='concurrent-mapping',state='adopted_existing',provenance='adopted',baseline_hash=source_hash WHERE tenant='a' AND source='source' AND qso='q1'",
+              )
+              .run();
+            before = await h.store.ledger(key);
+            return target.batch(statements);
+          };
+        const member = Reflect.get(target, property, target);
+        return typeof member === "function" ? member.bind(target) : member;
+      },
+    });
+    const outcome = classifyHistory(source, [], {
+      ...evidence,
+      inventoryComplete: false,
+    });
+    const result = await adoptHistory(
+      new Store(db, h.store.keys),
+      key,
+      "g1",
+      outcome,
+    );
+    assert.equal(result.applied, false);
+    assert.deepEqual(await h.store.ledger(key), before);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("forty route outcomes use seven bounded metadata, commit and completion RPCs", async () => {
+  const h = await database();
+  try {
+    await applyAdditionalMigrations(h.db);
+    await seed(h.store);
+    const foreign = await seed(h.store, "b");
+    await h.store.observe(foreign, "g1", "foreign", 30);
+    await h.store
+      .statement(
+        "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,config,created_at) VALUES('a','lotw','lotw','synthetic-lotw','LoTW','active','{}',0)",
+      )
+      .run();
+    const now = Date.now();
+    const requests: { qso: string; destination: string; generation: string }[] =
+      [];
+    for (let index = 0; index < 20; index++) {
+      const qso = `batch-${index}`;
+      await h.store
+        .statement(
+          "INSERT INTO source_work(tenant,source,id,kind,private_id,revision,expires_at) VALUES('a','source',?,'qso',?,'r1',?)",
+          qso,
+          qso,
+          now + 86_400_000,
+        )
+        .run();
+      for (const destination of ["destination", "lotw"]) {
+        requests.push({ qso, destination, generation: "g1" });
+        await h.store.observe(
+          { tenant: "a", source: "source", qso, destination },
+          "g1",
+          "hash",
+          30,
+        );
+      }
+    }
+    const measured = measuredDatabase(h.db);
+    const store = new Store(measured.database, h.store.keys);
+    const sourceKey = { tenant: "a", id: "source" };
+    const ledgers = await reconciliationPreflightBatch(
+      store,
+      sourceKey,
+      requests,
+      now,
+    );
+    assert.equal(ledgers.length, 40);
+    assert.equal(measured.metrics.calls, 1);
+    const items: HistoryAdoptionInput[] = ledgers.map((ledger) => ({
+      key: ledger,
+      generation: "g1",
+      ledger,
+      outcome: classifyHistory(source, [], {
+        ...evidence,
+        destination: ledger.destination_kind as "qrz" | "lotw",
+        inventoryComplete: false,
+      }),
+      commitGuard: () => ({ sql: "1", params: [] }),
+    }));
+    const results = await adoptHistoryBatch(store, sourceKey, items, () => now);
+    assert(results.every((result) => result.applied));
+    assert.equal(measured.metrics.calls, 6);
+    const completion: D1PreparedStatement[] = [];
+    for (const item of items) {
+      const memo = reconciliationCheckStatement(
+        store,
+        item.key,
+        "g1",
+        item.outcome,
+        now,
+        1,
+      );
+      assert(memo);
+      completion.push(memo);
+    }
+    for (let index = 0; index < 20; index++) {
+      const qso = `batch-${index}`;
+      completion.push(
+        store.statement(
+          "UPDATE source_work SET state='waiting',processed_at=? WHERE tenant='a' AND source='source' AND id=? AND EXISTS(SELECT 1 FROM reconciliation_work WHERE tenant='a' AND source='source' AND qso=? AND version=1)",
+          now,
+          qso,
+          qso,
+        ),
+      );
+      const finish = finishReconciliationWorkStatement(
+        store,
+        sourceKey,
+        qso,
+        1,
+        now,
+      );
+      assert(finish);
+      completion.push(finish);
+    }
+    const completed = await store.db.batch(completion);
+    assert.equal(completion.length, 80);
+    assert.equal(
+      completed.slice(0, 40).filter((row) => row.results.length === 1).length,
+      40,
+    );
+    assert.equal(measured.metrics.calls, 7);
+    assert.equal((await h.store.ledger(foreign))?.source_hash, "foreign");
+    assert.equal(
+      (
+        await h.store
+          .statement("SELECT COUNT(*) n FROM history_adoption_guards")
+          .first<{ n: number }>()
+      )?.n,
+      0,
+    );
+    assert.equal(
+      (
+        await h.store
+          .statement("SELECT COUNT(*) n FROM attempts")
+          .first<{ n: number }>()
+      )?.n,
+      0,
+    );
+    await assert.rejects(
+      () =>
+        reconciliationPreflightBatch(
+          store,
+          sourceKey,
+          [...requests, requests[0]!],
+          now,
+        ),
+      /reconciliation_batch_too_large/,
+    );
+    await assert.rejects(
+      () => adoptHistoryBatch(store, sourceKey, [...items, items[0]!]),
+      /reconciliation_batch_too_large/,
+    );
+    await assert.rejects(
+      () => adoptHistoryBatch(store, sourceKey, [items[0]!, items[0]!]),
+      /duplicate_reconciliation_route/,
+    );
+    await assert.rejects(
+      () => adoptHistoryBatch(store, { tenant: "b", id: "source" }, items),
+      /invalid_reconciliation_scope/,
+    );
+    assert.equal(measured.metrics.calls, 7);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("batched adoption quarantines same-chunk and cross-chunk duplicate claims atomically", async () => {
+  for (const destination of ["qrz", "lotw"] as const) {
+    for (const collision of [1, 8]) {
+      const h = await database();
+      try {
+        await applyAdditionalMigrations(h.db);
+        const key = await seed(h.store);
+        await h.store
+          .statement(
+            "UPDATE connections SET kind=? WHERE tenant='a' AND id='destination'",
+            destination,
+          )
+          .run();
+        const requests = [];
+        for (let index = 0; index <= collision; index++) {
+          const qso = `collision-${index}`;
+          requests.push({
+            qso,
+            destination: key.destination,
+            generation: "g1",
+          });
+          await h.store.observe({ ...key, qso }, "g1", "hash", 30);
+        }
+        // Direct snapshots exercise collision behavior independently of selection.
+        const ledgers = (
+          await h.store
+            .statement(
+              "SELECT l.*,d.kind AS destination_kind FROM ledger l JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination WHERE l.tenant='a' ORDER BY l.qso",
+            )
+            .all<HistoryAdoptionInput["ledger"]>()
+        ).results;
+        const commitTimes: number[] = [];
+        const items: HistoryAdoptionInput[] = ledgers.map((ledger, index) => {
+          const call = index === collision ? source.CALL : `K1B${index}`;
+          const record = { ...source, CALL: call };
+          const ownerRecord = { ...source, CALL: "K1B0" };
+          const current = index === collision ? ownerRecord : record;
+          return {
+            key: ledger,
+            ledger,
+            generation: "g1",
+            outcome: classifyHistory(
+              current,
+              [
+                {
+                  ...current,
+                  APP_QRZLOG_LOGID:
+                    index === collision ? "100" : String(100 + index),
+                },
+              ],
+              { ...evidence, destination },
+            ),
+            commitGuard: (now) => {
+              commitTimes.push(now);
+              return { sql: "1", params: [] };
+            },
+          };
+        });
+        let commitTime = 0;
+        const results = await adoptHistoryBatch(
+          h.store,
+          { tenant: "a", id: "source" },
+          items,
+          () => ++commitTime,
+        );
+        assert.deepEqual(
+          commitTimes,
+          items.map((_, index) => Math.floor(index / 8) + 1),
+        );
+        assert.equal(
+          results[collision]?.reason,
+          "remote_identity_claim_conflict",
+        );
+        for (const index of [0, collision]) {
+          const row = await h.store.ledger({
+            ...key,
+            qso: `collision-${index}`,
+          });
+          assert.equal(row?.provenance, "adoption_conflict");
+          assert.equal(row?.state, "history_ambiguous");
+          assert.equal(row?.reason, ADOPTION_CONFLICT_REASON);
+          assert.equal(row?.remote_id === null, index === collision);
+        }
+        if (destination === "lotw") {
+          assert.equal(
+            (await h.store.lotwIdentities({ ...key, qso: "collision-0" }))
+              .length,
+            1,
+          );
+          assert.equal(
+            (
+              await h.store.lotwIdentities({
+                ...key,
+                qso: `collision-${collision}`,
+              })
+            ).length,
+            0,
+          );
+        }
+        assert.equal(
+          (
+            await h.store
+              .statement("SELECT COUNT(*) n FROM history_adoption_guards")
+              .first<{ n: number }>()
+          )?.n,
+          0,
+        );
+      } finally {
+        await h.mf.dispose();
+      }
+    }
+  }
+});
+
+test("batched adoption rejects stale proofs and snapshots without blocking valid neighbors", async () => {
+  const h = await database();
+  try {
+    await applyAdditionalMigrations(h.db);
+    const key = await seed(h.store);
+    const names = ["mapped", "changed", "generation", "proof", "valid"];
+    for (const qso of names)
+      await h.store.observe({ ...key, qso }, "g1", "hash", 30);
+    const ledgers = (
+      await h.store
+        .statement(
+          "SELECT l.*,d.kind AS destination_kind FROM ledger l JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination WHERE l.tenant='a' ORDER BY l.qso",
+        )
+        .all<HistoryAdoptionInput["ledger"]>()
+    ).results;
+    const outcome = classifyHistory(source, [remote], evidence);
+    const items: HistoryAdoptionInput[] = ledgers.map((ledger) => ({
+      key: ledger,
+      ledger,
+      generation: "g1",
+      outcome,
+      commitGuard: () => ({
+        sql: ledger.qso === "proof" ? "0" : "1",
+        params: [],
+      }),
+    }));
+    await h.store
+      .statement(
+        "UPDATE ledger SET remote_id='trusted-concurrent',provenance='adopted' WHERE qso='mapped'",
+      )
+      .run();
+    await h.store
+      .statement("UPDATE ledger SET state='changed' WHERE qso='changed'")
+      .run();
+    await h.store
+      .statement("UPDATE ledger SET generation='g2' WHERE qso='generation'")
+      .run();
+    const results = await adoptHistoryBatch(
+      h.store,
+      { tenant: "a", id: "source" },
+      items,
+    );
+    assert.equal(results.filter((result) => result.applied).length, 1);
+    assert.equal(
+      (await h.store.ledger({ ...key, qso: "valid" }))?.remote_id,
+      "100",
+    );
+    assert.equal(
+      (await h.store.ledger({ ...key, qso: "mapped" }))?.remote_id,
+      "trusted-concurrent",
+    );
+    assert.equal(
+      (await h.store.ledger({ ...key, qso: "changed" }))?.state,
+      "changed",
+    );
+    assert.equal(
+      (await h.store.ledger({ ...key, qso: "generation" }))?.generation,
+      "g2",
+    );
+    assert.equal(
+      (await h.store.ledger({ ...key, qso: "proof" }))?.remote_id,
+      null,
+    );
+    assert.equal(
+      (
+        await h.store
+          .statement("SELECT COUNT(*) n FROM history_adoption_guards")
+          .first<{ n: number }>()
+      )?.n,
+      0,
     );
   } finally {
     await h.mf.dispose();

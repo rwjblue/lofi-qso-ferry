@@ -9,6 +9,9 @@ import {
   finishReconciliationWork,
   reconciliationCheckDue,
   reconciliationPreflight,
+  reconciliationPreflightBatch,
+  reconciliationCheckStatement,
+  finishReconciliationWorkStatement,
   recordReconciliationCheck,
   selectReconciliationWork,
   syncReconciliationPolicy,
@@ -118,6 +121,11 @@ test("one-query reconciliation preflight preserves generation, memo, attempt and
         ),
         null,
       );
+    await h.store
+      .statement(
+        "UPDATE ledger SET state='history_ambiguous' WHERE tenant='a' AND source='source' AND qso='q1'",
+      )
+      .run();
     await recordReconciliationCheck(
       h.store,
       key,
@@ -177,6 +185,175 @@ test("one-query reconciliation preflight preserves generation, memo, attempt and
         null,
       );
     }
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("batched preflight isolates tenants and excludes stale, mapped, attempted and remembered routes", async () => {
+  const h = await fixture();
+  try {
+    await seed(h.store, "b");
+    const names = [
+      "ready",
+      "changed",
+      "mapped",
+      "quarantined",
+      "memo",
+      "attempt",
+      "stale",
+    ];
+    for (const id of names) {
+      await qso(h.store, id);
+      await h.store.observe({ ...key, qso: id }, "g1", "hash", 30);
+    }
+    await h.store.observe(
+      { ...key, tenant: "b", qso: "ready" },
+      "g1",
+      "other-tenant",
+      30,
+    );
+    await h.store.db.batch([
+      h.store.statement(
+        "UPDATE ledger SET state='changed' WHERE tenant='a' AND qso='changed'",
+      ),
+      h.store.statement(
+        "UPDATE ledger SET remote_id='already-mapped' WHERE tenant='a' AND qso='mapped'",
+      ),
+      h.store.statement(
+        "UPDATE ledger SET provenance='adoption_conflict' WHERE tenant='a' AND qso='quarantined'",
+      ),
+      h.store.statement(
+        "INSERT INTO reconciliation_checks VALUES('a','source','memo','destination','g1',?,?)",
+        now,
+        now + 300000,
+      ),
+      h.store.statement(
+        "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a','batch-attempt','source','attempt','destination','g1','payload','hash','v1',0,'hash')",
+      ),
+      h.store.statement(
+        "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','batch-attempt','uncertain',0,0)",
+      ),
+    ]);
+    const measured = measuredDatabase(h.db);
+    const store = new Store(measured.database, h.store.keys);
+    const rows = await reconciliationPreflightBatch(
+      store,
+      source,
+      names.map((id) => ({
+        qso: id,
+        destination: "destination",
+        generation: id === "stale" ? "old" : "g1",
+      })),
+      now,
+    );
+    assert.equal(measured.metrics.calls, 1);
+    assert.deepEqual(
+      rows.map((row) => [
+        row.tenant,
+        row.qso,
+        row.source_hash,
+        row.destination_kind,
+      ]),
+      [["a", "ready", "hash", "qrz"]],
+    );
+    assert.deepEqual(
+      await reconciliationPreflightBatch(store, source, [], now),
+      [],
+    );
+    assert.equal(measured.metrics.calls, 1);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("batched completion cannot memoize changed outcomes or park newer work", async () => {
+  const h = await fixture();
+  try {
+    for (const id of ["valid", "reason", "state", "version"]) {
+      await qso(h.store, id);
+      await h.store.observe({ ...key, qso: id }, "g1", "hash", 30);
+      await h.store
+        .statement(
+          "UPDATE ledger SET state='history_ambiguous',reason='review' WHERE qso=?",
+          id,
+        )
+        .run();
+    }
+    const pending: D1PreparedStatement[] = [];
+    for (const id of ["valid", "reason", "state", "version"]) {
+      const memo = reconciliationCheckStatement(
+        h.store,
+        { ...key, qso: id },
+        "g1",
+        { state: "history_ambiguous", reason: "review" },
+        now,
+        1,
+      );
+      const finish = finishReconciliationWorkStatement(
+        h.store,
+        source,
+        id,
+        1,
+        now,
+      );
+      assert(memo && finish);
+      pending.push(memo, finish);
+    }
+    await h.store.db.batch([
+      h.store.statement(
+        "UPDATE ledger SET reason='new review' WHERE qso='reason'",
+      ),
+      h.store.statement(
+        "UPDATE ledger SET state='inventory_pending' WHERE qso='state'",
+      ),
+      h.store.statement(
+        "UPDATE source_work SET revision='r2' WHERE id='version'",
+      ),
+    ]);
+    const rows = await h.store.db.batch(pending);
+    assert.deepEqual(
+      rows.map((row) => row.results.length),
+      [1, 1, 0, 1, 0, 1, 0, 0],
+    );
+    assert.equal(
+      (
+        await h.store
+          .statement("SELECT COUNT(*) n FROM reconciliation_checks")
+          .first<{ n: number }>()
+      )?.n,
+      1,
+    );
+    assert.equal(
+      (
+        await h.store
+          .statement(
+            "SELECT next_due_at FROM reconciliation_work WHERE qso='version'",
+          )
+          .first<{ next_due_at: number }>()
+      )?.next_due_at,
+      0,
+    );
+    assert.equal(
+      reconciliationCheckStatement(
+        h.store,
+        key,
+        "g1",
+        { state: "inventory_pending" },
+        now,
+      ),
+      null,
+    );
+    assert.equal(
+      finishReconciliationWorkStatement(
+        h.store,
+        source,
+        "valid",
+        undefined,
+        now,
+      ),
+      null,
+    );
   } finally {
     await h.mf.dispose();
   }

@@ -9,6 +9,31 @@ const parked = 8_640_000_000_000_000;
 export interface ReconciliationWork extends Work {
   reconciliation_version: number;
 }
+export interface ReconciliationLedger extends Ledger {
+  destination_kind: Connection["kind"];
+}
+
+/** One bounded read supplies hints for a source batch; commit guards stay authoritative. */
+export async function reconciliationPreflightBatch(
+  store: Store,
+  source: Pick<Connection, "tenant" | "id">,
+  inputs: readonly { qso: string; destination: string; generation: string }[],
+  now: number,
+): Promise<ReconciliationLedger[]> {
+  if (inputs.length > 40) throw new Error("reconciliation_batch_too_large");
+  if (!inputs.length) return [];
+  return (
+    await store
+      .statement(
+        "SELECT DISTINCT l.*,d.kind AS destination_kind FROM json_each(?1) i JOIN ledger l ON l.tenant=?2 AND l.source=?3 AND l.qso=json_extract(i.value,'$.qso') AND l.destination=json_extract(i.value,'$.destination') AND l.generation=json_extract(i.value,'$.generation') JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination WHERE l.remote_id IS NULL AND l.state!='changed' AND l.provenance!='adoption_conflict' AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND NOT EXISTS(SELECT 1 FROM reconciliation_checks c WHERE c.tenant=l.tenant AND c.source=l.source AND c.qso=l.qso AND c.destination=l.destination AND c.generation=l.generation AND c.next_due_at>?4)",
+        JSON.stringify(inputs),
+        source.tenant,
+        source.id,
+        now,
+      )
+      .all<ReconciliationLedger>()
+  ).results;
+}
 
 /** Indexed hints choose work; intake still validates ciphertext and all context. */
 export async function selectReconciliationWork(
@@ -129,15 +154,15 @@ export async function reconciliationPreflight(
 }
 
 /** Persist only successful classifications, never a transport failure or defer. */
-export async function recordReconciliationCheck(
+export function reconciliationCheckStatement(
   store: Store,
   key: LedgerKey,
   generation: string,
   outcome: { state: string; reason?: string | null },
   now: number,
   version?: number,
-): Promise<boolean> {
-  if (version === undefined) return false;
+): D1PreparedStatement | null {
+  if (version === undefined) return null;
   const resolved = [
     "adopted_existing",
     "delivered",
@@ -153,23 +178,61 @@ export async function recordReconciliationCheck(
     outcome.reason ===
       "Shared history has no matching identity; a fresh targeted check is required before exporting";
   const due = resolved ? parked : now + (review ? reviewDelay : retryDelay);
-  const result = await store
-    .statement(
-      "INSERT INTO reconciliation_checks(tenant,source,qso,destination,generation,checked_at,next_due_at) SELECT ?1,?2,?3,?4,?5,?6,?7 WHERE EXISTS(SELECT 1 FROM reconciliation_work WHERE tenant=?1 AND source=?2 AND qso=?3 AND version=?8) AND EXISTS(SELECT 1 FROM ledger WHERE tenant=?1 AND source=?2 AND qso=?3 AND destination=?4 AND generation=?5) ON CONFLICT(tenant,source,qso,destination) DO UPDATE SET generation=excluded.generation,checked_at=excluded.checked_at,next_due_at=excluded.next_due_at",
-      key.tenant,
-      key.source,
-      key.qso,
-      key.destination,
-      generation,
-      now,
-      due,
-      version,
-    )
-    .run();
-  return result.meta.changes === 1;
+  return store.statement(
+    "INSERT INTO reconciliation_checks(tenant,source,qso,destination,generation,checked_at,next_due_at) SELECT ?1,?2,?3,?4,?5,?6,?7 WHERE EXISTS(SELECT 1 FROM reconciliation_work WHERE tenant=?1 AND source=?2 AND qso=?3 AND version=?8) AND EXISTS(SELECT 1 FROM ledger WHERE tenant=?1 AND source=?2 AND qso=?3 AND destination=?4 AND generation=?5 AND state=?9 AND reason IS ?10) ON CONFLICT(tenant,source,qso,destination) DO UPDATE SET generation=excluded.generation,checked_at=excluded.checked_at,next_due_at=excluded.next_due_at RETURNING qso",
+    key.tenant,
+    key.source,
+    key.qso,
+    key.destination,
+    generation,
+    now,
+    due,
+    version,
+    outcome.state,
+    outcome.reason ?? null,
+  );
+}
+
+export async function recordReconciliationCheck(
+  store: Store,
+  key: LedgerKey,
+  generation: string,
+  outcome: { state: string; reason?: string | null },
+  now: number,
+  version?: number,
+): Promise<boolean> {
+  const statement = reconciliationCheckStatement(
+    store,
+    key,
+    generation,
+    outcome,
+    now,
+    version,
+  );
+  return statement ? (await statement.all()).results.length === 1 : false;
 }
 
 /** A stale completion cannot delay a newer source, route, or inventory update. */
+export function finishReconciliationWorkStatement(
+  store: Store,
+  source: Pick<Connection, "tenant" | "id">,
+  qso: string,
+  version: number | undefined,
+  now: number,
+): D1PreparedStatement | null {
+  if (version === undefined) return null;
+  return store.statement(
+    `UPDATE reconciliation_work SET next_due_at=COALESCE((SELECT MIN(CASE WHEN l.state IN('adopted_existing','delivered','observed','source_deleted') AND l.source_hash IS l.baseline_hash THEN ?1 WHEN l.state IN('changed','missing_current_identity','live_new') THEN MAX(?2,l.due_at) WHEN c.generation=l.generation THEN MAX(?2,c.next_due_at) ELSE ?2 END) FROM ledger l JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination AND d.status='active' LEFT JOIN reconciliation_checks c ON c.tenant=l.tenant AND c.source=l.source AND c.qso=l.qso AND c.destination=l.destination WHERE l.tenant=?3 AND l.source=?4 AND l.qso=?5),?6) WHERE tenant=?3 AND source=?4 AND qso=?5 AND version=?7 RETURNING qso`,
+    parked,
+    now + retryDelay,
+    source.tenant,
+    source.id,
+    qso,
+    now + reviewDelay,
+    version,
+  );
+}
+
 export async function finishReconciliationWork(
   store: Store,
   source: Pick<Connection, "tenant" | "id">,
@@ -177,20 +240,14 @@ export async function finishReconciliationWork(
   version: number | undefined,
   now: number,
 ): Promise<boolean> {
-  if (version === undefined) return false;
-  const result = await store
-    .statement(
-      `UPDATE reconciliation_work SET next_due_at=COALESCE((SELECT MIN(CASE WHEN l.state IN('adopted_existing','delivered','observed','source_deleted') AND l.source_hash IS l.baseline_hash THEN ?1 WHEN l.state IN('changed','missing_current_identity','live_new') THEN MAX(?2,l.due_at) WHEN c.generation=l.generation THEN MAX(?2,c.next_due_at) ELSE ?2 END) FROM ledger l JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination AND d.status='active' LEFT JOIN reconciliation_checks c ON c.tenant=l.tenant AND c.source=l.source AND c.qso=l.qso AND c.destination=l.destination WHERE l.tenant=?3 AND l.source=?4 AND l.qso=?5),?6) WHERE tenant=?3 AND source=?4 AND qso=?5 AND version=?7`,
-      parked,
-      now + retryDelay,
-      source.tenant,
-      source.id,
-      qso,
-      now + reviewDelay,
-      version,
-    )
-    .run();
-  return result.meta.changes === 1;
+  const statement = finishReconciliationWorkStatement(
+    store,
+    source,
+    qso,
+    version,
+    now,
+  );
+  return statement ? (await statement.all()).results.length === 1 : false;
 }
 
 /** Wake only contacts whose newly completed inventory can change their result. */

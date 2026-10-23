@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { SessionIdentity } from "../src/auth.ts";
 import { connectionRoute, saveVerifiedConnection } from "../src/connections.ts";
 import { digestCode, sha256 } from "../src/security.ts";
+import { importPkcs12 } from "../src/signing.ts";
 import type { Store } from "../src/store.ts";
 import { DEFAULT_COMMENT_TEMPLATE } from "../src/templates.ts";
 import { database, keys, seed } from "./helpers.ts";
@@ -71,6 +72,66 @@ async function request(
       ),
     },
     body: JSON.stringify(input),
+  });
+}
+const emptyLotwReport =
+  "<PROGRAMID:4>LoTW<APP_LoTW_NUMREC:1>0<EOH><APP_LoTW_EOF>";
+async function savedLotwLogin(
+  store: Store,
+  options: {
+    tenant?: string;
+    status?: string;
+    trusted?: boolean;
+    query?: boolean;
+    statusCheckedAt?: string;
+  } = {},
+) {
+  const signing = await importPkcs12(
+    readFileSync(new URL("../fixtures/signing/current.p12", import.meta.url)),
+    "ferry-fixture",
+    {
+      trustedRoots: [
+        readFileSync(
+          new URL("../fixtures/signing/root.pem", import.meta.url),
+          "utf8",
+        ),
+      ],
+      certificateStatus: async () => "unrevoked",
+    },
+  );
+  signing.trusted = options.trusted ?? signing.trusted;
+  signing.statusCheckedAt = options.statusCheckedAt ?? signing.statusCheckedAt;
+  return saveVerifiedConnection(store, options.tenant ?? "a", {
+    kind: "lotw",
+    remoteIdentity:
+      options.query === false ? "station:W1AW:291" : "query:saved-login-user",
+    label: "Synthetic LoTW",
+    status: options.status ?? "active",
+    credential: {
+      signingCredentials: [signing],
+      ...(options.query === false
+        ? {}
+        : {
+            query: {
+              username: "saved-login-user",
+              password: " saved-login-secret ",
+            },
+          }),
+    },
+    config: {
+      readAccess: options.query !== false,
+      certificates: [
+        {
+          callsign: signing.callsign,
+          dxcc: signing.dxcc,
+          trusted: signing.trusted,
+          status: signing.status,
+          statusCheckedAt: signing.statusCheckedAt,
+          validFrom: signing.validFrom,
+          validTo: signing.validTo,
+        },
+      ],
+    },
   });
 }
 
@@ -669,6 +730,9 @@ test("LoTW account verification permits multiple isolated station certificates a
   assert.equal(new Set(imported).size, 1);
   const connection = await store.connection("a", imported[0]!);
   assert.equal(connection?.remote_identity, "query:synthetic-account");
+  const loginVerification = JSON.parse(connection!.config).loginVerification;
+  assert.equal(loginVerification.status, "verified");
+  assert(Number.isFinite(Date.parse(loginVerification.checkedAt)));
   const secret = await store.private<{
     signingCredentials: { callsign: string }[];
     query: { password: string };
@@ -751,22 +815,25 @@ test("LoTW verification identifies certificate and login failures without leakin
         identity,
         { fetcher },
       );
-      assert.equal(response?.status, 400);
+      assert.equal(
+        response?.status,
+        certificateFailure || failure === "http" ? 400 : 503,
+      );
       const output = await response!.text();
       const body = JSON.parse(output);
       assert.equal(
         body.code,
         certificateFailure
           ? "lotw_certificate_import_failed"
-          : "lotw_login_verification_failed",
+          : failure === "http"
+            ? "lotw_login_rejected"
+            : "lotw_login_unavailable",
       );
       assert.match(
         body.error,
-        certificateFailure
-          ? /^Certificate import failed\./
-          : /^Certificate file opened successfully, but LoTW login verification failed\./,
+        certificateFailure ? /^Certificate import failed\./ : /LoTW/i,
       );
-      assert.match(body.error, /password/i);
+      if (certificateFailure) assert.match(body.error, /password/i);
       for (const secret of [
         input.p12,
         input.password,
@@ -844,6 +911,336 @@ test("LoTW verification preserves vendor deferrals during certificate status and
         );
       }
       assert.equal(network, deferredPath === "/lotw/crl" ? 1 : 2);
+    });
+  }
+});
+test("unsaved LoTW login checks distinguish rejection from outages without saving credentials", async (t) => {
+  for (const [failure, expected] of [
+    ["none", "verified"],
+    ["login-html", "rejected"],
+    ["401", "rejected"],
+    ["503", "unavailable"],
+    ["unexpected-html", "unavailable"],
+    ["transport", "unavailable"],
+  ] as const) {
+    await t.test(failure, async (t) => {
+      const { env, store, mf } = await setup();
+      t.after(() => mf.dispose());
+      const connectionsBefore = await store.connections("a");
+      const privateRowsBefore = await store
+        .statement("SELECT count(*) n FROM private_data")
+        .first();
+      let network = 0;
+      const startedAt = Date.now();
+      const response = await connectionRoute(
+        await request(
+          "/lotw/check-login",
+          {
+            username: "unsaved-login-user",
+            password: " unsaved-login-secret ",
+          },
+          env,
+        ),
+        env,
+        identity,
+        {
+          fetcher: async (input, init) => {
+            network++;
+            const url = new URL(String(input));
+            assert.equal(url.pathname, "/lotwuser/lotwreport.adi");
+            assert.equal(url.searchParams.get("login"), "unsaved-login-user");
+            assert.equal(
+              url.searchParams.get("password"),
+              " unsaved-login-secret ",
+            );
+            assert.notEqual(init?.method, "POST");
+            if (failure === "transport")
+              throw new Error(`sensitive transport details: ${url}`);
+            return new Response(
+              failure === "none"
+                ? emptyLotwReport
+                : failure === "login-html"
+                  ? "<html>Login failed</html>"
+                  : "<html>sensitive vendor details</html>",
+              {
+                status: failure === "401" ? 401 : failure === "503" ? 503 : 200,
+              },
+            );
+          },
+        },
+      );
+      assert.equal(response?.status, 200);
+      const output = await response!.text();
+      const body = JSON.parse(output);
+      assert.equal(body.loginVerification.status, expected);
+      assert.deepEqual(Object.keys(body.loginVerification).sort(), [
+        "checkedAt",
+        "status",
+      ]);
+      assert(Date.parse(body.loginVerification.checkedAt) >= startedAt);
+      assert(Date.parse(body.loginVerification.checkedAt) <= Date.now());
+      assert.equal(typeof body.message, "string");
+      for (const secret of [
+        "unsaved-login-user",
+        "unsaved-login-secret",
+        "sensitive",
+        "PROGRAMID",
+        "lotwreport.adi",
+      ])
+        assert(!output.includes(secret));
+      assert.equal(network, 1);
+      assert.deepEqual(await store.connections("a"), connectionsBefore);
+      assert.deepEqual(
+        await store.statement("SELECT count(*) n FROM private_data").first(),
+        privateRowsBefore,
+      );
+    });
+  }
+});
+test("saved LoTW login checks persist only safe verdicts and preserve certificate and pause gates", async (t) => {
+  for (const [status, trusted, verdict, expectedStatus, staleStatus] of [
+    ["active", true, "verified", "active", false],
+    ["active", true, "verified", "active", true],
+    ["active", true, "rejected", "needs_verification", false],
+    ["active", true, "unavailable", "active", false],
+    ["needs_verification", false, "verified", "needs_verification", false],
+    ["disabled", true, "verified", "disabled", false],
+    ["disabled", true, "rejected", "disabled", false],
+  ] as const) {
+    await t.test(
+      `${status}/${trusted}/${verdict}/${staleStatus}`,
+      async (t) => {
+        const { env, store, mf } = await setup();
+        t.after(() => mf.dispose());
+        env.LOTW_TRUST_ROOTS_JSON = JSON.stringify([
+          readFileSync(
+            new URL("../fixtures/signing/root.pem", import.meta.url),
+            "utf8",
+          ),
+        ]);
+        const statusCheckedAt = staleStatus
+          ? new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()
+          : undefined;
+        const saved = await savedLotwLogin(store, {
+          status,
+          trusted,
+          statusCheckedAt,
+        });
+        const credentialBefore = await store.private(
+          "a",
+          saved.id,
+          saved.version,
+          "credential",
+        );
+        let network = 0;
+        const response = await connectionRoute(
+          await request("/lotw/check-login", { id: saved.id }, env),
+          env,
+          identity,
+          {
+            fetcher: async (input) => {
+              network++;
+              const url = new URL(String(input));
+              assert.equal(url.pathname, "/lotwuser/lotwreport.adi");
+              assert.equal(url.searchParams.get("login"), "saved-login-user");
+              assert.equal(
+                url.searchParams.get("password"),
+                " saved-login-secret ",
+              );
+              return new Response(
+                verdict === "verified"
+                  ? emptyLotwReport
+                  : "sensitive vendor details",
+                {
+                  status:
+                    verdict === "rejected"
+                      ? 403
+                      : verdict === "unavailable"
+                        ? 503
+                        : 200,
+                },
+              );
+            },
+          },
+        );
+        assert.equal(response?.status, 200);
+        const body = (await response!.json()) as {
+          loginVerification: { status: string; checkedAt: string };
+        };
+        assert.equal(body.loginVerification.status, verdict);
+        const connection = await store.connection("a", saved.id);
+        assert.equal(connection?.status, expectedStatus);
+        assert.equal(connection?.credential_version, saved.version);
+        assert.deepEqual(
+          JSON.parse(connection!.config).loginVerification,
+          body.loginVerification,
+        );
+        assert.equal(JSON.parse(connection!.config).readAccess, true);
+        assert.deepEqual(
+          await store.private("a", saved.id, saved.version, "credential"),
+          credentialBefore,
+        );
+        const listed = await connectionRoute(
+          new Request("http://localhost/api/connections"),
+          env,
+          identity,
+        );
+        const output = await listed!.text();
+        const publicConnection = JSON.parse(output).connections.find(
+          (row: { id: string }) => row.id === saved.id,
+        );
+        assert.equal(publicConnection.config.loginVerification.status, verdict);
+        if (staleStatus) {
+          assert.equal(
+            publicConnection.config.certificates[0].statusCheckedAt,
+            statusCheckedAt,
+          );
+          const diagnostic = publicConnection.lotwVerification.find(
+            (check: { id: string }) => check.id === "certificate_status",
+          );
+          assert.equal(diagnostic.status, "warning");
+          assert.equal(diagnostic.checkedAt, statusCheckedAt);
+          assert.match(diagnostic.message, /24 hours old/);
+        }
+        for (const secret of [
+          "saved-login-secret",
+          "PRIVATE KEY",
+          "sensitive",
+          "PROGRAMID",
+        ])
+          assert(!output.includes(secret));
+        assert.equal(network, 1);
+      },
+    );
+  }
+});
+test("LoTW login checks reject missing credentials, foreign connections and stale authentication before vendor requests", async (t) => {
+  const { env, store, mf } = await setup();
+  t.after(() => mf.dispose());
+  const foreign = await savedLotwLogin(store, { tenant: "b" });
+  const stationOnly = await savedLotwLogin(store, { query: false });
+  const removed = await savedLotwLogin(store);
+  await store
+    .statement(
+      "UPDATE connections SET status='revoked',credential_version=NULL WHERE tenant='a' AND id=?",
+      removed.id,
+    )
+    .run();
+  let network = 0;
+  const services = {
+    fetcher: async () => {
+      network++;
+      return new Response(emptyLotwReport);
+    },
+  };
+  for (const [id, statuses, code] of [
+    [foreign.id, [404], undefined],
+    ["destination", [404, 409], undefined],
+    [removed.id, [404, 409], undefined],
+    [stationOnly.id, [400], "lotw_login_not_configured"],
+  ] as const) {
+    const response = await connectionRoute(
+      await request("/lotw/check-login", { id }, env),
+      env,
+      identity,
+      services,
+    );
+    assert((statuses as readonly number[]).includes(response!.status));
+    if (code)
+      assert.equal(((await response!.json()) as { code: string }).code, code);
+  }
+  for (const failure of ["stale", "csrf"] as const) {
+    const input = await request(
+      "/lotw/check-login",
+      { username: "unsaved-login-user", password: "login-secret" },
+      env,
+    );
+    if (failure === "csrf") input.headers.delete("X-CSRF-Token");
+    const response = await connectionRoute(
+      input,
+      env,
+      failure === "stale" ? { ...identity, verifiedAt: 0 } : identity,
+      services,
+    );
+    assert.equal(response?.status, 403);
+    assert.equal(
+      ((await response!.json()) as { code: string }).code,
+      failure === "stale" ? "reauth_required" : "csrf_invalid",
+    );
+  }
+  assert.equal(network, 0);
+  assert.equal((await store.connection("b", foreign.id))?.status, "active");
+});
+test("LoTW login checks retain retry delays and never replay a deferred vendor request", async (t) => {
+  const { env, store, mf } = await setup();
+  t.after(() => mf.dispose());
+  const saved = await savedLotwLogin(store);
+  const before = await store.connection("a", saved.id);
+  let network = 0;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await connectionRoute(
+      await request("/lotw/check-login", { id: saved.id }, env),
+      env,
+      identity,
+      {
+        fetcher: async () => {
+          network++;
+          return new Response("sensitive vendor details", {
+            status: 429,
+            headers: { "Retry-After": "600" },
+          });
+        },
+      },
+    );
+    assert.equal(response?.status, 503);
+    assert(Number(response?.headers.get("Retry-After")) > 0);
+    assert.equal(
+      ((await response!.json()) as { code: string }).code,
+      "vendor_deferred",
+    );
+  }
+  assert.equal(network, 1);
+  assert.deepEqual(await store.connection("a", saved.id), before);
+});
+test("saved LoTW login results are fenced against credential replacement and expired session proof", async (t) => {
+  for (const race of ["credentials", "session"] as const) {
+    await t.test(race, async (t) => {
+      const { env, store, mf } = await setup();
+      t.after(() => mf.dispose());
+      const saved = await savedLotwLogin(store);
+      const before = await store.connection("a", saved.id);
+      let network = 0;
+      const response = await connectionRoute(
+        await request("/lotw/check-login", { id: saved.id }, env),
+        env,
+        identity,
+        {
+          fetcher: async () => {
+            network++;
+            if (race === "credentials")
+              await store
+                .statement(
+                  "UPDATE connections SET credential_version='replacement-version' WHERE tenant='a' AND id=?",
+                  saved.id,
+                )
+                .run();
+            else
+              await store
+                .statement("UPDATE sessions SET verified_at=0 WHERE tenant='a'")
+                .run();
+            return new Response(emptyLotwReport);
+          },
+        },
+      );
+      assert(response!.status >= 400);
+      const after = await store.connection("a", saved.id);
+      assert.equal(after?.config, before?.config);
+      assert.equal(after?.status, before?.status);
+      assert.equal(
+        after?.credential_version,
+        race === "credentials" ? "replacement-version" : saved.version,
+      );
+      assert.equal(network, 1);
     });
   }
 });

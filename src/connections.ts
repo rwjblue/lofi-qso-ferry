@@ -6,7 +6,11 @@ import {
   type SessionIdentity,
 } from "./auth.ts";
 import { LoFiClient, type LoFiCredentials } from "./lofi.ts";
-import { LotwClient } from "./lotw.ts";
+import { LotwClient, LotwLoginError } from "./lotw.ts";
+import {
+  type LotwLoginVerification,
+  lotwVerification,
+} from "./lotw-verification.ts";
 import { type QrzBook, QrzClient } from "./qrz.ts";
 import {
   boundedJson,
@@ -55,6 +59,44 @@ const object = (value: unknown): Record<string, unknown> => {
     throw new ConnectionError(400, "Expected an object");
   return value as Record<string, unknown>;
 };
+function lotwQueryCredentials(value: unknown) {
+  const input = object(value);
+  const username = text(input.username, "LoTW website username", 100);
+  if (
+    typeof input.password !== "string" ||
+    !input.password.length ||
+    input.password.length > 1024 ||
+    hasAsciiControl(input.password)
+  )
+    throw new ConnectionError(400, "Enter your LoTW website password");
+  return { username, password: input.password };
+}
+async function checkLotwLogin(
+  query: { username: string; password: string },
+  fetcher: typeof fetch,
+): Promise<LotwLoginVerification> {
+  let status: LotwLoginVerification["status"] = "verified";
+  try {
+    await new LotwClient(query, { fetcher }).verifyLogin();
+  } catch (error) {
+    if (error instanceof VendorDeferredError) throw error;
+    status =
+      error instanceof LotwLoginError && error.reason === "credentials"
+        ? "rejected"
+        : "unavailable";
+  }
+  return { status, checkedAt: new Date().toISOString() };
+}
+function lotwLoginMessage(verification: LotwLoginVerification): string {
+  return {
+    verified:
+      "LoTW accepted the website username and password for readback. Certificate and signing readiness are checked separately.",
+    rejected:
+      "LoTW rejected the website login or denied readback access. Check your LoTW website username, password and account access.",
+    unavailable:
+      "LoTW login could not be checked because readback is temporarily unavailable. Retry later; this does not establish that your password is wrong.",
+  }[verification.status];
+}
 function sessionGuard(
   store: Store,
   identity: SessionIdentity,
@@ -270,19 +312,23 @@ export async function saveVerifiedConnection(
   ]);
   return { id, version };
 }
-function safeConnection(connection: Connection) {
+function safeConnection(connection: Connection, trustRootsJson: string) {
+  const config = JSON.parse(connection.config);
   return {
     id: connection.id,
     kind: connection.kind,
     label: connection.label,
     status: connection.status,
     config: {
-      ...JSON.parse(connection.config),
+      ...config,
       ...(connection.kind === "lotw" &&
       connection.remote_identity.startsWith("query:")
         ? { queryUsername: connection.remote_identity.slice(6) }
         : {}),
     },
+    ...(connection.kind === "lotw"
+      ? { lotwVerification: lotwVerification(config, { trustRootsJson }) }
+      : {}),
     cutover: connection.cutover,
     credentialConfigured: Boolean(connection.credential_version),
   };
@@ -325,7 +371,7 @@ export async function connectionRoute(
     if (request.method === "GET" && path === "/api/connections")
       return json({
         connections: (await store.connections(identity.tenant)).map(
-          safeConnection,
+          (connection) => safeConnection(connection, env.LOTW_TRUST_ROOTS_JSON),
         ),
       });
     if (request.method !== "POST")
@@ -483,6 +529,74 @@ export async function connectionRoute(
         201,
       );
     }
+    if (path === "/api/connections/lotw/check-login") {
+      let connection: Connection | null = null;
+      let query: { username: string; password: string };
+      if (input.id !== undefined) {
+        const id = text(input.id, "connection ID", 100);
+        connection = await store.connection(identity.tenant, id);
+        if (connection?.kind !== "lotw" || connection.status === "revoked")
+          throw new ConnectionError(404, "LoTW connection not found");
+        if (!connection.credential_version)
+          throw new ConnectionError(
+            409,
+            "Saved LoTW credentials are unavailable",
+          );
+        const credential = await store.private<{
+          query?: { username: string; password: string };
+        }>(identity.tenant, id, connection.credential_version, "credential");
+        if (!credential?.query)
+          throw new ConnectionError(
+            400,
+            "No LoTW website login is saved. Update credentials to add readback access.",
+            "lotw_login_not_configured",
+          );
+        query = lotwQueryCredentials(credential.query);
+      } else {
+        query = lotwQueryCredentials(input);
+      }
+      const loginVerification = await checkLotwLogin(
+        query,
+        vendorFetch(store, "lotw", services.fetcher, { priority: "live" }),
+      );
+      if (connection?.credential_version) {
+        const now = Date.now();
+        const config = { ...JSON.parse(connection.config), loginVerification };
+        const checks = lotwVerification(config, {
+          trustRootsJson: env.LOTW_TRUST_ROOTS_JSON,
+          now,
+        });
+        const verifiedStatus = checks.every((check) => check.status === "ok")
+          ? "active"
+          : "needs_verification";
+        const results = await store.db.batch([
+          sessionGuard(store, identity, now),
+          store.statement(
+            "UPDATE connections SET config=json_set(config,'$.loginVerification',json(?)),status=CASE WHEN status IN('disabled','paused') THEN status WHEN ?='verified' THEN CASE WHEN status='active' THEN status ELSE ? END WHEN ?='rejected' THEN 'needs_verification' ELSE status END WHERE tenant=? AND id=? AND credential_version=? AND status!='revoked'",
+            JSON.stringify(loginVerification),
+            loginVerification.status,
+            verifiedStatus,
+            loginVerification.status,
+            identity.tenant,
+            connection.id,
+            connection.credential_version,
+          ),
+          store.statement(
+            "DELETE FROM auth_guards WHERE tenant=? AND purpose='connection'",
+            identity.tenant,
+          ),
+        ]);
+        if (results[1].meta.changes !== 1)
+          throw new ConnectionError(
+            409,
+            "LoTW credentials changed during verification. Refresh and check again.",
+          );
+      }
+      return json({
+        loginVerification,
+        message: lotwLoginMessage(loginVerification),
+      });
+    }
     if (path === "/api/connections/lotw") {
       const encoded = text(input.p12, "PKCS#12 base64", 360_000);
       if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4 !== 0)
@@ -521,33 +635,17 @@ export async function connectionRoute(
         );
       }
       let query: { username: string; password: string } | undefined;
+      let loginVerification: LotwLoginVerification | undefined;
       if (input.query) {
-        const value = object(input.query);
-        query = {
-          username: text(value.username, "LoTW query username", 100),
-          password: (() => {
-            if (
-              typeof value.password !== "string" ||
-              !value.password.length ||
-              value.password.length > 1024 ||
-              hasAsciiControl(value.password)
-            )
-              throw new ConnectionError(400, "Invalid LoTW query password");
-            return value.password;
-          })(),
-        };
-        const today = new Date().toISOString().slice(0, 10);
-        try {
-          await new LotwClient(query, { fetcher: lotwFetch }).query({
-            startDate: today,
-            endDate: today,
-          });
-        } catch (error) {
-          if (error instanceof VendorDeferredError) throw error;
+        query = lotwQueryCredentials(input.query);
+        loginVerification = await checkLotwLogin(query, lotwFetch);
+        if (loginVerification.status !== "verified") {
           throw new ConnectionError(
-            400,
-            "Certificate file opened successfully, but LoTW login verification failed. Check your LoTW website username and password, or try again if LoTW is unavailable.",
-            "lotw_login_verification_failed",
+            loginVerification.status === "rejected" ? 400 : 503,
+            `Certificate file opened successfully, but ${lotwLoginMessage(loginVerification)}`,
+            loginVerification.status === "rejected"
+              ? "lotw_login_rejected"
+              : "lotw_login_unavailable",
           );
         }
       }
@@ -605,6 +703,16 @@ export async function connectionRoute(
       )
         ? "active"
         : "needs_verification";
+      const config = {
+        stations,
+        readAccess: Boolean(query),
+        ...(loginVerification ? { loginVerification } : {}),
+        certificates: signingCredentials.map(publicCertificate),
+        signingConfiguration: "ferry-lotw-v2-us-ca-1",
+      };
+      const verification = lotwVerification(config, {
+        trustRootsJson: env.LOTW_TRUST_ROOTS_JSON,
+      });
       const saved = await saveVerifiedConnection(
         store,
         identity.tenant,
@@ -619,12 +727,7 @@ export async function connectionRoute(
                 : `LoTW station ${signing.callsign}`,
           credential: { signingCredentials, ...(query ? { query } : {}) },
           status,
-          config: {
-            stations,
-            readAccess: Boolean(query),
-            certificates: signingCredentials.map(publicCertificate),
-            signingConfiguration: "ferry-lotw-v2-us-ca-1",
-          },
+          config,
         },
         identity,
         {},
@@ -634,10 +737,14 @@ export async function connectionRoute(
           id: saved.id,
           status,
           certificate: publicCertificate(signing),
+          lotwVerification: verification,
           message:
             status === "active"
               ? "Certificate verified. Historical eligibility and rollout gates still apply."
-              : "Imported securely; configure verified trust roots and resolve certificate status before signing.",
+              : `Certificate saved. ${verification
+                  .filter((check) => check.status !== "ok")
+                  .map((check) => check.message)
+                  .join(" ")}`,
         },
         201,
       );

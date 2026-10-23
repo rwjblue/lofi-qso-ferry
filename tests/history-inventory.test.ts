@@ -1678,3 +1678,190 @@ test("batch read isolation preserves thrown configuration and save-guard failure
     await h.mf.dispose();
   }
 });
+
+test("parallel cold advances deduplicate partitions, isolate failures, and stop after the deadline wave", async () => {
+  const h = await inventoryCohort("lotw", 7);
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const dates = [
+      "20261022",
+      "20261022",
+      "20261029",
+      "20261105",
+      "20261112",
+      "20261119",
+      "20261126",
+    ];
+    const inputs: HistoryInventoryInput[] = h.inputs.map((input, index) => ({
+      ...input,
+      record: { ...input.record, QSO_DATE: dates[index] },
+    }));
+    let started = 0;
+    let active = 0;
+    let maximum = 0;
+    let continuing = true;
+    const failed = new VendorDeferredError(h.now + 300_000);
+    const results = await historyCandidatesBatch(h.store, inputs, {
+      ...h.options,
+      coldAdvanceConcurrency: 100,
+      shouldContinue: () => continuing,
+      fetcher: async (input) => {
+        timeout ??= setTimeout(release, 10_000);
+        started++;
+        active++;
+        maximum = Math.max(maximum, active);
+        if (started === 4) {
+          continuing = false;
+          release();
+        }
+        try {
+          await barrier;
+          const query = new URL(String(input)).searchParams;
+          const first = query.get("qso_startdate")!.replaceAll("-", "");
+          const last = query.get("qso_enddate")!.replaceAll("-", "");
+          if (first <= dates[0] && dates[0] <= last) throw failed;
+          return lotwResponse(
+            inputs
+              .map((member) => member.record)
+              .filter(
+                (record) => record.QSO_DATE >= first && record.QSO_DATE <= last,
+              ),
+          );
+        } finally {
+          active--;
+        }
+      },
+    });
+    assert.equal(maximum, 4);
+    assert.equal(started, 4);
+    assert.equal(active, 0);
+    for (const index of [0, 1]) {
+      assert.equal(results[index].failure, failed);
+      assert.equal(results[index].fence, undefined);
+      assert.deepEqual(results[index].records, []);
+    }
+    for (const index of [2, 3, 4]) {
+      assert.equal(results[index].state, "ready");
+      assert.equal(results[index].records[0].CALL, inputs[index].record.CALL);
+    }
+    for (const index of [5, 6]) {
+      assert.equal(results[index].state, "pending");
+      assert.equal(results[index].fetched, false);
+      assert.deepEqual(results[index].records, []);
+    }
+  } finally {
+    clearTimeout(timeout);
+    release();
+    await h.mf.dispose();
+  }
+});
+
+test("a fatal parallel save guard drains started peers and stops queued cold advances", async () => {
+  const h = await inventoryCohort("lotw", 3);
+  let releaseBoth!: () => void;
+  let releaseSlow!: () => void;
+  let releasedFirst!: () => void;
+  const both = new Promise<void>((resolve) => {
+    releaseBoth = resolve;
+  });
+  const slow = new Promise<void>((resolve) => {
+    releaseSlow = resolve;
+  });
+  const firstReleased = new Promise<void>((resolve) => {
+    releasedFirst = resolve;
+  });
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let running: Promise<unknown> | undefined;
+  try {
+    const dates = ["20261022", "20261029", "20261105"];
+    const inputs: HistoryInventoryInput[] = h.inputs.map((input, index) => ({
+      ...input,
+      record: { ...input.record, QSO_DATE: dates[index] },
+    }));
+    const store = new Store(h.db, h.store.keys);
+    const release = store.release.bind(store);
+    store.release = async (lease) => {
+      await release(lease);
+      releasedFirst();
+    };
+    let started = 0;
+    running = historyCandidatesBatch(store, inputs, {
+      ...h.options,
+      coldAdvanceConcurrency: 2,
+      fetcher: async (input) => {
+        timeout ??= setTimeout(() => {
+          releaseBoth();
+          releaseSlow();
+        }, 10_000);
+        started++;
+        if (started === 2) releaseBoth();
+        await both;
+        const start = new URL(String(input)).searchParams.get("qso_startdate")!;
+        if (start === "2026-10-22") {
+          await h.store
+            .statement(
+              "UPDATE ledger SET generation='replaced' WHERE qso=?",
+              inputs[0].qso,
+            )
+            .run();
+          return lotwResponse([inputs[0].record]);
+        }
+        assert.equal(
+          start,
+          "2026-10-29",
+          "a fatal guard must stop the third partition",
+        );
+        await slow;
+        return lotwResponse([inputs[1].record]);
+      },
+    });
+    const settled = running.then(
+      () => true,
+      () => true,
+    );
+    await firstReleased;
+    const returnedEarly = await Promise.race([
+      settled,
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50)),
+    ]);
+    assert.equal(
+      returnedEarly,
+      false,
+      "batch must await its slow peer's save and release",
+    );
+    assert.equal(started, 2);
+    releaseSlow();
+    await assert.rejects(running, /history source changed/);
+    assert.equal(started, 2);
+    assert.equal(
+      (await h.store
+        .statement("SELECT COUNT(*) n FROM partitions WHERE state='complete'")
+        .first<{ n: number }>())!.n,
+      1,
+    );
+    assert.equal(
+      (await h.store
+        .statement(
+          "SELECT COUNT(*) n FROM leases WHERE scope LIKE 'history:%' AND expires_at>0",
+        )
+        .first<{ n: number }>())!.n,
+      0,
+    );
+    assert.equal(
+      (await h.store
+        .statement("SELECT COUNT(*) n FROM history_inventory_guards")
+        .first<{ n: number }>())!.n,
+      0,
+    );
+  } finally {
+    clearTimeout(timeout);
+    releaseBoth();
+    releaseSlow();
+    if (running) await running.catch(() => undefined);
+    await h.mf.dispose();
+  }
+});

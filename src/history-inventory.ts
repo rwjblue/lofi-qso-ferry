@@ -167,6 +167,8 @@ export interface HistoryInventoryOptions {
   priority?: VendorPriority;
   /** Batch cold advances yield between representatives; completed reads can finish. */
   shouldContinue?: () => boolean;
+  /** Independent partition advances; defaults to one and is bounded to four. */
+  coldAdvanceConcurrency?: number;
 }
 interface Range {
   startDate: string;
@@ -1369,18 +1371,40 @@ async function readHistoryBatch(
   if (allowAdvance && advances.size) {
     const progressed = new Map<number, HistoryInventoryResult>();
     const failures = new Map<string, unknown>();
-    for (const [partition, member] of advances) {
-      if (options.shouldContinue?.() === false) break;
-      try {
-        progressed.set(
-          member.ordinal,
-          await readHistoryCandidates(store, member.input, options, true),
-        );
-      } catch (error) {
-        if (!(error instanceof HistoryReadFailure)) throw error;
-        failures.set(partition, error.failure);
-      }
-    }
+    const requested = options.coldAdvanceConcurrency ?? 1;
+    const concurrency = Number.isFinite(requested)
+      ? Math.max(1, Math.min(4, Math.floor(requested)))
+      : 1;
+    const queued = [...advances];
+    let next = 0;
+    let stopped = false;
+    const workers = await Promise.allSettled(
+      Array.from({ length: Math.min(concurrency, queued.length) }, async () => {
+        try {
+          while (!stopped && options.shouldContinue?.() !== false) {
+            const entry = queued[next++];
+            if (!entry) return;
+            const [partition, member] = entry;
+            try {
+              progressed.set(
+                member.ordinal,
+                await readHistoryCandidates(store, member.input, options, true),
+              );
+            } catch (error) {
+              if (!(error instanceof HistoryReadFailure)) throw error;
+              failures.set(partition, error.failure);
+            }
+          }
+        } catch (error) {
+          stopped = true;
+          throw error;
+        }
+      }),
+    );
+    // A failed guard stops new work, but every started save and lease release
+    // must finish before the caller can release its source cycle lease.
+    const failure = workers.find((worker) => worker.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
     // A cold advance can replace an epoch, split a range, or evict another row.
     // Never reuse any metadata or plaintext captured before those mutations.
     const refreshed = await readHistoryBatch(

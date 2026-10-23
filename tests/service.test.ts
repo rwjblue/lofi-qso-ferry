@@ -1195,7 +1195,7 @@ test("read-only background history overlaps at most four contacts and preserves 
   const barrier = new Promise<void>((resolve) => {
     release = resolve;
   });
-  const timeout = setTimeout(() => release(), 3000);
+  let timeout: ReturnType<typeof setTimeout> | undefined;
   try {
     const qrz = { ...h.qrzRecords[0] };
     const lotw = { ...h.lotwRecords[0] };
@@ -1239,6 +1239,7 @@ test("read-only background history overlaps at most four contacts and preserves 
         (url.hostname === "logbook.qrz.com" &&
           new URLSearchParams(String(init?.body)).get("ACTION") === "FETCH");
       if (!history) return h.fetcher(input, init);
+      timeout ??= setTimeout(() => release(), 10_000);
       active++;
       maximum = Math.max(maximum, active);
       try {

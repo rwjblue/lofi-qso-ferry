@@ -482,6 +482,9 @@ async function reconcileReadOnlyBatch(
               vendorNow,
               priority,
               shouldContinue: () => !expired(),
+              coldAdvanceConcurrency: Math.floor(
+                4 / Math.min(4, pending.length),
+              ),
             };
             const inventory = await historyCandidatesBatch(
               store,

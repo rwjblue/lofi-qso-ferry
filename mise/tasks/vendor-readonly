@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Probe QRZ and LoTW read-only using OS-keychain credentials"
+#USAGE arg "<persona>" help="Configured qso-auth persona, such as your callsign"
+#USAGE flag "--date <date>" help="Optional ISO date; otherwise derived from QRZ in memory"
+set -euo pipefail
+npx tsx scripts/vendor-readonly.ts "${usage_persona}" ${usage_date:+"${usage_date}"}

@@ -196,6 +196,13 @@ test("unexpected readback failures retain only a fixed safe diagnostic", async (
     };
     const result = await tick(h.env, fetcher, FIXTURE_NOW);
     assert.equal(result.errors, 1);
+    assert.deepEqual(
+      { ...result.throughput?.failures },
+      {
+        "reconciliation:qrz:qrz_transient": { events: 1, affected: 1 },
+      },
+    );
+    assert(!JSON.stringify(result).includes("private-api-key"));
     assert.equal(
       (await h.store.ledger(key("destination")))!.reason,
       "Destination reconciliation failed; retry automatically",
@@ -1842,6 +1849,13 @@ test("one failed QRZ boundary partition does not hold healthy contacts in the sa
     };
     const result = await tick(h.env, transport, FIXTURE_NOW);
     assert.equal(result.errors, 1);
+    assert.deepEqual(
+      { ...result.throughput?.failures },
+      {
+        "history_read:qrz:qrz_transient": { events: 1, affected: 1 },
+      },
+    );
+    assert(!JSON.stringify(result).includes("private marker"));
     assert.equal(
       failedReads,
       1,
@@ -1870,6 +1884,51 @@ test("one failed QRZ boundary partition does not hold healthy contacts in the sa
       ),
       0,
     );
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+    assert.equal(h.calls.lotwUploads, 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("shared reconciliation failures count one event and each affected route", async () => {
+  const h = await schedulerFixture();
+  try {
+    h.changes.operations.length = 0;
+    h.changes.qsos.length = 0;
+    for (let index = 0; index < 4; index++) {
+      const call = `K1FAIL${index}`;
+      h.changes.qsos.push({
+        ...h.qso,
+        uuid: `failed-cohort-${index}`,
+        operation: null,
+        their: { call },
+        our: { stationCall: "W1AW", grid: "FN31AA", dxccCode: 291 },
+        syncedAtMillis: 110 + index,
+      });
+      h.lotwRecords.push({ ...h.lotwRecords[0], CALL: call });
+    }
+    let failedReads = 0;
+    const transport: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).hostname === "logbook.qrz.com") {
+        failedReads++;
+        throw new Error("private-vendor-response-and-credential");
+      }
+      return h.fetcher(input, init);
+    };
+    const result = await tick(h.env, transport, FIXTURE_NOW);
+    assert.equal(failedReads, 1);
+    assert.equal(result.errors, 4);
+    assert.deepEqual(
+      { ...result.throughput?.failures },
+      {
+        "history_read:qrz:qrz_transient": { events: 1, affected: 4 },
+      },
+    );
+    assert.equal(result.throughput?.classifiedDestinations, 4);
+    assert.equal(result.throughput?.adoptedDestinations, 4);
+    assert(!JSON.stringify(result).includes("private-vendor"));
     assert.equal(await count(h, "attempts"), 0);
     assert.equal(h.calls.qrzWrites, 0);
     assert.equal(h.calls.lotwUploads, 0);

@@ -1,4 +1,5 @@
 import { measuredDatabase, type DatabaseMetrics } from "./database-metrics.ts";
+import { createFailureDiagnostics } from "./failure-diagnostics.ts";
 import { establishCutovers, proveNewAfterCutover } from "./cutover.ts";
 import { rotatePrivateData, purgeResolvedSource } from "./maintenance.ts";
 import { purgeAuth } from "./auth.ts";
@@ -323,6 +324,7 @@ async function reconcileReadOnlyBatch(
   vendorNow: number | undefined,
   expired: () => boolean,
   metrics: ThroughputMetrics,
+  diagnostics: ReturnType<typeof createFailureDiagnostics>,
 ) {
   const result = { contacts: contacts.length, errors: 0, deferred: 0 };
   const statements: D1PreparedStatement[] = [];
@@ -345,6 +347,7 @@ async function reconcileReadOnlyBatch(
   const ready = observations.filter((_, index) => {
     const observation = observed[index];
     if (observation.status === "fulfilled") return true;
+    diagnostics.record(observation.reason, "observation");
     if (observation.reason instanceof VendorDeferredError) result.deferred++;
     else result.errors++;
     return false;
@@ -414,7 +417,8 @@ async function reconcileReadOnlyBatch(
             record: contactReconciliationAdif(contact),
           },
         });
-      } catch {
+      } catch (error) {
+        diagnostics.record(error, "projection", destination.kind);
         result.errors++;
         diagnose(
           contact,
@@ -515,6 +519,11 @@ async function reconcileReadOnlyBatch(
               if (!ledger) continue;
               const evidence = inventory[index];
               if ("failure" in evidence) {
+                diagnostics.record(
+                  evidence.failure,
+                  "history_read",
+                  route.destination.kind,
+                );
                 if (evidence.failure instanceof VendorDeferredError)
                   result.deferred++;
                 else {
@@ -590,6 +599,12 @@ async function reconcileReadOnlyBatch(
               });
             }
           } catch (error) {
+            diagnostics.record(
+              error,
+              "history_group",
+              group[0].destination.kind,
+              group.length,
+            );
             for (const { contact, destination } of group) {
               if (error instanceof VendorDeferredError) result.deferred++;
               else {
@@ -628,6 +643,9 @@ async function reconcileReadOnlyBatch(
       );
       if (check) statements.push(check);
     }
+  } catch (error) {
+    diagnostics.record(error, "reconciliation", undefined, routes.length);
+    throw error;
   } finally {
     for (const { contact } of ready)
       statements.push(
@@ -665,6 +683,7 @@ export interface ThroughputMetrics {
   inventoryFetches: number;
   inventoryCacheHits: number;
   reconciliationBatchCalls: number;
+  failures: ReturnType<typeof createFailureDiagnostics>["counts"];
   stageMs: Record<string, number>;
   database: DatabaseMetrics;
 }
@@ -683,6 +702,7 @@ export async function tick(
   // Leave request headroom for a bounded in-flight operation and cleanup.
   // A checkpoint sends many statements in one D1 request; retain both counts.
   const expired = () => Date.now() >= deadline || metered.metrics.calls >= 850;
+  const diagnostics = createFailureDiagnostics();
   const throughput: ThroughputMetrics = {
     sourceRecords: 0,
     rescanPages: 0,
@@ -692,6 +712,7 @@ export async function tick(
     inventoryFetches: 0,
     inventoryCacheHits: 0,
     reconciliationBatchCalls: 0,
+    failures: diagnostics.counts,
     stageMs: {},
     database: metered.metrics,
   };
@@ -810,6 +831,7 @@ export async function tick(
             clock,
             expired,
             throughput,
+            diagnostics,
           ),
         ).finally(() => {
           throughput.reconciliationBatchCalls += metered.metrics.calls - before;
@@ -932,6 +954,11 @@ export async function tick(
                   )
                   .run();
             } catch (error) {
+              diagnostics.record(
+                error,
+                preparing ? "preparation" : "reconciliation",
+                destination.kind,
+              );
               if (error instanceof VendorDeferredError) {
                 result.deferred++;
                 continue;
@@ -960,6 +987,7 @@ export async function tick(
             )
             .run();
         } catch (error) {
+          diagnostics.record(error, "contact");
           if (error instanceof VendorDeferredError) result.deferred++;
           else result.errors++;
         } finally {
@@ -1027,6 +1055,7 @@ export async function tick(
           if (page.complete || page.pages === 0 || page.records === 0)
             rescans.add(rescan.stream);
         } catch (error) {
+          diagnostics.record(error, "source_rescan", "lofi");
           rescans.add(rescan.stream);
           if (error instanceof VendorDeferredError) result.deferred++;
           else result.errors++;
@@ -1049,6 +1078,7 @@ export async function tick(
           throughput.rereadPages += reread.pages;
           progress += reread.pages;
         } catch (error) {
+          diagnostics.record(error, "context", "lofi");
           stoppedRereads.add(rereadKey);
           if (error instanceof VendorDeferredError) result.deferred++;
           else result.errors++;
@@ -1075,6 +1105,7 @@ export async function tick(
           if (page.complete || page.pages === 0 || page.records === 0)
             completedPolls.add(sourceKey);
         } catch (error) {
+          diagnostics.record(error, "source_poll", "lofi");
           completedPolls.add(sourceKey);
           if (!(error instanceof VendorDeferredError)) throw error;
           result.deferred++;
@@ -1117,6 +1148,7 @@ export async function tick(
       if (priority === "live" || retainedSelected === 0)
         await processRetainedContacts();
     } catch (error) {
+      diagnostics.record(error, "source_cycle", "lofi");
       if (error instanceof VendorDeferredError) result.deferred++;
       else {
         result.errors++;

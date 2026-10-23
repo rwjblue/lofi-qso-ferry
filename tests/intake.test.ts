@@ -149,6 +149,121 @@ async function work(
     .first<Work & { processed_at: number }>();
 }
 
+test("general-log station migration requeues only retained projection holds without changing export evidence", async (t) => {
+  const state = await setup();
+  const { store, db, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const ids = [
+    "eligible",
+    "operation",
+    "other-kind",
+    "event",
+    "deleted",
+    "other-reason",
+    "other-state",
+    "expired-work",
+    "expired-payload",
+    "revoked-payload",
+    "missing-payload",
+    "wrong-payload-kind",
+    "wrong-payload-connection",
+  ];
+  await pollSource(
+    store,
+    source,
+    async () =>
+      response(
+        [],
+        ids.map((uuid) => ({
+          ...loose,
+          uuid,
+          our: { call: "N0CALL", grid: "FN42CC" },
+        })),
+      ),
+    now,
+  );
+  await store
+    .statement(
+      "UPDATE source_work SET state='blocked',reason='missing_or_ambiguous_station_call',processed_at=? WHERE kind='qso'",
+      now,
+    )
+    .run();
+  for (const [id, column, value] of [
+    ["operation", "operation_id", "op-1"],
+    ["other-kind", "kind", "operation"],
+    ["event", "is_event", 1],
+    ["deleted", "deleted", 1],
+    ["other-reason", "reason", "no_matching_destination"],
+    ["other-state", "state", "waiting"],
+    ["expired-work", "expires_at", now - 60_000],
+  ] as const)
+    await store
+      .statement(`UPDATE source_work SET ${column}=? WHERE id=?`, value, id)
+      .run();
+  for (const [id, column, value] of [
+    ["expired-payload", "expires_at", now - 60_000],
+    ["revoked-payload", "revoked_at", now - 60_000],
+    ["wrong-payload-kind", "kind", "outbox"],
+    ["wrong-payload-connection", "connection", "destination"],
+  ] as const)
+    await store
+      .statement(
+        `UPDATE private_data SET ${column}=? WHERE kind='source' AND id=(SELECT private_id FROM source_work WHERE id=?)`,
+        value,
+        id,
+      )
+      .run();
+  await store
+    .statement(
+      "DELETE FROM private_data WHERE kind='source' AND id=(SELECT private_id FROM source_work WHERE id='missing-payload')",
+    )
+    .run();
+  const rows = () =>
+    store.statement("SELECT * FROM source_work ORDER BY id").all<Work>();
+  const evidence = async () =>
+    Promise.all(
+      ["cursors", "private_data", "ledger", "attempts", "source_cutovers"].map(
+        (table) => store.statement(`SELECT * FROM ${table}`).all(),
+      ),
+    ).then((results) => results.map((result) => result.results));
+  const before = (await rows()).results;
+  const evidenceBefore = await evidence();
+  const migration = await readFile(
+    new URL(
+      "../migrations/0016_reproject_general_log_station.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  await db.prepare(migration).run();
+  assert.deepEqual(
+    (await rows()).results,
+    before.map((row) =>
+      row.id === "eligible" ? { ...row, state: "pending", reason: null } : row,
+    ),
+  );
+  assert.deepEqual(await evidence(), evidenceBefore);
+  const batch = await pendingContactBatch(
+    store,
+    source,
+    1,
+    now + 1,
+    undefined,
+    "eligible",
+  );
+  assert.equal(batch.selected, 1);
+  assert.equal(batch.contacts[0]?.stationCall, "N0CALL");
+  assert.equal(batch.contacts[0]?.operationId, null);
+  assert.equal(
+    (await store.statement("SELECT * FROM ledger").all()).results.length,
+    0,
+  );
+  assert.equal(
+    (await store.statement("SELECT * FROM attempts").all()).results.length,
+    0,
+  );
+});
+
 test("source polls and operation rereads retain renewed bearers after success, failure and budget deferral", async (t) => {
   for (const read of ["poll", "reread"] as const) {
     for (const outcome of ["success", "failure", "deferred"] as const) {

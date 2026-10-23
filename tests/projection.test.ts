@@ -4,8 +4,8 @@ import type { SourceRecord } from "../src/lofi.ts";
 import {
   effectiveOperation,
   isSourceDeleted,
-  projectContact,
   ProjectionError,
+  projectContact,
   sourceFingerprint,
 } from "../src/projection.ts";
 
@@ -170,6 +170,94 @@ test("null-operation general-log contacts use their own station without defaulti
     projectContact({ ...qso, operation: null }, null),
     ProjectionError,
   );
+});
+
+test("canonical general-log our.call supplies station identity without inferring the operator", async () => {
+  const record = {
+    ...qso,
+    operation: null,
+    our: { call: " n0call/p ", grid: "FN31AA" },
+  };
+  const contact = await projectContact(record, null);
+  assert.equal(contact.stationCall, "N0CALL/P");
+  assert.equal(contact.call, "W1AW");
+  assert.equal(contact.operatorCall, undefined);
+  const operated = await projectContact(
+    { ...record, our: { ...record.our, operatorCall: "W2XYZ" } },
+    null,
+  );
+  assert.equal(operated.stationCall, "N0CALL/P");
+  assert.equal(operated.operatorCall, "W2XYZ");
+});
+
+test("explicit QSO station fields take precedence over canonical our.call", async () => {
+  const record = {
+    ...qso,
+    operation: null,
+    stationCall: "W2XYZ",
+    our: { call: "N0CALL", stationCall: "K1ABC" },
+  };
+  assert.equal((await projectContact(record, null)).stationCall, "K1ABC");
+  assert.equal(
+    (await projectContact({ ...record, our: { call: "N0CALL" } }, null))
+      .stationCall,
+    "W2XYZ",
+  );
+});
+
+test("explicit station clears cannot fall back to canonical calls or operation context", async () => {
+  for (const cleared of [null, "", " "]) {
+    for (const operationId of [null, "op-1"]) {
+      for (const fields of [
+        { stationCall: "W2XYZ", our: { call: "N0CALL", stationCall: cleared } },
+        { stationCall: cleared, our: { call: "N0CALL" } },
+      ]) {
+        await assert.rejects(
+          project({ ...qso, operation: operationId, ...fields }),
+          { code: "missing_or_ambiguous_station_call" },
+        );
+      }
+    }
+  }
+});
+
+test("operation and segment station identities remain authoritative over our.call", async () => {
+  const record = { ...qso, our: { call: "W2XYZ", operatorCall: "K1ABC" } };
+  assert.equal((await project(record)).stationCall, "N0CALL/P");
+  assert.equal(
+    (
+      await project(record, operation, [
+        event("segment", at, { stationCall: "K2HRC" }),
+      ])
+    ).stationCall,
+    "K2HRC",
+  );
+  for (const cleared of [null, "", undefined]) {
+    await assert.rejects(
+      project(record, { ...operation, stationCall: cleared }),
+      {
+        code: "missing_or_ambiguous_station_call",
+      },
+    );
+    await assert.rejects(
+      project(record, operation, [
+        event("segment", at, { stationCall: cleared }),
+      ]),
+      { code: "missing_or_ambiguous_station_call" },
+    );
+  }
+});
+
+test("general-log station compatibility validates our.call and never uses operatorCall", async () => {
+  for (const call of [undefined, null, "", "N0CALL,W2XYZ", "NOCALL", "1234"]) {
+    await assert.rejects(
+      projectContact(
+        { ...qso, operation: null, our: { call, operatorCall: "N0CALL" } },
+        null,
+      ),
+      { code: "missing_or_ambiguous_station_call" },
+    );
+  }
 });
 
 test("event edits/deletions apply while stop rows never open segments", async () => {

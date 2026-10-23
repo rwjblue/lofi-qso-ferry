@@ -272,8 +272,16 @@ export async function projectContact(
   const our = map(qso.our);
   const their = map(qso.their);
   const call = stationCall(their.call);
+  // QSON our.call also carries imported OPERATOR fallbacks. Use it only for
+  // general-log QSOs without an explicit station field; explicit clears block.
   const ownCall = stationCall(
-    our.stationCall ?? qso.stationCall ?? op.stationCall,
+    Object.hasOwn(our, "stationCall")
+      ? our.stationCall
+      : Object.hasOwn(qso, "stationCall")
+        ? qso.stationCall
+        : operationId
+          ? op.stationCall
+          : our.call,
   );
   const frequencyKHz = numeric(qso.freq);
   if (

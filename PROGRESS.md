@@ -2,6 +2,8 @@
 
 Last checkpoint: 2026-10-22, LoFi connection passkey freshness fix deployed read-only. The owner authorizes signed logical commits directly to `origin/main`; no PRs. Every vendor export gate remains closed. This deployment does not authorize real logbook writes.
 
+Current follow-up: explain LoFi's vendor-provided account name, enforce one current optional connection per service, and add a retained-source read-only review. Initial tree was clean; upstream unchanged. Aggregate production metadata confirms intake is working (first page: 97 contacts, 3 events, 86 live operations and 14 operation tombstones), with no destination/ledger/attempt yet. No source contents or credentials were read. Full `mise run check` passes **196 tests**, formatting, strict lint, both TypeScript checks and the Worker build (297.93 KiB gzip). Actual isolated Worker/D1 + Chromium resident/UV passkey signup/link/pause/resume/review passes: one fixture source, expected effective location/reference/comment, hidden duplicate form, duplicate API409, unchanged unsaved settings on review refresh, zero attempts/outbox and no uncontrolled vendor traffic. Mobile375px has no overflow or browser errors. Independent review caught and fixed stale failure diagnostics with exact lease fencing; deleted/failed/partial operation reads now yield fairly. Next: land the three reviewed logical slices, deploy with migration0008 and every gate closed, verify live metadata/assets and record the deployed version.
+
 ## Current production
 
 - Host/RP: `https://ferry.n1rwj.com` / `ferry.n1rwj.com`. App revision `cbe9e63af1bf9215e2b87b75631f2effebd17e10`, Worker version `6a580035-ad08-4e35-9fa5-5d09fe5f9baf`; five-minute cron, workers.dev/previews disabled.

@@ -68,6 +68,31 @@ function sessionGuard(
     identity.tokenHash,
   );
 }
+type ConnectionSlot = { replacing?: string };
+async function assertConnectionSlot(
+  store: Store,
+  tenant: string,
+  kind: Connection["kind"],
+  remoteIdentity?: string,
+  replacing?: string,
+): Promise<void> {
+  const existing = await store
+    .statement(
+      "SELECT id,remote_identity FROM connections WHERE tenant=? AND kind=? AND status!='revoked' AND id!=?",
+      tenant,
+      kind,
+      replacing ?? "",
+    )
+    .all<{ id: string; remote_identity: string }>();
+  if (
+    existing.results.length &&
+    !existing.results.some((row) => row.remote_identity === remoteIdentity)
+  )
+    throw new ConnectionError(
+      409,
+      `A ${kind === "lofi" ? "LoFi" : kind === "qrz" ? "QRZ" : "LoTW"} connection already exists. Resume it, update its credentials, or remove its credentials before connecting a different account.`,
+    );
+}
 /** All identities here have already been established with read-only vendor evidence. */
 export async function saveVerifiedConnection(
   store: Store,
@@ -82,6 +107,7 @@ export async function saveVerifiedConnection(
     credentialVersion?: string;
   },
   identity?: SessionIdentity,
+  slot?: ConnectionSlot,
 ): Promise<{ id: string; version: string }> {
   if (identity && identity.tenant !== tenant)
     throw new ConnectionError(
@@ -141,6 +167,18 @@ export async function saveVerifiedConnection(
       : [];
   await store.db.batch([
     ...(identity ? [sessionGuard(store, identity, now)] : []),
+    ...(slot
+      ? [
+          store.statement(
+            "INSERT INTO connection_kind_guards(id,tenant,kind,remote_identity,replacing_id) VALUES(?,?,?,?,?)",
+            randomToken(),
+            tenant,
+            input.kind,
+            input.remoteIdentity,
+            slot.replacing ?? null,
+          ),
+        ]
+      : []),
     store.statement(
       `INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,config,created_at) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,kind,remote_identity) DO UPDATE SET label=excluded.label,status=excluded.status,credential_version=excluded.credential_version,config=excluded.config`,
       tenant,
@@ -154,6 +192,20 @@ export async function saveVerifiedConnection(
       now,
     ),
     privateWrite,
+    ...(slot?.replacing
+      ? [
+          store.statement(
+            "DELETE FROM private_data WHERE tenant=? AND connection=?",
+            tenant,
+            slot.replacing,
+          ),
+          store.statement(
+            "DELETE FROM connections WHERE tenant=? AND id=?",
+            tenant,
+            slot.replacing,
+          ),
+        ]
+      : []),
     ...newQrzTemplate,
     ...(input.kind !== "lofi" && !existing
       ? [
@@ -180,6 +232,14 @@ export async function saveVerifiedConnection(
           ),
         ]
       : []),
+    ...(slot
+      ? [
+          store.statement(
+            "DELETE FROM connection_kind_guards WHERE tenant=?",
+            tenant,
+          ),
+        ]
+      : []),
   ]);
   return { id, version };
 }
@@ -189,7 +249,13 @@ function safeConnection(connection: Connection) {
     kind: connection.kind,
     label: connection.label,
     status: connection.status,
-    config: JSON.parse(connection.config),
+    config: {
+      ...JSON.parse(connection.config),
+      ...(connection.kind === "lotw" &&
+      connection.remote_identity.startsWith("query:")
+        ? { queryUsername: connection.remote_identity.slice(6) }
+        : {}),
+    },
     cutover: connection.cutover,
     credentialConfigured: Boolean(connection.credential_version),
   };
@@ -241,6 +307,7 @@ export async function connectionRoute(
     requireRecent(identity);
     const input = await boundedJson(request, 400 * 1024);
     if (path === "/api/connections/lofi/start") {
+      await assertConnectionSlot(store, identity.tenant, "lofi");
       const email = normalizeEmail(input.email);
       const throttleKey = `lofi-approval:${identity.tenant}`;
       const now = Date.now();
@@ -275,6 +342,7 @@ export async function connectionRoute(
           config: { approvalRequestedAt: now },
         },
         identity,
+        {},
       );
       await store
         .statement(
@@ -316,6 +384,7 @@ export async function connectionRoute(
       const client = new LoFiClient(credentials, services.fetcher);
       const account = await client.accounts();
       const accountId = text(account.uuid, "verified LoFi account ID", 100);
+      await assertConnectionSlot(store, identity.tenant, "lofi", accountId, id);
       const label =
         typeof account.name === "string"
           ? account.name.slice(0, 100)
@@ -331,19 +400,8 @@ export async function connectionRoute(
           config: { accountId, replayBoundaryVerified: false },
         },
         identity,
+        { replacing: id },
       );
-      await store.db.batch([
-        store.statement(
-          "DELETE FROM private_data WHERE tenant=? AND connection=?",
-          identity.tenant,
-          id,
-        ),
-        store.statement(
-          "DELETE FROM connections WHERE tenant=? AND id=?",
-          identity.tenant,
-          id,
-        ),
-      ]);
       return json({
         id: saved.id,
         status: "active",
@@ -355,6 +413,12 @@ export async function connectionRoute(
     if (path === "/api/connections/qrz") {
       const apiKey = text(input.apiKey, "QRZ API key", 512);
       const expected = book(input.book);
+      await assertConnectionSlot(
+        store,
+        identity.tenant,
+        "qrz",
+        expected.bookId,
+      );
       await new QrzClient(apiKey, { fetch: services.fetcher }).verifyBook(
         expected,
       );
@@ -372,6 +436,7 @@ export async function connectionRoute(
           config: { ...expected, replacementContractVerified: false },
         },
         identity,
+        {},
       );
       return json(
         {
@@ -434,6 +499,12 @@ export async function connectionRoute(
       const remoteIdentity = query
         ? `query:${query.username}`
         : stationIdentity;
+      await assertConnectionSlot(
+        store,
+        identity.tenant,
+        "lotw",
+        remoteIdentity,
+      );
       const existing = await store
         .statement(
           "SELECT * FROM connections WHERE tenant=? AND kind='lotw' AND remote_identity=?",
@@ -498,6 +569,7 @@ export async function connectionRoute(
           },
         },
         identity,
+        {},
       );
       return json(
         {
@@ -511,6 +583,64 @@ export async function connectionRoute(
         },
         201,
       );
+    }
+    if (path === "/api/connections/enable") {
+      const id = text(input.id, "connection ID", 100);
+      const connection = await store.connection(identity.tenant, id);
+      if (!connection) throw new ConnectionError(404, "Connection not found");
+      if (connection.status !== "disabled" || !connection.credential_version)
+        throw new ConnectionError(
+          409,
+          "Only a paused connection can be resumed",
+        );
+      const config = JSON.parse(connection.config);
+      if (connection.kind === "lofi" && !config.accountId)
+        throw new ConnectionError(
+          409,
+          "Remove the incomplete connection and request LoFi approval again",
+        );
+      if (
+        !(await store.private(
+          identity.tenant,
+          id,
+          connection.credential_version,
+          "credential",
+        ))
+      )
+        throw new ConnectionError(
+          409,
+          "Credentials expired; remove them and reconnect",
+        );
+      const status =
+        connection.kind === "lotw" &&
+        (!Array.isArray(config.certificates) ||
+          !config.certificates.length ||
+          !config.certificates.every(
+            (certificate: { trusted?: boolean; status?: string }) =>
+              certificate.trusted && certificate.status === "unrevoked",
+          ))
+          ? "needs_verification"
+          : "active";
+      const now = Date.now();
+      await store.db.batch([
+        sessionGuard(store, identity, now),
+        store.statement(
+          "UPDATE connections SET status=? WHERE tenant=? AND id=? AND status='disabled' AND credential_version=?",
+          status,
+          identity.tenant,
+          id,
+          connection.credential_version,
+        ),
+        store.statement(
+          "DELETE FROM auth_guards WHERE tenant=? AND purpose='connection'",
+          identity.tenant,
+        ),
+      ]);
+      return json({
+        id,
+        status,
+        message: "Connection resumed. Export rollout gates still apply.",
+      });
     }
     if (
       path === "/api/connections/disable" ||

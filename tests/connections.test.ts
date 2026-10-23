@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { SessionIdentity } from "../src/auth.ts";
 import { connectionRoute, saveVerifiedConnection } from "../src/connections.ts";
 import { digestCode, sha256 } from "../src/security.ts";
+import type { Store } from "../src/store.ts";
 import { DEFAULT_COMMENT_TEMPLATE } from "../src/templates.ts";
 import { database, keys, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
@@ -43,6 +44,14 @@ async function setup() {
     LOTW_TRUST_ROOTS_JSON: "[]",
   } as Env;
   return { ...context, env };
+}
+async function vacate(store: Store, kind: string) {
+  await store
+    .statement(
+      "UPDATE connections SET status='revoked' WHERE tenant='a' AND kind=?",
+      kind,
+    )
+    .run();
 }
 async function request(
   path: string,
@@ -189,6 +198,7 @@ test("connection routes enforce passkey freshness, CSRF, tenant ownership and re
 test("LoFi approval distinguishes preflight authentication from vendor403 and post-request guard failures", async (t) => {
   const { env, store, mf } = await setup();
   t.after(() => mf.dispose());
+  await vacate(store, "lofi");
   let outbound = 0;
   const preflightFetcher: typeof fetch = async () => {
     outbound++;
@@ -238,6 +248,7 @@ test("LoFi approval distinguishes preflight authentication from vendor403 and po
     "preflight failures have no request side effects",
   );
   for (const failure of ["register403", "permissions403", "guard"] as const) {
+    await vacate(store, "lofi");
     await store
       .statement(
         "UPDATE sessions SET verified_at=? WHERE tenant='a'",
@@ -278,7 +289,7 @@ test("LoFi approval distinguishes preflight authentication from vendor403 and po
     (
       await store
         .statement(
-          "SELECT count(*) n FROM connections WHERE status='approval_pending'",
+          "SELECT count(*) n FROM connections WHERE remote_identity LIKE 'pending:%'",
         )
         .first<{ n: number }>()
     )?.n,
@@ -289,6 +300,7 @@ test("LoFi approval distinguishes preflight authentication from vendor403 and po
 test("QRZ linking uses STATUS proof, never INSERT, and preserves stable book on key renewal", async (t) => {
   const { env, store, mf } = await setup();
   t.after(() => mf.dispose());
+  await vacate(store, "qrz");
   let reads = 0;
   const fetcher: typeof fetch = async (_url, init) => {
     const body = init?.body as URLSearchParams;
@@ -344,6 +356,7 @@ test("QRZ linking uses STATUS proof, never INSERT, and preserves stable book on 
 test("expired or revoked authenticated sessions cannot commit vendor-verified credentials", async (t) => {
   const { env, store, mf } = await setup();
   t.after(() => mf.dispose());
+  await vacate(store, "qrz");
   await store
     .statement(
       "UPDATE sessions SET revoked_at=? WHERE token_hash='session-a'",
@@ -409,6 +422,7 @@ test("revocation removes credential ciphertext and cancels new work without vend
 test("LoFi approval binds only the vendor current account and saves no contact writes", async (t) => {
   const { env, store, mf } = await setup();
   t.after(() => mf.dispose());
+  await vacate(store, "lofi");
   const seen: string[] = [];
   const fetcher: typeof fetch = async (input, init) => {
     const path = new URL(String(input)).pathname;
@@ -541,6 +555,13 @@ test("LoTW account verification permits multiple isolated station certificates a
     identity,
   );
   const output = await listed!.text();
+  assert.equal(
+    JSON.parse(output).connections.find(
+      (row: { id: string }) => row.id === imported[0],
+    ).config.queryUsername,
+    "synthetic-account",
+    "credential updates prefill the verified readback username without exposing its password",
+  );
   assert.ok(
     !output.includes("PRIVATE KEY") &&
       !output.includes("synthetic-password") &&
@@ -733,4 +754,234 @@ test("new logical destinations request atomic source rescans; renewal and templa
     null,
     "forward source cursor is untouched",
   );
+});
+
+test("already connected services reject another account before outbound requests and paused credentials resume without relinking", async (t) => {
+  const { env, store, mf } = await setup();
+  t.after(() => mf.dispose());
+  let outbound = 0;
+  const services = {
+    fetcher: (async () => {
+      outbound++;
+      throw new Error("No outbound request expected");
+    }) as typeof fetch,
+  };
+  for (const [path, input] of [
+    ["/lofi/start", { email: "fixture@example.test" }],
+    [
+      "/qrz",
+      {
+        apiKey: "fixture",
+        book: {
+          bookId: "different",
+          stationCallsign: "W1AW",
+          startDate: "2020-01-01",
+          endDate: "2030-12-31",
+        },
+      },
+    ],
+  ] as const) {
+    const response = await connectionRoute(
+      await request(path, input, env),
+      env,
+      identity,
+      services,
+    );
+    assert.equal(response?.status, 409);
+  }
+  assert.equal(outbound, 0);
+  await store
+    .statement(
+      "UPDATE connections SET config='{\"accountId\":\"fixture\"}' WHERE tenant='a' AND id='source'",
+    )
+    .run();
+  assert.equal(
+    (
+      await connectionRoute(
+        await request("/disable", { id: "source" }, env),
+        env,
+        identity,
+      )
+    )?.status,
+    200,
+  );
+  assert.equal(
+    (
+      await connectionRoute(
+        await request("/lofi/start", { email: "fixture@example.test" }, env),
+        env,
+        identity,
+        services,
+      )
+    )?.status,
+    409,
+  );
+  const resumed = await connectionRoute(
+    await request("/enable", { id: "source" }, env),
+    env,
+    identity,
+    services,
+  );
+  assert.equal(resumed?.status, 200);
+  assert.equal((await store.connection("a", "source"))?.status, "active");
+  assert.equal((await store.connection("b", "source"))?.status, "active");
+  assert.equal(outbound, 0);
+  await connectionRoute(
+    await request("/revoke", { id: "source" }, env),
+    env,
+    identity,
+  );
+  assert.equal(
+    (
+      await connectionRoute(
+        await request("/enable", { id: "source" }, env),
+        env,
+        identity,
+      )
+    )?.status,
+    409,
+  );
+  assert.equal(
+    (await store.connection("a", "source"))?.credential_version,
+    null,
+  );
+});
+
+test("connection slot races commit at most one account and pending LoFi replacement is atomic", async (t) => {
+  const { store, mf } = await setup();
+  t.after(() => mf.dispose());
+  await vacate(store, "lofi");
+  const saved = await Promise.allSettled(
+    ["one", "two"].map((remoteIdentity) =>
+      saveVerifiedConnection(
+        store,
+        "a",
+        {
+          kind: "lofi",
+          remoteIdentity: `pending:${remoteIdentity}`,
+          label: "Pending",
+          status: "approval_pending",
+          credential: { key: remoteIdentity },
+          config: {},
+        },
+        identity,
+        {},
+      ),
+    ),
+  );
+  assert.equal(
+    saved.filter((result) => result.status === "fulfilled").length,
+    1,
+  );
+  const pending = (await store.connections("a")).find(
+    (row) => row.status === "approval_pending",
+  )!;
+  assert.ok(pending);
+  const finished = await saveVerifiedConnection(
+    store,
+    "a",
+    {
+      kind: "lofi",
+      remoteIdentity: "verified-account",
+      label: "Vendor account",
+      credential: { key: "approved" },
+      config: { accountId: "verified-account" },
+    },
+    identity,
+    { replacing: pending.id },
+  );
+  assert.equal(await store.connection("a", pending.id), null);
+  assert.equal(
+    await store.private(
+      "a",
+      pending.id,
+      pending.credential_version!,
+      "credential",
+    ),
+    null,
+  );
+  assert.equal((await store.connection("a", finished.id))?.status, "active");
+  await assert.rejects(
+    saveVerifiedConnection(
+      store,
+      "a",
+      {
+        kind: "lofi",
+        remoteIdentity: "different-account",
+        label: "Stale finish",
+        credential: {},
+        config: {},
+      },
+      identity,
+      { replacing: pending.id },
+    ),
+  );
+  assert.equal(
+    (await store.connections("a")).filter(
+      (row) => row.kind === "lofi" && row.status !== "revoked",
+    ).length,
+    1,
+  );
+  assert.equal(
+    (
+      await store
+        .statement("SELECT count(*) n FROM connection_kind_guards")
+        .first<{ n: number }>()
+    )?.n,
+    0,
+  );
+});
+
+test("resuming LoTW never promotes an untrusted certificate or crosses tenants", async (t) => {
+  const { store, env, mf } = await setup();
+  t.after(() => mf.dispose());
+  const saved = await saveVerifiedConnection(store, "a", {
+    kind: "lotw",
+    remoteIdentity: "station:fixture",
+    label: "Unverified",
+    status: "disabled",
+    credential: { signing: "encrypted-fixture" },
+    config: { certificates: [{ trusted: false, status: "unrevoked" }] },
+  });
+  const resumed = await connectionRoute(
+    await request("/enable", { id: saved.id }, env),
+    env,
+    identity,
+  );
+  assert.equal(resumed?.status, 200);
+  assert.equal(
+    (await store.connection("a", saved.id))?.status,
+    "needs_verification",
+  );
+  const crossed = await connectionRoute(
+    await request("/enable", { id: saved.id }, env),
+    env,
+    { ...identity, tenant: "b" },
+  );
+  assert.equal(crossed?.status, 404);
+  await store
+    .statement(
+      "UPDATE connections SET status='disabled' WHERE tenant='a' AND id=?",
+      saved.id,
+    )
+    .run();
+  await store
+    .statement(
+      "UPDATE private_data SET revoked_at=? WHERE tenant='a' AND connection=? AND kind='credential'",
+      Date.now(),
+      saved.id,
+    )
+    .run();
+  assert.equal(
+    (
+      await connectionRoute(
+        await request("/enable", { id: saved.id }, env),
+        env,
+        identity,
+      )
+    )?.status,
+    409,
+    "quarantined or revoked ciphertext cannot be resumed",
+  );
+  assert.equal((await store.connection("a", saved.id))?.status, "disabled");
 });

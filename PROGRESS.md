@@ -1,10 +1,10 @@
 # Implementation progress
 
-Last checkpoint: 2026-10-22, invite-only onboarding deployed read-only. The owner authorizes signed logical commits directly to `origin/main`; no PRs. Every vendor export gate remains closed. This deployment does not authorize real logbook writes.
+Last checkpoint: 2026-10-22, LoFi connection passkey freshness fix deployed read-only. The owner authorizes signed logical commits directly to `origin/main`; no PRs. Every vendor export gate remains closed. This deployment does not authorize real logbook writes.
 
 ## Current production
 
-- Host/RP: `https://ferry.n1rwj.com` / `ferry.n1rwj.com`. App revision `58a965d7c54d6acf3ecc24ad289433f7b62fb733`, Worker version `0bf32d19-13c7-43da-b179-702ab49ad3d6`; five-minute cron, workers.dev/previews disabled.
+- Host/RP: `https://ferry.n1rwj.com` / `ferry.n1rwj.com`. App revision `cbe9e63af1bf9215e2b87b75631f2effebd17e10`, Worker version `6a580035-ad08-4e35-9fa5-5d09fe5f9baf`; five-minute cron, workers.dev/previews disabled.
 - Existing Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2`; dedicated D1 `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) has all six migrations applied. No unrelated resources were changed.
 - Remote settings read back `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, empty `LIVE_WRITE_AUTHORIZATION`, `ROLLOUT_QSO_IDS_JSON=[]`, and `LOTW_TRUST_ROOTS_JSON=[]`.
 - Native `EMAIL` sender restricted to `signup@ferry.n1rwj.com`; sending DNS verified, existing Fastmail MX preserved, email-content previews disabled. Existing Wrangler OAuth includes Email Sending write access; no new credentials are needed for invites.
@@ -22,7 +22,7 @@ Last checkpoint: 2026-10-22, invite-only onboarding deployed read-only. The owne
 
 ## Verification and evidence
 
-- Full `mise run check`: **168 tests**, formatting, recommended lint with warnings as errors, server/browser/script TypeScript and Worker build pass. [Deployed-code CI passed](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39884975858). Bundle 1545.31 KiB raw / 292.65 KiB gzip; deployment-reported startup 29 ms. These are not billed CPU/peak-memory/monthly-cost measurements.
+- Full `mise run check`: **180 tests**, formatting, recommended lint with warnings as errors, server/browser/script TypeScript and Worker build pass. [Deployed-code CI passed](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39887260462). Bundle 1545.91 KiB raw / 292.78 KiB gzip; deployment-reported startup 30 ms. These are not billed CPU/peak-memory/monthly-cost measurements.
 - Actual workerd/D1 tests cover isolation, passkey cryptography, invitation expiry/atomic races, zero-write adoption, immutable templates, segment changes, retries/crashes, uncertain readback, signing vectors, revocation and restore. Native global-fetch adapter tests exercise successful requests plus redirect/opaque rejection through contained fixtures; no live vendors are contacted.
 - Actual isolated Wrangler/D1 + Chromium virtual resident/UV passkey signup, sign-out/sign-in and zero-connection saves pass. Quiet period 40 and COMMENT preference persisted after reload. `/join` asset canonicalization was found and fixed. Mobile 375×812 has no horizontal overflow.
 - Deployed Chromium confirms invite-only home, uninvited signup 403, `/join` retained/focused, code hints and no console errors. Health reports exports=false; local mailbox/alternate workers.dev return 404. All gates/RP/D1/sender/preview restrictions were independently checked through Cloudflare settings.
@@ -43,4 +43,5 @@ Keep exports disabled. Remaining acceptance inputs: exhaustive LoFi UUID/tombsto
 - Implemented automatic session/CSRF preflight and passkey assertion for protected connection/account actions; cancellation retains inputs and sends no protected request. Typed pre-dispatch auth errors permit one bounded retry; vendor, origin/CSRF and post-request failures never do. The original account and CSRF snapshot are pinned through concurrent refresh/retry.
 - Focused client/backend checks pass; actual isolated Worker/Chromium verifies stale/fresh/canceled approval flows and real signature checks with contained vendor fixtures. Review added stale+invalid-CSRF ordering and preservation of an unverified add-passkey ceremony on a retryable freshness refusal.
 - Full `mise run check` passes **180 tests**, formatting, strict lint, both TypeScript checks and Worker build (292.78 KiB gzip). Browser cancellation/retry, immutable CSRF/account snapshots, stale+invalid-CSRF precedence and add-key ceremony preservation have regression coverage.
-- Next: commit and push, redeploy with all vendor export gates closed, verify production asset/gate state and final CI, then update the deployed revision/version. Production secrets, data, passkeys and existing connections must be preserved. No live vendor requests were made during this fix.
+- Signed/pushed `cbe9e63af1bf` and deployed it as Worker version `6a580035-ad08-4e35-9fa5-5d09fe5f9baf`. No migrations or secret changes. Live new-client asset, typed origin rejection, health and all closed export gates verified; no real vendor requests were made.
+- Next operator action: refresh Ferry and request LoFi approval; use the existing passkey when prompted. The owner must complete that actual passkey/vendor approval flow; automated checks used contained vendor fixtures. Existing account data/passkeys/connections remain intact.

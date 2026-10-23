@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { Work } from "../src/intake.ts";
+import { contactAdif } from "../src/delivery.ts";
+import { destinationIdentityClaim } from "../src/identity-claims.ts";
 import {
   contactPriority,
   expireSource,
@@ -100,6 +102,7 @@ async function setup() {
         "0009_vendor_requests.sql",
         "0010_source_priority.sql",
         "0018_reconciliation_work.sql",
+        "0023_outbound_identity_claims.sql",
       ].map((file) =>
         readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8"),
       ),
@@ -3313,6 +3316,13 @@ test("a refused source cursor parks prepared work, preserves history, and restar
       "v1",
       version,
       now + 1,
+      undefined,
+      undefined,
+      undefined,
+      {
+        claim: await destinationIdentityClaim("qrz", contactAdif(contact)),
+        sourceVersion: contact.reconciliationVersion,
+      },
     );
     const oldCursor = (
       await store
@@ -3360,7 +3370,7 @@ test("a refused source cursor parks prepared work, preserves history, and restar
       JSON.parse(gap.cursor).previous,
       JSON.parse(oldCursor ?? "null"),
     );
-    const lease = await store.claim("a", "delivery", now + 3);
+    const lease = await store.claim("a", "delivery:destination", now + 3);
     assert.ok(lease);
     await assert.rejects(store.claimAttempt("a", attempt, lease, now + 3));
     assert.equal(

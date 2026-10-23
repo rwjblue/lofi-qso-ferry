@@ -3,6 +3,11 @@ import {
   normalizeAdifValue,
   serializeAdifRecord,
 } from "./adif.ts";
+import {
+  availableIdentityClaim,
+  claimedAttemptCurrent,
+  destinationIdentityClaim,
+} from "./identity-claims.ts";
 import { type IntakeContact, pendingContacts } from "./intake.ts";
 import { LotwClient, observeLotwContact } from "./lotw.ts";
 import { type Contact, isTestCallsign, isTestContact } from "./projection.ts";
@@ -40,8 +45,8 @@ import {
 } from "./templates.ts";
 import {
   VendorDeferredError,
-  vendorFetch,
   type VendorPriority,
+  vendorFetch,
 } from "./vendor-requests.ts";
 export interface DeliveryGates {
   exportsEnabled: boolean;
@@ -490,11 +495,6 @@ export async function prepareDue(
     !["missing_current_identity", "changed", "live_new"].includes(row.state)
   )
     return { state: "skipped", reason: "not_due_or_current" };
-  if (contact.startAtMillis % 1000)
-    return {
-      state: "blocked",
-      reason: "subsecond_export_requires_identity_claim",
-    };
   if (
     row.context_generation != null &&
     !(await sourceContextUnchanged(store, key, row.context_generation, now))
@@ -518,6 +518,40 @@ export async function prepareDue(
     !connection.credential_version
   )
     return { state: "blocked", reason: "connection_inactive" };
+  if (connection.kind !== "qrz" && connection.kind !== "lotw")
+    return { state: "blocked", reason: "invalid_destination" };
+  // This projection is only used by the guarded attempt path. The public ADIF
+  // helper remains strict; every attempt must acquire its exact seconds claim.
+  const structured = structuredContactAdif(contact);
+  const identity = await destinationIdentityClaim(connection.kind, structured);
+  const available = availableIdentityClaim(key, identity);
+  const retained =
+    connection.kind === "lotw"
+      ? await store.lotwIdentityClaimGuard(key, identity.hash)
+      : { sql: "1", params: [] };
+  const ownership = await store
+    .statement(
+      `SELECT (${available.sql}) AND (${retained.sql}) available,EXISTS(SELECT 1 FROM legacy_qrz_identity_reservations r WHERE r.tenant=? AND r.destination=?) legacy,EXISTS(SELECT 1 FROM legacy_outbound_identity_reservations r WHERE r.tenant=? AND r.destination=?) legacy_attempt`,
+      ...available.params,
+      ...retained.params,
+      key.tenant,
+      key.destination,
+      key.tenant,
+      key.destination,
+    )
+    .first<{ available: number; legacy: number; legacy_attempt: number }>();
+  if (ownership?.legacy)
+    return {
+      state: "blocked",
+      reason: "legacy_qrz_identity_backfill_required",
+    };
+  if (ownership?.legacy_attempt)
+    return {
+      state: "blocked",
+      reason: "legacy_outbound_identity_backfill_required",
+    };
+  if (!ownership?.available)
+    return { state: "blocked", reason: "outbound_identity_claim_conflict" };
   if (deps.priority === "background") {
     const backlog = await store
       .statement(
@@ -548,7 +582,6 @@ export async function prepareDue(
     if (!credential)
       return { state: "blocked", reason: "credential_unavailable" };
     const client = qrzClient(store, credential, config, gates, deps);
-    const structured = contactAdif(contact);
     let record = structured;
     if (row.narrative !== "remote_preserved") {
       const version = await activeTemplate(store, key, row.template_version);
@@ -859,18 +892,65 @@ export async function prepareDue(
       preparedAt: new Date(now).toISOString(),
     };
   } else return { state: "blocked", reason: "invalid_destination" };
-  const attemptId = await store.stage(
-    key,
-    contact.generation,
-    payload,
-    connection.credential_version,
-    expectedTemplate,
-    now,
-    payload.projectionHash,
-    lotwIdentityId,
-    deps.priority ?? "live",
-  );
+  let attemptId: string;
+  try {
+    attemptId = await store.stage(
+      key,
+      contact.generation,
+      payload,
+      connection.credential_version,
+      expectedTemplate,
+      now,
+      payload.projectionHash,
+      lotwIdentityId,
+      deps.priority ?? "live",
+      {
+        claim: await preparedIdentityClaim(payload),
+        sourceVersion: (contact as Partial<IntakeContact>)
+          .reconciliationVersion,
+      },
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("outbound identity claim conflict")
+    )
+      return { state: "blocked", reason: "outbound_identity_claim_conflict" };
+    if (
+      error instanceof Error &&
+      error.message.includes("legacy QRZ identity backfill required")
+    )
+      return {
+        state: "blocked",
+        reason: "legacy_qrz_identity_backfill_required",
+      };
+    if (
+      error instanceof Error &&
+      error.message.includes("legacy outbound identity backfill required")
+    )
+      return {
+        state: "blocked",
+        reason: "legacy_outbound_identity_backfill_required",
+      };
+    throw error;
+  }
   return { state: "prepared", attemptId };
+}
+
+async function preparedIdentityClaim(payload: PreparedPayload) {
+  if (payload.kind === "qrz")
+    return destinationIdentityClaim("qrz", payload.record);
+  return destinationIdentityClaim("lotw", {
+    STATION_CALLSIGN: payload.station.callsign,
+    CALL: payload.contact.call,
+    QSO_DATE: payload.contact.date.replaceAll("-", ""),
+    TIME_ON: payload.contact.time.replaceAll(":", "").replace(/Z$/, ""),
+    BAND: payload.contact.band,
+    MODE: payload.contact.mode,
+    ...(payload.contact.submode ? { SUBMODE: payload.contact.submode } : {}),
+    PROP_MODE: payload.contact.propagation ?? "",
+    SAT_NAME: payload.contact.satellite ?? "",
+  });
 }
 interface AttemptRow {
   id: string;
@@ -880,6 +960,7 @@ interface AttemptRow {
   generation: string;
   payload_id: string;
   credential_version: string;
+  attempt_state: string;
 }
 async function attemptData(
   store: Store,
@@ -891,7 +972,11 @@ async function attemptData(
   payload: PreparedPayload;
 } | null> {
   const attempt = await store
-    .statement("SELECT * FROM attempts WHERE tenant=? AND id=?", tenant, id)
+    .statement(
+      "SELECT a.*,s.state AS attempt_state FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.id=?",
+      tenant,
+      id,
+    )
     .first<AttemptRow>();
   if (!attempt) return null;
   const connection = await store.connection(tenant, attempt.destination);
@@ -949,6 +1034,29 @@ export async function dispatchAttempt(
       ),
     ]);
     return { state: "blocked", reason: "test_operation_not_exported" };
+  }
+  if (data.attempt.attempt_state !== "prepared")
+    return { state: "skipped", reason: "attempt_not_claimable" };
+  const identity = await preparedIdentityClaim(data.payload);
+  if (!(await claimedAttemptCurrent(store, tenant, id, identity, now))) {
+    // A source/context refresh can invalidate the pinned proof without changing
+    // the payload. Retire only known-unsent linked attempts so a fresh prepare
+    // can recapture evidence; destination ownership is deliberately retained.
+    await store.db.batch([
+      store.statement(
+        "INSERT INTO attempt_events(tenant,attempt,state,at,reason) SELECT tenant,attempt,'cancelled',?,'outbound_identity_evidence_changed' FROM attempt_state s WHERE tenant=? AND attempt=? AND state='prepared' AND EXISTS(SELECT 1 FROM attempt_identity_claims i WHERE i.tenant=s.tenant AND i.attempt=s.attempt)",
+        now,
+        tenant,
+        id,
+      ),
+      store.statement(
+        "UPDATE attempt_state SET state='cancelled',reason='outbound_identity_evidence_changed',updated_at=? WHERE tenant=? AND attempt=? AND state='prepared' AND EXISTS(SELECT 1 FROM attempt_identity_claims i WHERE i.tenant=attempt_state.tenant AND i.attempt=attempt_state.attempt)",
+        now,
+        tenant,
+        id,
+      ),
+    ]);
+    return { state: "blocked", reason: "outbound_identity_claim_unavailable" };
   }
   const sourceContext = await sourceExportContext(
     store,
@@ -1034,6 +1142,14 @@ export async function dispatchAttempt(
             current.credential_version === data.attempt.credential_version &&
             activeSource?.status === "active" &&
             Boolean(liveLease) &&
+            (await claimedAttemptCurrent(
+              store,
+              tenant,
+              id,
+              identity,
+              deps.now ?? Date.now(),
+              lease,
+            )) &&
             (await sourceContextUnchanged(
               store,
               key,
@@ -1196,6 +1312,14 @@ export async function dispatchAttempt(
         beforeSubmit.credential_version !== data.attempt.credential_version ||
         (await store.connection(tenant, data.attempt.source))?.status !==
           "active" ||
+        !(await claimedAttemptCurrent(
+          store,
+          tenant,
+          id,
+          identity,
+          deps.now ?? Date.now(),
+          lease,
+        )) ||
         !(await sourceContextUnchanged(
           store,
           key,

@@ -3,8 +3,21 @@ import assert from "node:assert/strict";
 import { database, seed } from "./helpers.ts";
 import { canonicalLotwIdentity, lotwRemoteIdentity } from "../src/reconcile.ts";
 import { LOTW_PRIOR_IDENTITY_NOTICE } from "../src/store.ts";
+import { destinationIdentityClaim } from "../src/identity-claims.ts";
+import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
+
+async function currentDatabase() {
+  const state = await database();
+  try {
+    await applyAdditionalMigrations(state.db);
+    return state;
+  } catch (error) {
+    await state.mf.dispose();
+    throw error;
+  }
+}
 test("observed uncertain artifact preserves exact baseline across new source and fences replay", async () => {
-  const { mf, store } = await database();
+  const { mf, store } = await currentDatabase();
   try {
     const key = await seed(store);
     const version = await store.saveTemplate("a", "destination", {
@@ -14,15 +27,32 @@ test("observed uncertain artifact preserves exact baseline across new source and
     await store
       .statement("UPDATE ledger SET state='missing_current_identity'")
       .run();
+    const record = {
+      STATION_CALLSIGN: "N0TEST",
+      CALL: "W1AW",
+      QSO_DATE: "20261022",
+      TIME_ON: "120001",
+      BAND: "20M",
+      MODE: "CW",
+    };
     const id = await store.stage(
       key,
       "g1",
-      { record: { CALL: "W1AW" } },
+      { record },
       "v1",
       version,
       1800001,
+      undefined,
+      undefined,
+      undefined,
+      { claim: await destinationIdentityClaim("qrz", record) },
     );
-    const send = (await store.claim("a", "send", 1800001, 100))!;
+    const send = (await store.claim(
+      "a",
+      "delivery:destination",
+      1800001,
+      100,
+    ))!;
     assert(await store.claimAttempt("a", id, send, 1800002));
     await store.resolve("a", id, send, "uncertain", null, 1800003);
     await store.observe(key, "g2", "h2", 30, false, 1800004);
@@ -62,7 +92,7 @@ test("observed uncertain artifact preserves exact baseline across new source and
   }
 });
 test("fenced LoTW dispatch retains possible identity across a crash and outbox expiry", async () => {
-  const { mf, store } = await database();
+  const { mf, store } = await currentDatabase();
   try {
     const key = await seed(store);
     await store
@@ -107,10 +137,12 @@ test("fenced LoTW dispatch retains possible identity across a crash and outbox e
       preparedAt,
       "new-projection",
       correction.remoteId,
+      undefined,
+      { claim: await destinationIdentityClaim("lotw", corrected) },
     );
     const expiredLease = (await store.claim(
       "a",
-      "expired-dispatch",
+      "delivery:destination",
       preparedAt,
       1,
     ))!;
@@ -131,7 +163,7 @@ test("fenced LoTW dispatch retains possible identity across a crash and outbox e
     );
     const lease = (await store.claim(
       "a",
-      "crashing-dispatch",
+      "delivery:destination",
       preparedAt + 3,
       1000,
     ))!;
@@ -169,7 +201,7 @@ test("fenced LoTW dispatch retains possible identity across a crash and outbox e
   }
 });
 test("later revisions retain one confirmation projection and deduplicate canonical identity evidence", async () => {
-  const { mf, store } = await database();
+  const { mf, store } = await currentDatabase();
   try {
     const key = await seed(store);
     await store
@@ -188,6 +220,7 @@ test("later revisions retain one confirmation projection and deduplicate canonic
         SAT_NAME: "",
       },
     };
+    identity.remoteId = await lotwRemoteIdentity(identity.identity);
     for (let index = 1; index <= 2; index++) {
       const observedAt = index * 2000000;
       await store.observe(
@@ -209,8 +242,17 @@ test("later revisions retain one confirmation projection and deduplicate canonic
         "v1",
         null,
         observedAt,
+        undefined,
+        identity.remoteId,
+        undefined,
+        { claim: await destinationIdentityClaim("lotw", identity.identity) },
       );
-      const lease = (await store.claim("a", `send${index}`, observedAt, 1000))!;
+      const lease = (await store.claim(
+        "a",
+        "delivery:destination",
+        observedAt,
+        1000,
+      ))!;
       assert(await store.claimAttempt("a", id, lease, observedAt + 1));
       await assert.rejects(
         store.resolve(
@@ -266,8 +308,17 @@ test("later revisions retain one confirmation projection and deduplicate canonic
       "v1",
       null,
       6000001,
+      undefined,
+      identity.remoteId,
+      undefined,
+      { claim: await destinationIdentityClaim("lotw", identity.identity) },
     );
-    const lease = (await store.claim("a", "later-source", 6000001, 1000))!;
+    const lease = (await store.claim(
+      "a",
+      "delivery:destination",
+      6000001,
+      1000,
+    ))!;
     assert(await store.claimAttempt("a", pending, lease, 6000002));
     await store.resolve(
       "a",

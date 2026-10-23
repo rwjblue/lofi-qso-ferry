@@ -1,9 +1,14 @@
 import type { AdifRecord } from "./adif.ts";
+import {
+  availableIdentityClaim,
+  destinationIdentityClaim,
+  reserveIdentityClaim,
+} from "./identity-claims.ts";
 import { matchQrzHistory, sameQrzIdentity } from "./qrz.ts";
-import { canonical, randomToken, sha256 } from "./security.ts";
-import type { Connection, LedgerKey, Store } from "./store.ts";
-import { lotwMode } from "./signing.ts";
 import type { ReconciliationLedger } from "./reconciliation-work.ts";
+import { canonical, randomToken, sha256 } from "./security.ts";
+import { lotwMode } from "./signing.ts";
+import type { Connection, LedgerKey, Store } from "./store.ts";
 
 export interface AdoptionResult {
   applied: boolean;
@@ -56,7 +61,7 @@ export async function adoptHistoryBatch(
     seen.add(key);
   }
   const results: AdoptionResult[] = [];
-  // At most eight statements per item, including collision quarantine.
+  // At most nine statements per item, including claim and collision quarantine.
   for (let offset = 0; offset < items.length; offset += 8) {
     const commitTime = now();
     const plans = await Promise.all(
@@ -457,10 +462,23 @@ async function prepareHistoryAdoption(
     : null;
   if (outcome.state === "adopted_existing" && !remoteId)
     return { applied: false, reason: "remote_identity_missing" };
-  const retainedClaim =
+  const priorClaim =
     ledger.destination_kind === "lotw" && remoteId
       ? await store.lotwIdentityClaimGuard(key, remoteId)
       : { sql: "1", params: [] };
+  const outboundIdentity = remote
+    ? await destinationIdentityClaim(
+        ledger.destination_kind === "qrz" ? "qrz" : "lotw",
+        remote,
+      )
+    : null;
+  const outboundAvailable = outboundIdentity
+    ? availableIdentityClaim(key, outboundIdentity)
+    : { sql: "1", params: [] };
+  const retainedClaim = {
+    sql: `(${priorClaim.sql}) AND (${outboundAvailable.sql})`,
+    params: [...priorClaim.params, ...outboundAvailable.params],
+  };
   const adoption = store.statement(
     `UPDATE ledger SET confirmed=COALESCE(?,confirmed),state=?,reason=?,baseline_hash=COALESCE(?,source_hash),source_hash=COALESCE(?,source_hash),remote_hash=?,remote_id=?,provenance=CASE WHEN ?='adopted_existing' THEN 'adopted' ELSE provenance END,narrative=CASE WHEN ?='adopted_existing' AND ?='qrz' THEN 'remote_preserved' ELSE narrative END,updated_at=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND source_hash=? AND remote_id IS NULL AND state!='changed' AND sent_hash IS NULL AND template_version IS NULL AND provenance NOT IN('ferry_created','adoption_conflict') AND NOT EXISTS(SELECT 1 FROM ledger other WHERE other.tenant=? AND other.destination=? AND other.remote_id=? AND (other.source!=? OR other.qso!=?)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND EXISTS(SELECT 1 FROM connections d WHERE d.tenant=ledger.tenant AND d.id=ledger.destination AND d.kind=?) AND ${retainedClaim.sql} AND (${currentInventory.sql}) RETURNING qso`,
     outcome.state === "adopted_existing" && ledger.destination_kind === "lotw"
@@ -522,6 +540,22 @@ async function prepareHistoryAdoption(
     ...(guardStart ? [guardStart] : []),
     adoption,
     ...(identity ? [identity] : []),
+    ...(outboundIdentity
+      ? [
+          reserveIdentityClaim(store, key, outboundIdentity, now, {
+            sql: `EXISTS(SELECT 1 FROM ledger WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND state='adopted_existing' AND remote_id=? AND provenance='adopted') AND (${currentInventory.sql})`,
+            params: [
+              key.tenant,
+              key.source,
+              key.qso,
+              key.destination,
+              generation,
+              remoteId,
+              ...currentInventory.params,
+            ],
+          }),
+        ]
+      : []),
   ];
   const adoptionIndex = guardStart ? 1 : 0;
   let quarantineIndex: number | undefined;
@@ -543,11 +577,14 @@ async function prepareHistoryAdoption(
       ...currentInventory.params,
     ];
     const conflictExists = `EXISTS(SELECT 1 FROM ledger contender WHERE ${contenderWhere} AND contender.provenance='adoption_conflict')`;
-    const ownerWhere = `owner.tenant=? AND owner.destination=? AND owner.remote_id=? AND owner.provenance='adoption_conflict' AND ${conflictExists}`;
+    const ownerIdentity = `(owner.remote_id=? OR EXISTS(SELECT 1 FROM destination_identity_claims claimed WHERE claimed.tenant=owner.tenant AND claimed.destination=owner.destination AND claimed.source=owner.source AND claimed.qso=owner.qso AND claimed.vendor=? AND claimed.identity_hash=?))`;
+    const ownerWhere = `owner.tenant=? AND owner.destination=? AND ${ownerIdentity} AND owner.provenance='adoption_conflict' AND ${conflictExists}`;
     const ownerParams = [
       key.tenant,
       key.destination,
       remoteId,
+      outboundIdentity?.vendor ?? ledger.destination_kind,
+      outboundIdentity?.hash ?? "",
       ...contenderParams,
     ];
     quarantineIndex = statements.length;
@@ -559,7 +596,7 @@ async function prepareHistoryAdoption(
         ...contenderParams,
       ),
       store.statement(
-        `UPDATE ledger AS owner SET state='history_ambiguous',provenance='adoption_conflict',reason=?,updated_at=? WHERE owner.tenant=? AND owner.destination=? AND owner.remote_id=? AND owner.provenance='adopted' AND owner.sent_hash IS NULL AND owner.template_version IS NULL AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=owner.tenant AND a.source=owner.source AND a.qso=owner.qso AND a.destination=owner.destination AND s.state NOT IN('prepared','rejected','cancelled')) AND ${conflictExists}`,
+        `UPDATE ledger AS owner SET state='history_ambiguous',provenance='adoption_conflict',reason=?,updated_at=? WHERE owner.tenant=? AND owner.destination=? AND ${ownerIdentity} AND owner.provenance='adopted' AND owner.sent_hash IS NULL AND owner.template_version IS NULL AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=owner.tenant AND a.source=owner.source AND a.qso=owner.qso AND a.destination=owner.destination AND s.state NOT IN('prepared','rejected','cancelled')) AND ${conflictExists}`,
         ADOPTION_CONFLICT_REASON,
         now,
         ...ownerParams,

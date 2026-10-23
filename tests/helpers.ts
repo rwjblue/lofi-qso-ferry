@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { Store } from "../src/store.ts";
 export const keys = {
   active: "1",
@@ -8,6 +8,27 @@ export const keys = {
     "2": Buffer.alloc(32, 8).toString("base64url"),
   },
 };
+export async function applyMigration(db: D1Database, name: string) {
+  const sql = await readFile(
+    new URL(`../migrations/${name}`, import.meta.url),
+    "utf8",
+  );
+  let current = "";
+  for (const line of sql.split("\n")) {
+    current += `${line}\n`;
+    const trimmed = current.replace(/^\s*(?:--[^\n]*\n\s*)*/, "");
+    const trigger = trimmed.startsWith("CREATE TRIGGER");
+    if (
+      line.trimEnd().endsWith(";") &&
+      (!trigger ||
+        line.trim() === "END;" ||
+        /^CREATE TRIGGER[^\n]*\bEND;$/.test(trimmed.trim()))
+    ) {
+      await db.prepare(current).run();
+      current = "";
+    }
+  }
+}
 export async function database() {
   const mf = new Miniflare(
     convertV4MiniflareOptions({

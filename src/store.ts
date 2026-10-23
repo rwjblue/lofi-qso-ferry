@@ -1,5 +1,6 @@
-import { canonical, open, randomToken, seal, sha256 } from "./security.ts";
+import type { DestinationIdentityClaim } from "./identity-claims.ts";
 import type { Envelope, Keyring } from "./security.ts";
+import { canonical, open, randomToken, seal, sha256 } from "./security.ts";
 export interface Connection {
   tenant: string;
   id: string;
@@ -412,6 +413,10 @@ export class Store {
     transmittedHash?: string,
     lotwIdentityId?: string,
     priority?: "live" | "background",
+    identity?: {
+      claim: DestinationIdentityClaim;
+      sourceVersion?: number;
+    },
   ) {
     const id = randomToken();
     const payloadHash = transmittedHash ?? (await sha256(canonical(payload)));
@@ -425,7 +430,9 @@ export class Store {
     );
     await this.db.batch([
       this.statement(
-        "INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version) VALUES(?,?,?,?,?,?,?,?,?)",
+        identity
+          ? "INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version,identity_vendor,identity_hash,identity_source_version,identity_lotw_owner_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
+          : "INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version) VALUES(?,?,?,?,?,?,?,?,?)",
         id,
         key.tenant,
         key.source,
@@ -435,6 +442,16 @@ export class Store {
         expectedTemplate,
         now,
         credentialVersion,
+        ...(identity
+          ? [
+              identity.claim.vendor,
+              identity.claim.hash,
+              identity.sourceVersion ?? null,
+              identity.claim.vendor === "lotw"
+                ? (await this.lotwIdentityPrefix(key)) + identity.claim.hash
+                : null,
+            ]
+          : []),
       ),
       encrypted,
       this.statement(
@@ -465,6 +482,21 @@ export class Store {
         now,
         ...(priority === undefined ? [] : [priority]),
       ),
+      ...(identity
+        ? [
+            this.statement(
+              "INSERT INTO attempt_identity_claims(tenant,attempt,destination,vendor,identity_hash,source,qso,source_version) VALUES(?,?,?,?,?,?,?,?)",
+              key.tenant,
+              id,
+              key.destination,
+              identity.claim.vendor,
+              identity.claim.hash,
+              key.source,
+              key.qso,
+              identity.sourceVersion ?? null,
+            ),
+          ]
+        : []),
       this.statement(
         "INSERT INTO attempt_events(tenant,attempt,state,at) VALUES(?,?,'prepared',?)",
         key.tenant,

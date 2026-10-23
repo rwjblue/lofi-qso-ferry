@@ -17,6 +17,10 @@ import {
   refreshConfirmations,
 } from "../src/delivery.ts";
 import {
+  destinationIdentityClaim,
+  reserveIdentityClaim,
+} from "../src/identity-claims.ts";
+import {
   observeContact,
   pendingContacts,
   pollSource,
@@ -34,7 +38,11 @@ import {
   VendorDeferredError,
 } from "../src/vendor-requests.ts";
 import { database, seed } from "./helpers.ts";
-import { FIXTURE_NOW, schedulerFixture } from "./runtime-fixtures.ts";
+import {
+  applyAdditionalMigrations,
+  FIXTURE_NOW,
+  schedulerFixture,
+} from "./runtime-fixtures.ts";
 
 const gates: DeliveryGates = {
   exportsEnabled: true,
@@ -45,12 +53,7 @@ const at = Date.parse("2026-10-22T12:00:01Z");
 const now = at + 31 * 60000;
 async function deliveryDatabase() {
   const harness = await database();
-  const sql = await readFile(
-    new URL("../migrations/0009_vendor_requests.sql", import.meta.url),
-    "utf8",
-  );
-  for (const statement of sql.split(";"))
-    if (statement.trim()) await harness.db.prepare(statement).run();
+  await applyAdditionalMigrations(harness.db);
   return harness;
 }
 async function contact(
@@ -104,7 +107,7 @@ test("read-only ADIF history projection omits fractional seconds without roundin
   }
 });
 
-test("fractional contacts remain blocked from preparation before any vendor call or signing", async () => {
+test("fractional contacts with an existing competing claim block before any vendor call or signing", async () => {
   const h = await setup();
   try {
     const fractional = await contact("source note", at + 999);
@@ -123,6 +126,25 @@ test("fractional contacts remain blocked from preparation before any vendor call
         false,
         at,
       );
+      const other = { ...h.key, qso: "other" };
+      await h.store.observe(
+        other,
+        "other-generation",
+        "other-hash",
+        30,
+        false,
+        at,
+      );
+      await reserveIdentityClaim(
+        h.store,
+        other,
+        await destinationIdentityClaim(
+          destination,
+          contactReconciliationAdif(fractional),
+        ),
+        now,
+        { sql: "1", params: [] },
+      ).run();
       assert.deepEqual(
         await prepareDue(h.store, h.key, fractional, gates, {
           now,
@@ -132,7 +154,7 @@ test("fractional contacts remain blocked from preparation before any vendor call
         }),
         {
           state: "blocked",
-          reason: "subsecond_export_requires_identity_claim",
+          reason: "outbound_identity_claim_conflict",
         },
       );
       assert.equal(
@@ -1164,7 +1186,7 @@ test("a full background outbox stops new vendor reads while live preparation rem
   try {
     for (const id of ["q1", "q2"]) {
       const key = { ...h.key, qso: id };
-      const item = { ...h.item, id };
+      const item = { ...h.item, id, call: `W${id.slice(1)}AW` };
       if (id !== "q1") {
         await h.store.observe(
           key,
@@ -1193,7 +1215,7 @@ test("a full background outbox stops new vendor reads while live preparation rem
       );
     }
     const key = { ...h.key, qso: "q3" };
-    const item = { ...h.item, id: "q3" };
+    const item = { ...h.item, id: "q3", call: "W3AW" };
     await h.store.observe(
       key,
       item.generation,
@@ -1246,7 +1268,7 @@ test("inactive routes and superseded credentials do not hold other background ou
       destination = "destination",
     ) => {
       const key = { tenant: "a", source, qso, destination };
-      const item = { ...h.item, id: qso };
+      const item = { ...h.item, id: qso, call: `W${qso.slice(1)}AW` };
       await h.store.observe(
         key,
         item.generation,
@@ -1287,6 +1309,11 @@ test("inactive routes and superseded credentials do not hold other background ou
         )
         .run();
     }
+    await (
+      await h.store.putPrivate("a", "available-source", "v1", "credential", {
+        secret: "synthetic",
+      })
+    ).run();
     await (
       await h.store.putPrivate(
         "a",

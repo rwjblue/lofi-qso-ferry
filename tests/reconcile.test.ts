@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { contactReconciliationAdif, prepareDue } from "../src/delivery.ts";
+import { destinationIdentityClaim } from "../src/identity-claims.ts";
 import { projectContact, sourceFingerprint } from "../src/projection.ts";
 import {
   adoptHistory,
@@ -22,6 +23,16 @@ import {
   reconciliationCheckStatement,
   finishReconciliationWorkStatement,
 } from "../src/reconciliation-work.ts";
+async function reconciliationDatabase() {
+  const h = await database();
+  try {
+    await applyAdditionalMigrations(h.db);
+    return h;
+  } catch (error) {
+    await h.mf.dispose();
+    throw error;
+  }
+}
 const source = {
   STATION_CALLSIGN: "N0TEST/P",
   CALL: "W1AW",
@@ -46,7 +57,7 @@ const evidence: ReconciliationEvidence = {
   freshCheckComplete: true,
 };
 test("adoption loads its tenant-bound ledger and destination in one RPC", async () => {
-  const h = await database();
+  const h = await reconciliationDatabase();
   try {
     const key = await seed(h.store);
     const foreign = await seed(h.store, "b");
@@ -80,7 +91,7 @@ test("adoption loads its tenant-bound ledger and destination in one RPC", async 
 });
 
 test("single adoption cannot clear a mapping established after its metadata read", async () => {
-  const h = await database();
+  const h = await reconciliationDatabase();
   try {
     const key = await seed(h.store);
     await h.store.observe(key, "g1", "hash", 30);
@@ -119,9 +130,8 @@ test("single adoption cannot clear a mapping established after its metadata read
 });
 
 test("forty route outcomes use seven bounded metadata, commit and completion RPCs", async () => {
-  const h = await database();
+  const h = await reconciliationDatabase();
   try {
-    await applyAdditionalMigrations(h.db);
     await seed(h.store);
     const foreign = await seed(h.store, "b");
     await h.store.observe(foreign, "g1", "foreign", 30);
@@ -266,9 +276,8 @@ test("forty route outcomes use seven bounded metadata, commit and completion RPC
 test("batched adoption quarantines same-chunk and cross-chunk duplicate claims atomically", async () => {
   for (const destination of ["qrz", "lotw"] as const) {
     for (const collision of [1, 8]) {
-      const h = await database();
+      const h = await reconciliationDatabase();
       try {
-        await applyAdditionalMigrations(h.db);
         const key = await seed(h.store);
         await h.store
           .statement(
@@ -378,9 +387,8 @@ test("batched adoption quarantines same-chunk and cross-chunk duplicate claims a
 });
 
 test("batched adoption rejects stale proofs and snapshots without blocking valid neighbors", async () => {
-  const h = await database();
+  const h = await reconciliationDatabase();
   try {
-    await applyAdditionalMigrations(h.db);
     const key = await seed(h.store);
     const names = ["mapped", "changed", "generation", "proof", "valid"];
     for (const qso of names)
@@ -454,7 +462,7 @@ test("batched adoption rejects stale proofs and snapshots without blocking valid
 });
 test("fractional source times adopt only a unique seconds projection and cannot share one remote claim", async () => {
   for (const destination of ["qrz", "lotw"] as const) {
-    const { mf, store } = await database();
+    const { mf, store } = await reconciliationDatabase();
     try {
       const first = await seed(store);
       await store
@@ -647,7 +655,7 @@ test("partial/failed history coverage and source races never authorize backfill"
   );
 });
 test("read-only LoTW adoption retains only encrypted canonical identity and scopes it to its owner", async () => {
-  const { mf, store } = await database();
+  const { mf, store } = await reconciliationDatabase();
   try {
     const key = await seed(store);
     await seed(store, "b");
@@ -705,6 +713,8 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
       1800011,
       "next-projection",
       nextIdentity.remoteId,
+      undefined,
+      { claim: await destinationIdentityClaim("lotw", next) },
     );
     assert.equal((await store.ledger(key))!.confirmed, 0);
     const lease = (await store.claim("a", "correction", 1800012, 1000))!;
@@ -769,7 +779,7 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
   }
 });
 test("D1 adoption preserves narrative policy without a fabricated delivery or signing attempt", async () => {
-  const { mf, store } = await database();
+  const { mf, store } = await reconciliationDatabase();
   try {
     const key = await seed(store);
     await store.observe(key, "g1", "source-input-hash", 30, false, 0);
@@ -806,7 +816,7 @@ test("D1 adoption preserves narrative policy without a fabricated delivery or si
   }
 });
 test("D1 generation CAS, remote uniqueness and tenant boundaries stop stale adoption", async () => {
-  const { mf, store } = await database();
+  const { mf, store } = await reconciliationDatabase();
   try {
     const first = await seed(store);
     await seed(store, "b");
@@ -844,7 +854,7 @@ test("D1 generation CAS, remote uniqueness and tenant boundaries stop stale adop
   }
 });
 test("trusted template mapping survives reconnect inventory", async () => {
-  const { mf, store } = await database();
+  const { mf, store } = await reconciliationDatabase();
   try {
     const key = await seed(store);
     await store.observe(key, "g1", "input", 30, false, 0);
@@ -898,7 +908,7 @@ test("competing adoption cancels only an unsent adopted correction and preserves
     "uncertain",
     "delivered",
   ] as const) {
-    const { mf, store } = await database();
+    const { mf, store } = await reconciliationDatabase();
     try {
       const owner = await seed(store);
       const contender = { ...owner, qso: "contender" };
@@ -914,6 +924,9 @@ test("competing adoption cancels only an unsent adopted correction and preserves
         null,
         1800011,
         "sent-projection",
+        undefined,
+        undefined,
+        { claim: await destinationIdentityClaim("qrz", source) },
       );
       if (state !== "prepared") {
         const lease = (await store.claim("a", "correction", 1800012, 1000))!;
@@ -990,7 +1003,7 @@ test("competing adoption cancels only an unsent adopted correction and preserves
   }
 });
 test("an unresolved contender attempt is not misclassified as an adoption identity conflict", async () => {
-  const { mf, store } = await database();
+  const { mf, store } = await reconciliationDatabase();
   try {
     const owner = await seed(store);
     const contender = { ...owner, qso: "contender" };
@@ -1062,7 +1075,7 @@ test("LoTW individual mode mapping never substitutes modegroup and adopted mappi
   );
 });
 test("adopted and observed LoTW identity keys prevent a second source UUID from claiming the same contact", async () => {
-  const { mf, store } = await database();
+  const { mf, store } = await reconciliationDatabase();
   try {
     const first = await seed(store);
     await store
@@ -1080,6 +1093,10 @@ test("adopted and observed LoTW identity keys prevent a second source UUID from 
       "v1",
       null,
       1800001,
+      undefined,
+      undefined,
+      undefined,
+      { claim: await destinationIdentityClaim("lotw", lotwRemote) },
     );
     const lease = (await store.claim("a", "lotw-reconcile", 1800001, 1000))!;
     assert(await store.claimAttempt("a", id, lease, 1800002));
@@ -1271,7 +1288,7 @@ test("LoTW grid precision review ignores unrelated neighbors but requires one ex
   assert.equal(competing.remote, undefined);
 });
 test("precision review outcomes persist as holds without a remote association or an attempt", async () => {
-  const { mf, store } = await database();
+  const { mf, store } = await reconciliationDatabase();
   try {
     const baseKey = await seed(store);
     for (const destination of ["qrz", "lotw"] as const) {
@@ -1342,9 +1359,8 @@ test("complete retained inventory adopts positive matches but never establishes 
       .state,
     "inventory_pending",
   );
-  const { mf, store } = await database();
+  const { mf, store } = await reconciliationDatabase();
   try {
-    await applyAdditionalMigrations(store.db);
     const key = await seed(store);
     await store.observe(key, "g1", "hash", 30, false, 0);
     assert.equal(

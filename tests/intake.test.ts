@@ -228,6 +228,59 @@ test("contact batches count invalid selections and exclude work already handled 
   assert.equal((await work(state, "b-valid"))?.processed_at, now + 1);
 });
 
+test("finishing an operation reread releases context-blocked contacts from every page", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const earlier = { ...qso, uuid: "qso-earlier", syncedAtMillis: 90 };
+  await pollSource(
+    store,
+    source,
+    fetcher(async () => response([op], [qso, earlier])),
+    now,
+  );
+  assert.deepEqual(await pendingContacts(store, source, 40, now + 1), []);
+  for (const contact of [qso, earlier]) {
+    const row = await work(state, String(contact.uuid));
+    assert.equal(row?.state, "blocked");
+    assert.equal(row?.reason, "operation_context_unavailable");
+  }
+
+  const partial = await rereadOperation(
+    store,
+    source,
+    fetcher(async () => operationResponse([qso], 1, 95)),
+    now + 2,
+  );
+  assert.equal(partial.complete, false);
+  assert.equal((await work(state, "op-1", "operation"))?.state, "pending");
+  assert.deepEqual(await pendingContacts(store, source, 40, now + 3), []);
+  assert.equal((await work(state, "qso-1"))?.state, "blocked");
+
+  const complete = await rereadOperation(
+    store,
+    source,
+    fetcher(async (url) => {
+      assert.equal(url.searchParams.get("syncedUntilMillis"), "95");
+      return operationResponse([earlier]);
+    }),
+    now + 4,
+  );
+  assert.equal(complete.complete, true);
+  assert.equal((await work(state, "op-1", "operation"))?.state, "context");
+  for (const contact of [qso, earlier]) {
+    const row = await work(state, String(contact.uuid));
+    assert.equal(row?.state, "pending");
+    assert.equal(row?.reason, null);
+  }
+  assert.deepEqual(
+    (await pendingContacts(store, source, 40, now + 5))
+      .map((contact) => contact.id)
+      .sort(),
+    ["qso-1", "qso-earlier"],
+  );
+});
+
 test("historical pages stay small while forward arrivals and edits retain live priority", async (t) => {
   const state = await setup();
   const { store, source, now, mf } = state;

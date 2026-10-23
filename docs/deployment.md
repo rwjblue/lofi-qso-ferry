@@ -40,7 +40,7 @@ ROLLOUT_QSO_IDS_JSON=[]
 - Session endpoint returns unauthenticated state with `signupAllowed=false`. The public landing shows an invite-only notice and passkey sign-in; the signup form is hidden. A live uninvited signup probe returned 403 before proof creation or sending.
 - Following the invitation link stays at `/join`, serves the app without the asset-canonicalization redirect, reveals invited enrollment and focuses its email field. Both confirmation inputs expose six-digit numeric/one-time-code attributes.
 - Remote settings independently confirm every closed gate, exact origin/RP, dedicated D1 and sender allowlist. Production local-mailbox and alternate workers.dev endpoints return 404. Email-content previews remain disabled, and no secrets were rotated.
-- Earlier full isolated checks passed **232 tests**, formatting, recommended lint with warnings as errors, types and build. Actual workerd exercises hosted invited registration and native adapter fetches through contained fixtures. Actual isolated Wrangler/D1/Chromium signup and passkey sign-in verify quiet40 and account-default template saves with zero connections, including persistence after reload. The earlier scheduler repair passed 377 tests. The 16:12 UTC combined throughput/test-operation release passed 452 tests locally and in CI. The 16:37 UTC follow-up passed 465 tests and all required checks locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39988135604). The current 16:53 UTC fairness release passed **467 tests** and all required local checks; [its CI run](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39990488592) failed only formatting after a documentation edit following local validation. The documentation correction and CI rerun are pending. Release-specific evidence is recorded below.
+- Earlier full isolated checks passed **232 tests**, formatting, recommended lint with warnings as errors, types and build. Actual workerd exercises hosted invited registration and native adapter fetches through contained fixtures. Actual isolated Wrangler/D1/Chromium signup and passkey sign-in verify quiet40 and account-default template saves with zero connections, including persistence after reload. The earlier scheduler repair passed 377 tests. The 16:12 UTC combined throughput/test-operation release passed 452 tests locally and in CI. The 16:37 UTC follow-up passed 465 tests and all required checks locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39988135604). The current 16:53 UTC fairness release passed **467 tests** and all required local checks; [its CI run](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39990488592) failed only formatting after a documentation edit following local validation. Signed documentation revision `7252cad4` fixes that formatting without changing the deployed code; its [CI rerun](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39991118470) passed all 467 tests and required checks. Release-specific evidence is recorded below.
 - Read-only remote D1 probes verified that the invite task must use query results, rather than bulk-file import summaries, to establish an exact email/deadline grant. Existing OAuth includes Email Sending write access. No real invitation grant/send was performed; CLI sends still require recipient-specific delivery confirmation.
 - The initial deployment delivered one real verification message to the owner's inbox through the same native provider path; only fixed delivery metadata was inspected. That smoke test enrolled no production account and initially observed zero account/connection/ledger/attempt rows. These are historical counts, not a claim about subsequent personal use. New branded mail was rendered/tested locally; email-client/device autofill remains unverified.
 
@@ -442,10 +442,11 @@ Worker `aea20af6-c08d-4718-bc41-2e450d8cc2e4`, created at
 `2026-10-23T16:53:26.165896Z`. Deployment
 `383eb991-f7ff-4dc7-97cd-f8834332f431` at `2026-10-23T16:53:28.594528Z`
 assigns it 100% of traffic. Full local validation passed 467 tests and all
-required checks. [Release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39990488592)
-failed only formatting: a subsequent `PROGRESS.md` edit omitted a blank line
-before a list. The documentation correction and CI rerun are pending; this is
-not a passing CI result.
+required checks. [Initial release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39990488592)
+failed only formatting after a documentation edit. Signed documentation revision
+`7252cad4` corrects that formatting with code identical to the deployed revision;
+its [CI rerun](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39991118470)
+passed all 467 tests and required checks.
 
 The scheduler now rotates which background lane runs first after canonical
 polling: retained contacts, historical rescan or context reread. The isolated
@@ -464,13 +465,37 @@ health returned `status=ok` and `exportsEnabled=false`, and the `/`, `/app.js`
 and `/admin.js` hashes matched the local build. The bundle is 1,720.10 KiB raw /
 332.17 KiB gzip, with reported startup of 32 ms.
 
-Production fairness measurements are pending. Observe the first newly started
-16:55 UTC cron and the following 17:00/17:05 UTC rotations before claiming
-rescan or context progress. The preceding 16:50 UTC run used revision `471e862`
-and processed 15 contacts with 17 classifications in 117.6 seconds, with ten
-errors, no deferrals and no context or rescan progress. Across three observed
-runs of that earlier release, 15–21 contact turns per invocation did not
-establish a sustained completion rate. Runs started before this deployment
-remain evidence for the earlier version even if they finish afterward.
-Exports remain disabled; neither release validation nor scheduling fairness
-completes exception review or establishes 200,000-contact capacity.
+The first fairness run, `16:55:48.291–16:57:28.171 UTC`, processed 23 contact
+turns and made 31 destination classifications in 99.880 seconds. It processed
+55 source records and advanced two historical rescan pages and two context
+reread pages, with six errors and five deferrals. History recorded 14 fetches
+and 22 cache hits. D1 recorded 662 RPCs / 1,495 statements, 203.490 seconds of
+cumulative duration and 93.964 seconds of wall time; overlapping work explains
+why cumulative duration exceeds elapsed time.
+
+The `16:57:52.155 UTC` snapshot showed rotation generation 2 after two
+background rounds, 125 destination checks covering 87 distinct contacts, and
+12 completed QRZ plus 21 completed LoTW partitions. Attempts, cutovers and
+temporary guard rows remained zero. This first run demonstrates resumed rescan
+and context progress alongside reconciliation; it does not establish a sustained
+completion rate across larger accounts.
+
+The second fairness run, `17:01:30.009–17:03:19.475 UTC`, advanced rotation
+generation 3 and one context reread page before processing 15 contacts. It made
+17 destination classifications, including one adoption, with four errors and
+zero deferrals. No rescan page advanced; the context page returned zero source
+records. D1 wall time was 96.214 seconds across 337 RPCs / 751 statements in
+109.466 seconds elapsed. At `17:03:59.338 UTC`, 142 remembered checks covered
+97 contacts, fifteen QRZ and twenty-three LoTW partitions were complete, and
+attempts/cutovers/guard residue remained zero. All three first positions have
+now been exercised across the two runs. The observed 15–23 contact turns remain
+insufficient evidence for complete reconciliation or the larger capacity goals.
+
+The preceding 16:50 UTC run used revision `471e862` and processed 15 contacts
+with 17 classifications in 117.6 seconds, with ten errors, no deferrals and no
+context or rescan progress. Across three observed runs of that earlier release,
+15–21 contact turns per invocation did not establish a sustained completion
+rate. Runs started before this deployment remain evidence for the earlier
+version even if they finish afterward. Exports remain disabled; neither release
+validation nor scheduling fairness completes exception review or establishes
+200,000-contact capacity.

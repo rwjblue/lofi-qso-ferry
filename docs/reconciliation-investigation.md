@@ -182,9 +182,33 @@ all three lanes across deadline exhaustion and a history failure; additional
 races reject expired or replaced cycle leases. All 467 tests and required local
 checks pass. Signed revision `cb9ea362` deployed at 16:53 UTC as Worker
 `aea20af6-c08d-4718-bc41-2e450d8cc2e4`. CI stopped at a documentation-format
-error corrected in the release-note update; a rerun and production observation
-are pending. All gates, assets and health were independently verified, with nineteen
+error corrected in documentation revision `7252cad4`; all 467 tests and required
+checks then passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39991118470)
+with application code identical to the deployed revision. Sustained production
+capacity remains unverified. All gates, assets and health were independently verified, with nineteen
 migrations and zero attempts/cutovers/guard residue.
+
+The first fairness-release run, **16:55:48–16:57:28 UTC**, processed 23 contacts
+and made 31 destination classifications in 99.9 seconds. It advanced **two
+rescan pages and two context reread pages**, returning 55 source records, with
+six errors and five deferrals. The persisted rotation advanced twice. Database
+wall time was 94.0 seconds across 662 RPCs / 1,495 statements; summed RPC time
+was 203.5 seconds. The 16:57:52 snapshot had 125 remembered checks spanning 87
+contacts, twelve completed QRZ partitions and twenty-one completed LoTW
+partitions. Export attempts, cutovers and temporary guard rows remained zero.
+This confirms source recovery and contact processing both advanced in the first
+run; it does not establish complete reconciliation or large-account capacity.
+
+The second fairness-release run, **17:01:30–17:03:19 UTC**, advanced the third
+rotation position and one context page before processing 15 contacts. It made
+17 destination classifications, including one adoption, with four errors and
+zero deferrals. The context page returned no source records; no rescan page ran
+before the deadline. It took 109.5 seconds, including 96.2 seconds of D1 wall
+time across 337 RPCs / 751 statements. At 17:03:59 UTC, 142 remembered checks
+covered 97 contacts, with fifteen QRZ and twenty-three LoTW partitions complete.
+Attempts, cutovers and temporary guard rows remained zero. Both new runs
+advanced context recovery, and the rotation reached all three first positions;
+the measured 15–23 contact turns still fall short of the capacity targets.
 
 Cumulative stage/database durations may overlap under concurrency. The new
 `database.wallMs` reports elapsed time with any database request in flight;
@@ -343,7 +367,7 @@ be claimed from destination batching alone.
    complete review interface remains needed. Provide paginated, tenant-scoped review with full
    contact identifiers and the relevant source/candidate differences; the
    current recent-activity list is not a complete review workflow.
-2. **Deploy and measure the implemented throughput path.** Keep every export
+2. **Measure and validate the deployed throughput path.** Keep every export
    gate closed. Verify sustained classification progress, inventory reuse,
    stable-hold retry suppression, source freshness and live fairness using the
    new stage/D1/classification telemetry. Record the deployed revision,

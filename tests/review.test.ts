@@ -253,7 +253,7 @@ test("LoTW readiness explains saved verification evidence without vendor reads, 
       "UPDATE connections SET status='active' WHERE tenant='a' AND id='lotw'",
     )
     .run();
-  assert.equal((await readiness('["synthetic-root"]')).status, "ready");
+  assert.equal((await readiness("bundled")).status, "ready");
 
   await h.store
     .statement(
@@ -273,7 +273,7 @@ test("LoTW readiness explains saved verification evidence without vendor reads, 
       }),
     )
     .run();
-  const failed = await readiness('["synthetic-root"]');
+  const failed = await readiness("bundled");
   assert.equal(failed.status, "attention");
   assert.match(failed.message, /LoTW rejected/);
   assert.match(failed.message, /at least 24 hours old/);

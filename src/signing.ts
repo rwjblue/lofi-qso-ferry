@@ -251,61 +251,85 @@ async function verifyTrustedChain(
     const seen = new Set<string>();
     for (let depth = 0; depth < 8; depth++) {
       const id = fingerprint(child);
-      if (
-        seen.has(id) ||
-        now < child.validity.notBefore ||
-        now > child.validity.notAfter
-      )
-        return false;
+      if (seen.has(id)) return false;
       seen.add(id);
+      // Exact, explicitly configured CA anchors are trust inputs, not members
+      // of the prospective certification path (RFC 5280 section 6.1.1).
       if (trusted.has(id)) return child !== leaf;
+      if (now < child.validity.notBefore || now > child.validity.notAfter)
+        return false;
       const issuers = candidates.filter((parent) => child.isIssuer(parent));
       const unique = [
         ...new Map(
           issuers.map((parent) => [fingerprint(parent), parent]),
         ).values(),
       ];
-      if (unique.length !== 1) return false;
-      const parent = unique[0];
-      const basic: unknown = parent.getExtension("basicConstraints");
-      const usage: unknown = parent.getExtension("keyUsage");
-      if (
-        !basic ||
-        typeof basic !== "object" ||
-        !("cA" in basic) ||
-        basic.cA !== true
-      )
-        return false;
-      if (
-        "pathLenConstraint" in basic &&
-        typeof basic.pathLenConstraint === "number" &&
-        depth > basic.pathLenConstraint
-      )
-        return false;
-      if (
-        usage &&
-        (typeof usage !== "object" ||
-          !("keyCertSign" in usage) ||
-          usage.keyCertSign !== true)
-      )
-        return false;
-      // Unknown critical constraints must not be silently ignored.
-      const allowedCritical = new Set(["2.5.29.19", "2.5.29.15"]);
-      if (
-        [child, parent].some((cert) =>
-          cert.extensions.some(
-            (ext) => ext.critical && !allowedCritical.has(ext.id),
-          ),
+      const validIssuers: forge.pki.Certificate[] = [];
+      for (const parent of unique) {
+        const basic: unknown = parent.getExtension("basicConstraints");
+        const usage: unknown = parent.getExtension("keyUsage");
+        if (
+          !basic ||
+          typeof basic !== "object" ||
+          !("cA" in basic) ||
+          basic.cA !== true
         )
-      )
-        return false;
-      if (!(await verifyCertificateSignature(child, parent))) return false;
-      child = parent;
+          continue;
+        if (
+          "pathLenConstraint" in basic &&
+          typeof basic.pathLenConstraint === "number" &&
+          depth > basic.pathLenConstraint
+        )
+          continue;
+        if (
+          usage &&
+          (typeof usage !== "object" ||
+            !("keyCertSign" in usage) ||
+            usage.keyCertSign !== true)
+        )
+          continue;
+        // Unknown critical constraints must not be silently ignored.
+        const allowedCritical = new Set(["2.5.29.19", "2.5.29.15"]);
+        if (
+          [child, parent].some((cert) =>
+            cert.extensions.some(
+              (ext) => ext.critical && !allowedCritical.has(ext.id),
+            ),
+          )
+        )
+          continue;
+        if (await verifyCertificateSignature(child, parent))
+          validIssuers.push(parent);
+      }
+      // ARRL rotates keys while retaining CA names. A matching issuer DN
+      // alone cannot disambiguate current and historical trust anchors.
+      if (validIssuers.length !== 1) return false;
+      child = validIssuers[0];
     }
   } catch {
     return false;
   }
   return false;
+}
+/** Recheck normalized public certificates against the current trust policy.
+ * Previously saved trust booleans and uploaded issuers never establish trust.
+ */
+export async function verifySigningCredentialTrust(
+  credential: Pick<SigningCredential, "certificatePem" | "chainPem">,
+  roots: string[],
+  now = new Date(),
+): Promise<boolean> {
+  try {
+    if (!Number.isFinite(now.getTime()) || credential.chainPem.length > 7)
+      return false;
+    const leaf = forge.pki.certificateFromPem(credential.certificatePem);
+    const chain = credential.chainPem.map((pem) =>
+      forge.pki.certificateFromPem(pem),
+    );
+    return await verifyTrustedChain(leaf, [leaf, ...chain], roots, now);
+  } catch {
+    return false;
+  }
 }
 /** Parses only. Unknown trust or revocation may be saved but cannot be signed. */
 export async function importPkcs12(

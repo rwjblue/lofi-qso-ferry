@@ -29,7 +29,7 @@ ROLLOUT_CHECKS_PASSED=false
 SOURCE_BOUNDARY_VERIFIED=false
 LIVE_WRITE_AUTHORIZATION=
 ROLLOUT_QSO_IDS_JSON=[]
-LOTW_TRUST_ROOTS_JSON=[]
+LOTW_TRUST_ROOTS_JSON=bundled
 ```
 
 [Health](https://ferry.n1rwj.com/health) returns `{"status":"ok","exportsEnabled":false}`. No authorized UUID scope exists. The scheduled service can poll and adopt configured history after the owner connects accounts; it cannot sign, insert, replace, delete or upload contacts with these gates closed. Signup email and LoFi approval/client renewal are separate provider interactions.

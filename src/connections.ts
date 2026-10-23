@@ -7,6 +7,7 @@ import {
 } from "./auth.ts";
 import { LoFiClient, type LoFiCredentials } from "./lofi.ts";
 import { LotwClient, LotwLoginError } from "./lotw.ts";
+import { lotwTrustRoots } from "./lotw-trust.ts";
 import {
   type LotwLoginVerification,
   lotwVerification,
@@ -603,14 +604,12 @@ export async function connectionRoute(
         throw new ConnectionError(400, "Invalid PKCS#12 base64");
       if (typeof input.password !== "string" || input.password.length > 1024)
         throw new ConnectionError(400, "Invalid PKCS#12 password");
-      const rootsInput: unknown = JSON.parse(env.LOTW_TRUST_ROOTS_JSON);
-      if (
-        !Array.isArray(rootsInput) ||
-        rootsInput.length > 8 ||
-        rootsInput.some((value) => typeof value !== "string")
-      )
+      let roots: string[];
+      try {
+        roots = lotwTrustRoots(env.LOTW_TRUST_ROOTS_JSON);
+      } catch {
         throw new ConnectionError(503, "LoTW trust configuration is invalid");
-      const roots = rootsInput as string[];
+      }
       const lotwFetch = vendorFetch(store, "lotw", services.fetcher, {
         priority: "live",
       });

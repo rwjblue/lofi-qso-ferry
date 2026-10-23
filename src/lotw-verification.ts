@@ -1,3 +1,5 @@
+import { lotwTrustRoots } from "./lotw-trust.ts";
+
 /** Public verification summaries only; no credentials or vendor requests. */
 export interface LotwLoginVerification {
   status: "verified" | "rejected" | "unavailable";
@@ -136,23 +138,17 @@ function trustCheck(
   certificates: Record<string, unknown>[],
   trustRootsJson: string,
 ): LotwVerificationCheck {
-  let roots: unknown;
+  let roots: string[];
   try {
-    roots = JSON.parse(trustRootsJson);
+    roots = lotwTrustRoots(trustRootsJson);
   } catch {
-    roots = null;
-  }
-  if (
-    !Array.isArray(roots) ||
-    roots.length > 8 ||
-    roots.some((root) => typeof root !== "string" || !root.trim())
-  )
     return {
       id: "trust",
       status: "error",
       message:
         "LoTW certificate trust configuration is invalid on the server. The Ferry operator must repair it before signing.",
     };
+  }
   if (!roots.length)
     return {
       id: "trust",
@@ -178,7 +174,7 @@ function trustCheck(
     id: "trust",
     status: "ok",
     message:
-      "Certificate issuer trust was verified when the certificate was imported. Server trust roots are configured.",
+      "Certificate issuer trust was verified against Ferry's LoTW trust anchors. Saved certificates are rechecked automatically.",
   };
 }
 

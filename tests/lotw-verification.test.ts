@@ -7,7 +7,7 @@ import {
 
 const now = Date.UTC(2026, 9, 23, 12);
 const checked = new Date(now - 60_000).toISOString();
-const roots = JSON.stringify(["synthetic-root-pem"]);
+const roots = "bundled";
 const certificate = {
   validFrom: "2026-01-01T00:00:00.000Z",
   validTo: "2027-01-01T00:00:00.000Z",

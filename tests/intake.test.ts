@@ -149,6 +149,457 @@ async function work(
     .first<Work & { processed_at: number }>();
 }
 
+test("synced test operations remain retained without destination work while ordinary contacts continue", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const operations = ["N0CALL/test", "T", "N0CALL, W1AW/T"].map(
+    (stationCall, index) => ({
+      ...op,
+      uuid: `test-op-${index}`,
+      stationCall,
+    }),
+  );
+  const tests = operations.map((operation, index) => ({
+    ...qso,
+    uuid: `test-qso-${index}`,
+    operation: operation.uuid,
+  }));
+  await pollSource(
+    store,
+    source,
+    async () => response(operations, [...tests, loose]),
+    now,
+  );
+  for (let index = 0; index < operations.length; index++)
+    await rereadOperation(
+      store,
+      source,
+      fetcher(async (url) =>
+        operationResponse(
+          tests.filter(
+            (record) =>
+              url.pathname === `/v1/operations/${record.operation}/qsos`,
+          ),
+        ),
+      ),
+      now + index + 1,
+    );
+  const contacts = await pendingContacts(store, source, 40, now + 4);
+  assert.deepEqual(
+    contacts.map((contact) => contact.id),
+    ["loose-1"],
+  );
+  await observeContact(store, source, contacts[0], now + 4);
+  for (const record of tests) {
+    const saved = await work(state, record.uuid);
+    assert.equal(saved?.state, "test");
+    assert.equal(saved?.reason, "test_operation_not_exported");
+    assert.deepEqual(
+      await store.private("a", "source", saved!.private_id, "source"),
+      record,
+    );
+    assert.equal(await store.ledger({ ...state.key, qso: record.uuid }), null);
+    assert.deepEqual(
+      await pendingContacts(store, source, 40, now + 4, undefined, record.uuid),
+      [],
+      "classified test contacts are not selected for reconciliation again",
+    );
+  }
+  assert.equal(
+    (await store.ledger({ ...state.key, qso: "loose-1" }))?.state,
+    "inventory_pending",
+  );
+  assert.equal(
+    (
+      await store
+        .statement("SELECT COUNT(*) n FROM attempts")
+        .first<{ n: number }>()
+    )?.n,
+    0,
+  );
+  assert.equal(
+    (
+      await store
+        .statement("SELECT COUNT(*) n FROM projection_guards")
+        .first<{ n: number }>()
+    )?.n,
+    0,
+  );
+  await store
+    .statement("UPDATE source_work SET expires_at=? WHERE state='test'", now)
+    .run();
+  await expireSource(store, now + 5);
+  for (const record of tests) {
+    assert.equal((await work(state, record.uuid))?.state, "test");
+    assert.equal(
+      (await work(state, record.uuid))?.reason,
+      "test_operation_not_exported",
+    );
+  }
+  assert.equal(
+    await store
+      .statement("SELECT * FROM cursors WHERE stream='repair'")
+      .first(),
+    null,
+    "expired test payloads do not schedule repeated recovery reads",
+  );
+});
+
+test("operation test edits cancel only prepared attempts and restoration preserves history", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const states = ["prepared", "submitted", "uncertain", "delivered"] as const;
+  const records = states.map((status) => ({ ...qso, uuid: `qso-${status}` }));
+  await pollSource(store, source, async () => response([op], records), now);
+  await rereadOperation(
+    store,
+    source,
+    async () => operationResponse(records),
+    now + 1,
+  );
+  const contacts = await pendingContacts(store, source, 40, now + 2);
+  assert.equal(contacts.length, records.length);
+  const template = await store.saveTemplate("a", "destination", {
+    fields: { COMMENT: "Preserved template" },
+  });
+  const attempts = new Map<string, string>();
+  for (const contact of contacts) {
+    const status = contact.id.slice("qso-".length);
+    const key = { ...state.key, qso: contact.id };
+    await observeContact(store, source, contact, now + 2);
+    await store
+      .statement(
+        "UPDATE ledger SET state='live_new',due_at=? WHERE tenant='a' AND qso=?",
+        now,
+        contact.id,
+      )
+      .run();
+    const attempt = await store.stage(
+      key,
+      contact.generation,
+      { immutable: status },
+      "v1",
+      template,
+      now + 2,
+    );
+    attempts.set(status, attempt);
+    await store
+      .statement(
+        "UPDATE attempt_state SET state=?,reason='original evidence' WHERE tenant='a' AND attempt=?",
+        status,
+        attempt,
+      )
+      .run();
+    await store
+      .statement(
+        "UPDATE ledger SET state=?,baseline_hash=source_hash,remote_hash=?,sent_hash=?,remote_id=?,provenance='created' WHERE tenant='a' AND qso=?",
+        status === "prepared" ? "live_new" : status,
+        `remote-${status}`,
+        `sent-${status}`,
+        status === "prepared" ? null : `remote-id-${status}`,
+        contact.id,
+      )
+      .run();
+  }
+  const before = (
+    await store.statement("SELECT * FROM ledger ORDER BY qso").all()
+  ).results;
+  const immutable = (
+    await store.statement("SELECT * FROM attempts ORDER BY id").all()
+  ).results;
+  await pollSource(
+    store,
+    source,
+    async () =>
+      response(
+        [{ ...op, stationCall: "N0CALL/TEST", syncedAtMillis: 200 }],
+        [],
+      ),
+    now + 3,
+  );
+  await rereadOperation(
+    store,
+    source,
+    async () => operationResponse(records),
+    now + 4,
+  );
+  assert.deepEqual(await pendingContacts(store, source, 40, now + 5), []);
+  assert.deepEqual(
+    (await store.statement("SELECT * FROM ledger ORDER BY qso").all()).results,
+    before.map((row) => ({ ...row, reason: "test_operation_not_exported" })),
+    "classification preserves ledger state, baselines, mappings and template bindings",
+  );
+  assert.deepEqual(
+    (await store.statement("SELECT * FROM attempts ORDER BY id").all()).results,
+    immutable,
+  );
+  for (const status of states) {
+    assert.equal((await work(state, `qso-${status}`))?.state, "test");
+    const attempt = attempts.get(status)!;
+    const saved = await store
+      .statement(
+        "SELECT state,reason FROM attempt_state WHERE attempt=?",
+        attempt,
+      )
+      .first<{ state: string; reason: string }>();
+    assert.deepEqual(saved, {
+      state: status === "prepared" ? "cancelled" : status,
+      reason:
+        status === "prepared"
+          ? "test_operation_not_exported"
+          : "original evidence",
+    });
+    assert.deepEqual(
+      await store.private("a", "destination", attempt, "outbox"),
+      { immutable: status },
+    );
+  }
+  assert.equal(
+    (
+      await store
+        .statement(
+          "SELECT COUNT(*) n FROM attempt_events WHERE state='cancelled' AND reason='test_operation_not_exported'",
+        )
+        .first<{ n: number }>()
+    )?.n,
+    1,
+  );
+  await pollSource(
+    store,
+    source,
+    async () => response([{ ...op, syncedAtMillis: 300 }], []),
+    now + 6,
+  );
+  assert.equal((await work(state, "qso-prepared"))?.state, "pending");
+  await rereadOperation(
+    store,
+    source,
+    async () => operationResponse(records),
+    now + 7,
+  );
+  const restored = await pendingContacts(store, source, 40, now + 8);
+  assert.equal(restored.length, records.length);
+  for (const contact of restored) {
+    assert.equal((await work(state, contact.id))?.reason, null);
+    await observeContact(store, source, contact, now + 8);
+    const ledger = await store.ledger({ ...state.key, qso: contact.id });
+    assert.notEqual(ledger?.reason, "test_operation_not_exported");
+    assert.equal(ledger?.baseline_hash, ledger?.source_hash);
+    assert.equal(ledger?.template_version, template);
+  }
+  const replacement = restored.find(
+    (contact) => contact.id === "qso-prepared",
+  )!;
+  await store.stage(
+    { ...state.key, qso: replacement.id },
+    replacement.generation,
+    { immutable: "restored" },
+    "v1",
+    template,
+    now + 9,
+  );
+  assert.equal(
+    (
+      await store
+        .statement(
+          "SELECT state FROM attempt_state WHERE attempt=?",
+          attempts.get("prepared")!,
+        )
+        .first<{ state: string }>()
+    )?.state,
+    "cancelled",
+    "restoration creates new work without reviving a cancelled payload",
+  );
+});
+
+test("test segments suppress only their interval and a segment edit releases retained contacts", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const records = [-1000, 0, 1000].map((offset, index) => ({
+    ...qso,
+    uuid: `segment-qso-${index}`,
+    startAtMillis: at + offset,
+  }));
+  const testBoundary = {
+    ...boundary,
+    event: { event: "break", operation: { stationCall: "N0CALL/T" } },
+  };
+  const reset = {
+    ...boundary,
+    uuid: "event-reset",
+    startAtMillis: at + 1000,
+  };
+  await pollSource(
+    store,
+    source,
+    async () => response([op], [...records, testBoundary, reset]),
+    now,
+  );
+  await rereadOperation(
+    store,
+    source,
+    async () => operationResponse([...records, testBoundary, reset]),
+    now + 1,
+  );
+  const contacts = await pendingContacts(store, source, 40, now + 2);
+  assert.deepEqual(contacts.map((contact) => contact.id).sort(), [
+    "segment-qso-0",
+    "segment-qso-2",
+  ]);
+  assert.equal((await work(state, "segment-qso-1"))?.state, "test");
+  for (const contact of contacts)
+    await observeContact(store, source, contact, now + 2);
+  assert.equal(
+    await store.ledger({ ...state.key, qso: "segment-qso-1" }),
+    null,
+  );
+  const normalBoundary = { ...boundary, syncedAtMillis: 200 };
+  await pollSource(
+    store,
+    source,
+    async () => response([], [normalBoundary]),
+    now + 3,
+  );
+  await rereadOperation(
+    store,
+    source,
+    async () => operationResponse([...records, normalBoundary, reset]),
+    now + 4,
+  );
+  const restored = await pendingContacts(store, source, 40, now + 5);
+  assert.equal(restored.length, records.length);
+  const released = restored.find((contact) => contact.id === "segment-qso-1");
+  assert.ok(released);
+  assert.equal(released.stationCall, "N0CALL");
+  assert.equal((await work(state, released.id))?.reason, null);
+  await observeContact(store, source, released, now + 5);
+  assert.equal(
+    (await store.ledger({ ...state.key, qso: released.id }))?.state,
+    "inventory_pending",
+  );
+});
+
+test("test classification migration revisits retained holds and guards already classified attempts", async (t) => {
+  const state = await setup();
+  const { store, db, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const ids = [
+    "waiting",
+    "blocked",
+    "expired-work",
+    "expired-payload",
+    "revoked-payload",
+    "event",
+    "deleted",
+    "test",
+    "processed",
+  ];
+  await pollSource(
+    store,
+    source,
+    async () =>
+      response(
+        [],
+        ids.map((uuid) => ({
+          ...loose,
+          uuid,
+          our: { call: "N0CALL/T" },
+        })),
+      ),
+    now,
+  );
+  await store
+    .statement(
+      "UPDATE source_work SET state='blocked',reason='old projection hold' WHERE kind='qso'",
+    )
+    .run();
+  for (const [id, column, value] of [
+    ["waiting", "state", "waiting"],
+    ["expired-work", "expires_at", now - 60_000],
+    ["event", "is_event", 1],
+    ["deleted", "deleted", 1],
+    ["test", "state", "test"],
+    ["processed", "state", "processed"],
+  ] as const)
+    await store
+      .statement(`UPDATE source_work SET ${column}=? WHERE id=?`, value, id)
+      .run();
+  for (const [id, column] of [
+    ["expired-payload", "expires_at"],
+    ["revoked-payload", "revoked_at"],
+  ] as const)
+    await store
+      .statement(
+        `UPDATE private_data SET ${column}=? WHERE kind='source' AND id=(SELECT private_id FROM source_work WHERE id=?)`,
+        now - 60_000,
+        id,
+      )
+      .run();
+  await store
+    .statement(
+      "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,baseline_hash,state,due_at,updated_at) VALUES('a','source','test','destination','generation','source-hash','baseline-hash','live_new',0,0)",
+    )
+    .run();
+  await store
+    .statement(
+      "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a','prior-test-attempt','source','test','destination','generation','frozen-payload','payload-hash','v1',0,'source-hash')",
+    )
+    .run();
+  await store
+    .statement(
+      "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','prior-test-attempt','prepared',0,0)",
+    )
+    .run();
+  const before = (
+    await store.statement("SELECT * FROM source_work ORDER BY id").all()
+  ).results;
+  const evidence = async () =>
+    Promise.all(
+      ["ledger", "attempts", "attempt_state", "cursors", "private_data"].map(
+        (table) => store.statement(`SELECT * FROM ${table}`).all(),
+      ),
+    ).then((results) => results.map((result) => result.results));
+  const evidenceBefore = await evidence();
+  const migration = await readFile(
+    new URL("../migrations/0020_test_operation_review.sql", import.meta.url),
+    "utf8",
+  );
+  const triggerAt = migration.indexOf("CREATE TRIGGER");
+  assert(triggerAt > 0);
+  await db.prepare(migration.slice(0, triggerAt)).run();
+  await db.prepare(migration.slice(triggerAt)).run();
+  assert.deepEqual(
+    (await store.statement("SELECT * FROM source_work ORDER BY id").all())
+      .results,
+    before.map((row) =>
+      ["waiting", "blocked"].includes(String(row.id))
+        ? { ...row, state: "pending", reason: "test_classification_pending" }
+        : row,
+    ),
+  );
+  assert.deepEqual(await evidence(), evidenceBefore);
+  await assert.rejects(
+    store
+      .statement(
+        "UPDATE attempt_state SET state='dispatching' WHERE attempt='prior-test-attempt'",
+      )
+      .run(),
+    /test operation cannot be exported/,
+  );
+  assert.deepEqual(await pendingContacts(store, source, 40, now + 1), []);
+  for (const id of ["waiting", "blocked"]) {
+    assert.equal((await work(state, id))?.state, "test");
+    assert.equal(
+      (await work(state, id))?.reason,
+      "test_operation_not_exported",
+    );
+    assert.equal(await store.ledger({ ...state.key, qso: id }), null);
+  }
+});
+
 test("general-log station migration requeues only retained projection holds without changing export evidence", async (t) => {
   const state = await setup();
   const { store, db, source, now, mf } = state;

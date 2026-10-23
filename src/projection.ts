@@ -78,6 +78,37 @@ export function isEventRecord(record: SourceRecord): boolean {
   return record.band === "event" || Boolean(record.event);
 }
 
+/** Match HaLo's exact T/TEST slash components in any comma-separated call. */
+export function isTestCallsign(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.split(",").some((call) =>
+      call
+        .trim()
+        .toUpperCase()
+        .split("/")
+        .some((part) => part === "T" || part === "TEST"),
+    )
+  );
+}
+
+function sourceStationCall(
+  qso: SourceRecord,
+  operation: SourceRecord,
+  hasOperation: boolean,
+): unknown {
+  const our = map(qso.our);
+  // QSON our.call also carries imported OPERATOR fallbacks. Use it only for
+  // general-log QSOs without an explicit station field; explicit clears block.
+  return Object.hasOwn(our, "stationCall")
+    ? our.stationCall
+    : Object.hasOwn(qso, "stationCall")
+      ? qso.stationCall
+      : hasOperation
+        ? operation.stationCall
+        : our.call;
+}
+
 const segmentKeys = new Set([
   "stationCall",
   "refs",
@@ -123,6 +154,44 @@ export function effectiveOperation(
       Object.entries(selected).filter(([key]) => segmentKeys.has(key)),
     ),
   };
+}
+
+/** Classify reliable test identities before validating an exportable contact. */
+export function isTestContact(
+  qso: SourceRecord,
+  operation: SourceRecord | null,
+  events: SourceRecord[] = [],
+): boolean {
+  if (isEventRecord(qso)) return false;
+  const hasOperation = qso.operation !== null && qso.operation !== undefined;
+  if (isTestCallsign(sourceStationCall(qso, {}, hasOperation))) return true;
+  if (
+    !hasOperation ||
+    !operation ||
+    !text(qso.operation) ||
+    text(qso.operation) !== operation.uuid
+  )
+    return false;
+  // A test operation stays a test even if a QSO or segment changes its station.
+  if (isTestCallsign(operation.stationCall)) return true;
+  const at = numeric(qso.startAtMillis);
+  if (
+    at === undefined ||
+    !Number.isSafeInteger(at) ||
+    at <= 0 ||
+    !Number.isFinite(new Date(at).getTime())
+  )
+    return false;
+  try {
+    return isTestCallsign(
+      effectiveOperation(operation, events, at).stationCall,
+    );
+  } catch (error) {
+    // Invalid segment context still fails normal projection; it cannot reliably
+    // identify a test segment or justify suppressing an otherwise normal QSO.
+    if (error instanceof ProjectionError) return false;
+    throw error;
+  }
 }
 
 function refs(value: unknown, kind: string): string[] {
@@ -238,6 +307,8 @@ export async function projectContact(
   events: SourceRecord[] = [],
   options: { operationComplete: boolean } = { operationComplete: false },
 ): Promise<Contact> {
+  if (isTestContact(qso, operation, events))
+    throw new ProjectionError("test_operation_not_exported");
   if (isEventRecord(qso)) throw new ProjectionError("event_is_not_contact");
   const id = text(qso.uuid);
   if (!id) throw new ProjectionError("missing_qso_uuid");
@@ -272,17 +343,7 @@ export async function projectContact(
   const our = map(qso.our);
   const their = map(qso.their);
   const call = stationCall(their.call);
-  // QSON our.call also carries imported OPERATOR fallbacks. Use it only for
-  // general-log QSOs without an explicit station field; explicit clears block.
-  const ownCall = stationCall(
-    Object.hasOwn(our, "stationCall")
-      ? our.stationCall
-      : Object.hasOwn(qso, "stationCall")
-        ? qso.stationCall
-        : operationId
-          ? op.stationCall
-          : our.call,
-  );
+  const ownCall = stationCall(sourceStationCall(qso, op, Boolean(operationId)));
   const frequencyKHz = numeric(qso.freq);
   if (
     qso.freq !== undefined &&

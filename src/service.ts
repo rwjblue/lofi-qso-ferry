@@ -397,7 +397,7 @@ export async function tick(
           }
           await store
             .statement(
-              "UPDATE source_work SET state='waiting',processed_at=?,reason=? WHERE tenant=? AND source=? AND id=? AND kind='qso'",
+              "UPDATE source_work SET state='waiting',processed_at=?,reason=? WHERE tenant=? AND source=? AND id=? AND kind='qso' AND state IN('pending','waiting')",
               now,
               routingIssues.join("; ") || null,
               source.tenant,
@@ -580,6 +580,7 @@ export async function tick(
           await dispatchAttempt(store, attempt.tenant, attempt.attempt, gates, {
             ...deps,
             priority,
+            sourceContact: contact,
           });
         } else
           await reconcileAttempt(store, attempt.tenant, attempt.attempt, {

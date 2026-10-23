@@ -203,6 +203,122 @@ test("retained review uses effective segment context and current production rend
   }
 });
 
+test("test contacts remain visible with operation context and no export preview", async (t) => {
+  for (const [state, operationCall, segmentCall, qsoCall] of [
+    ["pending", "N0CALL/TEST", undefined, undefined],
+    ["pending", "TEST", undefined, undefined],
+    ["pending", "N0CALL, N1CALL/T", undefined, undefined],
+    ["blocked", "N0CALL", "N0CALL/T", undefined],
+    ["test", "N0CALL", undefined, "N0CALL/TEST"],
+  ] as const) {
+    const expectedStation = qsoCall ?? segmentCall ?? operationCall;
+    await t.test(`${state}: ${expectedStation}`, async () => {
+      const h = await setup();
+      try {
+        await put(
+          h,
+          { ...rawOperation, stationCall: operationCall },
+          "operation",
+        );
+        if (segmentCall)
+          await put(h, {
+            uuid: "test-segment",
+            operation: "op1",
+            band: "event",
+            startAtMillis: qsoAt - 1,
+            event: {
+              event: "break",
+              operation: { stationCall: segmentCall },
+            },
+          });
+        await put(
+          h,
+          {
+            ...rawQso(),
+            ...(qsoCall ? { our: { stationCall: qsoCall } } : {}),
+          },
+          "qso",
+          { state },
+        );
+        const before = await snapshot(h);
+        const result = await reviewSource(h.store, "a", {}, h.now);
+        assert.deepEqual(await snapshot(h), before);
+        const contact = result.recentContacts[0];
+        assert.equal(contact.state, "test");
+        assert.equal(contact.reason, "test_operation_not_exported");
+        assert.equal(contact.call, "W1AW");
+        assert.equal(contact.stationCall, expectedStation);
+        assert.equal(contact.operationName, "Portable afternoon");
+        assert.equal(contact.at, new Date(qsoAt).toISOString());
+        assert.equal(contact.band, "20m");
+        assert.equal(contact.mode, "FT8");
+        assert.equal(contact.templateStatus, "unavailable");
+        assert.equal(contact.preview, undefined);
+      } finally {
+        await h.mf.dispose();
+      }
+    });
+  }
+});
+
+test("known tests stay visible while context is pending or segment boundaries are malformed", async (t) => {
+  for (const context of ["pending", "invalid", "ambiguous"] as const) {
+    await t.test(context, async (t) => {
+      const h = await setup();
+      t.after(() => h.mf.dispose());
+      await put(
+        h,
+        { ...rawOperation, stationCall: "N0CALL/TEST" },
+        "operation",
+        { state: context === "pending" ? "pending" : "context" },
+      );
+      await put(h, rawQso());
+      if (context === "pending") {
+        await h.store
+          .statement(
+            "UPDATE cursors SET cursor=? WHERE stream='context'",
+            JSON.stringify({ complete: false }),
+          )
+          .run();
+        await put(h, {
+          ...rawQso("loose-test", null),
+          our: { call: "N0CALL/T" },
+        });
+      } else {
+        for (let index = 0; index < (context === "ambiguous" ? 2 : 1); index++)
+          await put(h, {
+            uuid: `bad-segment-${index}`,
+            operation: "op1",
+            band: "event",
+            startAtMillis: context === "invalid" ? "invalid" : qsoAt,
+            event: {
+              event: "break",
+              operation: { grid: "FN32BB" },
+            },
+          });
+      }
+      const result = await reviewSource(h.store, "a", {}, h.now);
+      const contact = result.recentContacts.find((item) => item.id === "q1");
+      assert(contact);
+      assert.equal(contact.state, "test");
+      assert.equal(contact.reason, "test_operation_not_exported");
+      assert.equal(contact.stationCall, "N0CALL/TEST");
+      assert.equal(contact.operationName, "Portable afternoon");
+      assert.equal(contact.preview, undefined);
+      if (context === "pending") {
+        const loose = result.recentContacts.find(
+          (item) => item.id === "loose-test",
+        );
+        assert(loose);
+        assert.equal(loose.state, "test");
+        assert.equal(loose.reason, "test_operation_not_exported");
+        assert.equal(loose.stationCall, "N0CALL/T");
+        assert.equal(loose.preview, undefined);
+      }
+    });
+  }
+});
+
 test("source review shows confirmed email and hides historical names and account ID fallbacks", async (t) => {
   const h = await setup();
   t.after(() => h.mf.dispose());

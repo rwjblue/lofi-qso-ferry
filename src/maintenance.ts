@@ -54,7 +54,7 @@ export async function rotatePrivateData(store: Store, limit = 50) {
 }
 /** Resolved contact payloads leave only their compact delivery ledger and context. */
 export async function purgeResolvedSource(store: Store) {
-  const resolved = `SELECT w.tenant,w.source,w.private_id FROM source_work w WHERE w.kind='qso' AND w.is_event=0 AND EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=w.tenant AND l.source=w.source AND l.qso=w.id) AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=w.tenant AND l.source=w.source AND l.qso=w.id AND (l.state NOT IN('adopted_existing','delivered','observed','source_deleted') OR l.source_hash IS NOT l.baseline_hash)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=w.tenant AND a.source=w.source AND a.qso=w.id AND s.state NOT IN('delivered','observed','rejected','cancelled'))`;
+  const resolved = `SELECT w.tenant,w.source,w.private_id FROM source_work w WHERE w.kind='qso' AND w.is_event=0 AND w.state!='test' AND EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=w.tenant AND l.source=w.source AND l.qso=w.id) AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=w.tenant AND l.source=w.source AND l.qso=w.id AND (l.state NOT IN('adopted_existing','delivered','observed','source_deleted') OR l.source_hash IS NOT l.baseline_hash)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=w.tenant AND a.source=w.source AND a.qso=w.id AND s.state NOT IN('delivered','observed','rejected','cancelled'))`;
   await store.db.batch([
     // Resolve the payload keys once, then use private_data's primary key. A
     // correlated source_work lookup scans the tenant's backlog for every body.

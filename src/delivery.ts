@@ -3,8 +3,9 @@ import {
   normalizeAdifValue,
   serializeAdifRecord,
 } from "./adif.ts";
+import { type IntakeContact, pendingContacts } from "./intake.ts";
 import { LotwClient, observeLotwContact } from "./lotw.ts";
-import type { Contact } from "./projection.ts";
+import { type Contact, isTestCallsign, isTestContact } from "./projection.ts";
 import {
   mergeQrzCorrection,
   QrzClient,
@@ -53,6 +54,11 @@ export interface DeliveryDependencies {
   now?: number;
   sign?: typeof buildSignedTq8;
   priority?: VendorPriority;
+  /** Scheduler projection already fenced by observeContact in this turn. */
+  sourceContact?: Pick<
+    IntakeContact,
+    "id" | "generation" | "contextGeneration"
+  >;
 }
 function certificateCurrentlyValid(
   credential: SigningCredential,
@@ -186,7 +192,72 @@ export function contactAdif(contact: Contact): AdifRecord {
 export function contactReconciliationAdif(contact: Contact): AdifRecord {
   return structuredContactAdif(contact);
 }
+function testContact(contact: Contact): boolean {
+  return (
+    isTestCallsign(contact.stationCall) ||
+    isTestContact(contact.context.qso, contact.context.op)
+  );
+}
+
+/** Recheck retained source even for an upload prepared by an older version. */
+async function sourceExportContext(
+  store: Store,
+  key: LedgerKey,
+  now: number,
+  observed?: DeliveryDependencies["sourceContact"],
+): Promise<number | null | undefined> {
+  const ledger = await store.ledger(key);
+  if (!ledger) return undefined;
+  // Legacy/directly staged records have no retained intake context. Their
+  // immutable station call is still checked at the dispatch boundary below.
+  if (ledger.context_generation == null) return null;
+  if (
+    observed?.id === key.qso &&
+    observed.generation === ledger.generation &&
+    observed.contextGeneration === ledger.context_generation
+  )
+    return observed.contextGeneration;
+  const source = await store.connection(key.tenant, key.source);
+  if (source?.status !== "active") return undefined;
+  const [current] = await pendingContacts(
+    store,
+    source,
+    1,
+    now,
+    undefined,
+    key.qso,
+  );
+  return current !== undefined &&
+    current.generation === ledger.generation &&
+    current.contextGeneration === ledger.context_generation
+    ? current.contextGeneration
+    : undefined;
+}
+
+async function sourceContextUnchanged(
+  store: Store,
+  key: LedgerKey,
+  generation: number | null,
+  now: number,
+): Promise<boolean> {
+  if (generation === null) return true;
+  return Boolean(
+    await store
+      .statement(
+        "SELECT 1 current FROM ledger l JOIN cursors c ON c.tenant=l.tenant AND c.connection=l.source AND c.stream='context' JOIN source_work w ON w.tenant=l.tenant AND w.source=l.source AND w.id=l.qso AND w.kind='qso' WHERE l.tenant=? AND l.source=? AND l.qso=? AND l.destination=? AND l.context_generation=? AND c.generation=? AND json_extract(c.cursor,'$.complete')=1 AND w.state IN('pending','waiting') AND w.expires_at>?",
+        key.tenant,
+        key.source,
+        key.qso,
+        key.destination,
+        generation,
+        generation,
+        now,
+      )
+      .first(),
+  );
+}
 function structuredContactAdif(contact: Contact): AdifRecord {
+  if (testContact(contact)) throw new Error("test_operation_not_exported");
   if (contact.deleted) throw new Error("Deleted contacts cannot be exported");
   const iso = new Date(contact.startAtMillis).toISOString();
   const record: AdifRecord = {
@@ -403,6 +474,8 @@ export async function prepareDue(
   deps: DeliveryDependencies = {},
 ): Promise<DeliveryResult> {
   const now = deps.now ?? Date.now();
+  if (testContact(contact))
+    return { state: "blocked", reason: "test_operation_not_exported" };
   if (gates.allowedQsoIds && !gates.allowedQsoIds.includes(key.qso))
     return { state: "blocked", reason: "qso_outside_rollout_scope" };
   const row = await store.ledger(key);
@@ -422,6 +495,11 @@ export async function prepareDue(
       state: "blocked",
       reason: "subsecond_export_requires_identity_claim",
     };
+  if (
+    row.context_generation != null &&
+    !(await sourceContextUnchanged(store, key, row.context_generation, now))
+  )
+    return { state: "blocked", reason: "source_not_exportable" };
   const unresolved = await store
     .statement(
       "SELECT 1 n FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled') LIMIT 1",
@@ -848,6 +926,38 @@ export async function dispatchAttempt(
     return { state: "blocked", reason: "qso_outside_rollout_scope" };
   if (!data)
     return { state: "blocked", reason: "attempt_or_connection_unavailable" };
+  const key = { tenant, ...data.attempt };
+  if (
+    isTestCallsign(
+      data.payload.kind === "qrz"
+        ? data.payload.record.STATION_CALLSIGN
+        : data.payload.station.callsign,
+    )
+  ) {
+    await store.db.batch([
+      store.statement(
+        "INSERT INTO attempt_events(tenant,attempt,state,at,reason) SELECT tenant,attempt,'cancelled',?,'test_operation_not_exported' FROM attempt_state WHERE tenant=? AND attempt=? AND state='prepared'",
+        now,
+        tenant,
+        id,
+      ),
+      store.statement(
+        "UPDATE attempt_state SET state='cancelled',reason='test_operation_not_exported',updated_at=? WHERE tenant=? AND attempt=? AND state='prepared'",
+        now,
+        tenant,
+        id,
+      ),
+    ]);
+    return { state: "blocked", reason: "test_operation_not_exported" };
+  }
+  const sourceContext = await sourceExportContext(
+    store,
+    key,
+    now,
+    deps.sourceContact,
+  );
+  if (sourceContext === undefined)
+    return { state: "blocked", reason: "source_not_exportable" };
   const lease = await store.claim(
     tenant,
     `delivery:${data.attempt.destination}`,
@@ -924,6 +1034,12 @@ export async function dispatchAttempt(
             current.credential_version === data.attempt.credential_version &&
             activeSource?.status === "active" &&
             Boolean(liveLease) &&
+            (await sourceContextUnchanged(
+              store,
+              key,
+              sourceContext,
+              deps.now ?? Date.now(),
+            )) &&
             Boolean(
               await store.private(
                 tenant,
@@ -1080,6 +1196,12 @@ export async function dispatchAttempt(
         beforeSubmit.credential_version !== data.attempt.credential_version ||
         (await store.connection(tenant, data.attempt.source))?.status !==
           "active" ||
+        !(await sourceContextUnchanged(
+          store,
+          key,
+          sourceContext,
+          deps.now ?? Date.now(),
+        )) ||
         !(await store.private(
           tenant,
           data.attempt.destination,

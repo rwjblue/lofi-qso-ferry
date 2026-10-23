@@ -4,6 +4,8 @@ import type { SourceRecord } from "../src/lofi.ts";
 import {
   effectiveOperation,
   isSourceDeleted,
+  isTestCallsign,
+  isTestContact,
   ProjectionError,
   projectContact,
   sourceFingerprint,
@@ -44,6 +46,195 @@ const event = (
 });
 const project = (record = qso, op = operation, events: SourceRecord[] = []) =>
   projectContact(record, op, events, { operationComplete: true });
+
+test("test callsigns match HaLo's exact comma and slash component rules", () => {
+  for (const call of [
+    "N0CALL/T",
+    "n0call/test",
+    "N0CALL/P/Test",
+    "N0CALL/t/P",
+    "TEST/N0CALL",
+    "t/N0CALL",
+    "TEST",
+    "t",
+    " N0CALL/T ",
+    "N0CALL, W1AW/TEST",
+    " N0CALL/T, W1AW ",
+    "/TEST",
+    "N0CALL//T",
+  ]) {
+    assert.equal(isTestCallsign(call), true, call);
+  }
+  for (const call of [
+    undefined,
+    null,
+    1,
+    true,
+    ["N0CALL/TEST"],
+    { stationCall: "N0CALL/T" },
+    "",
+    "N0CALL",
+    "N0CALL/P",
+    "N0TEST",
+    "TESTER/N0CALL",
+    "N0CALL/TESTING",
+    "N0CALL/T1",
+    "N0CALL/TST",
+    "N0CALL/ T",
+    "N0CALL/TEST /P",
+    "N0CALL,W1AW/P",
+  ]) {
+    assert.equal(isTestCallsign(call), false, String(call));
+  }
+});
+
+test("base test operations suppress every contact before export validation", async () => {
+  const testOperation = { ...operation, stationCall: "N0CALL/TEST" };
+  for (const record of [
+    qso,
+    { ...qso, stationCall: "W2XYZ" },
+    { ...qso, our: { stationCall: "K1ABC" } },
+    { ...qso, uuid: undefined, startAtMillis: "invalid", mode: undefined },
+  ]) {
+    const events = [event("normal-segment", at, { stationCall: "W1AW" })];
+    assert.equal(isTestContact(record, testOperation, events), true);
+    await assert.rejects(projectContact(record, testOperation, events), {
+      code: "test_operation_not_exported",
+    });
+  }
+  await assert.rejects(
+    project(qso, { ...operation, stationCall: "N0CALL, W1AW/t" }),
+    { code: "test_operation_not_exported" },
+  );
+});
+
+test("test segments suppress only their interval and cannot be overridden per QSO", async () => {
+  const events = [
+    event("test-segment", at, { stationCall: "N0CALL/T" }),
+    event("normal-again", at + 1000, { grid: "FN32BB" }),
+  ];
+  const before = { ...qso, startAtMillis: at - 1000 };
+  const after = { ...qso, startAtMillis: at + 1000 };
+  assert.equal(isTestContact(before, operation, events), false);
+  assert.equal(
+    (await project(before, operation, events)).stationCall,
+    "N0CALL/P",
+  );
+  for (const record of [qso, { ...qso, our: { stationCall: "W2XYZ" } }]) {
+    assert.equal(isTestContact(record, operation, events), true);
+    await assert.rejects(project(record, operation, events), {
+      code: "test_operation_not_exported",
+    });
+  }
+  assert.equal(isTestContact(after, operation, events), false);
+  assert.equal(
+    (await project(after, operation, events)).stationCall,
+    "N0CALL/P",
+  );
+});
+
+test("test classification follows explicit station aliases and general-log our.call", async () => {
+  for (const operationId of [null, "op-1"]) {
+    for (const fields of [
+      { stationCall: "N0CALL/T" },
+      { our: { stationCall: "N0CALL/TEST" } },
+      { stationCall: "N0CALL", our: { stationCall: "W1AW/T" } },
+    ]) {
+      const record = { ...qso, operation: operationId, ...fields };
+      assert.equal(isTestContact(record, operation), true);
+      await assert.rejects(project(record), {
+        code: "test_operation_not_exported",
+      });
+    }
+  }
+  const generalLog = { ...qso, operation: null, our: { call: "N0CALL/T" } };
+  assert.equal(isTestContact(generalLog, null), true);
+  await assert.rejects(projectContact(generalLog, null), {
+    code: "test_operation_not_exported",
+  });
+  // Alias precedence is the same for classification and export.
+  const overridden = {
+    ...generalLog,
+    stationCall: "W1AW/T",
+    our: { call: "N0CALL/TEST", stationCall: "K1ABC" },
+  };
+  assert.equal(isTestContact(overridden, null), false);
+  assert.equal((await projectContact(overridden, null)).stationCall, "K1ABC");
+});
+
+test("test classification does not infer from worked calls, operators, titles or flags", async () => {
+  const record = {
+    ...qso,
+    their: { call: "W1AW/TEST" },
+    our: { call: "N0CALL/TEST", operatorCall: "W2XYZ/T" },
+    test: true,
+    isTest: true,
+    title: "Test operation",
+  };
+  const op = {
+    ...operation,
+    test: true,
+    isTest: true,
+    title: "Test operation",
+  };
+  assert.equal(isTestContact(record, op), false);
+  const contact = await project(record, op);
+  assert.equal(contact.stationCall, "N0CALL/P");
+  assert.equal(contact.call, "W1AW/TEST");
+  assert.equal(contact.operatorCall, "W2XYZ/T");
+  assert.equal(
+    isTestContact(
+      { ...record, operation: null, our: { operatorCall: "N0CALL/T" } },
+      null,
+    ),
+    false,
+  );
+});
+
+test("unrelated operations, stop events and deleted segments cannot identify tests", async () => {
+  const testOperation = { ...operation, stationCall: "N0CALL/T" };
+  const generalLog = { ...qso, operation: null, our: { call: "W1AW" } };
+  assert.equal(isTestContact(generalLog, testOperation), false);
+  assert.equal(
+    (await projectContact(generalLog, testOperation)).stationCall,
+    "W1AW",
+  );
+  assert.equal(isTestContact(qso, { ...testOperation, uuid: "other" }), false);
+  await assert.rejects(project(qso, { ...testOperation, uuid: "other" }), {
+    code: "operation_context_incomplete",
+  });
+  const events = [
+    { ...event("deleted", at, { stationCall: "N0CALL/T" }), deleted: true },
+    {
+      ...event("stop", at, { stationCall: "N0CALL/TEST" }),
+      event: { event: "stop", operation: { stationCall: "N0CALL/TEST" } },
+    },
+  ];
+  assert.equal(isTestContact(qso, operation, events), false);
+  assert.equal((await project(qso, operation, events)).stationCall, "N0CALL/P");
+  await assert.rejects(project(event("event", at, {}), testOperation), {
+    code: "event_is_not_contact",
+  });
+});
+
+test("unreliable test segment context preserves ordinary validation errors", async () => {
+  const events = [
+    event("test", at, { stationCall: "N0CALL/T" }),
+    event("normal", at, { stationCall: "W1AW" }),
+  ];
+  assert.equal(isTestContact(qso, operation, events), false);
+  await assert.rejects(project(qso, operation, events), {
+    code: "ambiguous_segment_boundary",
+  });
+  const invalidTime = { ...qso, startAtMillis: "invalid" };
+  assert.equal(
+    isTestContact(invalidTime, operation, events.slice(0, 1)),
+    false,
+  );
+  await assert.rejects(project(invalidTime, operation, events.slice(0, 1)), {
+    code: "invalid_qso_time",
+  });
+});
 
 test("projects callsign, frequency kHz and own versus worked parks deliberately", async () => {
   const contact = await project();

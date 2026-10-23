@@ -19,6 +19,7 @@ export interface LedgerKey {
 }
 export interface Ledger extends LedgerKey {
   generation: string;
+  context_generation?: number | null;
   source_hash: string;
   baseline_hash: string | null;
   remote_hash: string | null;

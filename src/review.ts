@@ -4,8 +4,10 @@ import type { SourceRecord } from "./lofi.ts";
 import { lofiAccountLabel } from "./lofi-identity.ts";
 import { lotwReadyForUpload, lotwVerification } from "./lotw-verification.ts";
 import {
+  effectiveOperation,
   isEventRecord,
   isSourceDeleted,
+  isTestContact,
   ProjectionError,
   projectContact,
 } from "./projection.ts";
@@ -246,9 +248,23 @@ async function currentTemplate(
   validateTemplateVersion(template);
   return template;
 }
-function sourceSummary(raw: SourceRecord): Partial<ReviewContact> {
+function sourceSummary(
+  raw: SourceRecord,
+  operation?: SourceRecord,
+): Partial<ReviewContact> {
   const their = record(raw.their);
   const our = record(raw.our);
+  const stationCall = display(
+    Object.hasOwn(our, "stationCall")
+      ? our.stationCall
+      : Object.hasOwn(raw, "stationCall")
+        ? raw.stationCall
+        : raw.operation !== null && raw.operation !== undefined
+          ? operation?.stationCall
+          : our.call,
+  );
+  const operationName =
+    display(operation?.title, 256) ?? display(operation?.name, 256);
   const at = timestamp(raw.startAtMillis);
   const stamp =
     at && Number.isFinite(new Date(at).getTime())
@@ -258,13 +274,8 @@ function sourceSummary(raw: SourceRecord): Partial<ReviewContact> {
     ...(display(their.call)
       ? { call: display(their.call)?.toUpperCase() }
       : {}),
-    ...(display(our.stationCall ?? raw.stationCall)
-      ? {
-          stationCall: display(
-            our.stationCall ?? raw.stationCall,
-          )?.toUpperCase(),
-        }
-      : {}),
+    ...(stationCall ? { stationCall: stationCall.toUpperCase() } : {}),
+    ...(operationName ? { operationName } : {}),
     ...(stamp ? { at: stamp } : {}),
     ...(display(raw.band, 32) ? { band: display(raw.band, 32) } : {}),
     ...(display(raw.mode, 32) ? { mode: display(raw.mode, 32) } : {}),
@@ -288,6 +299,7 @@ async function recentContact(
     retainedUntil: row.expires_at,
     templateStatus: "unavailable",
   };
+  let knownTest = false;
   try {
     if (row.deleted) throw new ProjectionError("source_deleted");
     if (row.expires_at <= now)
@@ -303,8 +315,9 @@ async function recentContact(
     if (isSourceDeleted(raw)) throw new ProjectionError("source_deleted");
     if (isEventRecord(raw)) throw new ProjectionError("event_is_not_contact");
     Object.assign(output, sourceSummary(raw));
-    if (!state.public.contextComplete)
-      throw new ProjectionError("source_context_pending");
+    knownTest = isTestContact(raw, null);
+    if (knownTest && !state.public.contextComplete)
+      throw new ProjectionError("test_operation_not_exported");
     const operationRows = row.operation_id
       ? (
           await store
@@ -334,11 +347,27 @@ async function recentContact(
       );
       if (!value) throw new ProjectionError("operation_context_unavailable");
       if (dependency.kind === "operation") {
-        if (dependency.state !== "context")
-          throw new ProjectionError("operation_context_pending");
         operation = value;
+        // A known test stays visible while its remaining context is pending or
+        // malformed. It cannot produce an export preview either way.
+        if (isTestContact(raw, operation)) {
+          Object.assign(output, sourceSummary(raw, operation));
+          throw new ProjectionError("test_operation_not_exported");
+        }
+        if (dependency.state !== "context")
+          throw new ProjectionError(
+            state.public.contextComplete
+              ? "operation_context_pending"
+              : "source_context_pending",
+          );
       } else if (isEventRecord(value)) events.push(value);
     }
+    if (!state.public.contextComplete)
+      throw new ProjectionError("source_context_pending");
+    const effective = operation
+      ? effectiveOperation(operation, events, timestamp(raw.startAtMillis) ?? 0)
+      : {};
+    Object.assign(output, sourceSummary(raw, effective));
     const contact = await projectContact(raw, operation, events, {
       operationComplete: true,
     });
@@ -367,9 +396,6 @@ async function recentContact(
           )
           .first<Pick<Ledger, "narrative" | "template_version">>()
       : null;
-    const operationName =
-      display(contact.context.op.title, 256) ??
-      display(contact.context.op.name, 256);
     Object.assign(output, {
       call: contact.call,
       stationCall: contact.stationCall,
@@ -377,7 +403,6 @@ async function recentContact(
       band: contact.band,
       mode: contact.submode ?? contact.mode,
       ...(contact.grid ? { grid: contact.grid } : {}),
-      ...(operationName ? { operationName } : {}),
       ownParks: contact.ownParks
         .slice(0, 32)
         .filter((park) => park.length <= 100),
@@ -396,10 +421,12 @@ async function recentContact(
         : {}),
     });
   } catch (error) {
-    output.reason =
-      error instanceof ProjectionError
+    output.reason = knownTest
+      ? "test_operation_not_exported"
+      : error instanceof ProjectionError
         ? error.code
         : "source_preview_unavailable";
+    if (output.reason === "test_operation_not_exported") output.state = "test";
   }
   return output;
 }

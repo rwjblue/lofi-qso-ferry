@@ -2,31 +2,40 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  type AdifRecord,
   parseAdif,
   serializeAdifRecord,
-  type AdifRecord,
 } from "../src/adif.ts";
 import {
   contactAdif,
   contactReconciliationAdif,
+  type DeliveryGates,
   dispatchAttempt,
+  type PreparedPayload,
   prepareDue,
   reconcileAttempt,
   refreshConfirmations,
-  type DeliveryGates,
 } from "../src/delivery.ts";
 import {
+  observeContact,
+  pendingContacts,
+  pollSource,
+  rereadOperation,
+} from "../src/intake.ts";
+import {
+  type Contact,
   projectContact,
   sourceFingerprint,
-  type Contact,
 } from "../src/projection.ts";
-import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import { LOTW_PRIOR_IDENTITY_NOTICE } from "../src/store.ts";
+import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import {
-  VendorDeferredError,
   VENDOR_POLICIES,
+  VendorDeferredError,
 } from "../src/vendor-requests.ts";
 import { database, seed } from "./helpers.ts";
+import { FIXTURE_NOW, schedulerFixture } from "./runtime-fixtures.ts";
+
 const gates: DeliveryGates = {
   exportsEnabled: true,
   liveWriteAuthorized: true,
@@ -137,6 +146,314 @@ test("fractional contacts remain blocked from preparation before any vendor call
     await h.mf.dispose();
   }
 });
+test("preprojected test contacts cannot prepare either destination or generate ADIF", async (t) => {
+  const h = await setup();
+  t.after(() => h.mf.dispose());
+  let requests = 0;
+  let signatures = 0;
+  for (const kind of ["qrz", "lotw"] as const) {
+    await h.store
+      .statement("UPDATE connections SET kind=? WHERE id='destination'", kind)
+      .run();
+    for (const testContext of ["operation", "station"] as const) {
+      const projected = structuredClone(h.item);
+      if (testContext === "operation")
+        projected.context.op.stationCall = "N0TEST/TEST";
+      else projected.stationCall = "N0TEST/T";
+      assert.deepEqual(
+        await prepareDue(h.store, h.key, projected, gates, {
+          now,
+          fetcher: async () => {
+            requests++;
+            throw new Error("Test contact reached a vendor");
+          },
+          sign: async () => {
+            signatures++;
+            throw new Error("Test contact reached signing");
+          },
+        }),
+        { state: "blocked", reason: "test_operation_not_exported" },
+      );
+      assert.throws(
+        () => contactAdif(projected),
+        /test_operation_not_exported/,
+      );
+      assert.throws(
+        () => contactReconciliationAdif(projected),
+        /test_operation_not_exported/,
+      );
+    }
+  }
+  assert.equal(requests, 0);
+  assert.equal(signatures, 0);
+  assert.equal(
+    (
+      await h.store
+        .statement("SELECT COUNT(*) n FROM attempts")
+        .first<{ n: number }>()
+    )?.n,
+    0,
+  );
+});
+
+test("saved test payloads never reach either vendor and only unsent attempts are cancelled", async (t) => {
+  const h = await setup();
+  t.after(() => h.mf.dispose());
+  let requests = 0;
+  for (const kind of ["qrz", "lotw"] as const) {
+    await h.store
+      .statement("UPDATE connections SET kind=? WHERE id='destination'", kind)
+      .run();
+    for (const state of ["prepared", "uncertain", "submitted"] as const) {
+      const key = { ...h.key, qso: `legacy-${kind}-${state}` };
+      await h.store.observe(
+        key,
+        h.item.generation,
+        h.item.generation,
+        30,
+        false,
+        at,
+      );
+      await h.store
+        .statement(
+          "UPDATE ledger SET state='missing_current_identity' WHERE qso=?",
+          key.qso,
+        )
+        .run();
+      const common = {
+        members: [{ id: key.qso, generation: h.item.generation }],
+        projectionHash: "legacy-projection",
+        preparedAt: new Date(now).toISOString(),
+      };
+      const payload: PreparedPayload =
+        kind === "qrz"
+          ? {
+              ...common,
+              kind,
+              record: {
+                ...contactAdif(h.item),
+                STATION_CALLSIGN: "N0TEST/TEST",
+              },
+              operation: "insert",
+              mappedLogId: null,
+              narrative: "template_bound",
+            }
+          : {
+              ...common,
+              kind,
+              tq8: "legacy-signed-artifact",
+              station: { callsign: "N0TEST/TEST", dxcc: 291 },
+              contact: {
+                id: key.qso,
+                generation: h.item.generation,
+                call: "W1AW",
+                band: "20m",
+                mode: "CW",
+                date: "2026-10-22",
+                time: "12:00:01",
+              },
+              certificateVersion: "legacy-certificate",
+              configurationVersion: "legacy-configuration",
+            };
+      // Stage the historical artifact directly to model an older deployment
+      // that had no test-operation guard during preparation.
+      const id = await h.store.stage(
+        key,
+        h.item.generation,
+        payload,
+        "v1",
+        kind === "qrz" ? h.version : null,
+        now,
+      );
+      if (state !== "prepared")
+        await h.store
+          .statement(
+            "UPDATE attempt_state SET state=? WHERE attempt=?",
+            state,
+            id,
+          )
+          .run();
+      assert.deepEqual(
+        await dispatchAttempt(h.store, "a", id, gates, {
+          now,
+          fetcher: async () => {
+            requests++;
+            throw new Error("Saved test payload reached a vendor");
+          },
+        }),
+        { state: "blocked", reason: "test_operation_not_exported" },
+      );
+      assert.equal(
+        (
+          await h.store
+            .statement("SELECT state FROM attempt_state WHERE attempt=?", id)
+            .first<{ state: string }>()
+        )?.state,
+        state === "prepared" ? "cancelled" : state,
+      );
+      assert.equal(
+        (
+          await h.store
+            .statement(
+              "SELECT COUNT(*) n FROM attempt_events WHERE attempt=? AND state='cancelled'",
+              id,
+            )
+            .first<{ n: number }>()
+        )?.n,
+        state === "prepared" ? 1 : 0,
+      );
+      if (state !== "prepared")
+        assert.deepEqual(
+          await h.store.private("a", "destination", id, "outbox"),
+          payload,
+        );
+    }
+  }
+  assert.equal(requests, 0);
+});
+
+async function retainedDeliveryFixture() {
+  const h = await schedulerFixture();
+  h.qrzRecords.splice(0);
+  h.lotwRecords.splice(0);
+  const source = await h.store.connection("a", "source");
+  assert(source);
+  await pollSource(h.store, source, h.fetcher, FIXTURE_NOW);
+  await rereadOperation(h.store, source, h.fetcher, FIXTURE_NOW);
+  const [item] = await pendingContacts(h.store, source, 1, FIXTURE_NOW);
+  assert(item);
+  await observeContact(h.store, source, item, FIXTURE_NOW);
+  await h.store
+    .statement("UPDATE ledger SET state='missing_current_identity'")
+    .run();
+  const changedToTest = async (changedAt: number) => {
+    h.operation.stationCall = "W1AW/TEST";
+    h.operation.syncedAtMillis = 200;
+    h.changes.operations.push({ ...h.operation });
+    await pollSource(h.store, source, h.fetcher, changedAt);
+    await rereadOperation(h.store, source, h.fetcher, changedAt);
+  };
+  return { ...h, source, item, changedToTest };
+}
+
+test("stale projections cannot prepare after retained operation changes to a test", async (t) => {
+  for (const destination of ["destination", "lotw"]) {
+    await t.test(destination, async (t) => {
+      const h = await retainedDeliveryFixture();
+      t.after(() => h.mf.dispose());
+      const deliveryAt = FIXTURE_NOW + 31 * 60_000;
+      await h.changedToTest(deliveryAt);
+      let requests = 0;
+      let signatures = 0;
+      const result = await prepareDue(
+        h.store,
+        { tenant: "a", source: "source", qso: "q1", destination },
+        h.item,
+        gates,
+        {
+          now: deliveryAt,
+          fetcher: async () => {
+            requests++;
+            throw new Error("Stale test projection reached a vendor");
+          },
+          sign: async () => {
+            signatures++;
+            throw new Error("Stale test projection reached signing");
+          },
+        },
+      );
+      assert.deepEqual(result, {
+        state: "blocked",
+        reason: "source_not_exportable",
+      });
+      assert.equal(requests, 0);
+      assert.equal(signatures, 0);
+      assert.deepEqual(
+        await pendingContacts(h.store, h.source, 1, deliveryAt),
+        [],
+      );
+      assert.equal(
+        (
+          await h.store
+            .statement("SELECT COUNT(*) n FROM attempts")
+            .first<{ n: number }>()
+        )?.n,
+        0,
+      );
+      assert.equal(
+        (
+          await h.store
+            .statement(
+              "SELECT state FROM source_work WHERE id='q1' AND kind='qso'",
+            )
+            .first<{ state: string }>()
+        )?.state,
+        "test",
+      );
+    });
+  }
+});
+
+test("a test-operation change during QRZ preflight prevents the final insert", async (t) => {
+  const h = await retainedDeliveryFixture();
+  t.after(() => h.mf.dispose());
+  const deliveryAt = FIXTURE_NOW + 31 * 60_000;
+  const key = {
+    tenant: "a",
+    source: "source",
+    qso: "q1",
+    destination: "destination",
+  };
+  const prepared = await prepareDue(h.store, key, h.item, gates, {
+    now: deliveryAt,
+    fetcher: h.fetcher,
+  });
+  assert.equal(prepared.state, "prepared");
+  assert(prepared.attemptId);
+  let changed = false;
+  const result = await dispatchAttempt(
+    h.store,
+    "a",
+    prepared.attemptId,
+    gates,
+    {
+      now: deliveryAt + 1,
+      fetcher: async (input, init) => {
+        const form = new URLSearchParams(String(init?.body));
+        if (
+          new URL(String(input)).hostname === "logbook.qrz.com" &&
+          form.get("ACTION") === "FETCH" &&
+          !changed
+        ) {
+          changed = true;
+          await h.changedToTest(deliveryAt + 1);
+        }
+        return h.fetcher(input, init);
+      },
+    },
+  );
+  assert.equal(changed, true, "the attempt reached its final QRZ preflight");
+  assert.equal(result.state, "rejected");
+  assert.equal(h.calls.qrzWrites, 0);
+  assert.deepEqual(h.qrzMutations, []);
+  assert.deepEqual(
+    await pendingContacts(h.store, h.source, 1, deliveryAt + 1),
+    [],
+  );
+  assert.equal(
+    (await h.store.ledger(key))?.reason,
+    "test_operation_not_exported",
+  );
+  assert.equal(
+    (
+      await h.store
+        .statement("SELECT state FROM source_work WHERE id='q1' AND kind='qso'")
+        .first<{ state: string }>()
+    )?.state,
+    "test",
+  );
+});
+
 async function setup() {
   const harness = await deliveryDatabase();
   const key = await seed(harness.store);

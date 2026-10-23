@@ -676,7 +676,13 @@ function renderReview(data: ReviewResponse) {
     if (references.length)
       card.append(node("p", references.join(" · "), "small"));
     card.append(
-      node("span", previewStatus(contact.templateStatus), "badge"),
+      node(
+        "span",
+        contact.state === "test"
+          ? "Test — not exported"
+          : previewStatus(contact.templateStatus),
+        "badge",
+      ),
       node("p", `Review state: ${contact.state.replaceAll("_", " ")}`, "small"),
     );
     if (contact.templateStatus === "remote_preserved")
@@ -711,7 +717,15 @@ function renderReview(data: ReviewResponse) {
       card.append(fields);
     }
     if (contact.reason)
-      card.append(node("p", contact.reason.replaceAll("_", " "), "small"));
+      card.append(
+        node(
+          "p",
+          contact.reason === "test_operation_not_exported"
+            ? "Test contacts are retained here and excluded from external services."
+            : contact.reason.replaceAll("_", " "),
+          "small",
+        ),
+      );
     if (contact.pinnedTemplateVersion)
       card.append(
         node("p", `Pinned version ${contact.pinnedTemplateVersion}`, "small"),

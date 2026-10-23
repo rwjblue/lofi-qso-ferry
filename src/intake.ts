@@ -11,6 +11,7 @@ import type { Contact } from "./projection.ts";
 import {
   isEventRecord,
   isSourceDeleted,
+  ProjectionError,
   projectContact,
   sourceFingerprint,
 } from "./projection.ts";
@@ -496,6 +497,62 @@ export async function pendingContactBatch(
         error instanceof Error && /^[a-z_]+$/.test(error.message)
           ? error.message
           : "source_projection_requires_review";
+      if (
+        error instanceof ProjectionError &&
+        error.code === "test_operation_not_exported"
+      ) {
+        // Test data remains in intake, but must never reach routing or history
+        // adoption. Fence the decision against concurrent source/context edits.
+        const guard = randomToken();
+        const recordGuard = sourceGuard(store, source, row);
+        await store.db.batch([
+          recordGuard.sql,
+          store.statement(
+            "INSERT INTO projection_guards VALUES(?,?,?,?,?,?)",
+            guard,
+            row.tenant,
+            row.source,
+            context.generation,
+            now,
+            row.operation_id,
+          ),
+          store.statement(
+            "UPDATE source_work SET state='test',reason='test_operation_not_exported' WHERE tenant=? AND source=? AND id=? AND kind='qso'",
+            row.tenant,
+            row.source,
+            row.id,
+          ),
+          // Preserve destination state, mappings and baselines for history that
+          // may already exist; only an unsent attempt can safely be cancelled.
+          store.statement(
+            "UPDATE ledger SET reason='test_operation_not_exported' WHERE tenant=? AND source=? AND qso=?",
+            row.tenant,
+            row.source,
+            row.id,
+          ),
+          store.statement(
+            "INSERT INTO attempt_events(tenant,attempt,state,at,reason) SELECT s.tenant,s.attempt,'cancelled',?,'test_operation_not_exported' FROM attempt_state s JOIN attempts a ON a.tenant=s.tenant AND a.id=s.attempt WHERE s.tenant=? AND s.state='prepared' AND a.source=? AND a.qso=?",
+            now,
+            row.tenant,
+            row.source,
+            row.id,
+          ),
+          store.statement(
+            "UPDATE attempt_state SET state='cancelled',reason='test_operation_not_exported',updated_at=? WHERE tenant=? AND state='prepared' AND attempt IN(SELECT id FROM attempts WHERE tenant=? AND source=? AND qso=?)",
+            now,
+            row.tenant,
+            row.tenant,
+            row.source,
+            row.id,
+          ),
+          store.statement("DELETE FROM projection_guards WHERE id=?", guard),
+          store.statement(
+            "DELETE FROM source_write_guards WHERE id=?",
+            recordGuard.id,
+          ),
+        ]);
+        continue;
+      }
       await store
         .statement(
           "UPDATE source_work SET state='blocked',reason=? WHERE tenant=? AND source=? AND id=? AND kind='qso' AND revision=?",
@@ -545,6 +602,12 @@ export async function observeContact(
       contact.contextGeneration,
       now,
       contact.operationId,
+    ),
+    store.statement(
+      "UPDATE ledger SET reason=NULL WHERE tenant=? AND source=? AND qso=? AND reason='test_operation_not_exported'",
+      source.tenant,
+      source.id,
+      contact.id,
     ),
   ];
   if (routedDestinations !== undefined) {
@@ -682,7 +745,7 @@ export async function expireSource(store: Store, now = Date.now()) {
     // Recovery uses its own historical cursor; forward coverage and cutovers
     // stay intact. An incomplete repair is never restarted by older expiries.
     store.statement(
-      "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) SELECT c.tenant,c.id,'repair',json_object('mode','backfill','operations',json('{}'),'qsos',json('{}'),'accountId',json_extract(c.config,'$.accountId'),'rescanComplete',json('false')),0,? FROM connections c LEFT JOIN cursors r ON r.tenant=c.tenant AND r.connection=c.id AND r.stream='repair' WHERE c.kind='lofi' AND c.status='active' AND EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=c.tenant AND w.source=c.id AND w.kind='qso' AND w.is_event=0 AND w.state!='archived' AND w.expires_at<=? AND (r.cursor IS NULL OR w.state!='expired' OR w.expires_at>r.updated_at)) ON CONFLICT(tenant,connection,stream) DO UPDATE SET cursor=excluded.cursor,generation=cursors.generation+1,updated_at=excluded.updated_at WHERE COALESCE(json_extract(cursors.cursor,'$.rescanComplete'),0)=1",
+      "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) SELECT c.tenant,c.id,'repair',json_object('mode','backfill','operations',json('{}'),'qsos',json('{}'),'accountId',json_extract(c.config,'$.accountId'),'rescanComplete',json('false')),0,? FROM connections c LEFT JOIN cursors r ON r.tenant=c.tenant AND r.connection=c.id AND r.stream='repair' WHERE c.kind='lofi' AND c.status='active' AND EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=c.tenant AND w.source=c.id AND w.kind='qso' AND w.is_event=0 AND w.state NOT IN('archived','test') AND w.expires_at<=? AND (r.cursor IS NULL OR w.state!='expired' OR w.expires_at>r.updated_at)) ON CONFLICT(tenant,connection,stream) DO UPDATE SET cursor=excluded.cursor,generation=cursors.generation+1,updated_at=excluded.updated_at WHERE COALESCE(json_extract(cursors.cursor,'$.rescanComplete'),0)=1",
       now,
       now,
     ),
@@ -692,7 +755,7 @@ export async function expireSource(store: Store, now = Date.now()) {
       now,
     ),
     store.statement(
-      "UPDATE ledger SET state='inventory_pending',reason='source_buffer_expired_requires_reread' WHERE EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=ledger.tenant AND w.source=ledger.source AND w.id=ledger.qso AND w.expires_at<=?) AND state NOT IN('delivered','observed','adopted_existing','source_deleted')",
+      "UPDATE ledger SET state='inventory_pending',reason='source_buffer_expired_requires_reread' WHERE EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=ledger.tenant AND w.source=ledger.source AND w.id=ledger.qso AND w.state!='test' AND w.expires_at<=?) AND state NOT IN('delivered','observed','adopted_existing','source_deleted')",
       now,
     ),
     // There is no verified selective base-operation GET; refresh expired bases
@@ -709,7 +772,7 @@ export async function expireSource(store: Store, now = Date.now()) {
       now,
     ),
     store.statement(
-      "UPDATE source_work SET state='expired',reason='source payload expired; current reread required' WHERE expires_at<=? AND kind='qso' AND is_event=0 AND state!='archived'",
+      "UPDATE source_work SET state='expired',reason='source payload expired; current reread required' WHERE expires_at<=? AND kind='qso' AND is_event=0 AND state NOT IN('archived','test')",
       now,
     ),
   ]);

@@ -9,6 +9,7 @@ import {
   mayCleanOldQrzIdentity,
 } from "../src/qrz.ts";
 import { parseAdif, serializeAdifRecord } from "../src/adif.ts";
+import { VendorDeferredError } from "../src/vendor-requests.ts";
 const contact = {
   STATION_CALLSIGN: "N0TEST/P",
   CALL: "W1AW",
@@ -31,6 +32,17 @@ const remote = {
 };
 const encode = (data: Record<string, string>) =>
   new Response(new URLSearchParams(data).toString());
+test("QRZ preserves typed transport deferrals for reads and uploads", async () => {
+  const deferred = new VendorDeferredError(Date.now() + 300000);
+  const client = new QrzClient("synthetic", {
+    writesEnabled: true,
+    fetch: async () => {
+      throw deferred;
+    },
+  });
+  await assert.rejects(client.status(), (error) => error === deferred);
+  await assert.rejects(client.insert(contact), (error) => error === deferred);
+});
 test("QRZ responses decode narrative form values exactly once", () => {
   const adif = serializeAdifRecord({ COMMENT: "A & B + C = 100%" });
   assert.equal(

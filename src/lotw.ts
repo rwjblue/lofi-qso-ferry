@@ -1,4 +1,5 @@
 import { type AdifRecord, parseAdif } from "./adif.ts";
+import { VendorDeferredError } from "./vendor-requests.ts";
 import {
   type CertificateStatus,
   type LotwContact,
@@ -176,7 +177,8 @@ export class LotwClient {
           headers: { "User-Agent": "LoFiQSOFerry/0.1" },
         },
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof VendorDeferredError) throw error;
       throw new Error(
         "LoTW query transport failed; coverage remains incomplete",
       );
@@ -209,7 +211,8 @@ export class LotwClient {
         Revoked: "revoked",
       };
       return known[statuses[0][1].trim()] ?? "unknown";
-    } catch {
+    } catch (error) {
+      if (error instanceof VendorDeferredError) throw error;
       return "unknown";
     }
   }
@@ -245,7 +248,8 @@ export class LotwClient {
         return { state: "uncertain", code: "http_after_dispatch" };
       }
       return parseUploadResponse(await boundedResponse(response, 64 * 1024));
-    } catch {
+    } catch (error) {
+      if (error instanceof VendorDeferredError) throw error;
       return { state: "uncertain", code: "transport_after_dispatch" };
     }
   }

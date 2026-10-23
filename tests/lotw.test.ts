@@ -10,6 +10,7 @@ import {
   parseUploadResponse,
 } from "../src/lotw.ts";
 import type { LotwContact, LotwStation } from "../src/signing.ts";
+import { VendorDeferredError } from "../src/vendor-requests.ts";
 const vector: { station: LotwStation; contact: LotwContact } = JSON.parse(
   readFileSync(
     new URL("../fixtures/signing/vector.json", import.meta.url),
@@ -34,6 +35,31 @@ const record = {
 };
 const report = (records: AdifRecord[] = [record]) =>
   `<PROGRAMID:4>LoTW<APP_LoTW_LASTQSORX:19>2026-10-22 13:00:00<APP_LoTW_NUMREC:${String(records.length).length}>${records.length}<EOH>${records.map(serializeAdifRecord).join("\n")}<APP_LoTW_EOF>`;
+
+test("LoTW preserves typed transport deferrals for query, certificate status and upload", async () => {
+  const deferred = new VendorDeferredError(Date.now() + 300000);
+  const client = new LotwClient(
+    { username: "synthetic", password: "synthetic" },
+    {
+      exportsEnabled: true,
+      fetcher: async () => {
+        throw deferred;
+      },
+    },
+  );
+  await assert.rejects(
+    client.query({ startDate: "2026-10-22", endDate: "2026-10-22" }),
+    (error) => error === deferred,
+  );
+  await assert.rejects(
+    client.certificateStatus("123"),
+    (error) => error === deferred,
+  );
+  await assert.rejects(
+    client.submit(new Uint8Array([0x1f, 0x8b]), { liveWriteAuthorized: true }),
+    (error) => error === deferred,
+  );
+});
 
 test("LoTW report inventories accepted unconfirmed QSOs with own location and server receive cursor", () => {
   const parsed = parseLotwReport(report());

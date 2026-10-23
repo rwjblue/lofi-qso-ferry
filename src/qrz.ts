@@ -1,4 +1,5 @@
 import { parseAdif, serializeAdifRecord, type AdifRecord } from "./adif.ts";
+import { VendorDeferredError } from "./vendor-requests.ts";
 export const QRZ_ENDPOINT = "https://logbook.qrz.com/api";
 export class QrzError extends Error {
   constructor(
@@ -159,7 +160,8 @@ export class QrzClient {
         signal: AbortSignal.timeout(20000),
         redirect: "manual",
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof VendorDeferredError) throw error;
       throw new QrzError(
         mutating ? "uncertain" : "transient",
         "QRZ request failed; mutation outcome must be reconciled",

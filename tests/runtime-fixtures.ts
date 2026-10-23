@@ -128,6 +128,9 @@ export async function schedulerFixture() {
     const qrzMutations: AdifRecord[] = [];
     const fixture = async (name: string) =>
       readFile(new URL(`../fixtures/signing/${name}`, import.meta.url));
+    env.LOTW_TRUST_ROOTS_JSON = JSON.stringify([
+      (await fixture("root.pem")).toString(),
+    ]);
     const credential = await importPkcs12(
       await fixture("current.p12"),
       "ferry-fixture",

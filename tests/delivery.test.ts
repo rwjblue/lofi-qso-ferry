@@ -360,6 +360,7 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
     const { importPkcs12 } = await import("../src/signing.ts");
     const fixture = async (name: string) =>
       readFile(new URL(`../fixtures/signing/${name}`, import.meta.url));
+    const trustRoots = [(await fixture("root.pem")).toString()];
     const signingNow = Date.parse("2027-01-01T00:00:00Z");
     const signing = await importPkcs12(
       await fixture("current.p12"),
@@ -371,6 +372,7 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
         version: "fixture-v1",
       },
     );
+    signing.trusted = false; // Imported before roots were available.
     await h.store
       .statement(
         "UPDATE connections SET kind='lotw',config=? WHERE id='destination'",
@@ -457,13 +459,14 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       key,
       item,
       { ...gates, exportsEnabled: false },
-      { fetcher, now: signingNow },
+      { fetcher, now: signingNow, trustRoots },
     );
     assert.equal(disabled.reason, "exports_disabled_before_signing");
     assert.equal(network, 0);
     const prepared = await prepareDue(h.store, key, item, gates, {
       fetcher,
       now: signingNow,
+      trustRoots,
     });
     assert(prepared.attemptId);
     const payload = await h.store.private<{
@@ -487,6 +490,7 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       (
         await dispatchAttempt(h.store, "a", prepared.attemptId, gates, {
           fetcher,
+          trustRoots,
           now: signingNow + 1,
         })
       ).state,
@@ -507,6 +511,7 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       (
         await dispatchAttempt(h.store, "a", prepared.attemptId, gates, {
           fetcher,
+          trustRoots,
           now: retry!.due_at + 1,
         })
       ).state,
@@ -581,6 +586,7 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
     record.QSL_RCVD = "Y";
     const corrected = await prepareDue(h.store, key, changed, gates, {
       fetcher,
+      trustRoots,
       now: correctedNow,
     });
     assert(corrected.attemptId);
@@ -602,6 +608,7 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       (
         await dispatchAttempt(h.store, "a", corrected.attemptId, gates, {
           fetcher,
+          trustRoots,
           now: correctedNow + 2,
         })
       ).state,
@@ -1182,6 +1189,138 @@ test("prepared narrative context exposes HaLo contact aliases and frozen operati
       "outbox",
     );
     assert.equal(payload!.record.COMMENT, "Alice CT #007 12 12:00");
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("withdrawn LoTW trust anchors reject a prepared signed artifact before upload", async () => {
+  const h = await deliveryDatabase();
+  try {
+    const key = await seed(h.store);
+    const { importPkcs12 } = await import("../src/signing.ts");
+    const fixture = (name: string) =>
+      readFile(new URL(`../fixtures/signing/${name}`, import.meta.url));
+    const trustRoots = [(await fixture("root.pem")).toString()];
+    const signingNow = Date.parse("2027-01-01T00:00:00Z");
+    const signing = await importPkcs12(
+      await fixture("current.p12"),
+      "ferry-fixture",
+      {
+        trustedRoots: trustRoots,
+        now: new Date(signingNow),
+        certificateStatus: async () => "unrevoked",
+        version: "fixture-trust-withdrawal",
+      },
+    );
+    assert.equal(signing.trusted, true);
+    await h.store
+      .statement(
+        "UPDATE connections SET kind='lotw',config=? WHERE id='destination'",
+        JSON.stringify({ stations: [{ callsign: "W1AW", dxcc: 291 }] }),
+      )
+      .run();
+    await h.store
+      .statement(
+        "DELETE FROM private_data WHERE connection='destination' AND kind='credential'",
+      )
+      .run();
+    await (
+      await h.store.putPrivate("a", "destination", "v1", "credential", {
+        signingCredentials: [signing],
+        query: { username: "synthetic", password: "synthetic" },
+      })
+    ).run();
+    const item = await projectContact(
+      {
+        uuid: "q1",
+        operation: "op1",
+        startAtMillis: at,
+        freq: 14074,
+        band: "20m",
+        mode: "FT8",
+        their: { call: "K1ABC" },
+        our: {
+          stationCall: "W1AW",
+          dxccCode: 291,
+          grid: "FN31PR",
+          state: "CT",
+          county: "CT,Tolland",
+          cqZone: 5,
+          ituZone: 8,
+        },
+      },
+      { uuid: "op1", stationCall: "W1AW" },
+      [],
+      { operationComplete: true },
+    );
+    await h.store.observe(
+      key,
+      item.generation,
+      await sourceFingerprint(item, "lotw"),
+      30,
+      false,
+      at,
+    );
+    await h.store
+      .statement("UPDATE ledger SET state='missing_current_identity'")
+      .run();
+    let requests = 0;
+    let uploads = 0;
+    const fetcher: typeof fetch = async (input) => {
+      requests++;
+      const url = String(input);
+      if (url.includes("/lotw/crl?"))
+        return new Response("<Status>Unrevoked</Status>");
+      if (url.includes("lotwreport.adi?"))
+        return new Response(
+          "<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>0<EOH><APP_LOTW_EOF>",
+        );
+      assert.match(url, /lotw\/upload$/);
+      uploads++;
+      return new Response("<!-- .UPL. accepted -->");
+    };
+    const prepared = await prepareDue(h.store, key, item, gates, {
+      fetcher,
+      now: signingNow,
+      trustRoots,
+    });
+    assert.equal(prepared.state, "prepared");
+    assert(prepared.attemptId);
+    const payload = await h.store.private<{ kind: string; tq8: string }>(
+      "a",
+      "destination",
+      prepared.attemptId,
+      "outbox",
+    );
+    assert.equal(payload?.kind, "lotw");
+    assert.deepEqual(
+      [...Buffer.from(payload!.tq8, "base64").subarray(0, 2)],
+      [0x1f, 0x8b],
+    );
+    const requestsBeforeWithdrawal = requests;
+    const rejected = await dispatchAttempt(
+      h.store,
+      "a",
+      prepared.attemptId,
+      gates,
+      { fetcher, now: signingNow + 1, trustRoots: [] },
+    );
+    assert.equal(rejected.state, "rejected");
+    assert.equal(rejected.reason, "lotw_certificate_untrusted");
+    assert.equal(uploads, 0);
+    assert.equal(requests, requestsBeforeWithdrawal);
+    assert.equal(
+      (
+        await h.store
+          .statement(
+            "SELECT state FROM attempt_state WHERE attempt=?",
+            prepared.attemptId,
+          )
+          .first<{ state: string }>()
+      )?.state,
+      "rejected",
+    );
   } finally {
     await h.mf.dispose();
   }

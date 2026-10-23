@@ -18,6 +18,8 @@ import {
   rereadOperation,
 } from "./intake.ts";
 import { LotwClient } from "./lotw.ts";
+import { refreshLotwCertificates } from "./lotw-maintenance.ts";
+import { lotwTrustRoots } from "./lotw-trust.ts";
 import type { Contact } from "./projection.ts";
 import { sourceFingerprint } from "./projection.ts";
 import { QrzClient } from "./qrz.ts";
@@ -185,7 +187,19 @@ export async function tick(
   const currentTime = () => clock ?? Date.now();
   const now = currentTime();
   const nowAtStart = now;
-  const deps = { fetcher, ...(clock === undefined ? {} : { now: clock }) };
+  let trustRoots: string[] = [];
+  let invalidLotwTrust = false;
+  try {
+    trustRoots = lotwTrustRoots(env.LOTW_TRUST_ROOTS_JSON);
+  } catch {
+    // Invalid LoTW trust must deny LoTW signing without stopping other vendors.
+    invalidLotwTrust = true;
+  }
+  const deps = {
+    fetcher,
+    trustRoots,
+    ...(clock === undefined ? {} : { now: clock }),
+  };
   const deadline = startedAt + 90_000;
   const expired = () => Date.now() >= deadline;
   await purgeAuth(env, now);
@@ -194,6 +208,11 @@ export async function tick(
   await expireSource(store, now);
   await store.recover(now);
   await rotatePrivateData(store);
+  const certificateRefresh = await refreshLotwCertificates(
+    store,
+    invalidLotwTrust ? "[]" : env.LOTW_TRUST_ROOTS_JSON,
+    deps,
+  );
   const sources = (
     await store
       .statement(
@@ -205,8 +224,8 @@ export async function tick(
     sources: 0,
     contacts: 0,
     attempts: 0,
-    errors: 0,
-    deferred: 0,
+    errors: certificateRefresh.errors + Number(invalidLotwTrust),
+    deferred: certificateRefresh.deferred,
     exportsEnabled: exportsEffective(gates),
     rounds: 0,
     elapsedMs: 0,

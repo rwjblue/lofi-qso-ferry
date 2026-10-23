@@ -41,6 +41,43 @@ test("an idle drain polls a completed source and processes each contact only onc
     await h.mf.dispose();
   }
 });
+test("invalid LoTW trust denies signing while source sync and QRZ delivery continue", async () => {
+  const h = await schedulerFixture();
+  try {
+    h.env.LOTW_TRUST_ROOTS_JSON = "invalid-json";
+    const initial = await tick(h.env, h.fetcher, FIXTURE_NOW);
+    assert.equal(initial.errors, 1);
+    assert.equal(initial.contacts, 1);
+    assert.equal(h.calls.sourceSync, 1);
+    assert(h.calls.qrzReads > 0);
+    assert.equal(
+      (await h.store.ledger(key("destination")))?.state,
+      "adopted_existing",
+    );
+    assert.equal(
+      (await h.store.connection("a", "lotw"))?.status,
+      "needs_verification",
+    );
+    assert.equal(
+      JSON.parse((await h.store.connection("a", "lotw"))!.config)
+        .certificates[0].trusted,
+      false,
+    );
+    h.enable();
+    h.operation.grid = "FN32BB";
+    h.operation.syncedAtMillis = 200;
+    h.changes.operations.push(h.operation);
+    await tick(h.env, h.fetcher, FIXTURE_NOW + 5 * 60000);
+    const sent = await tick(h.env, h.fetcher, FIXTURE_NOW + 36 * 60000);
+    assert.equal(sent.errors, 1);
+    assert.equal(h.calls.qrzWrites, 1);
+    assert.equal(h.calls.lotwUploads, 0);
+    assert.equal(h.tq8Texts.length, 0);
+    assert.equal(await count(h, "attempts", "destination='lotw'"), 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
 test("one invocation resumes incomplete source pages and stops polling at completion", async () => {
   const h = await schedulerFixture();
   try {
@@ -454,11 +491,29 @@ test("no-query LoTW permits only a durably new forward UUID after cutover, inclu
 test("one invocation visits every failed source and confirmation turns remain fair", async () => {
   const h = await schedulerFixture();
   try {
+    const lotw = await h.store.private<Record<string, unknown>>(
+      "a",
+      "lotw",
+      "fixture-lotw",
+      "credential",
+    );
+    assert.ok(lotw);
+    const config = (await h.store.connection("a", "lotw"))!.config;
     for (const tenant of ["b", "c"]) {
       await seed(h.store, tenant);
+      await (
+        await h.store.putPrivate(
+          tenant,
+          "destination",
+          "fixture-lotw",
+          "credential",
+          lotw,
+        )
+      ).run();
       await h.store
         .statement(
-          "UPDATE connections SET kind='lotw' WHERE tenant=? AND id='destination'",
+          "UPDATE connections SET kind='lotw',credential_version='fixture-lotw',config=? WHERE tenant=? AND id='destination'",
+          config,
           tenant,
         )
         .run();

@@ -4,6 +4,7 @@ import {
   serializeAdifRecord,
 } from "./adif.ts";
 import { LotwClient, observeLotwContact } from "./lotw.ts";
+import { lotwTrustRoots } from "./lotw-trust.ts";
 import type { Contact } from "./projection.ts";
 import {
   mergeQrzCorrection,
@@ -23,6 +24,7 @@ import {
   type LotwContact,
   type LotwStation,
   type SigningCredential,
+  verifySigningCredentialTrust,
 } from "./signing.ts";
 import {
   type Connection,
@@ -53,6 +55,7 @@ export interface DeliveryDependencies {
   now?: number;
   sign?: typeof buildSignedTq8;
   priority?: VendorPriority;
+  trustRoots?: string[];
 }
 interface QrzCredential {
   apiKey: string;
@@ -704,6 +707,13 @@ export async function prepareDue(
         reason: "lotw_certificate_selection_ambiguous_or_missing",
       };
     const selected = eligibleCertificates[0];
+    const trusted = await verifySigningCredentialTrust(
+      selected,
+      deps.trustRoots ?? lotwTrustRoots("bundled"),
+      new Date(now),
+    );
+    if (!trusted)
+      return { state: "blocked", reason: "lotw_certificate_untrusted" };
     const status = await client.certificateStatus(selected.serial);
     if (status !== "unrevoked")
       return { state: "blocked", reason: `lotw_certificate_${status}` };
@@ -725,6 +735,7 @@ export async function prepareDue(
       };
     const signing = {
       ...selected,
+      trusted,
       status,
       statusCheckedAt: new Date(now).toISOString(),
     };
@@ -989,6 +1000,23 @@ export async function dispatchAttempt(
           state: "rejected",
           reason: "lotw_certificate_version_unavailable",
         };
+      }
+      if (
+        !(await verifySigningCredentialTrust(
+          certificate,
+          deps.trustRoots ?? lotwTrustRoots("bundled"),
+          new Date(deps.now ?? Date.now()),
+        ))
+      ) {
+        await store.resolve(
+          tenant,
+          id,
+          lease,
+          "rejected",
+          null,
+          deps.now ?? Date.now(),
+        );
+        return { state: "rejected", reason: "lotw_certificate_untrusted" };
       }
       const certificateStatus = await client.certificateStatus(
         certificate.serial,

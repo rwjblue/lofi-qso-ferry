@@ -486,6 +486,7 @@ export function mergeQrzCorrection(
   for (const [field, value] of Object.entries(remote)) {
     // Never re-submit IDs, confirmations, award credits, or server extension state.
     if (
+      field.startsWith("QRZCOM_") ||
       field.startsWith("APP_QRZLOG_") ||
       field.startsWith("APP_LOTW_") ||
       (/(?:QSL|LOTW|EQSL|CREDIT|AWARD)/.test(field) && field !== "QSLMSG")
@@ -509,6 +510,18 @@ export type QrzMatch =
   | { state: "missing_current_identity" }
   | { state: "history_ambiguous" | "history_mismatch"; reason: string }
   | { state: "adopted_existing"; record: AdifRecord };
+function normalizedFrequency(value: string): string | null {
+  if (
+    !/^\d+(?:\.\d+)?$/.test(value) ||
+    !Number.isFinite(Number(value)) ||
+    Number(value) <= 0
+  )
+    return null;
+  const [integer, fraction = ""] = value.split(".");
+  const whole = integer!.replace(/^0+(?=\d)/, "");
+  const decimals = fraction.replace(/0+$/, "");
+  return decimals ? `${whole}.${decimals}` : whole;
+}
 export function matchQrzHistory(
   source: AdifRecord,
   candidates: AdifRecord[],
@@ -535,6 +548,23 @@ export function matchQrzHistory(
       reason: "No unique exact identity, including time precision and mode",
     };
   const remote = exact[0]!;
+  for (const field of ["FREQ", "FREQ_RX"])
+    if (source[field]) {
+      const local = normalizedFrequency(source[field]!);
+      const observed = remote[field]
+        ? normalizedFrequency(remote[field]!)
+        : null;
+      if (!local || !observed)
+        return {
+          state: "history_ambiguous",
+          reason: `Frequency evidence ${field} is invalid or unavailable`,
+        };
+      if (local !== observed)
+        return {
+          state: "history_mismatch",
+          reason: `Operating frequency ${field} differs`,
+        };
+    }
   for (const field of [
     "MY_GRIDSQUARE",
     "MY_STATE",

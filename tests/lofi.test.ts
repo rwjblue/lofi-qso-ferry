@@ -229,3 +229,86 @@ test("HTML, huge responses, changed accounts and vendor errors never establish c
     await assert.rejects(client.syncPage(initial, 1000), LoFiError);
   }
 });
+
+test("operation rereads retain since and resume bounded descending pages including events/tombstones", async () => {
+  const requests: URL[] = [];
+  const client = new LoFiClient(
+    credentials,
+    fake(async (input) => {
+      const url = new URL(String(input));
+      requests.push(url);
+      assert.equal(url.pathname, "/v1/operations/op-1/qsos");
+      assert.equal(url.searchParams.get("syncedSinceMillis"), "100");
+      if (requests.length === 1)
+        return json({
+          qsos: [{ uuid: "event-1", band: "event", syncedAtMillis: 900 }],
+          meta: { qsos: { records_left: 2, next_synced_until_millis: 900 } },
+        });
+      assert.equal(url.searchParams.get("syncedUntilMillis"), "900");
+      return json({
+        qsos: [
+          { uuid: "qso-1", operation: "op-1", deleted: 1, syncedAtMillis: 899 },
+        ],
+        meta: { qsos: { records_left: 0 } },
+      });
+    }),
+  );
+  const first = await client.operationQsosPage("op-1", { since: 100 });
+  assert.equal(first.complete, false);
+  assert.equal(first.qsos[0].operation, "op-1");
+  const resumed = await client.operationQsosPage(
+    "op-1",
+    JSON.parse(JSON.stringify(first.next)),
+  );
+  assert.equal(resumed.complete, true);
+  assert.equal(resumed.qsos[0].deleted, 1);
+});
+
+test("operation rereads cannot infer empty history, skip a stalled tie, or select another operation", async () => {
+  for (const response of [
+    { qsos: [], meta: { qsos: {} } },
+    {
+      qsos: [{ uuid: "q", syncedAtMillis: 100 }],
+      meta: { qsos: { records_left: 1, next_synced_until_millis: 100 } },
+    },
+    {
+      qsos: [{ uuid: "q", operation: "another", syncedAtMillis: 100 }],
+      meta: { qsos: { records_left: 0 } },
+    },
+  ]) {
+    const client = new LoFiClient(
+      credentials,
+      fake(async () => json(response)),
+    );
+    await assert.rejects(
+      client.operationQsosPage("op-1", { cursor: 100 }),
+      LoFiError,
+    );
+  }
+  const client = new LoFiClient(
+    credentials,
+    fake(async () => json({ qsos: [], meta: { qsos: { records_left: 2 } } })),
+  );
+  const empty = await client.operationQsosPage("op-1", { cursor: 100 });
+  assert.equal(empty.complete, false);
+  assert.equal(empty.next.cursor, 100);
+  await assert.rejects(client.operationQsosPage("../accounts"), LoFiError);
+});
+
+test("an empty forward tail preserves its server watermark instead of replaying from zero", async () => {
+  const state: SyncState = {
+    mode: "forward",
+    accountId: "account-1",
+    operations: { watermark: 200 },
+    qsos: { watermark: 300 },
+  };
+  const client = new LoFiClient(
+    credentials,
+    fake(async () =>
+      json(reply([], [], { records_left: 0 }, { records_left: 0 })),
+    ),
+  );
+  const page = await client.syncPage(state, 1000);
+  assert.equal(page.next.operations.watermark, 200);
+  assert.equal(page.next.qsos.watermark, 300);
+});

@@ -17,6 +17,8 @@ export interface Contact {
   state?: string;
   county?: string;
   dxcc?: number;
+  cqZone?: number;
+  ituZone?: number;
   operatorCall?: string;
   rstSent?: string;
   rstReceived?: string;
@@ -193,7 +195,7 @@ export function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   return `{${Object.entries(value)
     .filter(([, item]) => item !== undefined)
-    .sort(([a], [b]) => a.localeCompare(b))
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
     .join(",")}}`;
 }
@@ -219,9 +221,13 @@ const metadata = new Set([
   "lastQSO",
 ]);
 
-function triggerContext(record: SourceRecord): SourceRecord {
+function triggerContext(record: SourceRecord, operation = false): SourceRecord {
   return Object.fromEntries(
-    Object.entries(record).filter(([key]) => !metadata.has(key)),
+    Object.entries(record).filter(
+      ([key]) =>
+        !metadata.has(key) ||
+        (!operation && ["endAt", "endAtMillis"].includes(key)),
+    ),
   );
 }
 
@@ -259,9 +265,10 @@ export async function projectContact(
   ) {
     throw new ProjectionError("invalid_qso_time");
   }
-  const op = operation
-    ? effectiveOperation(operation, events, startAtMillis)
-    : {};
+  const op =
+    operationId && operation
+      ? effectiveOperation(operation, events, startAtMillis)
+      : {};
   const our = map(qso.our);
   const their = map(qso.their);
   const call = stationCall(their.call);
@@ -318,6 +325,12 @@ export async function projectContact(
     ...(state ? { state } : {}),
     ...(county ? { county } : {}),
     ...(numeric(our.dxccCode) ? { dxcc: numeric(our.dxccCode) } : {}),
+    ...(numeric(our.cqZone) !== undefined
+      ? { cqZone: numeric(our.cqZone) }
+      : {}),
+    ...(numeric(our.ituZone) !== undefined
+      ? { ituZone: numeric(our.ituZone) }
+      : {}),
     ...(text(our.operatorCall)
       ? { operatorCall: text(our.operatorCall)?.toUpperCase() }
       : {}),
@@ -347,16 +360,52 @@ export async function sourceFingerprint(
     notes,
     ownParks,
     workedParks,
-    ...structured
   } = contact;
+  const structured = Object.fromEntries(
+    [
+      "id",
+      "operationId",
+      "call",
+      "stationCall",
+      "startAtMillis",
+      "timePrecision",
+      "frequencyMHz",
+      "band",
+      "mode",
+      "submode",
+      "grid",
+      "latitude",
+      "longitude",
+      "state",
+      "county",
+      "dxcc",
+      "cqZone",
+      "ituZone",
+      "operatorCall",
+      "rstSent",
+      "rstReceived",
+      "power",
+      "deleted",
+    ].map((key) => [key, contact[key as keyof Contact]]),
+  );
   if (destination === "lotw") {
-    const {
-      power: _power,
-      rstSent: _sent,
-      rstReceived: _received,
-      ...supported
-    } = structured;
-    return projectionHash({ version: "lotw-source-v1", ...supported });
+    return projectionHash({
+      version: "lotw-source-v1",
+      call: contact.call,
+      stationCall: contact.stationCall,
+      startAtMillis: contact.startAtMillis,
+      band: contact.band,
+      mode: contact.mode,
+      submode: contact.submode,
+      frequencyMHz: contact.frequencyMHz,
+      grid: contact.grid,
+      state: contact.state,
+      county: contact.county,
+      dxcc: contact.dxcc,
+      cqZone: contact.cqZone,
+      ituZone: contact.ituZone,
+      deleted: contact.deleted,
+    });
   }
   return projectionHash({
     version: "qrz-source-v1",
@@ -368,7 +417,7 @@ export async function sourceFingerprint(
           ownParks,
           workedParks,
           qso: triggerContext(context.qso),
-          op: triggerContext(context.op),
+          op: triggerContext(context.op, true),
         }),
   });
 }

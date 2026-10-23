@@ -281,3 +281,23 @@ test("live QRZ raw HTML-encoded ADIF tail preserves literal entities and plus/am
     "Line 1\r\n<EOR> &amp; literal",
   );
 });
+test("QRZ structured corrections exclude QRZCOM server metadata and adoption normalizes decimal frequencies", () => {
+  const merged = mergeQrzCorrection(
+    { ...remote, QRZCOM_QSO_UPLOAD_DATE: "server-managed" },
+    contact,
+    "remote_preserved",
+  );
+  assert.equal(merged.QRZCOM_QSO_UPLOAD_DATE, undefined);
+  assert.equal(
+    matchQrzHistory({ ...contact, FREQ: "14.074" }, [
+      { ...remote, FREQ: "14.07400" },
+    ]).state,
+    "adopted_existing",
+  );
+  assert.equal(
+    matchQrzHistory({ ...contact, FREQ: "14.074" }, [
+      { ...remote, FREQ: "14.07500" },
+    ]).state,
+    "history_mismatch",
+  );
+});

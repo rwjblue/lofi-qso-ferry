@@ -210,3 +210,71 @@ test("ambiguous boundary, mixed station calls, unsupported mode and wrong freque
   const fractional = await project({ ...qso, startAtMillis: at + 123 });
   assert.equal(fractional.timePrecision, "millisecond");
 });
+
+test("a null-operation contact never inherits a supplied operation's station or location", async () => {
+  await assert.rejects(
+    projectContact({ ...qso, operation: null }, operation),
+    ProjectionError,
+  );
+  const contact = await projectContact(
+    { ...qso, operation: null, our: { stationCall: "N0CALL" } },
+    operation,
+  );
+  assert.equal(contact.grid, undefined);
+  assert.deepEqual(contact.ownParks, []);
+});
+
+test("LoTW dependencies match signed fields and exclude coordinates and operator-only edits", async () => {
+  const before = await project();
+  const after = await project(
+    { ...qso, our: { ...(qso.our as SourceRecord), operatorCall: "W1AW" } },
+    { ...operation, lat: 41.5, lon: -73.5 },
+  );
+  assert.equal(
+    await sourceFingerprint(before, "lotw"),
+    await sourceFingerprint(after, "lotw"),
+  );
+  assert.notEqual(
+    await sourceFingerprint(before, "qrz"),
+    await sourceFingerprint(after, "qrz"),
+  );
+  for (const field of ["cqZone", "ituZone"] as const) {
+    const changed = await project({
+      ...qso,
+      our: { ...(qso.our as SourceRecord), [field]: 5 },
+    });
+    assert.equal(changed[field], 5);
+    assert.notEqual(
+      await sourceFingerprint(before, "lotw"),
+      await sourceFingerprint(changed, "lotw"),
+    );
+  }
+});
+
+test("a contact end-time edit remains a QRZ input while operation end totals are snapshots", async () => {
+  const before = await project();
+  const after = await project({ ...qso, endAtMillis: at + 60_000 });
+  assert.notEqual(before.generation, after.generation);
+  assert.equal(
+    await sourceFingerprint(before, "lotw"),
+    await sourceFingerprint(after, "lotw"),
+  );
+});
+
+test("internal intake bookkeeping cannot change destination fingerprints or quiet periods", async () => {
+  const original = await project();
+  const first = { ...original, contextGeneration: 1 };
+  const second = { ...original, contextGeneration: 99 };
+  assert.equal(
+    await sourceFingerprint(first, "qrz"),
+    await sourceFingerprint(second, "qrz"),
+  );
+  assert.equal(
+    await sourceFingerprint(first, "qrz", true),
+    await sourceFingerprint(second, "qrz", true),
+  );
+  assert.equal(
+    await sourceFingerprint(first, "lotw"),
+    await sourceFingerprint(second, "lotw"),
+  );
+});

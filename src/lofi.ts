@@ -30,6 +30,18 @@ export interface SyncPage {
   coverage: "client-contract-only";
 }
 
+export interface OperationQsosState {
+  cursor?: number;
+  since?: number;
+}
+
+export interface OperationQsosPage {
+  qsos: SourceRecord[];
+  next: OperationQsosState;
+  complete: boolean;
+  coverage: "client-contract-only";
+}
+
 export class LoFiError extends Error {
   constructor(
     readonly code: string,
@@ -194,6 +206,81 @@ export class LoFiClient {
     return account;
   }
 
+  /** Bounded reread for an operation edit; completion is not a snapshot. */
+  async operationQsosPage(
+    operationId: string,
+    state: OperationQsosState = {},
+    limit = 100,
+  ): Promise<OperationQsosPage> {
+    if (
+      !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(operationId) ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 200
+    ) {
+      throw new LoFiError("invalid_operation_window");
+    }
+    const query = new URLSearchParams({ limit: String(limit) });
+    for (const [key, value] of [
+      ["syncedSinceMillis", state.since],
+      ["syncedUntilMillis", state.cursor],
+    ] as const) {
+      if (value === undefined) continue;
+      if (count(value) === undefined)
+        throw new LoFiError("invalid_operation_window");
+      query.set(key, String(value));
+    }
+    const response = await this.request(
+      `/v1/operations/${encodeURIComponent(operationId)}/qsos?${query}`,
+    );
+    if (
+      Object.keys(optionalObject(optionalObject(response.errors).qsos)).length
+    ) {
+      throw new LoFiError("operation_reread_reconciliation_required");
+    }
+    const qsos = records(response.qsos).map((record) => {
+      if (record.operation !== undefined && record.operation !== operationId) {
+        throw new LoFiError("operation_reread_identity_mismatch");
+      }
+      if (count(record.syncedAtMillis) === undefined)
+        throw new LoFiError("missing_server_watermark");
+      // The route establishes membership when an older server omits it.
+      return { ...record, operation: operationId };
+    });
+    const info = object(object(response.meta).qsos);
+    const left = count(info.records_left ?? info.recordsLeft);
+    if (left === undefined) throw new LoFiError("missing_coverage_count");
+    if (left === 0)
+      return {
+        qsos,
+        next: { ...state },
+        complete: true,
+        coverage: "client-contract-only",
+      };
+    if (!qsos.length)
+      return {
+        qsos,
+        next: { ...state },
+        complete: false,
+        coverage: "client-contract-only",
+      };
+    const next = count(
+      info.next_synced_until_millis ?? info.nextSyncedUntilMillis,
+    );
+    if (
+      next === undefined ||
+      (state.cursor !== undefined && next >= state.cursor)
+    ) {
+      throw new LoFiError("operation_reread_pagination_stalled");
+    }
+    return {
+      qsos,
+      next: { ...state, cursor: next },
+      complete: false,
+      coverage: "client-contract-only",
+    };
+  }
+
   async syncPage(
     state: SyncState,
     now: number,
@@ -267,9 +354,12 @@ export class LoFiClient {
         throw new LoFiError("missing_server_watermark");
       }
       const times = stamps as number[];
+      const priorLatest =
+        previous.latest ??
+        (state.mode === "forward" ? previous.watermark : undefined);
       const latest = times.length
-        ? Math.max(previous.latest ?? 0, ...times)
-        : previous.latest;
+        ? Math.max(priorLatest ?? 0, ...times)
+        : priorLatest;
       const oldest = times.length ? Math.min(...times) : previous.watermark;
       const candidate =
         state.mode === "backfill"

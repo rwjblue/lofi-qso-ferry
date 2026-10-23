@@ -9,8 +9,20 @@
     "binding": "ASSETS",
     "run_worker_first": true
   },
-  "observability": { "enabled": true },
-  "triggers": { "crons": ["*/5 * * * *"] },
+  "observability": {
+    "enabled": true,
+    "redact_query_string": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false
+    },
+    "traces": {
+      "enabled": false
+    }
+  },
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "vars": {
     "ENVIRONMENT": "local",
     "RP_ID": "localhost",
@@ -18,7 +30,11 @@
     "EXPORTS_ENABLED": "false",
     "LIVE_WRITE_AUTHORIZATION": "",
     "MAIL_FROM": "LoFi QSO Ferry <ferry@example.invalid>",
-    "ACTIVE_KEK_VERSION": "1"
+    "LOTW_TRUST_ROOTS_JSON": "[]",
+    "ACTIVE_KEK_VERSION": "1",
+    "ROLLOUT_CHECKS_PASSED": "false",
+    "SOURCE_BOUNDARY_VERIFIED": "false",
+    "ROLLOUT_QSO_IDS_JSON": "[]"
   },
   "d1_databases": [
     {
@@ -38,7 +54,11 @@
         "EXPORTS_ENABLED": "false",
         "LIVE_WRITE_AUTHORIZATION": "",
         "MAIL_FROM": "configure@example.invalid",
-        "ACTIVE_KEK_VERSION": "1"
+        "LOTW_TRUST_ROOTS_JSON": "[]",
+        "ACTIVE_KEK_VERSION": "1",
+        "ROLLOUT_CHECKS_PASSED": "false",
+        "SOURCE_BOUNDARY_VERIFIED": "false",
+        "ROLLOUT_QSO_IDS_JSON": "[]"
       },
       "d1_databases": [
         {
@@ -58,7 +78,11 @@
         "EXPORTS_ENABLED": "false",
         "LIVE_WRITE_AUTHORIZATION": "",
         "MAIL_FROM": "configure@example.invalid",
-        "ACTIVE_KEK_VERSION": "1"
+        "LOTW_TRUST_ROOTS_JSON": "[]",
+        "ACTIVE_KEK_VERSION": "1",
+        "ROLLOUT_CHECKS_PASSED": "false",
+        "SOURCE_BOUNDARY_VERIFIED": "false",
+        "ROLLOUT_QSO_IDS_JSON": "[]"
       },
       "d1_databases": [
         {

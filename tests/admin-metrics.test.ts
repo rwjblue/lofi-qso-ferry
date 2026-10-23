@@ -461,7 +461,11 @@ test("scheduled wrapper invokes the real idle scheduler without a test runner", 
         "SELECT throughput_json FROM scheduler_runs WHERE status='completed' ORDER BY started_at DESC LIMIT 1",
       )
       .first<{ throughput_json: string }>();
-    assert.deepEqual(JSON.parse(saved!.throughput_json), throughput);
+    // JSON preserves diagnostic entries, not the in-memory map's null prototype.
+    assert.deepEqual(JSON.parse(saved!.throughput_json), {
+      ...throughput,
+      failures: { ...throughput.failures },
+    });
     assert(elapsedMs >= 0);
     assert.deepEqual(counters, {
       sources: 0,

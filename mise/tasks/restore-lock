@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="Quarantine restored local D1 before binding any service"
+set -euo pipefail
+npx wrangler d1 execute ferry-local --local --env= --file ops/lock-restored.sql

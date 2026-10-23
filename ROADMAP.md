@@ -5,7 +5,7 @@ This roadmap is the handoff for implementation in this repository. Checked items
 ## Next milestones (2026-10-23)
 
 Core feature paths, owner enrollment and service linking are implemented. Production remains read-only. The immediate work is to resolve the reconciliation backlog and prove rollout readiness; linking credentials and waiting for cron do not establish that readiness. Fractional-timestamp exports also need durable outbound identity claims before they can be enabled safely.
-1. **Measure and improve the deployed reconciliation throughput work.** Batched intake/context reads, indexed due-work selection, durable exception retry scheduling, shared encrypted destination inventory and scheduler telemetry are deployed in `bbc2346c`; follow-up `471e8620` adds a QRZ verification fallback, fewer database requests and four-way read-only background concurrency. All gates are closed and nineteen migrations are applied; the follow-up passes 465 tests locally and in CI. Its first production run processed 20 contacts and made 29 destination classifications in 95.3 seconds, but source-context starvation still needs correction. The local 20-contact fixture produces 40 stable destination holds using three vendor requests, then no contact processing or history reads on the next tick. Keep exports disabled, measure sustained unique classifications and source freshness, complete context/rescans, and review the remaining exceptions. Batching comparisons and guarded commits for contacts sharing inventory, targeted wakeups, larger verified source pages, durable queue continuations and full 4,000/200,000-contact capacity acceptance remain open. See the [investigation and ordered capacity plan](docs/reconciliation-investigation.md). Waiting for cron alone does not complete these steps.
+1. **Measure and improve the deployed reconciliation throughput work.** Batched intake/context reads, indexed due-work selection, durable exception retry scheduling, shared encrypted destination inventory and scheduler telemetry are deployed in `bbc2346c`; follow-up `471e8620` adds a QRZ verification fallback, fewer database requests and four-way read-only background concurrency. All gates are closed and nineteen migrations are applied; the follow-up passes 465 tests locally and in CI. Its first production run processed 20 contacts and made 29 destination classifications in 95.3 seconds, and the source-lane fairness correction deployed in `cb9ea362` after all 467 tests and required local checks passed. Sustained classification and source-context progress still need verification. The local 20-contact fixture produces 40 stable destination holds using three vendor requests, then no contact processing or history reads on the next tick. Keep exports disabled, measure sustained unique classifications and source freshness, complete context/rescans, and review the remaining exceptions. Batching comparisons and guarded commits for contacts sharing inventory, targeted wakeups, larger verified source pages, durable queue continuations and full 4,000/200,000-contact capacity acceptance remain open. See the [investigation and ordered capacity plan](docs/reconciliation-investigation.md). Waiting for cron alone does not complete these steps.
 2. **Establish the source contract and remaining personal checks.** Complete exhaustive LoFi UUID/tombstone inventory and replay/cutover evidence; verify an independent backup passkey, secret backup and representative deployed signing/resource behavior. Preserve `SOURCE_BOUNDARY_VERIFIED=false` until supported by that evidence.
 3. **Complete outbound identity collision protection.** Implement durable identity claims for both QRZ and LoTW before fractional-timestamp exports can enter the canary. Establish a separate precision-aware historical-association policy and the outbound policy for eight-character source grids; diagnostic review holds do not authorize truncation or adoption. Adoption reservations and quarantine now protect competing source contacts in local tests; that protection does not provide outbound claims or make a later edit exportable through a collision.
 4. **Run explicitly authorized first writes.** Select exact new source UUIDs and destinations, prove QRZ mutation/narrative/location behavior and Worker-signed LoTW acceptance through readback, and record the deployed revision and results. Keep prior QRZ identities retained until cleanup is separately proven safe.
@@ -182,19 +182,20 @@ dashboard has been exercised in Chromium at desktop and 390px mobile widths with
 a virtual passkey. Production exports remain disabled. No live INSERT, REPLACE,
 DELETE or LoTW upload occurred.
 
-The throughput follow-up `471e8620e227c35adf2cb5c91a31765fdc7fa04a` deployed as
-Worker `5d667922-2d09-4020-8fbd-46594a537750` at `2026-10-23T16:37:10.435132Z`.
-All 465 tests and required checks passed locally and in
-[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39988135604).
+The scheduling correction `cb9ea362e2a03e29b7d53793bae95276de7d7341` deployed as
+Worker `aea20af6-c08d-4718-bc41-2e450d8cc2e4` at `2026-10-23T16:53:28.594528Z`.
+All 467 tests and required checks passed locally; its
+[CI run](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39990488592) stopped at a documentation-format error corrected in this update; code CI is being rerun.
 Live version and health checks confirm 100% traffic and all five gates closed.
-The 16:43 UTC D1 snapshot confirms nineteen migrations, zero attempts and zero
-cutovers. Its first completed run processed 20 contacts and made 29 destination
-classifications in 95.3 seconds, with three errors and eight deferrals. No
-historical rescan or operation reread page advanced in that run; the retained
-batch can exhaust the turn before those lanes run, requiring a fairness fix.
-Owner enrollment and LoFi/QRZ/LoTW linking are complete. Sustained production
-progress, complete inventory/source capacity, precision policy and owner-history
-acceptance remain outstanding. No 200,000-contact SLA has been demonstrated.
+The 16:53 UTC D1 snapshot confirms nineteen migrations, zero attempts and zero
+cutovers. The preceding throughput release processed 15–21 contacts per run
+across three observed runs; the first made 29 destination classifications in
+95.3 seconds. Context progress was inconsistent because retained batches could
+exhaust the deadline. The deployed correction rotates which background lane
+runs first; production verification is next. Owner enrollment and LoFi/QRZ/LoTW
+linking are complete. Sustained production progress, complete inventory/source
+capacity, precision policy and owner-history acceptance remain outstanding.
+No 200,000-contact SLA has been demonstrated.
 See [deployment evidence](docs/deployment.md).
 
 Milestone 0 has bounded live read evidence for all three vendors, local signing

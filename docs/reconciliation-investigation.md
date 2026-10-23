@@ -149,7 +149,7 @@ summed RPC latency was 234.0 seconds because requests overlapped. Source polling
 read one empty canonical page, but neither historical rescan nor operation
 reread advanced. Inspection confirms the ready batch can consume every turn's
 deadline before background source recovery runs. A durable fair rotation of
-background processing lanes is the next correction; simply waiting longer does
+background processing lanes is the correction described below; simply waiting longer does
 not fix this ordering defect.
 
 Read-only metadata localizes the three failures to two QRZ initial scans and
@@ -180,7 +180,11 @@ coverage or cutover proofs. It adds one database request per background turn
 without a migration or vendor-budget change. Virtual-time regressions exercise
 all three lanes across deadline exhaustion and a history failure; additional
 races reject expired or replaced cycle leases. All 467 tests and required local
-checks pass. Deployment evidence is recorded separately after release.
+checks pass. Signed revision `cb9ea362` deployed at 16:53 UTC as Worker
+`aea20af6-c08d-4718-bc41-2e450d8cc2e4`. CI stopped at a documentation-format
+error corrected in the release-note update; a rerun and production observation
+are pending. All gates, assets and health were independently verified, with nineteen
+migrations and zero attempts/cutovers/guard residue.
 
 Cumulative stage/database durations may overlap under concurrency. The new
 `database.wallMs` reports elapsed time with any database request in flight;
@@ -358,7 +362,10 @@ be claimed from destination batching alone.
    account/credential checks and commit-time evidence fences. Increasing
    concurrency or enqueueing the current per-contact function does not remove
    those round trips. Measure both cold and warm inventories before expanding
-   parallelism.
+   parallelism. An initial local acceptance target is no more than 30 database
+   RPCs for 20 cached contacts across two destinations, excluding scheduler
+   housekeeping, versus the measured 400. This is a target, not an implemented
+   result.
 5. **Add durable continuations and targeted inventory wakeups.** Shared
    partitions and durable indexed due-work metadata are implemented, but
    Cloudflare Queue jobs are not. Move bounded page/partition continuations to a

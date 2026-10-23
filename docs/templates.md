@@ -1,6 +1,6 @@
 # QRZ narrative templates
 
-This document defines the proposed v1 behavior. Templates format QRZ narrative fields; they do not control QSO identity or station/location fields. LoTW exports have no narrative template binding. Changing a template must never schedule a LoTW export.
+This document defines the implemented v1 behavior (`ferry-liquid-v1`, a bounded compatibility profile). See [QRZ evidence](evidence-qrz.md) for supported syntax and remaining vendor checks. Templates format QRZ narrative fields; they do not control QSO identity or station/location fields. LoTW exports have no narrative template binding. Changing a template must never schedule a LoTW export.
 
 ## HaLo compatibility
 
@@ -27,7 +27,6 @@ The durable binding belongs to `(tenant, LoFi account, source QSO UUID, logical 
 The **composite source generation** includes the QSO plus the effective operation and segment inputs that determine its projection, including segment boundaries and applicable station, location, and reference overrides. Capture and validate those dependencies together; an unchanged QSO revision does not establish an unchanged generation when its operation or segment changed.
 
 The first **durable outbound generation** pins the active version. This means the validated, rendered export has been committed to the outbox, before any network request. Binding at the first successful response would leave timeouts and crashes ambiguous.
-
 1. A contact waiting for cooldown or failing pre-export validation remains unbound.
 2. Render and validate against the active version and current source generation.
 3. Atomically commit the version binding, output hash, delivery identity, and immutable outbox payload. If the selected version or source generation changed before commit, retry preparation.

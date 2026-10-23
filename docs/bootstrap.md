@@ -1,19 +1,19 @@
 # Adopting existing QRZ and LoTW history
 
-Status: proposed implementation contract. Bootstrap first inventories and adopts existing contacts without remote writes. After reconciliation, contacts whose current identity is demonstrably absent become eligible for automatic backfill through normal delivery. Adoption itself must not re-upload existing history, regenerate its comments, reset confirmations, or re-sign every QSO.
+Status: implemented v1 contract; complete owner-history and source-boundary verification remain gated. See [rollout checklist](rollout-checklist.md). Bootstrap first inventories and adopts existing contacts without remote writes. After reconciliation, contacts whose current identity is demonstrably absent become eligible for automatic backfill through normal delivery. Adoption itself must not re-upload existing history, regenerate its comments, reset confirmations, or re-sign every QSO.
 
 QRZ and LoTW reconcile independently. A QSO can be adopted at QRZ while LoTW remains unavailable. Exceptions affect the relevant record and destination; they do not hold up unrelated live logging.
 
 ## Outcomes
 
-| Destination state | Meaning and next action |
-| --- | --- |
-| `inventory_pending` | Coverage or source-version checks are incomplete. Do not export historical records. |
-| `adopted_existing` | One existing record matches, with sufficient agreement on source-owned operational fields. Record the association without writing remotely. |
-| `missing_current_identity` | Complete, successful inventory and a fresh targeted check found no matching or ambiguous candidate. Eligible for normal automatic delivery. |
-| `history_mismatch` | An identifiable existing QSO disagrees on substantive source-owned data, such as operating location. Preserve it and expose the disagreement. |
-| `history_ambiguous` | Multiple candidates, insufficient precision, or an unverified normalization prevents safe association. Isolate the exception. |
-| `historical_unverified` | Required read access is unavailable. History is skipped, not marked delivered or eligible for blind backfill. |
+| Destination state          | Meaning and next action                                                                                                                       |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inventory_pending`        | Coverage or source-version checks are incomplete. Do not export historical records.                                                           |
+| `adopted_existing`         | One existing record matches, with sufficient agreement on source-owned operational fields. Record the association without writing remotely.   |
+| `missing_current_identity` | Complete, successful inventory and a fresh targeted check found no matching or ambiguous candidate. Eligible for normal automatic delivery.   |
+| `history_mismatch`         | An identifiable existing QSO disagrees on substantive source-owned data, such as operating location. Preserve it and expose the disagreement. |
+| `history_ambiguous`        | Multiple candidates, insufficient precision, or an unverified normalization prevents safe association. Isolate the exception.                 |
+| `historical_unverified`    | Required read access is unavailable. History is skipped, not marked delivered or eligible for blind backfill.                                 |
 
 Adoption records presence; confirmation is a separate fact. Source upload flags, operation completion, and another service's confirmation badge are not evidence that a destination contains the current QSO.
 
@@ -21,7 +21,7 @@ Adoption records presence; confirmation is a separate fact. Source upload flags,
 
 ### QRZ
 
-Use the connected logbook's API key and `ACTION=FETCH`, requesting ADIF and `STATUS:ALL`. Page with `MAX:250,AFTERLOGID:0`, advancing to the largest returned `APP_QRZLOG_LOGID` plus one. Stop on the parsed page length, not `COUNT`, which describes all matches. `BETWEEN` can bound a partition. Do not combine `ALL` with pagination options. `MODSINCE` covers modifications that an ID-only pass misses. The documented interface has no snapshot token. A generic `FAIL` is not an empty inventory; validate the server's empty-result behavior in adapter contract tests. See the [QRZ API guide](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html).
+Use the connected logbook's API key and `ACTION=FETCH`, requesting ADIF and relying on the all-status default. An explicit `STATUS:ALL` produced generic failure in the bounded live probe; see [QRZ evidence](evidence-qrz.md). Page with `MAX:250,AFTERLOGID:0`, advancing to the largest returned `APP_QRZLOG_LOGID` plus one. Stop on the parsed page length, not `COUNT`, which describes all matches. `BETWEEN` can bound a partition. Do not combine `ALL` with pagination options. `MODSINCE` covers modifications that an ID-only pass misses. The documented interface has no snapshot token. A generic `FAIL` is not an empty inventory; validate the server's empty-result behavior in adapter contract tests. See the [QRZ API guide](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html).
 
 Inventory every connected callsign/date-range book. Portable suffixes are significant; `N1RWJ` and `N1RWJ/P` must not be silently combined. The [multiple-logbooks rules](https://www.qrz.com/docs/logbook30/multiple-logbooks) explain this routing.
 
@@ -49,15 +49,15 @@ Persist one row per tenant, stable LoFi account, source UUID, and **logical dest
 
 On reconnect, reuse trusted Ferry receipt, mapping, provenance, and binding history before considering fresh adoption. Restore an established QRZ template binding; never downgrade it to `remote_preserved` merely because the remote record already exists. Reconciliation checks that retained association without inventing a new ownership policy.
 
-| Value | Purpose |
-| --- | --- |
-| Captured source revision or content token | Identifies the exact version examined, including effective operation/location inputs. |
-| `source_baseline_hash` and projection version | Hashes that captured version's source-owned inputs included in the destination projection. Detects subsequent real source changes. |
-| `remote_observed_hash` | Hashes comparable remote fields under a separate, versioned projection. Records what was observed, not what Ferry wishes had been sent. |
-| Association and evidence time | QRZ book/LOGID, or an encrypted LoTW identity tuple; observation time and inventory scope. |
-| Adoption state and compact reason | Distinguishes an adopted record from a Ferry delivery and records unresolved evidence. |
-| Remote creation provenance | Per QRZ LOGID: `adopted`, `ferry_created`, or `unknown`; retained for any prior ID awaiting cleanup. A replacement does not convert adopted provenance into Ferry creation. |
-| QRZ narrative ownership | `remote_preserved` for newly adopted associations; otherwise the retained immutable template binding. This is separate from remote creation provenance. LoTW has no narrative binding. |
+| Value                                         | Purpose                                                                                                                                                                                |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Captured source revision or content token     | Identifies the exact version examined, including effective operation/location inputs.                                                                                                  |
+| `source_baseline_hash` and projection version | Hashes that captured version's source-owned inputs included in the destination projection. Detects subsequent real source changes.                                                     |
+| `remote_observed_hash`                        | Hashes comparable remote fields under a separate, versioned projection. Records what was observed, not what Ferry wishes had been sent.                                                |
+| Association and evidence time                 | QRZ book/LOGID, or an encrypted LoTW identity tuple; observation time and inventory scope.                                                                                             |
+| Adoption state and compact reason             | Distinguishes an adopted record from a Ferry delivery and records unresolved evidence.                                                                                                 |
+| Remote creation provenance                    | Per QRZ LOGID: `adopted`, `ferry_created`, or `unknown`; retained for any prior ID awaiting cleanup. A replacement does not convert adopted provenance into Ferry creation.            |
+| QRZ narrative ownership                       | `remote_preserved` for newly adopted associations; otherwise the retained immutable template binding. This is separate from remote creation provenance. LoTW has no narrative binding. |
 
 A newly adopted row without trusted Ferry history has no Ferry delivery receipt or `last_sent_hash`. Do not set those to today's generated payload: that payload was never sent. Do not compare `remote_observed_hash` with the differently defined source hash and treat their inequality as a change.
 
@@ -65,6 +65,7 @@ The first unchanged poll is a no-op. Later source edits compare against the capt
 
 ## Reconciliation and cutover algorithm
 
+V1 uses one source contact as its bounded partition: QRZ reads its documented collision neighborhood with date margins, and LoTW queries that station/worked callsign on its UTC date. The complete targeted response supplies candidate coverage; no permanent remote logbook index is retained. Oversized, partial or malformed responses remain unresolved. The immutable source birth/cursor cutover and replay gate still apply; targeted readback does not establish a missing source snapshot guarantee.
 1. **Establish source change intake.** Record a cutover boundary and begin durable intake before scanning. Use a resumable cursor only if its ordering, retention, pagination, and historical-edit behavior are verified. Record bootstrap progress separately from normal delivery progress.
 2. **Capture one bounded source partition.** Save its UUIDs, exact observed version tokens, destination projections, and effective location dependencies temporarily. An inventory page of mutable current records is not an immutable historical snapshot.
 3. **Stream remote candidates.** Build a bounded temporary index for the corresponding account, callsign, dates, and collision margins. Resume failed pages; incomplete or malformed responses cannot establish absence. Track coverage independently for each destination.
@@ -92,22 +93,22 @@ A signing certificate is not a substitute for account read access. Without the w
 
 ## Acceptance cases
 
-| Scenario | Required result |
-| --- | --- |
-| Historical QSOs already exist at both services, including unconfirmed ones | Adopt; zero INSERT, REPLACE, DELETE, or signing operations. |
-| QRZ text differs from today's template | Preserve text; unchanged future polls remain silent. |
-| Same identity has wrong portable location | `history_mismatch`; no automatic historical rewrite. |
-| Minute-only time, unknown mode mapping, or two plausible candidates | `history_ambiguous`; no nearest-match adoption. |
-| One source UUID matches exactly; another claims the same remote record | No silent second association; isolate the conflict. |
-| Full inventory and fresh read establish absence at only one destination | Queue that destination only, after cooldown. |
-| QRZ page fails or LoTW returns HTML/truncated ADIF | Coverage remains incomplete; no inferred missing records. |
-| Source QSO or operation location changes between capture and commit | Version check fails; replay/reconcile without losing the edit. |
-| Source creates a QSO while its historical partition is scanning | Change intake discovers it; one logical delivery is scheduled. |
-| Crash after association commit but before temporary cleanup | Resume idempotently and remove the temporary index. |
-| Credentials rotate or the same remote account/book reconnects | Retain adoption, mappings, provenance, and narrative/template policy. |
-| Trusted Ferry history already contains a QRZ template binding | Restore it; do not downgrade to `remote_preserved` during reconciliation. |
-| Only source notes change on an adopted `remote_preserved` contact | No outgoing work and no takeover of existing narrative. |
-| An adopted QRZ identity is corrected into a distinct new record | Preserve the old historical record and surface it; no automatic deletion. |
-| QRZ replacement reuses the prior LOGID | Retain its creation provenance; never delete it as an obsolete ID. |
-| LoTW password is omitted | Unverified history stays unsent; established live-cutover records proceed. |
-| Template edits alone | Zero historical scans, invalidations, hash recomputations, or export jobs. |
+| Scenario                                                                   | Required result                                                            |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Historical QSOs already exist at both services, including unconfirmed ones | Adopt; zero INSERT, REPLACE, DELETE, or signing operations.                |
+| QRZ text differs from today's template                                     | Preserve text; unchanged future polls remain silent.                       |
+| Same identity has wrong portable location                                  | `history_mismatch`; no automatic historical rewrite.                       |
+| Minute-only time, unknown mode mapping, or two plausible candidates        | `history_ambiguous`; no nearest-match adoption.                            |
+| One source UUID matches exactly; another claims the same remote record     | No silent second association; isolate the conflict.                        |
+| Full inventory and fresh read establish absence at only one destination    | Queue that destination only, after cooldown.                               |
+| QRZ page fails or LoTW returns HTML/truncated ADIF                         | Coverage remains incomplete; no inferred missing records.                  |
+| Source QSO or operation location changes between capture and commit        | Version check fails; replay/reconcile without losing the edit.             |
+| Source creates a QSO while its historical partition is scanning            | Change intake discovers it; one logical delivery is scheduled.             |
+| Crash after association commit but before temporary cleanup                | Resume idempotently and remove the temporary index.                        |
+| Credentials rotate or the same remote account/book reconnects              | Retain adoption, mappings, provenance, and narrative/template policy.      |
+| Trusted Ferry history already contains a QRZ template binding              | Restore it; do not downgrade to `remote_preserved` during reconciliation.  |
+| Only source notes change on an adopted `remote_preserved` contact          | No outgoing work and no takeover of existing narrative.                    |
+| An adopted QRZ identity is corrected into a distinct new record            | Preserve the old historical record and surface it; no automatic deletion.  |
+| QRZ replacement reuses the prior LOGID                                     | Retain its creation provenance; never delete it as an obsolete ID.         |
+| LoTW password is omitted                                                   | Unverified history stays unsent; established live-cutover records proceed. |
+| Template edits alone                                                       | Zero historical scans, invalidations, hash recomputations, or export jobs. |

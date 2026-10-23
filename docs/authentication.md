@@ -1,6 +1,6 @@
 # Authentication
 
-Status: proposed v1 design; implementation and browser/runtime validation remain to be done. Primary sources checked on 2026-10-22.
+Status: v1 implemented with real Worker HTTP cryptographic tests and local Chromium virtual-authenticator signup/login. Physical keys, synced providers and real email delivery remain rollout checks. See [auth evidence](evidence-auth.md). Primary sources checked on 2026-10-22.
 
 ## Account contract
 
@@ -40,13 +40,13 @@ Allow the browser's native phone/security-key choices. FIDO's [cross-device auth
 
 ## Minimal authentication state
 
-| Record | Stored values |
-| --- | --- |
-| Account | Internal account ID, unique normalized email, email verification time, opaque stable WebAuthn user handle, status |
-| Passkey | Globally unique credential ID, account ID, public-key bytes, signature counter, backup/device flags, transports, label, creation/last-use/revocation times |
-| Pending signup or email change | Intended email, bound browser/account, verification digest, attempts, expiry, consumed state |
-| Ceremony | Random ID, challenge hash, purpose, bound browser session, intended account when known, expiry, consumed state |
-| Session | Random token hash, account ID, authenticating credential ID, creation and latest passkey-verification times, expiry, revoked state |
+| Record                         | Stored values                                                                                                                                              |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Account                        | Internal account ID, unique normalized email, email verification time, opaque stable WebAuthn user handle, status                                          |
+| Passkey                        | Globally unique credential ID, account ID, public-key bytes, signature counter, backup/device flags, transports, label, creation/last-use/revocation times |
+| Pending signup or email change | Intended email, bound browser/account, verification digest, attempts, expiry, consumed state                                                               |
+| Ceremony                       | Random ID, challenge hash, purpose, bound browser session, intended account when known, expiry, consumed state                                             |
+| Session                        | Random token hash, account ID, authenticating credential ID, creation and latest passkey-verification times, expiry, revoked state                         |
 
 The WebAuthn user handle contains no email or other identifying text and remains stable when the email changes; see [custom user IDs](https://simplewebauthn.dev/docs/advanced/server/custom-user-ids). Store only passkey public keys and metadata; the authenticator/provider retains private keys. LoTW signing keys and other service connection secrets are a separate, encrypted subsystem.
 
@@ -56,7 +56,7 @@ Follow [WebAuthn verification requirements](https://www.w3.org/TR/webauthn-3/#sc
 
 ## Sessions and account management
 
-Use opaque random session cookies, storing their hashes in D1. Set `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, and a `__Host-` name with no Domain attribute. Rotate the session at authentication, enforce server-side expiry, and invalidate it on logout. A proposed initial absolute lifetime is 30 days, preserving useful mobile sessions. Protect state-changing endpoints with same-origin checks and CSRF protection.
+Use opaque random session cookies, storing their hashes in D1. Set `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, and a `__Host-` name with no Domain attribute. Rotate the session at authentication, enforce server-side expiry, and invalidate it on logout. The initial absolute lifetime is 30 days, preserving useful mobile sessions. Protect state-changing endpoints with same-origin checks and CSRF protection.
 
 Derive the account boundary from the validated session on every request. Check authoritative session and credential status when issuing and validating sessions. Provide session listing and revocation, including “sign out other sessions.” Revocation takes effect on subsequent requests rather than waiting for cookie expiry.
 
@@ -71,7 +71,6 @@ After signup, encourage a second passkey in an independent provider or security 
 If all registered credentials and provider recovery are unavailable, **v1 cannot recover the account**. An existing browser session or verified inbox cannot enroll a replacement without fresh passkey verification. There is no hidden support email reset or recovery-code login. Explain this during setup and on the recovery-help screen.
 
 Implementation acceptance requires:
-
 - Confirmed email plus verified first passkey is the only account-activation path; existing-account signup cannot reset access.
 - Expired, replayed, wrong-session, wrong-purpose, wrong-origin, wrong-RP-ID, missing-UV, and mismatched-user-handle responses fail; concurrent challenge submissions produce at most one successful state change.
 - Cross-account credential IDs and request parameters cannot cross tenant boundaries. Session and passkey revocations are enforced.

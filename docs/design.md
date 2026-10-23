@@ -1,6 +1,6 @@
 # System design
 
-Status: proposed v1 architecture, researched on 2026-10-22. Product requirements are settled where stated below; library choices, schema details, and vendor behaviors identified as spikes still require implementation evidence. No live delivery or Worker signing test has been performed by this documentation change.
+Status: v1 implementation contract, checked on 2026-10-22. The Worker, D1, adapters, signer and dashboard are implemented. Local workerd tests pass; live mutation, source-boundary and deployment checks remain gated. See [rollout checklist](rollout-checklist.md) and the evidence documents for measured limits.
 
 ## Scope and components
 
@@ -10,15 +10,15 @@ Start with one TypeScript Worker, D1, a five-minute Cron Trigger, and Worker Sec
 
 Use [Cloudflare Cron Triggers](https://developers.cloudflare.com/workers/configuration/cron-triggers/) and the platform's current runtime limits. The [Workers paid plan](https://developers.cloudflare.com/workers/platform/pricing/) currently has a $5 monthly account minimum; do not treat either the free CPU allowance or zero incremental cost as proven sufficient for PKCS#12 import and signing. Measure actual workloads in the first milestone. An existing paid account may make the incremental cost small.
 
-| Boundary | Responsibility |
-| --- | --- |
-| Account/authentication | Email-confirmed registration, passkey login, sessions, tenant identity |
-| LoFi adapter | Link account, page operations and QSOs, durable change intake, current-source reads |
-| Projection | Effective operation/segment, normalized contact, destination-specific supported fields |
-| Reconciler | Initial history adoption, remote readback, uncertain-delivery resolution |
-| Scheduler/outbox | Per-contact quiet period, immutable attempts, leases, retries, checkpoints |
-| QRZ adapter | Book routing, readback, insert/replace, narrowly scoped identity cleanup |
-| LoTW adapter/signer | Certificate/location selection, signing, submission, readback state |
+| Boundary               | Responsibility                                                                         |
+| ---------------------- | -------------------------------------------------------------------------------------- |
+| Account/authentication | Email-confirmed registration, passkey login, sessions, tenant identity                 |
+| LoFi adapter           | Link account, page operations and QSOs, durable change intake, current-source reads    |
+| Projection             | Effective operation/segment, normalized contact, destination-specific supported fields |
+| Reconciler             | Initial history adoption, remote readback, uncertain-delivery resolution               |
+| Scheduler/outbox       | Per-contact quiet period, immutable attempts, leases, retries, checkpoints             |
+| QRZ adapter            | Book routing, readback, insert/replace, narrowly scoped identity cleanup               |
+| LoTW adapter/signer    | Certificate/location selection, signing, submission, readback state                    |
 
 Keep these as modules with explicit interfaces in one application until operational evidence justifies separate services.
 
@@ -38,8 +38,7 @@ Keep UTC timestamps to their actual precision and convert source frequency units
 
 ## Quiet period and durable delivery
 
-The initial proposed quiet period is 30 minutes, configurable between 20 and 60 minutes. Measure it from Ferry's observation of the last meaningful change to that contact's destination-relevant source inputs. This works for offline uploads and corrected old contacts without trusting device clocks. Unrelated new QSOs or changes to another segment do not postpone an already stable contact.
-
+The default quiet period is 30 minutes, configurable between 20 and 60 minutes. Measure it from Ferry's observation of the last meaningful change to that contact's destination-relevant source inputs. This works for offline uploads and corrected old contacts without trusting device clocks. Unrelated new QSOs or changes to another segment do not postpone an already stable contact.
 1. Claim a tenant/source polling lease. Fetch a bounded page and atomically persist its affected work, necessary temporary source data, and next cursor. Never advance the cursor first.
 2. Compute a versioned input fingerprint for each affected destination and its field-ownership policy. Include structured inputs and source-edit inputs consumed by the pinned QRZ narrative profile, even if they are not standalone QRZ fields; exclude note-only changes for `remote_preserved` records. Exclude polling metadata, designated render-time snapshots, and fields that destination ignores. If it changed, coalesce pending work and update that contact/destination's due time. Operation edits may require a paged reread of affected QSOs.
 3. After the quiet period, validate routing and the latest composite source generation. Recheck destination absence for a first delivery, or the known mapping for a correction. Unresolved bootstrap evidence blocks only the affected record/destination. The explicit exception is LoTW without read credentials: a record established as new after the source cutover may be submitted with submission-only evidence; historical records remain unverified.
@@ -53,15 +52,15 @@ Use per-tenant/destination leases with expirations and fencing tokens, uniquenes
 
 The stable ledger key is `(tenant, linked LoFi account, QSO UUID, logical destination)`. A logical QRZ destination includes the account/book; a logical LoTW destination identifies the account. Key rotation, certificate renewal, and reconnecting the same destination preserve that identity and its history.
 
-| Data | Retention and purpose |
-| --- | --- |
-| Account, passkeys, sessions | Authentication metadata; no passkey private keys |
-| Connections and routing | Verified account/book IDs, certificate metadata, station/location rules, encrypted credentials |
-| Source progress | Separate opaque cursors, coverage checkpoints, operation dependencies, generation tokens |
-| Per-destination ledger | Source baseline/input hashes, observed remote hash, last submission hash, status, QRZ LOGID or encrypted LoTW identity, provenance |
-| Narrative policy | `unbound`, `template_bound` plus immutable version, or `remote_preserved`; null alone cannot distinguish these states |
-| Jobs/outbox | Due time, attempt/lease state, encrypted pending payload, exact signed artifact when needed |
-| Bootstrap workspace | Bounded encrypted source/remote projections and candidate index, deleted after durable reconciliation |
+| Data                        | Retention and purpose                                                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Account, passkeys, sessions | Authentication metadata; no passkey private keys                                                                                   |
+| Connections and routing     | Verified account/book IDs, certificate metadata, station/location rules, encrypted credentials                                     |
+| Source progress             | Separate opaque cursors, coverage checkpoints, operation dependencies, generation tokens                                           |
+| Per-destination ledger      | Source baseline/input hashes, observed remote hash, last submission hash, status, QRZ LOGID or encrypted LoTW identity, provenance |
+| Narrative policy            | `unbound`, `template_bound` plus immutable version, or `remote_preserved`; null alone cannot distinguish these states              |
+| Jobs/outbox                 | Due time, attempt/lease state, encrypted pending payload, exact signed artifact when needed                                        |
+| Bootstrap workspace         | Bounded encrypted source/remote projections and candidate index, deleted after durable reconciliation                              |
 
 Keep source input hashes separate from hashes of remote observations and transmitted payloads. They have different projections and cannot be compared interchangeably. In particular, adoption records an observed source baseline, not a fictional Ferry delivery. See [bootstrap](bootstrap.md).
 

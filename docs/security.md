@@ -1,6 +1,6 @@
 # Credential security and retention
 
-Status: proposed v1 implementation contract. Ferry intentionally holds credentials that permit unattended delivery. The goal is to protect stored material, isolate users, and constrain its use while making that trust boundary explicit.
+Status: implemented v1 contract, locally verified with tenant isolation, envelope rotation and restore-quarantine tests. See [operations](operations.md) for deployment controls. Ferry intentionally holds credentials that permit unattended delivery. The goal is to protect stored material, isolate users, and constrain its use while making that trust boundary explicit.
 
 ## Secrets and trust boundary
 
@@ -12,8 +12,7 @@ This protects against disclosure of a D1 export or backup alone. Compromise of t
 
 ## Envelope format
 
-Use reviewed platform cryptography rather than a custom cipher. The following is the proposed envelope, following the [envelope-encryption model](https://docs.cloud.google.com/kms/docs/envelope-encryption) and using [Workers Web Crypto](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/):
-
+Use reviewed platform cryptography rather than a custom cipher. The following is the implemented envelope, following the [envelope-encryption model](https://docs.cloud.google.com/kms/docs/envelope-encryption) and using [Workers Web Crypto](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/):
 1. Generate a fresh random 256-bit DEK for each credential version or private-payload write.
 2. Encrypt the payload with AES-256-GCM, a fresh random 96-bit nonce, and a 128-bit authentication tag.
 3. Authenticate canonical additional data containing the tenant UUID, logical connection/destination ID, credential or payload ID, kind, schema version, and purpose. Moving ciphertext to another tenant or purpose must fail authentication.

@@ -1,0 +1,101 @@
+# Operations and personal rollout
+
+All checked-in environments disable exports. Local tests and synthetic signatures establish implementation behavior; live source replay, QRZ mutation preservation and ARRL acceptance still require the inputs below. Deployment alone must not change real logs.
+
+## Prepare a disabled deployment
+
+1. Select the permanent HTTPS hostname and set that exact `ORIGIN` and hostname-only `RP_ID` in the production environment of `wrangler.jsonc`. Choose it before real passkey enrollment. Use separate D1 databases, keys, RP/origins and cookies for local/staging/production.
+2. Create the Cloudflare production/staging D1 resources and replace the placeholder IDs. Keep `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false` and `LIVE_WRITE_AUTHORIZATION` empty, and `ROLLOUT_QSO_IDS_JSON=[]`. Configure the five-minute cron and review paid-plan CPU limits before certificate import.
+3. Select Resend for production verification mail. [Verify a sending domain](https://resend.com/docs/dashboard/domains/introduction), configure its required DNS records, set `MAIL_FROM`, and install a restricted `RESEND_API_KEY`. Use independent random `KEK_V1`, `AUTH_SECRET` and `EMAIL_CODE_SECRET` secrets. Generate/store them in the operator's secret manager; never commit or paste them into issue reports, command arguments or logs.
+4. Populate `LOTW_TRUST_ROOTS_JSON` with independently verified LoTW issuing/root PEM certificates. Imported PKCS#12 issuers do not establish trust by themselves. Review [signing evidence](evidence-signing.md), current mode/location configuration, dependency advisories and representative deployed CPU/memory measurements. The default empty trust bundle permits encrypted inspection imports but blocks signing.
+5. Build, review the disabled configuration, migrate the intended remote database and deploy only when authorized:
+
+```sh
+mise run check
+npx wrangler d1 create ferry-production
+# Copy the returned database ID into env.production.d1_databases.
+npx wrangler secret put KEK_V1 --env production
+npx wrangler secret put AUTH_SECRET --env production
+npx wrangler secret put EMAIL_CODE_SECRET --env production
+npx wrangler secret put RESEND_API_KEY --env production
+npx wrangler d1 migrations apply ferry-production --env production --remote
+npx wrangler deploy --env production --dry-run
+npx wrangler deploy --env production
+```
+
+The `secret put` commands prompt securely. Production creation/migration/deployment commands above are operator instructions, not evidence they were run. Confirm `/health` reports exports disabled, and test production email delivery and passkey ceremonies at the permanent origin. Record deployed revision, database IDs, RP/origin, dependency versions and evidence dates without secrets.
+
+## Connect and adopt read-only
+
+Signup confirms email and enrolls the first passkey atomically. Register a second key in an independent provider/security key. Losing every usable passkey has no email reset. Existing-account email confirmation cannot replace a passkey. Sensitive changes require a fresh passkey assertion within five minutes; session and key revocation take effect on subsequent requests.
+
+Link LoFi through its approval email, then finish the connection so Ferry verifies the vendor account UUID. Link QRZ using its book API key plus exact book ID, station callsign and date range; incomplete STATUS evidence blocks linking. Import a LoTW `.p12` with its matching private key and original password; `.tq6` alone cannot sign. Optional LoTW website credentials enable accepted/unconfirmed history readback. The original import password and PKCS#12 bytes are discarded after normalized encrypted import; optional query passwords remain encrypted for unattended readback. Renewal must use the same verified query username (and read credentials) as the original account connection; omitting optional readback fields creates a distinct station-only destination. Renewal retains the verified logical destination and ledger; a different QRZ book or verified LoTW account starts separate reconciliation.
+
+LoTW query accounts can hold several exact callsign/DXCC certificates. Without read credentials the certificate proves a station identity, not website-account membership; adding query access creates a separate destination and requires read-only re-adoption. Overlapping active routes are ambiguous and cannot export until resolved.
+
+A genuinely new destination atomically requests a bounded source backfill stream so retained-source expiry cannot hide older contacts. Same-identity reconnection/renewal preserves its existing rescan progress; template edits never trigger rescans. Review adopted/missing/ambiguous/mismatched/incomplete aggregate counts and exceptions before writes. Adoption creates no insert, replace, delete or signature, and keeps existing QRZ narrative. A partial or failed inventory never proves absence. Without a verified source server cutover, absence/backfill and source-new classifications remain blocked. Do not turn the source-evidence flag on simply because fixture tests pass. General-log reread/cursor expiry behavior and historical operation rereads need the documented source evidence or explicit visible recovery work.
+
+## First writes and expansion
+
+Required inputs are: Cloudflare deployment authority and resource IDs; the permanent hostname; verified Resend sender/API key; independently stored application secrets; the approved LoFi account and replay/cutover evidence; QRZ book key/identity/range plus a deliberately designated test contact/book; LoTW `.p12` import password and verified trust/status chain; optional LoTW query credentials; supported callsign/location/mode configuration; and explicit authorization naming the first genuinely new contacts and permitted destinations.
+
+Set `ROLLOUT_QSO_IDS_JSON` to the exact authorized source QSO UUIDs for the first writes; the default empty array permits none. The explicit `["*"]` scope enables normal coverage only after scoped evidence and authorization. Preparation and dispatch both enforce the scope. Keep a small identifiable scope for the first writes. Verify QRZ INSERT/duplicate/REPLACE identity and narrative preservation on the designated test record. Verify one real Worker-signed LoTW upload reaches the queue, then separately observe its exact supported projection in readback. Confirmation is additional evidence. Record contact IDs/source generations, destination mappings, certificate/configuration versions, deployed revision, timing and redacted outcomes. Expand automatic coverage only after reviewing these results and the adopted-history exceptions. Template changes alone never authorize historical work; existing bindings remain pinned at durable export preparation.
+
+After those checks and the separate human authorization, the full set of required production values is `EXPORTS_ENABLED=true`, `ROLLOUT_CHECKS_PASSED=true`, `SOURCE_BOUNDARY_VERIFIED=true`, `LIVE_WRITE_AUTHORIZATION=I_AUTHORIZE_LIVE_VENDOR_WRITES`, and a nonempty `ROLLOUT_QSO_IDS_JSON` scope. Keep the exact UUID allowlist initially; `["*"]` is an explicit later expansion.
+
+The enablement flags are operational gates, not authorization obtained from this runbook. Explicit human live-write authorization and completed rollout evidence are both necessary. Never clear uncertain states or reset the source cursor to force a first write.
+
+## Failures, throttling and revocation
+
+A prepared attempt owns immutable encrypted bytes, members and versions. Repeated cron ticks must send the saved artifact. A crash after dispatch or lost response becomes uncertain and is reconciled before any new create. A LoTW queue acknowledgement is `submitted`, exact readback is `observed`, and QSL confirmation remains separate. An old identity or wrong location cannot acknowledge a correction. Without read access, submission-only uncertainty remains visible.
+
+Transient failures proven to occur before dispatch may retry with bounded exponential delay and jitter. Authentication, certificate, ambiguous history and unsupported-field errors require attention on that connection/contact. Honor vendor throttling; reduce bounded work or lengthen backoff rather than resetting ledgers or resubmitting history. Never log credential-bearing LoTW URLs or raw vendor payloads. Routine cron logs contain aggregate counters only.
+
+Disable a connection to stop new work while retaining configuration; revoke it to remove credential ciphertext and cancel unsent attempts. A request already dispatched may finish remotely. Account/connection removal never mass-deletes vendor records. Source tombstones retain remote history. LoTW identity changes can leave old contacts; QRZ cleanup requires Ferry-created provenance, acknowledged new mapping and a fresh exact old-record check. Automatic cleanup is not enabled in v1 until that live contract is proven; prior identities remain retained and visible.
+
+## Retention and rotation
+
+Current ceilings: ordinary encrypted source QSO buffers seven days; operation/segment-event context 30 days; pending LoFi approval credentials one day; outbox/signed artifacts seven days; retired credential versions seven days. Successful resolved artifacts are purged after the durable checkpoint. Expired unresolved artifacts become reconciliation-required, never missing/retryable. Minimal ledger identities/hashes/associations and referenced immutable template versions persist. Source/context expiry blocks dependent work until a verified reread restores it. Email proofs last ten minutes, ceremonies five minutes and authenticated sessions at most 30 days; expired authentication state is purged.
+
+For KEK rotation, retain old `KEK_Vn` secrets, install a new independent 32-byte `KEK_Vn`, and change `ACTIVE_KEK_VERSION` so new writes use it. Rewrap each stored DEK with its exact tenant/connection/id/kind/purpose identity; payload ciphertext and mappings do not change. Each cron tick automatically rewraps up to 50 `private_data` envelopes using a compare-and-set on the old envelope, without any vendor writes. Interrupted ticks resume on the next run. Inspect aggregate remaining versions with:
+
+```sh
+npx wrangler d1 execute ferry-production --env production --remote --command "SELECT json_extract(envelope, '$.kek') AS kek, count(*) AS remaining FROM private_data GROUP BY kek"
+```
+
+Require all live rows to use the active version; an unreadable envelope blocks that row and needs its original KEK. Exercise interrupted rotation, decrypt/readback and a restored backup before retiring an old KEK. A missing KEK is data loss, not permission to relink or resend. Keep old keys available for retained backups and any unexpired local-only mailbox envelopes until their documented retention expires.
+
+Certificate renewal imports a new verified credential version on the same logical route. In-flight signed artifacts keep their certificate/configuration version; renewal must not regenerate an uncertain artifact. Revalidate issuer, matching key, date authorization, current validity and revocation/supersession. Import rejects unsuitable keys and excessive work; unknown trust remains `needs_verification` and prevents signing. Signing also requires fresh unrevoked status.
+
+## Backup and restore
+
+Export backups to restricted storage outside the repository and keep encryption keys separately:
+
+```sh
+npx wrangler d1 export ferry-production --env production --remote --output /secure/backup/ferry.sql
+npx wrangler d1 time-travel info ferry-production --env production
+```
+
+D1 [Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/) retains up to 30 days on Paid or seven days on Free. Deleting live ciphertext does not erase those backups. Record a bookmark and current authoritative revocations before changes. Restoring an old database can resurrect old sessions, revoked credentials and prepared work: first disable production exports and scheduled delivery, restore into an isolated review path where possible, revoke restored sessions, reapply current account/passkey/connection revocations, expire stale leases, and reconcile every dispatched/uncertain artifact against vendors. Preserve successful mappings, source baselines, provenance and template versions. Re-enable only after reviewing the resulting exceptions. If the current revocation record or required KEKs are unavailable, keep the restored service disabled. A backup predating an upload cannot prove that contact absent.
+
+Before a planned restore, capture a fresh restricted revocations manifest from the current authoritative service: creation time, deployed revision/database bookmark, all account IDs/statuses, passkey IDs/account IDs/revocation times, and connection IDs/account IDs/statuses. Include current identity sets so rows deleted since the backup cannot silently reappear. Do not include credential ciphertext or plaintext secrets. After restoring, invalidate every restored session, freeze all restored connections, and reapply that manifest before any account or delivery resumes. A manifest older than intervening access changes is insufficient; if current state is unavailable, restoration remains disabled pending authoritative reconstruction. A historical backup is not a fresh manifest.
+
+The checked-in quarantine is executable for a restored **local** database:
+
+```sh
+mise run restore-lock
+```
+
+It always targets `ferry-local --local` and takes no remote/environment arguments. Apply all v1 migrations first. `ops/lock-restored.sql` is the identical operator SQL tested against the runtime `lockRestoredDatabase()` helper. It locks active accounts, preserves already revoked accounts/keys, revokes sessions and credential-envelope access, disables connections, expires leases, clears pending email/passkey proofs, invalidates prior absence coverage, and moves prepared/dispatching/submitted/uncertain attempts to reconciliation-required. Immutable attempts, outbox bytes, mappings, narrative policies, provenance and template versions remain intact. Repeating the lock cannot make work retryable.
+
+For an isolated restored remote database, the explicit operator equivalent is `npx wrangler d1 execute RESTORED_DATABASE --env REVIEW_ENVIRONMENT --remote --file ops/lock-restored.sql`, with both names deliberately replaced after reviewing its bindings. Run this **before binding a Worker**, and keep all export gates disabled. Never point the local task at production by editing it casually. This implementation deliberately provides no automatic unlock, account-reset or replay command. Returning to service requires the fresh manifest, current credential proof and read-only vendor receipt reconciliation described above; preserving old ciphertext does not restore authorization.
+
+Keep backup retention explicit in the operator's storage policy. This repository does not configure an external backup destination or authorize destructive Time Travel restoration. [Cloudflare documents](https://developers.cloudflare.com/d1/reference/time-travel/) that restore overwrites the live database and cancels in-flight transactions.
+
+## Capacity and cost evidence
+
+Checked 2026-10-22: [Workers Paid](https://developers.cloudflare.com/workers/platform/pricing/) has a $5 account monthly minimum, including 10 million requests and 30 million CPU ms; overages are $0.30/million requests and $0.02/million CPU ms. [D1 Paid](https://developers.cloudflare.com/d1/platform/pricing/) includes 25 billion rows read, 50 million written and 5 GB; overages are $0.001/million read, $1/million written and $0.75/GB-month. These allowances are account-wide; existing services consume part of them.
+
+For a 30-day month, a five-minute cron schedules 8,640 invocations. Measure dashboard/API invocations, per-cycle CPU, certificate-import CPU, source rows, adopted/backfilled/changed contacts, retries, scanned/written D1 rows and average storage. Request and CPU overage cost is `max(requests-10M,0)/1M*0.30 + max(CPU_ms-30M,0)/1M*0.02`, plus the account plan, D1 and the selected [Resend plan](https://resend.com/pricing). Count verification/change emails separately from LoFi's own approval emails. Do not call the service free based on a small contact count.
+
+[Worker limits](https://developers.cloudflare.com/workers/platform/limits/) include 128 MB per isolate, distinct CPU and wall time, and a 15-minute cron wall limit. Inspect deployed invocation CPU/wall metrics and memory errors. Final local bundle, startup-profile and signing timings are recorded in [signing evidence](evidence-signing.md); they do not measure deployed billed CPU or peak memory. No production monthly usage or invoice has been measured. Collect representative deployed evidence and set an appropriate CPU limit before enabling exports.

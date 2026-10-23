@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { connectionRoute, saveVerifiedConnection } from "../src/connections.ts";
 import type { SessionIdentity } from "../src/auth.ts";
+import { connectionRoute, saveVerifiedConnection } from "../src/connections.ts";
 import { digestCode, sha256 } from "../src/security.ts";
+import { DEFAULT_COMMENT_TEMPLATE } from "../src/templates.ts";
 import { database, keys, seed } from "./helpers.ts";
+import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
+
 const now = Date.now();
 const identity: SessionIdentity = {
   tenant: "a",
@@ -14,19 +17,7 @@ const identity: SessionIdentity = {
 };
 async function setup() {
   const context = await database();
-  const sql = readFileSync(
-    new URL("../migrations/0002_auth.sql", import.meta.url),
-    "utf8",
-  );
-  let current = "";
-  for (const line of sql.split("\n")) {
-    current += `${line}\n`;
-    const trigger = current.trimStart().startsWith("CREATE TRIGGER");
-    if (line.trimEnd().endsWith(";") && (!trigger || line.trim() === "END;")) {
-      await context.db.prepare(current).run();
-      current = "";
-    }
-  }
+  await applyAdditionalMigrations(context.db);
   await seed(context.store, "a");
   await seed(context.store, "b");
   await context.store
@@ -480,7 +471,7 @@ test("untrusted LoTW certificate can be encrypted for later verification but can
   );
 });
 
-test("new QRZ connection atomically gets a default POTA profile and renewal preserves an edited active version", async (t) => {
+test("new QRZ connection atomically gets the refs-and-notes default and renewal preserves an edited active version", async (t) => {
   const { store, mf } = await setup();
   t.after(() => mf.dispose());
   const input = {
@@ -500,8 +491,8 @@ test("new QRZ connection atomically gets a default POTA profile and renewal pres
     .first<{ version: string; config: string }>();
   assert.ok(initial);
   const profile = JSON.parse(initial.config);
-  assert.match(profile.fields.COMMENT, /potaActivation/);
-  assert.equal(profile.fallbackNotes, true);
+  assert.equal(profile.fields.COMMENT, DEFAULT_COMMENT_TEMPLATE);
+  assert.equal(profile.fallbackNotes, false);
   const custom = await store.saveTemplate("a", first.id, {
     id: "custom",
     profile: profile.profile,

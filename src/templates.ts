@@ -1,10 +1,12 @@
-import { normalizeAdifValue, type AdifRecord } from "./adif.ts";
+import { type AdifRecord, normalizeAdifValue } from "./adif.ts";
 /**
  * Bounded, interpreted Liquid subset. Compatible helper semantics were reviewed
  * against HaLo's MIT SDK (Sebastian Delmont, 2026); implementation is independent.
  * Profile changes require a new immutable template version, never historical work.
  */
 export const TEMPLATE_PROFILE = "ferry-liquid-v1";
+export const DEFAULT_COMMENT_TEMPLATE =
+  '{% assign refs = op.refs | refLabels | join: ", " %}{{ refs }}{% if qso.notes != blank %}{% if refs != blank %} | {% endif %}{{ qso.notes }}{% endif %}';
 export const POTA_TEMPLATE =
   '{% assign parks = op.refs | where: "type", "potaActivation" | map: "ref" %}{% if parks.size > 0 %}POTA {{ parks | sentence }}{% endif %}';
 export type TemplateValue =

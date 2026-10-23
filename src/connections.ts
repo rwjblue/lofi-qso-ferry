@@ -6,12 +6,7 @@ import {
 } from "./auth.ts";
 import { LoFiClient, type LoFiCredentials } from "./lofi.ts";
 import { LotwClient } from "./lotw.ts";
-import { QrzClient, type QrzBook } from "./qrz.ts";
-import {
-  importPkcs12,
-  type LotwStation,
-  type SigningCredential,
-} from "./signing.ts";
+import { type QrzBook, QrzClient } from "./qrz.ts";
 import {
   boundedJson,
   canonical,
@@ -19,8 +14,13 @@ import {
   randomToken,
   sha256,
 } from "./security.ts";
-import { Store, type Connection } from "./store.ts";
-import { POTA_TEMPLATE, TEMPLATE_PROFILE } from "./templates.ts";
+import { defaultTemplate as accountDefaultTemplate } from "./settings.ts";
+import {
+  importPkcs12,
+  type LotwStation,
+  type SigningCredential,
+} from "./signing.ts";
+import { type Connection, Store } from "./store.ts";
 
 class ConnectionError extends Error {
   constructor(
@@ -110,6 +110,10 @@ export async function saveVerifiedConnection(
   );
   const now = Date.now();
   const defaultTemplate = randomToken();
+  const initialTemplate =
+    input.kind === "qrz" && !existing
+      ? await accountDefaultTemplate(store, tenant)
+      : null;
   const newQrzTemplate =
     input.kind === "qrz" && !existing
       ? [
@@ -119,10 +123,8 @@ export async function saveVerifiedConnection(
             id,
             defaultTemplate,
             canonical({
+              ...initialTemplate,
               id: defaultTemplate,
-              profile: TEMPLATE_PROFILE,
-              fields: { COMMENT: POTA_TEMPLATE },
-              fallbackNotes: true,
             }),
             now,
             tenant,

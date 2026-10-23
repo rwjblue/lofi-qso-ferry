@@ -1,11 +1,13 @@
-import test from "node:test";
 import assert from "node:assert/strict";
+import test from "node:test";
 import {
+  DEFAULT_COMMENT_TEMPLATE,
   POTA_TEMPLATE,
-  TEMPLATE_PROFILE,
-  renderTemplate,
   renderNarrative,
+  renderTemplate,
+  TEMPLATE_PROFILE,
 } from "../src/templates.ts";
+
 const context = {
   op: {
     refs: [
@@ -16,6 +18,33 @@ const context = {
   qso: { refs: [{ type: "pota", ref: "US-9999" }], notes: "First\nsecond" },
   now: "2026-10-22T12:34:56Z",
 };
+test("default comment combines effective reference labels and notes without empty separators", () => {
+  assert.equal(
+    DEFAULT_COMMENT_TEMPLATE,
+    '{% assign refs = op.refs | refLabels | join: ", " %}{{ refs }}{% if qso.notes != blank %}{% if refs != blank %} | {% endif %}{{ qso.notes }}{% endif %}',
+  );
+  for (const [refs, notes, expected] of [
+    [
+      [
+        { shortLabel: "POTA US-1234", ref: "US-1234" },
+        { label: "Summit W1/AA-001", ref: "W1/AA-001" },
+      ],
+      "Nice contact",
+      "POTA US-1234, Summit W1/AA-001 | Nice contact",
+    ],
+    [[{ ref: "US-1234" }], "", "US-1234"],
+    [[], "Nice contact", "Nice contact"],
+    [[], "   ", ""],
+  ] as const)
+    assert.equal(
+      renderTemplate(DEFAULT_COMMENT_TEMPLATE, {
+        op: { refs: [...refs] },
+        qso: { notes },
+      }),
+      expected,
+    );
+  assert.equal(renderTemplate(DEFAULT_COMMENT_TEMPLATE, {}), "");
+});
 test("POTA example names operator parks with HaLo helper semantics", () => {
   assert.equal(
     renderTemplate(POTA_TEMPLATE, context),

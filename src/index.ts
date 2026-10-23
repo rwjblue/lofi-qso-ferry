@@ -2,12 +2,18 @@ import { authRoute, checkCsrf, session } from "./auth.ts";
 import { connectionRoute } from "./connections.ts";
 import { boundedJson, keyring } from "./security.ts";
 import { deliveryGates, exportsEffective, tick } from "./service.ts";
+import {
+  defaultTemplate,
+  destinationTemplates,
+  saveDefaultTemplate,
+} from "./settings.ts";
 import { Store } from "./store.ts";
 import {
   POTA_TEMPLATE,
   TEMPLATE_PROFILE,
   validateTemplateVersion,
 } from "./templates.ts";
+
 function secured(response: Response): Response {
   const headers = new Headers(response.headers);
   headers.set(
@@ -164,6 +170,11 @@ export default {
             sessions,
             exportsEnabled: exportsEffective(gates),
             potaExample: POTA_TEMPLATE,
+            defaultTemplate: await defaultTemplate(store, identity.tenant),
+            destinationTemplates: await destinationTemplates(
+              store,
+              identity.tenant,
+            ),
           }),
         );
       }
@@ -189,8 +200,10 @@ export default {
       if (request.method === "POST" && url.pathname === "/api/templates") {
         const input = await boundedJson(request, 32_000);
         const destination = String(input.destination ?? "");
-        const connection = await store.connection(identity.tenant, destination);
-        if (connection?.kind !== "qrz")
+        const connection = destination
+          ? await store.connection(identity.tenant, destination)
+          : null;
+        if (destination && connection?.kind !== "qrz")
           return secured(
             Response.json(
               { error: "QRZ connection not found" },
@@ -204,11 +217,9 @@ export default {
           fallbackNotes: input.fallbackNotes === true,
         };
         validateTemplateVersion(version);
-        const id = await store.saveTemplate(
-          identity.tenant,
-          destination,
-          version,
-        );
+        const id = destination
+          ? await store.saveTemplate(identity.tenant, destination, version)
+          : await saveDefaultTemplate(store, identity.tenant, version);
         return secured(Response.json({ id }));
       }
       return secured(Response.json({ error: "Not found" }, { status: 404 }));

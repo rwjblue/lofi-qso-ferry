@@ -8,6 +8,14 @@ Use HaLo's Liquid syntax, documented context vocabulary, and filters. Configurat
 
 The SDK renderer and context helpers are MIT-licensed; reuse must retain their license notices. Their availability does not make the separate core ADIF exporter MIT-licensed.
 
+The initial comment default combines effective operation reference labels and the contact's notes:
+
+```liquid
+{% assign refs = op.refs | refLabels | join: ", " %}{{ refs }}{% if qso.notes != blank %}{% if refs != blank %} | {% endif %}{{ qso.notes }}{% endif %}
+```
+
+The initial default does not also copy notes into `NOTES`; the separate fallback setting remains configurable. Existing versions retain their saved fallback setting and text.
+
 For the operator's activated POTA parks, use `op.refs` with type `potaActivation`:
 
 ```liquid
@@ -21,6 +29,8 @@ Ferry supplies an **effective operation for each QSO**, after applying the segme
 ## Immutable versions and the binding boundary
 
 A version snapshots the complete effective narrative configuration: template text, enabled fields, fallback behavior, whitespace rules, and renderer/context compatibility profile. Saving a change creates a new immutable version and moves the active-version pointer. Referenced versions remain available after later edits, rollback, or configuration removal.
+
+An account default can be saved before connecting any service. A newly linked QRZ logbook snapshots the current account default into its own initial version. Editing that default does not change an existing logbook's active version, and renewal does not recopy it. Select an existing QRZ destination explicitly to create a new forward-only version for that logbook. Quiet-period settings, LoFi, QRZ and LoTW connections remain independently configurable.
 
 The durable binding belongs to `(tenant, LoFi account, source QSO UUID, logical destination)`. Credential rotation and reconnection retain the same destination identity. A different QRZ logbook is a different destination.
 

@@ -35,3 +35,9 @@ Last checkpoint: 2026-10-22, read-only production deployment. Work is coordinate
 Owner: open Ferry in their own browser, start a fresh signup, enroll a real passkey and independent backup key, then link LoFi/QRZ for read-only adoption. The verification smoke test created no account and its code belongs to the test browser. Do not enroll virtual authenticators in production or bypass recent-passkey guards to preload credentials.
 
 Keep all vendor exports disabled. Remaining rollout evidence: exhaustive LoFi UUID/tombstone replay contract, full owner-history review, authorized LoTW P12/password/trust/status/station inputs, physical/synced-browser matrix, scoped QRZ/LoTW live-write authorization/tests, deployed resource/cost measurements and restore drill. See [deployment evidence](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md). Staging remains intentionally undeployed. This read-only deployment does not authorize export enablement.
+
+## Follow-up: independent settings and template defaults
+
+- Account template preferences now save without any connected service. Dashboard returns saved defaults and per-logbook versions; only genuinely new QRZ books inherit the current preference. Existing active and durably pinned versions stay intact.
+- Built-in COMMENT now uses the requested effective-reference labels plus contact notes, with no empty separator or duplicate NOTES fallback. Each service remains optional.
+- Focused settings/template/connection checks and actual Worker HTTP/service integration pass; server/browser types pass. Next: finish invite-only enrollment, operator invite task, styled verification mail/OTP hints and dashboard browser checks; then run the complete checks and redeploy with every export gate closed.

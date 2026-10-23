@@ -10,18 +10,18 @@ import { DEFAULT_COMMENT_TEMPLATE } from "../src/templates.ts";
 import { database, keys, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
-const now = Date.now();
-const identity: SessionIdentity = {
-  tenant: "a",
-  credentialId: "key-a",
-  tokenHash: "session-a",
-  verifiedAt: now,
-};
 async function setup() {
   const context = await database();
   await applyAdditionalMigrations(context.db);
   await seed(context.store, "a");
   await seed(context.store, "b");
+  const now = Date.now();
+  const identity: SessionIdentity = {
+    tenant: "a",
+    credentialId: "key-a",
+    tokenHash: "session-a",
+    verifiedAt: now,
+  };
   await context.store
     .statement(
       "INSERT INTO passkeys(id,tenant,public_key,counter,metadata,label,created_at) VALUES('key-a','a','fixture',0,'{}','fixture',?)",
@@ -43,7 +43,7 @@ async function setup() {
     KEK_V1: keys.keys["1"],
     AUTH_SECRET: "fixture-connection-secret",
   } as Env;
-  return { ...context, env };
+  return { ...context, env, identity };
 }
 async function vacate(store: Store, kind: string) {
   await store
@@ -129,6 +129,45 @@ async function savedLotwLogin(
   });
 }
 
+test("connection fixture authentication is fresh after time advances beyond an earlier module timestamp", async (t) => {
+  const earlier = Date.now();
+  const advanced = earlier + 3_600_000;
+  t.mock.method(Date, "now", () => advanced);
+  const h = await setup();
+  t.after(() => h.mf.dispose());
+  assert.equal(h.identity.verifiedAt, advanced);
+  const session = await h.store
+    .statement(
+      "SELECT created_at,verified_at,expires_at FROM sessions WHERE token_hash='session-a'",
+    )
+    .first();
+  assert.deepEqual(session, {
+    created_at: advanced,
+    verified_at: advanced,
+    expires_at: advanced + 86_400_000,
+  });
+  const stale = await connectionRoute(
+    await request("/disable", { id: "destination" }, h.env),
+    h.env,
+    { ...h.identity, verifiedAt: earlier },
+  );
+  assert.equal(stale?.status, 403);
+  assert.equal(
+    ((await stale!.json()) as { code: string }).code,
+    "reauth_required",
+  );
+  const fresh = await connectionRoute(
+    await request("/disable", { id: "destination" }, h.env),
+    h.env,
+    h.identity,
+  );
+  assert.equal(fresh?.status, 200);
+  assert.equal(
+    (await h.store.connection("a", "destination"))?.status,
+    "disabled",
+  );
+});
+
 test("LoTW import checks the certificate and website login without downloading trust roots", async (t) => {
   const h = await setup();
   t.after(() => h.mf.dispose());
@@ -146,7 +185,7 @@ test("LoTW import checks the certificate and website login without downloading t
       h.env,
     ),
     h.env,
-    identity,
+    h.identity,
     {
       fetcher: async (input, init) => {
         assert.notEqual(init?.method, "POST");
@@ -189,7 +228,7 @@ test("LoTW import checks the certificate and website login without downloading t
 });
 
 test("verified connection renewals retain logical destination and ledger, credentials stay encrypted and tenant scoped", async (t) => {
-  const { store, db, mf } = await setup();
+  const { store, db, mf, identity } = await setup();
   t.after(() => mf.dispose());
   const input = {
     kind: "qrz" as const,
@@ -247,7 +286,7 @@ test("verified connection renewals retain logical destination and ledger, creden
   );
 });
 test("credential renewal atomically retires only unsent artifacts using superseded credentials", async (t) => {
-  const { store, mf } = await setup();
+  const { store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   const cases = [
     { tenant: "a", id: "old-prepared", state: "prepared", version: "v1" },
@@ -346,7 +385,7 @@ test("credential renewal atomically retires only unsent artifacts using supersed
 });
 
 test("connection routes enforce passkey freshness, CSRF, tenant ownership and redacted listing", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   const anonymous = await connectionRoute(
     new Request("http://localhost/api/connections"),
@@ -409,7 +448,7 @@ test("connection routes enforce passkey freshness, CSRF, tenant ownership and re
 });
 
 test("LoFi approval distinguishes preflight authentication from vendor403 and post-request guard failures", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   await vacate(store, "lofi");
   let outbound = 0;
@@ -511,7 +550,7 @@ test("LoFi approval distinguishes preflight authentication from vendor403 and po
   );
 });
 test("connection verification exposes a safe retry delay and shares vendor cooldowns", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   await vacate(store, "qrz");
   const book = {
@@ -545,7 +584,7 @@ test("connection verification exposes a safe retry delay and shares vendor coold
 });
 
 test("QRZ linking uses STATUS proof, never INSERT, and preserves stable book on key renewal", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   await vacate(store, "qrz");
   let reads = 0;
@@ -601,7 +640,7 @@ test("QRZ linking uses STATUS proof, never INSERT, and preserves stable book on 
   );
 });
 test("expired or revoked authenticated sessions cannot commit vendor-verified credentials", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   await vacate(store, "qrz");
   await store
@@ -642,7 +681,7 @@ test("expired or revoked authenticated sessions cannot commit vendor-verified cr
   );
 });
 test("revocation removes credential ciphertext and cancels new work without vendor deletes", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   const response = await connectionRoute(
     await request("/revoke", { id: "destination" }, env),
@@ -667,7 +706,7 @@ test("revocation removes credential ciphertext and cancels new work without vend
 });
 
 test("LoFi approval binds only the vendor current account and saves no contact writes", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   await vacate(store, "lofi");
   const seen: string[] = [];
@@ -772,7 +811,7 @@ test("LoFi approval binds only the vendor current account and saves no contact w
   );
 });
 test("LoFi listings hide historical names and unavailable email while retaining pending approval labels", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   for (const [label, status, accountEmail, expected] of [
     ["iPad", "active", null, "Email unavailable"],
@@ -825,7 +864,7 @@ test("LoFi listings hide historical names and unavailable email while retaining 
   }
 });
 test("LoFi linking never substitutes another address when confirmed vendor email is unavailable", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   await vacate(store, "lofi");
   const fetcher: typeof fetch = async (input) => {
@@ -869,7 +908,7 @@ test("LoFi linking never substitutes another address when confirmed vendor email
   );
 });
 test("LoTW account verification permits multiple isolated station certificates and renewal retains destination", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   const fetcher: typeof fetch = async (input, init) => {
     assert.notEqual(init?.method, "POST", "no upload during connection import");
@@ -961,7 +1000,7 @@ test("LoTW verification identifies certificate and login failures without leakin
   ).toString("base64");
   for (const failure of ["password", "corrupt", "html", "http", "transport"]) {
     await t.test(failure, async (t) => {
-      const { env, store, mf } = await setup();
+      const { env, store, mf, identity } = await setup();
       t.after(() => mf.dispose());
       const privateRowsBefore = await store
         .statement("SELECT count(*) n FROM private_data")
@@ -1052,7 +1091,7 @@ test("LoTW verification preserves vendor deferrals during certificate status and
   ).toString("base64");
   for (const deferredPath of ["/lotw/crl", "/lotwuser/lotwreport.adi"]) {
     await t.test(deferredPath, async (t) => {
-      const { env, mf } = await setup();
+      const { env, mf, identity } = await setup();
       t.after(() => mf.dispose());
       let network = 0;
       const fetcher: typeof fetch = async (input) => {
@@ -1106,7 +1145,7 @@ test("unsaved LoTW login checks distinguish rejection from outages without savin
     ["transport", "unavailable"],
   ] as const) {
     await t.test(failure, async (t) => {
-      const { env, store, mf } = await setup();
+      const { env, store, mf, identity } = await setup();
       t.after(() => mf.dispose());
       const connectionsBefore = await store.connections("a");
       const privateRowsBefore = await store
@@ -1192,7 +1231,7 @@ test("saved LoTW login checks persist only safe verdicts and preserve certificat
     await t.test(
       `${status}/${trusted}/${verdict}/${staleStatus}`,
       async (t) => {
-        const { env, store, mf } = await setup();
+        const { env, store, mf, identity } = await setup();
         t.after(() => mf.dispose());
         const statusCheckedAt = staleStatus
           ? new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString()
@@ -1291,7 +1330,7 @@ test("saved LoTW login checks persist only safe verdicts and preserve certificat
   }
 });
 test("LoTW login checks reject missing credentials, foreign connections and stale authentication before vendor requests", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   const foreign = await savedLotwLogin(store, { tenant: "b" });
   const stationOnly = await savedLotwLogin(store, { query: false });
@@ -1348,7 +1387,7 @@ test("LoTW login checks reject missing credentials, foreign connections and stal
   assert.equal((await store.connection("b", foreign.id))?.status, "active");
 });
 test("LoTW login checks retain retry delays and never replay a deferred vendor request", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   const saved = await savedLotwLogin(store);
   const before = await store.connection("a", saved.id);
@@ -1381,7 +1420,7 @@ test("LoTW login checks retain retry delays and never replay a deferred vendor r
 test("saved LoTW login results are fenced against credential replacement and expired session proof", async (t) => {
   for (const race of ["credentials", "session"] as const) {
     await t.test(race, async (t) => {
-      const { env, store, mf } = await setup();
+      const { env, store, mf, identity } = await setup();
       t.after(() => mf.dispose());
       const saved = await savedLotwLogin(store);
       const before = await store.connection("a", saved.id);
@@ -1421,7 +1460,7 @@ test("saved LoTW login results are fenced against credential replacement and exp
   }
 });
 test("LoTW station certificate passes local checks without issuer trust or a website login", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   const p12 = readFileSync(
     new URL("../fixtures/signing/current.p12", import.meta.url),
@@ -1450,7 +1489,7 @@ test("LoTW station certificate passes local checks without issuer trust or a web
 });
 
 test("new QRZ connection atomically gets the refs-and-notes default and renewal preserves an edited active version", async (t) => {
-  const { store, mf } = await setup();
+  const { store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   const input = {
     kind: "qrz" as const,
@@ -1518,7 +1557,7 @@ test("new QRZ connection atomically gets the refs-and-notes default and renewal 
 });
 
 test("new logical destinations request atomic source rescans; renewal and template edits never rescan history", async (t) => {
-  const { store, mf } = await setup();
+  const { store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   await store
     .statement(
@@ -1601,7 +1640,7 @@ test("new logical destinations request atomic source rescans; renewal and templa
 });
 
 test("already connected services reject another account before outbound requests and paused credentials resume without relinking", async (t) => {
-  const { env, store, mf } = await setup();
+  const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   let outbound = 0;
   const services = {
@@ -1692,7 +1731,7 @@ test("already connected services reject another account before outbound requests
 });
 
 test("connection slot races commit at most one account and pending LoFi replacement is atomic", async (t) => {
-  const { store, mf } = await setup();
+  const { store, mf, identity } = await setup();
   t.after(() => mf.dispose());
   await vacate(store, "lofi");
   const saved = await Promise.allSettled(
@@ -1777,7 +1816,7 @@ test("connection slot races commit at most one account and pending LoFi replacem
 });
 
 test("resuming a valid LoTW connection ignores legacy trust flags but preserves login rejection", async (t) => {
-  const { store, env, mf } = await setup();
+  const { store, env, mf, identity } = await setup();
   t.after(() => mf.dispose());
   const saved = await savedLotwLogin(store, {
     status: "disabled",
@@ -1819,7 +1858,7 @@ test("resuming a valid LoTW connection ignores legacy trust flags but preserves 
 });
 
 test("resuming LoTW requires valid certificate evidence and remains tenant scoped", async (t) => {
-  const { store, env, mf } = await setup();
+  const { store, env, mf, identity } = await setup();
   t.after(() => mf.dispose());
   const saved = await saveVerifiedConnection(store, "a", {
     kind: "lotw",

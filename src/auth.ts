@@ -452,26 +452,18 @@ async function newCeremony(
   signupId: string | null = null,
 ) {
   const id = randomToken();
-  await env.DB.batch([
-    statement(
-      env,
-      "UPDATE ceremonies SET consumed_at=? WHERE browser_hash=? AND purpose=? AND consumed_at IS NULL",
-      Date.now(),
-      binding,
-      purpose,
-    ),
-    statement(
-      env,
-      "INSERT INTO ceremonies(id,browser_hash,tenant,purpose,challenge_hash,expires_at,signup_id) VALUES(?,?,?,?,?,?,?)",
-      id,
-      binding,
-      tenant,
-      purpose,
-      await sha256(challenge),
-      Date.now() + fiveMinutes,
-      signupId,
-    ),
-  ]);
+  // Concurrent conditional/explicit options must not invalidate each other.
+  await statement(
+    env,
+    "INSERT INTO ceremonies(id,browser_hash,tenant,purpose,challenge_hash,expires_at,signup_id) VALUES(?,?,?,?,?,?,?)",
+    id,
+    binding,
+    tenant,
+    purpose,
+    await sha256(challenge),
+    Date.now() + fiveMinutes,
+    signupId,
+  ).run();
   return id;
 }
 async function ceremony(

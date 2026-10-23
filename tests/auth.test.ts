@@ -558,3 +558,105 @@ test("production has no local mailbox and refuses placeholder RP configuration",
     await mf.dispose();
   }
 });
+
+test("conditional and explicit login options remain independently valid and individually single-use", async () => {
+  const { env, mf } = await setup();
+  try {
+    const browser = new Browser(env);
+    const { key, user } = await enrolled(
+      browser,
+      "concurrent-options@example.test",
+    );
+    await browser.request("logout", {});
+    await browser.refresh();
+    const conditional = await browser.request("login/options", {});
+    const explicit = await browser.request("login/options", {});
+    assert.equal(conditional.status, 200);
+    assert.equal(explicit.status, 200);
+    assert.notEqual(conditional.body.ceremonyId, explicit.body.ceremonyId);
+    const first = await key.assertion(
+      conditional.body.options as Record<string, unknown>,
+      user,
+    );
+    assert.equal(
+      (
+        await browser.request("login/verify", {
+          ceremonyId: conditional.body.ceremonyId,
+          response: first,
+        })
+      ).status,
+      200,
+    );
+    await browser.refresh();
+    assert.equal(
+      (
+        await browser.request("login/verify", {
+          ceremonyId: conditional.body.ceremonyId,
+          response: first,
+        })
+      ).status,
+      400,
+      "each challenge remains single-use",
+    );
+    const second = await key.assertion(
+      explicit.body.options as Record<string, unknown>,
+      user,
+    );
+    assert.equal(
+      (
+        await browser.request("login/verify", {
+          ceremonyId: explicit.body.ceremonyId,
+          response: second,
+        })
+      ).status,
+      200,
+      "later options do not invalidate the conditional challenge or vice versa",
+    );
+    assert.equal((await browser.refresh()).body.authenticated, true);
+  } finally {
+    await mf.dispose();
+  }
+});
+
+test("independent WebAuthn ceremonies do not weaken replaced email-code invalidation", async () => {
+  const { env, mf } = await setup();
+  try {
+    const browser = new Browser(env);
+    await browser.refresh();
+    const first = await browser.request("signup", {
+      email: "replace@example.test",
+    });
+    const oldMail = (await browser.request("local-mailbox")).body.messages as {
+      id: string;
+      code: string;
+    }[];
+    const oldCode = oldMail.find((item) => item.id === first.body.id)?.code;
+    assert.ok(oldCode);
+    const next = await browser.request("signup", {
+      email: "replace@example.test",
+    });
+    const newMail = (await browser.request("local-mailbox")).body.messages as {
+      id: string;
+      code: string;
+    }[];
+    const code = newMail.find((item) => item.id === next.body.id)?.code;
+    assert.ok(code);
+    assert.equal(
+      (
+        await browser.request("signup/verify", {
+          id: first.body.id,
+          code: oldCode,
+        })
+      ).status,
+      400,
+    );
+    assert.equal(
+      (await browser.request("signup/verify", { id: next.body.id, code }))
+        .status,
+      200,
+    );
+    assert.equal((await browser.refresh()).body.authenticated, false);
+  } finally {
+    await mf.dispose();
+  }
+});

@@ -28,6 +28,8 @@ export async function applyMigration(db: D1Database, name: string) {
       current = "";
     }
   }
+  if (current.replace(/^\s*(?:--[^\n]*\n\s*)*/, "").trim())
+    throw new Error(`unterminated migration ${name}`);
 }
 export async function database() {
   const mf = new Miniflare(

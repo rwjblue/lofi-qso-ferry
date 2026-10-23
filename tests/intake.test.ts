@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import type { Work } from "../src/intake.ts";
 import { contactAdif } from "../src/delivery.ts";
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
+import type { Work } from "../src/intake.ts";
 import {
   contactPriority,
   expireSource,
@@ -24,7 +24,7 @@ import { adoptHistory } from "../src/reconcile.ts";
 import { seal } from "../src/security.ts";
 import { Store } from "../src/store.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
-import { database, seed } from "./helpers.ts";
+import { applyMigration, database, seed } from "./helpers.ts";
 
 const at = 1792684800000;
 const op: SourceRecord = {
@@ -94,34 +94,20 @@ const fetcher =
     handler(new URL(String(input)), init);
 async function setup() {
   const state = await database();
-  const sql = (
-    await Promise.all(
-      [
-        "0004_intake.sql",
-        "0005_cutover.sql",
-        "0009_vendor_requests.sql",
-        "0010_source_priority.sql",
-        "0018_reconciliation_work.sql",
-        "0023_outbound_identity_claims.sql",
-        "0024_identity_mapping_overlap.sql",
-      ].map((file) =>
-        readFile(new URL(`../migrations/${file}`, import.meta.url), "utf8"),
-      ),
-    )
-  ).join("\n");
-  let current = "";
-  for (const line of sql.split("\n")) {
-    current += `${line}\n`;
-    const trigger = current.trimStart().startsWith("CREATE TRIGGER");
-    if (
-      line.trimEnd().endsWith(";") &&
-      (!trigger ||
-        line.trim() === "END;" ||
-        line.trimStart().startsWith("CREATE TRIGGER"))
-    ) {
-      await state.db.prepare(current).run();
-      current = "";
-    }
+  try {
+    for (const file of [
+      "0004_intake.sql",
+      "0005_cutover.sql",
+      "0009_vendor_requests.sql",
+      "0010_source_priority.sql",
+      "0018_reconciliation_work.sql",
+      "0023_outbound_identity_claims.sql",
+      "0024_identity_mapping_overlap.sql",
+    ])
+      await applyMigration(state.db, file);
+  } catch (error) {
+    await state.mf.dispose();
+    throw error;
   }
   const key = await seed(state.store);
   await (

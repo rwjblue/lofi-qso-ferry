@@ -4,6 +4,7 @@ import test from "node:test";
 import { build } from "esbuild";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { syntheticAuthenticator } from "./auth-fixtures.ts";
+import { applyMigration } from "./helpers.ts";
 
 async function runtime(environment = "local", emailFixture = false) {
   const [bundle, browser, html] = await Promise.all([
@@ -92,27 +93,13 @@ async function runtime(environment = "local", emailFixture = false) {
   const paths = (await readdir(new URL("../migrations/", import.meta.url)))
     .filter((name) => name.endsWith(".sql"))
     .sort();
-  for (const path of paths) {
-    const schema = await readFile(
-      new URL(`../migrations/${path}`, import.meta.url),
-      "utf8",
-    );
-    let current = "";
-    for (const line of schema.split("\n")) {
-      current += `${line}\n`;
-      const trigger = current.trimStart().startsWith("CREATE TRIGGER");
-      if (
-        line.trimEnd().endsWith(";") &&
-        (!trigger ||
-          line.trim() === "END;" ||
-          line.trimStart().startsWith("CREATE TRIGGER"))
-      ) {
-        await db.prepare(current).run();
-        current = "";
-      }
-    }
-    assert.ok(!current.trim(), `unterminated migration ${path}`);
+  try {
+    for (const path of paths) await applyMigration(db as D1Database, path);
+  } catch (error) {
+    await mf.dispose();
+    throw error;
   }
+
   return {
     mf,
     db,

@@ -456,7 +456,6 @@ async function reconcileReadOnlyBatch(
       const scope = JSON.stringify([
         route.destination.id,
         route.contact.stationCall,
-        Math.floor(route.contact.startAtMillis / (7 * 86_400_000)),
       ]);
       const group = groups.get(scope) ?? [];
       group.push(route);

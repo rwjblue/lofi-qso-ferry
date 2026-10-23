@@ -29,7 +29,6 @@ ROLLOUT_CHECKS_PASSED=false
 SOURCE_BOUNDARY_VERIFIED=false
 LIVE_WRITE_AUTHORIZATION=
 ROLLOUT_QSO_IDS_JSON=[]
-LOTW_TRUST_ROOTS_JSON=bundled
 ```
 
 [Health](https://ferry.n1rwj.com/health) returns `{"status":"ok","exportsEnabled":false}`. No authorized UUID scope exists. The scheduled service can poll and adopt configured history after the owner connects accounts; it cannot sign, insert, replace, delete or upload contacts with these gates closed. Signup email and LoFi approval/client renewal are separate provider interactions.
@@ -59,7 +58,7 @@ Independent `KEK_V1`, `AUTH_SECRET` and `EMAIL_CODE_SECRET` are installed as Wor
 
 ## Owner's next step
 
-Existing users sign in with their passkey. To enroll someone new, run `mise run invite -- person@example.com`; they follow `/join`, confirm the exact invited address and create a passkey. Add an independent backup passkey, then connect only the services you use. Settings and account-default templates need no connections. LoTW connection import requires the personal P12 and its export password, if set. Ferry supplies reviewed ARRL trust anchors, refreshes them automatically from ARRL over HTTPS using a working LoTW readback login, and rechecks saved certificates and ARRL status. Keep all vendor exports disabled throughout this review; deployment authorization does not grant live-write authorization.
+Existing users sign in with their passkey. To enroll someone new, run `mise run invite -- person@example.com`; they follow `/join`, confirm the exact invited address and create a passkey. Add an independent backup passkey, then connect only the services you use. Settings and account-default templates need no connections. LoTW connection import requires the personal P12 and its export password, if set. Ferry checks the certificate/private key, dates, serial status and optional website login, then leaves certificate-authority validation to LoTW during upload processing. See [certificate checks](lotw-certificates.md); there is no root configuration or updater. Keep all vendor exports disabled throughout this review; deployment authorization does not grant live-write authorization.
 
 
 ## Connection passkey freshness fix
@@ -100,7 +99,7 @@ Version JSON independently confirmed all five closed export gates, exact product
 All 292 tests, formatting, lint, types and Worker build passed before the focused commits. The uploaded artifact is 1,605.00 KiB raw / 305.51 KiB gzip. This deployment reported no startup measurement; the earlier 29 ms result belongs to the previous version.
 
 
-## Managed LoTW trust deployment
+## Historical managed LoTW trust deployment
 
 Deployed signed main revision `8f371eb5deaa2c28eee77249b49f2adc3b3860a8`
 as Worker `521a1920-fc03-49d2-aa4e-24a0b9287ab5`. The guarded deployment applied
@@ -108,7 +107,7 @@ migrations 0011 and 0012 from the already landed admin work, then deployed the
 latest tested main tree. All eleven migrations are applied. Every export gate
 remains closed, and the trust setting is `LOTW_TRUST_ROOTS_JSON=bundled`.
 
-The [reviewed trust bundle](lotw-trust.md) includes the current ARRL root obtained
+The [former trust bundle](lotw-certificates.md) includes the current ARRL root obtained
 independently from ARRL's authenticated HTTPS certificate download. The actual
 imported certificate chain verified against that root in memory. No private key,
 website password or user certificate was saved as release data. Existing
@@ -127,7 +126,7 @@ logbook entry was uploaded or changed.
 passed for this deployed revision.
 
 
-## Automatic LoTW trust discovery deployment
+## Historical automatic LoTW trust discovery deployment
 
 Deployed signed main revision `a20660b41f9aea4adb20798820ea1e2638705020`
 as Worker `5b6e738c-dfb6-42f3-bc7c-f825712e2338`, receiving 100% of traffic.
@@ -140,7 +139,7 @@ root from ARRL's fixed HTTPS certificate download. Its next normal attempt is
 no certificate reimport or private-key rewrite was needed. Failed refreshes
 retain known anchors, and uploaded certificate chains cannot establish trust.
 An unfamiliar issuer can request an earlier refresh subject to shared cooldowns.
-See [LoTW trust policy](lotw-trust.md) for source provenance and explicit overrides.
+See [current certificate checks](lotw-certificates.md) for source provenance and explicit overrides.
 
 The full release check passed all 358 tests, formatting, lint, types and Worker
 build. [GitHub CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39953556943)

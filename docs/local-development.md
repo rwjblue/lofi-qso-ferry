@@ -47,7 +47,7 @@ npx tsx --test tests/reconcile.test.ts tests/store-reconcile.test.ts tests/store
 
 The Worker E2E bundles the actual service, applies migrations to workerd-backed D1, performs email-confirmed passkey registration/login using a synthetic authenticator, exercises the dashboard and security gates, and blocks outbound vendor access. The signing-runtime test imports both generated legacy/current PKCS#12 fixtures in actual workerd, verifies certificate chains and RSA/SHA-1 signatures against OpenSSL, and emits gzip TQ8. Delivery tests inject realistic QRZ/LoTW responses for adoption, immutable outbox preparation, lost responses, corrections and separate submission/observation states. These are local contract checks; none proves live vendor acceptance.
 
-The public synthetic key material under `fixtures/signing/` is intentionally committed and has no ARRL authority. [Its README](../fixtures/signing/README.md) reproduces the containers and vector. Never submit those contacts or import that test CA into production trust configuration.
+The public synthetic key material under `fixtures/signing/` is intentionally committed and has no ARRL authority. [Its README](../fixtures/signing/README.md) reproduces the containers and vector. Never submit those contacts or import these synthetic credentials into a live account.
 
 Use [operations](operations.md) for deployment, backups, rotation and the live rollout boundary. Protocol findings and remaining vendor inputs are recorded in `docs/evidence-*.md`; production writes stay disabled while their required checks remain unresolved.
 

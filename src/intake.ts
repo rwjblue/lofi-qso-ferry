@@ -1,5 +1,4 @@
 import { recordBirth } from "./cutover.ts";
-import { lofiAccountLabel } from "./lofi-identity.ts";
 import type {
   LoFiCredentials,
   SourceRecord,
@@ -7,6 +6,7 @@ import type {
   SyncState,
 } from "./lofi.ts";
 import { LoFiClient, LoFiError } from "./lofi.ts";
+import { lofiAccountLabel } from "./lofi-identity.ts";
 import type { Contact } from "./projection.ts";
 import {
   isEventRecord,
@@ -735,11 +735,133 @@ export async function observeContact(
     | { quiet_minutes: number }
     | undefined;
   const existing = metadata[1].results as Ledger[];
+  const destinations =
+    routedDestinations ?? (metadata[2].results as Connection[]);
+  await store.db.batch(
+    await observationStatements(
+      store,
+      source,
+      contact,
+      settings?.quiet_minutes ?? 30,
+      existing,
+      destinations,
+      routedDestinations !== undefined,
+      now,
+    ),
+  );
+}
+
+export interface ContactObservation {
+  contact: IntakeContact;
+  routedDestinations: readonly Connection[];
+}
+
+/** Share metadata reads while each contact retains its complete atomic guard. */
+export async function observeContacts(
+  store: Store,
+  source: Connection,
+  observations: readonly ContactObservation[],
+  now = Date.now(),
+): Promise<PromiseSettledResult<void>[]> {
+  if (observations.length > 20)
+    throw new Error("observation_batch_exceeds_20_contacts");
+  if (observations.length === 0) return [];
+  const ids = observations.map(({ contact }) => contact.id);
+  if (new Set(ids).size !== ids.length)
+    throw new Error("duplicate_observation_contact");
+  const metadata = await store.db.batch([
+    store.statement(
+      "SELECT quiet_minutes FROM accounts WHERE id=?",
+      source.tenant,
+    ),
+    store.statement(
+      "SELECT * FROM ledger WHERE tenant=? AND source=? AND qso IN(SELECT value FROM json_each(?))",
+      source.tenant,
+      source.id,
+      JSON.stringify(ids),
+    ),
+  ]);
+  const settings = metadata[0].results[0] as
+    | { quiet_minutes: number }
+    | undefined;
+  const existing = new Map<string, Ledger[]>();
+  for (const row of metadata[1].results as Ledger[]) {
+    const rows = existing.get(row.qso) ?? [];
+    rows.push(row);
+    existing.set(row.qso, rows);
+  }
+  const results: PromiseSettledResult<void>[] = [];
+  let chunk: { index: number; statements: D1PreparedStatement[] }[] = [];
+  let statementCount = 0;
+  const commit = async () => {
+    if (chunk.length === 0) return;
+    try {
+      await store.db.batch(chunk.flatMap(({ statements }) => statements));
+      for (const { index } of chunk)
+        results[index] = { status: "fulfilled", value: undefined };
+    } catch (error) {
+      // D1 rolls the entire failed batch back. Retry whole contacts, with their
+      // guards again, so one stale context cannot prevent unrelated progress.
+      for (const { index, statements } of chunk) {
+        if (chunk.length === 1) {
+          results[index] = { status: "rejected", reason: error };
+          continue;
+        }
+        try {
+          await store.db.batch(statements);
+          results[index] = { status: "fulfilled", value: undefined };
+        } catch (error) {
+          results[index] = { status: "rejected", reason: error };
+        }
+      }
+    }
+    chunk = [];
+    statementCount = 0;
+  };
+  for (const [
+    index,
+    { contact, routedDestinations },
+  ] of observations.entries()) {
+    try {
+      const statements = await observationStatements(
+        store,
+        source,
+        contact,
+        settings?.quiet_minutes ?? 30,
+        existing.get(contact.id) ?? [],
+        routedDestinations,
+        true,
+        now,
+        true,
+      );
+      if (statements.length > 100)
+        throw new Error("contact_observation_exceeds_100_statements");
+      if (chunk.length === 4 || statementCount + statements.length > 100)
+        await commit();
+      chunk.push({ index, statements });
+      statementCount += statements.length;
+    } catch (error) {
+      results[index] = { status: "rejected", reason: error };
+    }
+  }
+  await commit();
+  return results;
+}
+
+async function observationStatements(
+  store: Store,
+  source: Connection,
+  contact: IntakeContact,
+  quietMinutes: number,
+  existing: readonly Ledger[],
+  destinations: readonly Connection[],
+  explicitRoutes: boolean,
+  now: number,
+  fenceSnapshot = false,
+): Promise<D1PreparedStatement[]> {
   const previousByDestination = new Map(
     existing.map((previous) => [previous.destination, previous]),
   );
-  const destinations =
-    routedDestinations ?? (metadata[2].results as Connection[]);
   if (
     destinations.some(
       (destination) =>
@@ -750,16 +872,82 @@ export async function observeContact(
   )
     throw new Error("invalid_destination_scope");
   const guard = randomToken();
+  const { syncedAtMillis: _stamp, ...sourceInputs } = contact.context.qso;
+  // Batched metadata can outlive another member's transaction. Reject stale
+  // policy or source snapshots inside this contact's projection guard, before
+  // any ledger write or unsent-attempt cancellation. The trigger rejects -1.
+  const projectionGuard = fenceSnapshot
+    ? store.statement(
+        `INSERT INTO projection_guards VALUES(?1,?2,?3,CASE WHEN
+          EXISTS(SELECT 1 FROM accounts WHERE id=?2 AND status='active' AND quiet_minutes=?10)
+          AND (SELECT COUNT(*) FROM ledger WHERE tenant=?2 AND source=?3 AND qso=?7)=json_array_length(?8)
+          AND NOT EXISTS(SELECT 1 FROM json_each(?8) expected LEFT JOIN ledger l
+            ON l.tenant=?2 AND l.source=?3 AND l.qso=?7 AND l.destination=json_extract(expected.value,'$[0]')
+            WHERE l.qso IS NULL OR l.generation IS NOT json_extract(expected.value,'$[1]')
+              OR l.source_hash IS NOT json_extract(expected.value,'$[2]')
+              OR l.narrative IS NOT json_extract(expected.value,'$[3]')
+              OR l.remote_id IS NOT json_extract(expected.value,'$[4]')
+              OR l.provenance IS NOT json_extract(expected.value,'$[5]'))
+          AND NOT EXISTS(SELECT 1 FROM json_each(?9) expected LEFT JOIN connections c
+            ON c.tenant=?2 AND c.id=json_extract(expected.value,'$[0]')
+            WHERE c.id IS NULL OR c.status!='active'
+              OR c.kind IS NOT json_extract(expected.value,'$[1]')
+              OR c.remote_identity IS NOT json_extract(expected.value,'$[2]')
+              OR c.config IS NOT json_extract(expected.value,'$[3]')
+              OR c.credential_version IS NOT json_extract(expected.value,'$[4]'))
+          AND (?11 IS NULL OR EXISTS(SELECT 1 FROM reconciliation_work r WHERE r.tenant=?2 AND r.source=?3 AND r.qso=?7 AND r.version=?11))
+          AND EXISTS(SELECT 1 FROM source_work w JOIN private_data p ON p.tenant=w.tenant AND p.connection=w.source AND p.id=w.private_id AND p.kind='source'
+            WHERE w.tenant=?2 AND w.source=?3 AND w.id=?7 AND w.kind='qso' AND w.revision=?12
+              AND w.operation_id IS ?6 AND w.deleted=0 AND w.is_event=0 AND w.state IN('pending','waiting')
+              AND w.expires_at>?5 AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?5))
+          AND (?6 IS NULL OR EXISTS(SELECT 1 FROM source_work o JOIN private_data p ON p.tenant=o.tenant AND p.connection=o.source AND p.id=o.private_id AND p.kind='source'
+            WHERE o.tenant=?2 AND o.source=?3 AND o.id=?6 AND o.kind='operation' AND o.state='context' AND o.deleted=0
+              AND o.expires_at>?5 AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?5)
+              AND NOT EXISTS(SELECT 1 FROM source_work e LEFT JOIN private_data ep ON ep.tenant=e.tenant AND ep.connection=e.source AND ep.id=e.private_id AND ep.kind='source'
+                WHERE e.tenant=o.tenant AND e.source=o.source AND e.operation_id=o.id AND e.kind='qso' AND e.is_event=1 AND e.deleted=0
+                  AND (e.expires_at<=?5 OR ep.id IS NULL OR ep.revoked_at IS NOT NULL OR (ep.expires_at IS NOT NULL AND ep.expires_at<=?5)))))
+          THEN ?4 ELSE -1 END,?5,?6)`,
+        guard,
+        source.tenant,
+        source.id,
+        contact.contextGeneration,
+        now,
+        contact.operationId,
+        contact.id,
+        JSON.stringify(
+          existing.map((row) => [
+            row.destination,
+            row.generation,
+            row.source_hash,
+            row.narrative,
+            row.remote_id,
+            row.provenance,
+          ]),
+        ),
+        JSON.stringify(
+          destinations.map((destination) => [
+            destination.id,
+            destination.kind,
+            destination.remote_identity,
+            destination.config,
+            destination.credential_version,
+          ]),
+        ),
+        quietMinutes,
+        contact.reconciliationVersion ?? null,
+        await sha256(canonical(sourceInputs)),
+      )
+    : store.statement(
+        "INSERT INTO projection_guards VALUES(?,?,?,?,?,?)",
+        guard,
+        source.tenant,
+        source.id,
+        contact.contextGeneration,
+        now,
+        contact.operationId,
+      );
   const updates: D1PreparedStatement[] = [
-    store.statement(
-      "INSERT INTO projection_guards VALUES(?,?,?,?,?,?)",
-      guard,
-      source.tenant,
-      source.id,
-      contact.contextGeneration,
-      now,
-      contact.operationId,
-    ),
+    projectionGuard,
     store.statement(
       "UPDATE ledger SET reason=NULL WHERE tenant=? AND source=? AND qso=? AND reason='test_operation_not_exported'",
       source.tenant,
@@ -767,7 +955,7 @@ export async function observeContact(
       contact.id,
     ),
   ];
-  if (routedDestinations !== undefined) {
+  if (explicitRoutes) {
     const routed = new Set(destinations.map((destination) => destination.id));
     for (const previous of existing) {
       if (routed.has(previous.destination)) continue;
@@ -830,7 +1018,7 @@ export async function observeContact(
         key,
         contact.generation,
         hash,
-        settings?.quiet_minutes ?? 30,
+        quietMinutes,
         contact.deleted,
         now,
       ),
@@ -881,7 +1069,7 @@ export async function observeContact(
   updates.push(
     store.statement("DELETE FROM projection_guards WHERE id=?", guard),
   );
-  await store.db.batch(updates);
+  return updates;
 }
 export async function expireSource(store: Store, now = Date.now()) {
   await store.db.batch([

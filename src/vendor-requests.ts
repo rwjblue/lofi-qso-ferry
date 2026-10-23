@@ -1,6 +1,7 @@
+import type { ProviderKind } from "./providers.ts";
 import type { Store } from "./store.ts";
 
-export type Vendor = "lofi" | "qrz" | "lotw";
+export type Vendor = ProviderKind;
 export type VendorPriority = "live" | "background";
 export interface VendorPolicy {
   windowMs: number;
@@ -14,6 +15,7 @@ export const VENDOR_POLICIES: Readonly<Record<Vendor, Readonly<VendorPolicy>>> =
     lofi: { windowMs: 300_000, total: 24, background: 4 },
     qrz: { windowMs: 300_000, total: 120, background: 24 },
     lotw: { windowMs: 300_000, total: 40, background: 8 },
+    clublog: { windowMs: 300_000, total: 40, background: 8 },
   };
 
 export class VendorDeferredError extends Error {
@@ -48,7 +50,7 @@ function retryAfter(value: string | null, now: number): number | null {
 }
 
 /**
- * All tenants and all Worker invocations share one row per vendor. A request
+ * All tenants and all Worker invocations share one row per vendor/scope. A request
  * reserves its slot before dispatch; there is no sleep or automatic replay.
  */
 export function vendorFetch(
@@ -59,6 +61,8 @@ export function vendorFetch(
     priority?: VendorPriority;
     now?: number;
     policy?: VendorPolicy;
+    /** Canonical instance identity; omitted for globally hosted providers. */
+    scope?: string;
   } = {},
 ): typeof fetch {
   const policy = options.policy ?? VENDOR_POLICIES[vendor];
@@ -73,6 +77,14 @@ export function vendorFetch(
   )
     throw new Error("Invalid vendor request policy");
   const background = options.priority === "background" ? 1 : 0;
+  const scope = options.scope;
+  if (scope !== undefined && (!scope || scope.length > 2048))
+    throw new Error("Invalid vendor request scope");
+  const table =
+    scope === undefined ? "vendor_requests" : "vendor_scoped_requests";
+  const scopeColumn = scope === undefined ? "" : ",scope";
+  const scopeValue = scope === undefined ? "" : ",?7";
+  const scopeWhere = scope === undefined ? "" : " AND scope=?";
   return async (input, init) => {
     const now = options.now ?? Date.now();
     const window = Math.floor(now / policy.windowMs) * policy.windowMs;
@@ -80,15 +92,15 @@ export function vendorFetch(
     // invocation cannot move the window backwards and refill another's budget.
     const reserved = await store
       .statement(
-        `INSERT INTO vendor_requests(vendor,window_start,requests,background_requests,cooldown_until)
-         SELECT ?1,?2,1,?3,0 WHERE ?3=0 OR ?4>0
-         ON CONFLICT(vendor) DO UPDATE SET
-          window_start=MAX(vendor_requests.window_start,excluded.window_start),
-          requests=CASE WHEN vendor_requests.window_start<excluded.window_start THEN 1 ELSE vendor_requests.requests+1 END,
-          background_requests=CASE WHEN vendor_requests.window_start<excluded.window_start THEN excluded.background_requests ELSE vendor_requests.background_requests+excluded.background_requests END
-         WHERE vendor_requests.cooldown_until<=?5
-          AND (vendor_requests.window_start<excluded.window_start OR vendor_requests.requests<?6)
-          AND (?3=0 OR ?4>0 AND (vendor_requests.window_start<excluded.window_start OR vendor_requests.background_requests<?4))
+        `INSERT INTO ${table}(vendor,window_start,requests,background_requests,cooldown_until${scopeColumn})
+         SELECT ?1,?2,1,?3,0${scopeValue} WHERE ?3=0 OR ?4>0
+         ON CONFLICT(vendor${scopeColumn}) DO UPDATE SET
+          window_start=MAX(${table}.window_start,excluded.window_start),
+          requests=CASE WHEN ${table}.window_start<excluded.window_start THEN 1 ELSE ${table}.requests+1 END,
+          background_requests=CASE WHEN ${table}.window_start<excluded.window_start THEN excluded.background_requests ELSE ${table}.background_requests+excluded.background_requests END
+         WHERE ${table}.cooldown_until<=?5
+          AND (${table}.window_start<excluded.window_start OR ${table}.requests<?6)
+          AND (?3=0 OR ?4>0 AND (${table}.window_start<excluded.window_start OR ${table}.background_requests<?4))
          RETURNING window_start,cooldown_until`,
         vendor,
         window,
@@ -96,13 +108,15 @@ export function vendorFetch(
         policy.background,
         now,
         policy.total,
+        ...(scope === undefined ? [] : [scope]),
       )
       .first<Budget>();
     if (!reserved) {
       const budget = await store
         .statement(
-          "SELECT window_start,cooldown_until FROM vendor_requests WHERE vendor=?",
+          `SELECT window_start,cooldown_until FROM ${table} WHERE vendor=?${scopeWhere}`,
           vendor,
+          ...(scope === undefined ? [] : [scope]),
         )
         .first<Budget>();
       throw new VendorDeferredError(
@@ -124,12 +138,13 @@ export function vendorFetch(
     // A shorter concurrent response must never cancel a longer vendor cooldown.
     const cooldown = await store
       .statement(
-        `INSERT INTO vendor_requests(vendor,window_start,requests,background_requests,cooldown_until) VALUES(?,?,0,0,?)
-         ON CONFLICT(vendor) DO UPDATE SET cooldown_until=MAX(vendor_requests.cooldown_until,excluded.cooldown_until)
+        `INSERT INTO ${table}(vendor,window_start,requests,background_requests,cooldown_until${scopeColumn}) VALUES(?,?,0,0,?${scope === undefined ? "" : ",?"})
+         ON CONFLICT(vendor${scopeColumn}) DO UPDATE SET cooldown_until=MAX(${table}.cooldown_until,excluded.cooldown_until)
          RETURNING window_start,cooldown_until`,
         vendor,
         window,
         until,
+        ...(scope === undefined ? [] : [scope]),
       )
       .first<Budget>();
     if (response.status === 429) {

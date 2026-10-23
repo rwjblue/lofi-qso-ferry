@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import type { SessionIdentity } from "../src/auth.ts";
+import { ClubLogError } from "../src/clublog.ts";
 import { connectionRoute, saveVerifiedConnection } from "../src/connections.ts";
+import { handleProviderRejection } from "../src/provider-errors.ts";
 import { digestCode, sha256 } from "../src/security.ts";
 import { importPkcs12 } from "../src/signing.ts";
 import type { Store } from "../src/store.ts";
@@ -1870,4 +1872,380 @@ test("resuming LoTW requires valid certificate evidence and remains tenant scope
     "quarantined or revoked ciphertext cannot be resumed",
   );
   assert.equal((await store.connection("a", saved.id))?.status, "disabled");
+});
+
+test("Club Log linking reads only, encrypts credentials and preserves destination identity on renewal", async (t) => {
+  const { mf, env, store } = await setup();
+  t.after(() => mf.dispose());
+  env.CLUBLOG_API_KEY = "synthetic-application-key";
+  const calls: URLSearchParams[] = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    assert.equal(String(input), "https://clublog.org/getadif.php");
+    assert.equal(init?.method, "POST");
+    assert.equal(init?.redirect, "manual");
+    const data = new URLSearchParams(String(init?.body));
+    assert.equal(data.get("email"), "operator@example.test");
+    assert.equal(data.get("call"), "W1AW");
+    assert.equal(data.has("api"), false);
+    calls.push(data);
+    return new Response("<ADIF_VER:5>3.1.6<EOH>");
+  };
+  const input = {
+    email: " operator@EXAMPLE.TEST ",
+    password: " first-app-password ",
+    callsign: " w1aw ",
+  };
+  const connected = await connectionRoute(
+    await request("/clublog", input, env),
+    env,
+    identity,
+    { fetcher },
+  );
+  assert.equal(connected?.status, 201);
+  const first = (await connected!.json()) as { id: string };
+  const original = await store.connection("a", first.id);
+  assert.equal(original?.kind, "clublog");
+  assert.deepEqual(JSON.parse(original!.config), {
+    stationCallsign: "W1AW",
+    readAccess: true,
+  });
+  assert.equal(original!.remote_identity.includes("operator"), false);
+  assert.deepEqual(
+    await store.private(
+      "a",
+      first.id,
+      original!.credential_version!,
+      "credential",
+    ),
+    {
+      email: "operator@example.test",
+      password: " first-app-password ",
+      callsign: "W1AW",
+    },
+  );
+  await store
+    .statement(
+      "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,state,due_at,updated_at) VALUES('a','source','club-qso',?,'g','hash','historical_unverified',0,0)",
+      first.id,
+    )
+    .run();
+  const beforeCursor = await store
+    .statement("SELECT * FROM cursors WHERE stream=?", `rescan:${first.id}`)
+    .first();
+  const renewed = await connectionRoute(
+    await request(
+      "/clublog",
+      { ...input, password: "renewed-app-password" },
+      env,
+    ),
+    env,
+    identity,
+    { fetcher },
+  );
+  assert.equal(renewed?.status, 201);
+  assert.equal(((await renewed!.json()) as { id: string }).id, first.id);
+  const updated = await store.connection("a", first.id);
+  assert.notEqual(updated?.credential_version, original?.credential_version);
+  assert.deepEqual(
+    await store
+      .statement("SELECT * FROM cursors WHERE stream=?", `rescan:${first.id}`)
+      .first(),
+    beforeCursor,
+  );
+  assert.equal(
+    (
+      await store
+        .statement(
+          "SELECT COUNT(*) n FROM ledger WHERE destination=?",
+          first.id,
+        )
+        .first<{ n: number }>()
+    )?.n,
+    1,
+  );
+  const list = await connectionRoute(
+    new Request("http://localhost:8787/api/connections"),
+    env,
+    identity,
+  );
+  const publicText = await list!.text();
+  for (const secret of [
+    "operator@example.test",
+    "first-app-password",
+    "renewed-app-password",
+    env.CLUBLOG_API_KEY,
+  ])
+    assert.equal(publicText.includes(secret), false);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0]?.get("password"), " first-app-password ");
+});
+
+test("Club Log keeps one current account through pause and renewal, revocation permits another without deleting history", async (t) => {
+  const { mf, env, store } = await setup();
+  t.after(() => mf.dispose());
+  env.CLUBLOG_API_KEY = "synthetic-application-key";
+  let reads = 0;
+  const fetcher: typeof fetch = async () => {
+    ++reads;
+    return new Response("<ADIF_VER:5>3.1.6<EOH>");
+  };
+  const input = {
+    email: "operator@example.test",
+    password: "app-password",
+    callsign: "W1AW",
+  };
+  const first = await connectionRoute(
+    await request("/clublog", input, env),
+    env,
+    identity,
+    { fetcher },
+  );
+  const id = ((await first!.json()) as { id: string }).id;
+  assert.equal(
+    (
+      await connectionRoute(
+        await request("/disable", { id }, env),
+        env,
+        identity,
+      )
+    )?.status,
+    200,
+  );
+  assert.equal((await store.connection("a", id))?.status, "disabled");
+  for (const changed of [
+    { ...input, callsign: "K1ABC" },
+    { ...input, email: "different@example.test" },
+  ]) {
+    const blocked = await connectionRoute(
+      await request("/clublog", changed, env),
+      env,
+      identity,
+      { fetcher },
+    );
+    assert.equal(blocked?.status, 409);
+    assert.match(await blocked!.text(), /Club Log connection already exists/);
+  }
+  assert.equal(reads, 1);
+  assert.equal(
+    (
+      await connectionRoute(
+        await request("/enable", { id }, env),
+        env,
+        identity,
+      )
+    )?.status,
+    200,
+  );
+  assert.equal((await store.connection("a", id))?.status, "active");
+  await store
+    .statement(
+      "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,state,due_at,updated_at) VALUES('a','source','club-history',?,'g','hash','adopted',0,0)",
+      id,
+    )
+    .run();
+  assert.equal(
+    (
+      await connectionRoute(
+        await request("/revoke", { id }, env),
+        env,
+        identity,
+      )
+    )?.status,
+    200,
+  );
+  assert.equal((await store.connection("a", id))?.credential_version, null);
+  assert.equal(
+    (
+      await store
+        .statement(
+          "SELECT COUNT(*) n FROM private_data WHERE connection=? AND kind='credential'",
+          id,
+        )
+        .first<{ n: number }>()
+    )?.n,
+    0,
+  );
+  assert.equal(
+    (
+      await store
+        .statement("SELECT COUNT(*) n FROM ledger WHERE destination=?", id)
+        .first<{ n: number }>()
+    )?.n,
+    1,
+  );
+  const replacement = await connectionRoute(
+    await request("/clublog", { ...input, callsign: "K1ABC" }, env),
+    env,
+    identity,
+    { fetcher },
+  );
+  assert.equal(replacement?.status, 201);
+  assert.notEqual(((await replacement!.json()) as { id: string }).id, id);
+});
+
+test("Club Log missing application setup and failed verification cannot save credentials or leak vendor bodies", async (t) => {
+  const { mf, env, store } = await setup();
+  t.after(() => mf.dispose());
+  const input = {
+    email: "operator@example.test",
+    password: "private-app-password",
+    callsign: "W1AW",
+  };
+  let reads = 0;
+  const blocked = await connectionRoute(
+    await request("/clublog", input, env),
+    env,
+    identity,
+    {
+      fetcher: async () => {
+        ++reads;
+        throw new Error("No request without application setup");
+      },
+    },
+  );
+  assert.equal(blocked?.status, 503);
+  assert.equal(
+    ((await blocked!.json()) as { code: string }).code,
+    "clublog_not_configured",
+  );
+  assert.equal(reads, 0);
+  env.CLUBLOG_API_KEY = "private-application-key";
+  for (const response of [
+    new Response("private-app-password operator@example.test", { status: 403 }),
+    new Response("<html>private-app-password</html>"),
+  ]) {
+    const rejected = await connectionRoute(
+      await request("/clublog", input, env),
+      env,
+      identity,
+      { fetcher: async () => response },
+    );
+    assert.equal(rejected?.status, 400);
+    const error = await rejected!.text();
+    for (const secret of [input.password, input.email, env.CLUBLOG_API_KEY])
+      assert.equal(error.includes(secret), false);
+  }
+  assert.equal(
+    (
+      await store
+        .statement("SELECT COUNT(*) n FROM connections WHERE kind='clublog'")
+        .first<{ n: number }>()
+    )?.n,
+    0,
+  );
+});
+
+test("a rejected Club Log credential stays suspended across pause and resume until verified renewal", async (t) => {
+  const { mf, env, store } = await setup();
+  t.after(() => mf.dispose());
+  env.CLUBLOG_API_KEY = "synthetic-application-key";
+  const input = {
+    email: "operator@example.test",
+    password: "app-password",
+    callsign: "W1AW",
+  };
+  const fetcher: typeof fetch = async () =>
+    new Response("<ADIF_VER:5>3.1.6<EOH>");
+  const first = await connectionRoute(
+    await request("/clublog", input, env),
+    env,
+    identity,
+    { fetcher },
+  );
+  const id = ((await first!.json()) as { id: string }).id;
+  await store
+    .statement(
+      "UPDATE connections SET status='needs_verification',config=json_set(config,'$.credentialRejected',json('true')) WHERE tenant='a' AND id=?",
+      id,
+    )
+    .run();
+  const blocked = await connectionRoute(
+    await request("/enable", { id }, env),
+    env,
+    identity,
+  );
+  assert.equal(blocked?.status, 409);
+  await connectionRoute(await request("/disable", { id }, env), env, identity);
+  const resumed = await connectionRoute(
+    await request("/enable", { id }, env),
+    env,
+    identity,
+  );
+  assert.equal(resumed?.status, 200);
+  assert.equal(
+    ((await resumed!.json()) as { status: string }).status,
+    "needs_verification",
+  );
+  assert.equal((await store.connection("a", id))?.status, "needs_verification");
+  const renewed = await connectionRoute(
+    await request("/clublog", { ...input, password: "new-app-password" }, env),
+    env,
+    identity,
+    { fetcher },
+  );
+  assert.equal(renewed?.status, 201);
+  assert.equal(((await renewed!.json()) as { id: string }).id, id);
+  const current = await store.connection("a", id);
+  assert.equal(current?.status, "active");
+  assert.equal(JSON.parse(current!.config).credentialRejected, undefined);
+});
+
+test("a Club Log rejection arriving during resume cannot reactivate rejected credentials", async (t) => {
+  const { mf, env, store } = await setup();
+  t.after(() => mf.dispose());
+  const saved = await saveVerifiedConnection(store, "a", {
+    kind: "clublog",
+    remoteIdentity: "account:resume-race",
+    label: "Club Log W1AW",
+    credential: {
+      email: "operator@example.test",
+      password: "app-password",
+      callsign: "W1AW",
+    },
+    config: { stationCallsign: "W1AW", readAccess: true },
+  });
+  const outstanding = await store.connection("a", saved.id);
+  assert(outstanding);
+  await connectionRoute(
+    await request("/disable", { id: saved.id }, env),
+    env,
+    identity,
+  );
+
+  const batch = env.DB.batch.bind(env.DB);
+  let injectRejection = true;
+  env.DB = new Proxy(env.DB, {
+    get(target, property) {
+      if (property === "batch")
+        return async (statements: D1PreparedStatement[]) => {
+          if (injectRejection) {
+            injectRejection = false;
+            await handleProviderRejection(
+              store,
+              outstanding,
+              new ClubLogError("auth", "Access rejected"),
+            );
+          }
+          return batch(statements);
+        };
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const response = await connectionRoute(
+    await request("/enable", { id: saved.id }, env),
+    env,
+    identity,
+  );
+  assert.equal(injectRejection, false);
+  assert.equal(response?.status, 200);
+  const result = (await response!.json()) as {
+    status: string;
+    message: string;
+  };
+  assert.equal(result.status, "needs_verification");
+  assert.match(result.message, /Update credentials/);
+  const current = await store.connection("a", saved.id);
+  assert.equal(current?.status, "needs_verification");
+  assert.equal(JSON.parse(current!.config).credentialRejected, true);
 });

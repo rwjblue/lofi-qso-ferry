@@ -8,6 +8,7 @@ import type {
 } from "./admin-invitation-types.ts";
 import type { AdminOverview, AdminPriority } from "./admin-types.ts";
 import {
+  deliveryBreakdown,
   trendSegments,
   workloadChange,
   workloadStatus,
@@ -298,25 +299,19 @@ function renderWorkload(data: AdminOverview) {
     "No backlog samples available.",
   );
   const hours = deliveries.windowMs / 3_600_000;
+  const destinations = deliveryBreakdown(deliveries);
   element("delivery-window").textContent = `Last ${hours} hours`;
   table(
     "delivery-throughput",
     ["Destination", "Completed deliveries", "Average / hour"],
     [
-      [
-        "QRZ accepted",
-        count(deliveries.qrz),
-        (deliveries.qrz / hours).toLocaleString(undefined, {
+      ...destinations.map((destination) => [
+        destination.label,
+        count(destination.completed),
+        destination.perHour.toLocaleString(undefined, {
           maximumFractionDigits: 1,
         }),
-      ],
-      [
-        "LoTW confirmed by readback",
-        count(deliveries.lotw),
-        (deliveries.lotw / hours).toLocaleString(undefined, {
-          maximumFractionDigits: 1,
-        }),
-      ],
+      ]),
       [
         "Total",
         count(deliveries.total),
@@ -328,14 +323,17 @@ function renderWorkload(data: AdminOverview) {
     "No completed deliveries in this period.",
   );
   element("delivery-context").textContent =
-    `Last completed delivery in this period: ${age(deliveries.lastCompletedAt, data.generatedAt)}. ${count(deliveries.submittedOutstanding)} LoTW submissions await readback. ${count(deliveries.adoptedExisting)} existing destination records are currently adopted; these are not new deliveries.`;
+    `Last completed delivery in this period: ${age(deliveries.lastCompletedAt, data.generatedAt)}. ${count(deliveries.submittedOutstanding)} destination submissions await readback. ${count(deliveries.adoptedExisting)} existing destination records are currently adopted; these are not new deliveries.`;
   table(
     "delivery-buckets",
-    ["Hour ending", "QRZ accepted", "LoTW readback", "Total completed"],
+    [
+      "Hour ending",
+      ...destinations.map((destination) => destination.label),
+      "Total completed",
+    ],
     deliveries.buckets.map((bucket) => [
       date(bucket.at),
-      count(bucket.qrz),
-      count(bucket.lotw),
+      ...destinations.map((destination) => count(bucket[destination.kind])),
       count(bucket.total),
     ]),
     "No completed deliveries in this period.",
@@ -473,7 +471,9 @@ function renderOverview(data: AdminOverview) {
       node("h3", vendorName(vendor.vendor)),
       pill(
         vendor.cooldownUntil
-          ? "Cooling down"
+          ? vendor.scopeCount
+            ? "Some instances cooling down"
+            : "Cooling down"
           : vendor.requests >= vendor.totalLimit
             ? "Budget used"
             : "Available",
@@ -493,7 +493,7 @@ function renderOverview(data: AdminOverview) {
       meter,
       node(
         "p",
-        `${count(vendor.requests)} / ${count(vendor.totalLimit)} total · ${count(vendor.backgroundRequests)} / ${count(vendor.backgroundLimit)} background`,
+        `${count(vendor.requests)} / ${count(vendor.totalLimit)} total · ${count(vendor.backgroundRequests)} / ${count(vendor.backgroundLimit)} background${vendor.scopeCount ? ` across ${count(vendor.scopeCount)} independent instance budgets` : ""}`,
         "small",
       ),
       node(

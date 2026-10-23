@@ -8,6 +8,71 @@ import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 const endpoint = "https://vendor.example.test/records";
 const policy: VendorPolicy = { windowMs: 1000, total: 5, background: 2 };
 
+test("self-hosted instances share their own budget without cooling down other instances", async () => {
+  const h = await fixture();
+  try {
+    const one = { windowMs: 1000, total: 1, background: 1 };
+    const calls: string[] = [];
+    const throttled: typeof fetch = async () => {
+      calls.push("first");
+      return new Response("limited", {
+        status: 429,
+        headers: { "Retry-After": "10" },
+      });
+    };
+    await assert.rejects(
+      vendorFetch(h.store, "qrz", throttled, {
+        scope: "https://one.example.test",
+        now: 100,
+        policy: one,
+      })(endpoint),
+      VendorDeferredError,
+    );
+    const allowed: typeof fetch = async () => {
+      calls.push("other");
+      return new Response("ok");
+    };
+    await assert.rejects(
+      vendorFetch(h.store, "qrz", allowed, {
+        scope: "https://one.example.test",
+        now: 2000,
+        policy: one,
+      })(endpoint),
+      (error) =>
+        error instanceof VendorDeferredError &&
+        error.retryAt === 10100 &&
+        !error.requestSent,
+    );
+    await vendorFetch(h.store, "qrz", allowed, {
+      scope: "https://two.example.test",
+      now: 2000,
+      policy: one,
+    })(endpoint);
+    await assert.rejects(
+      vendorFetch(h.store, "qrz", allowed, {
+        scope: "https://two.example.test",
+        now: 2000,
+        policy: one,
+      })(endpoint),
+      VendorDeferredError,
+    );
+    await vendorFetch(h.store, "qrz", allowed, { now: 2000, policy: one })(
+      endpoint,
+    );
+    assert.deepEqual(calls, ["first", "other", "other"]);
+    assert.equal(
+      (
+        await h.store
+          .statement("SELECT COUNT(*) n FROM vendor_scoped_requests")
+          .first<{ n: number }>()
+      )?.n,
+      2,
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
 async function fixture() {
   const h = await database();
   try {

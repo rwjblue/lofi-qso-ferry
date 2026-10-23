@@ -1,3 +1,4 @@
+import { vendorKinds } from "./providers.ts";
 import type {
   AdminBacklogSample,
   AdminOverview,
@@ -210,7 +211,7 @@ export async function getAdminOverview(
       `SELECT 'source' AS area,w.state,COUNT(*) AS count FROM source_work w WHERE ${sourceFilter} AND w.state IN('blocked','expired','missing_from_reread') GROUP BY w.state UNION ALL SELECT 'attempt' AS area,s.state,COUNT(*) AS count FROM attempt_state s WHERE ${attemptFilter} AND s.state IN('uncertain','reconciliation_required','rejected') GROUP BY s.state UNION ALL SELECT 'history' AS area,state,COUNT(*) AS count FROM ledger WHERE state IN('history_mismatch','history_ambiguous','historical_unverified') GROUP BY state`,
     ),
     db.prepare(
-      "SELECT vendor,window_start,requests,background_requests,cooldown_until FROM vendor_requests",
+      "SELECT vendor,window_start,requests,background_requests,cooldown_until FROM vendor_requests UNION ALL SELECT vendor,window_start,requests,background_requests,cooldown_until FROM vendor_scoped_requests",
     ),
     db.prepare("SELECT COUNT(*) AS total FROM accounts"),
     db
@@ -302,21 +303,27 @@ export async function getAdminOverview(
         .results[0] as AdminOverview["backlog"]["deliveryCandidates"],
     },
     attention: results[6].results as AdminOverview["attention"],
-    vendors: (["lofi", "qrz", "lotw"] as const).map((vendor) => {
+    vendors: vendorKinds.map((vendor) => {
       const policy = VENDOR_POLICIES[vendor];
-      const row = vendors.find((entry) => entry.vendor === vendor);
+      const rows = vendors.filter((entry) => entry.vendor === vendor);
       const window = Math.floor(now / policy.windowMs) * policy.windowMs;
-      const current = row && row.window_start >= window;
+      const current = rows.filter((row) => row.window_start >= window);
+      const scopes = Math.max(1, rows.length);
+      const cooldown = Math.max(0, ...rows.map((row) => row.cooldown_until));
       return {
         vendor,
-        requests: current ? row.requests : 0,
-        backgroundRequests: current ? row.background_requests : 0,
-        totalLimit: policy.total,
-        backgroundLimit: policy.background,
+        requests: current.reduce((sum, row) => sum + row.requests, 0),
+        backgroundRequests: current.reduce(
+          (sum, row) => sum + row.background_requests,
+          0,
+        ),
+        totalLimit: policy.total * scopes,
+        backgroundLimit: policy.background * scopes,
+        ...(scopes > 1 ? { scopeCount: scopes } : {}),
         windowEndsAt:
-          Math.max(window, row?.window_start ?? window) + policy.windowMs,
-        cooldownUntil:
-          row && row.cooldown_until > now ? row.cooldown_until : null,
+          Math.max(window, ...rows.map((row) => row.window_start)) +
+          policy.windowMs,
+        cooldownUntil: cooldown > now ? cooldown : null,
       };
     }),
     gates: gatesSummary(env),

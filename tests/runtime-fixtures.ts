@@ -12,15 +12,24 @@ import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import { database, keys, seed } from "./helpers.ts";
 export const FIXTURE_NOW = Date.parse("2027-01-01T00:00:00Z");
 export const FIXTURE_QSO_AT = Date.parse("2026-10-22T12:00:01Z");
-export async function applyAdditionalMigrations(db: D1Database) {
+export async function applyAdditionalMigrations(
+  db: D1Database,
+  through?: string,
+) {
   for (const name of (await readdir(new URL("../migrations/", import.meta.url)))
-    .filter((name) => name.endsWith(".sql") && name !== "0001_foundation.sql")
+    .filter(
+      (name) =>
+        name.endsWith(".sql") &&
+        name !== "0001_foundation.sql" &&
+        (!through || name <= through),
+    )
     .sort()) {
     const sql = await readFile(
       new URL(`../migrations/${name}`, import.meta.url),
       "utf8",
     );
     let current = "";
+    const statements: D1PreparedStatement[] = [];
     for (const line of sql.split("\n")) {
       current += `${line}\n`;
       const trimmed = current.replace(/^\s*(?:--[^\n]*\n\s*)*/, "");
@@ -31,10 +40,11 @@ export async function applyAdditionalMigrations(db: D1Database) {
           line.trim() === "END;" ||
           /^CREATE TRIGGER[^\n]*\bEND;$/.test(trimmed.trim()))
       ) {
-        await db.prepare(current).run();
+        statements.push(db.prepare(current));
         current = "";
       }
     }
+    await db.batch(statements);
   }
 }
 export function fixtureEnvironment(db: D1Database): Env {
@@ -59,6 +69,7 @@ export function fixtureEnvironment(db: D1Database): Env {
     KEK_V1: keys.keys["1"],
     AUTH_SECRET: "synthetic-auth-secret-32-characters",
     RESEND_API_KEY: "",
+    CLUBLOG_API_KEY: "",
     EMAIL_CODE_SECRET: "synthetic-code-secret-32-characters",
   } as Env;
 }

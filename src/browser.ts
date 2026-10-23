@@ -237,13 +237,17 @@ async function updateCredentials(connection: ConnectionSummary) {
   const fields =
     connection.kind === "qrz"
       ? ["bookId", "stationCallsign", "startDate", "endDate"]
-      : ["username"];
+      : connection.kind === "clublog"
+        ? ["callsign"]
+        : ["username"];
   for (const field of fields) {
     const input = form.elements.namedItem(field);
     const value =
       field === "username"
         ? existing.config.queryUsername
-        : existing.config[field];
+        : field === "callsign"
+          ? existing.config.stationCallsign
+          : existing.config[field];
     if (input instanceof HTMLInputElement && typeof value === "string")
       input.value = value;
   }
@@ -989,6 +993,16 @@ form("qrz", async (data) => {
     },
   });
   element<HTMLFormElement>("qrz").reset();
+  await load();
+});
+form("clublog", async (data) => {
+  const result = await api<{ message: string }>("/api/connections/clublog", {
+    email: text(data, "email"),
+    password: text(data, "password"),
+    callsign: text(data, "callsign"),
+  });
+  element<HTMLFormElement>("clublog").reset();
+  message(result.message);
   await load();
 });
 bind("lotw-check-login", async () => {

@@ -31,6 +31,7 @@ test("all current legacy connections remain visible and removed credentials perm
       ["lofi", ["pending"]],
       ["qrz", ["active", "extra"]],
       ["lotw", ["cert"]],
+      ["clublog", []],
     ],
   );
   assert.equal(groups[0]?.previous[0]?.id, "old");
@@ -61,6 +62,7 @@ test("source-only empty ledger explains review instead of implying zero imported
 test("friendly labels preserve distinctions between pending, paused and unverified connections and historical preview bindings", () => {
   assert.equal(vendorName("lofi"), "LoFi");
   assert.equal(vendorName("lotw"), "LoTW");
+  assert.equal(vendorName("clublog"), "Club Log");
   assert.equal(connectionStatus("disabled"), "Paused");
   assert.equal(connectionStatus("approval_pending"), "Approval pending");
   assert.equal(connectionStatus("needs_verification"), "Verification needed");
@@ -73,4 +75,19 @@ test("friendly labels preserve distinctions between pending, paused and unverifi
     "Current preview · export uses pinned version",
   );
   assert.equal(previewStatus("current_preview"), "Current template preview");
+});
+
+test("Club Log cards show current and retained destinations without combining account state", () => {
+  const clublog = connectionGroups([
+    connection("removed", "clublog", "revoked"),
+    connection("current", "clublog", "disabled"),
+  ]).find((group) => group.kind === "clublog");
+  assert.deepEqual(
+    clublog?.current.map((row) => row.id),
+    ["current"],
+  );
+  assert.deepEqual(
+    clublog?.previous.map((row) => row.id),
+    ["removed"],
+  );
 });

@@ -23,28 +23,62 @@ or a dependency on Cloudflare management credentials in the app.
 
 ## Interpreting load honestly
 
-Successful source pages, drain rounds and idle/deadline stop reasons are
-retained per run. Repeated time-budget stops with rising backlog suggest
-capacity pressure. An idle stop only means the run found no further progress;
-work held by rollout gates, quiet time, missing context or vendor budgets may
-remain. The scheduler's contact and attempt counters count processing turns, not unique
-contacts delivered. Waiting work may be considered repeatedly. A LoTW upload
-acknowledgement is not readback confirmation. Vendor request counts measure
+The workload panel separates source records into **Ready**, **Held**,
+**Blocked**, and **Expired**, independently for live traffic and background
+imports. Each source record appears once. One contact may involve several
+routes; it is ready when at least one destination has useful processing work.
+These are processing categories, not permission to upload:
+- **Ready:** no known metadata hold prevents further processing. This includes
+  destination inventory reads and retries, even when export gates are closed.
+  The worker still validates source context, routing, credentials, current
+  vendor budgets, and write eligibility before acting.
+- **Held:** a known prerequisite is missing, such as operation context, an active
+  destination, a matching route, quiet time, export authorization, or reviewed
+  destination history. Existing in-flight deliveries and resolved records
+  awaiting cleanup are held separately from new processing work.
+- **Blocked:** source data could not be interpreted and needs review, such as an
+  invalid callsign, mode, time, or location. Reason counts use fixed labels;
+  vendor responses and private payloads never appear in this panel.
+- **Expired:** the buffered source input has expired and requires a fresh read.
+
+Some rows stored internally as `blocked` are shown as held when the reason is
+unavailable context or an expired payload. Finishing an operation reread already
+requeues its contacts automatically. See the [production workload investigation]
+(admin-workload-investigation.md) for the 767 context dependencies and one
+callsign problem behind the original 768-blocked screenshot.
+
+The charts show the latest classified scheduler snapshot in each hour over the
+last 24 hours. Exact timestamps and counts are available below the charts.
+Coverage, missing intervals, and the latest sample's age remain visible. Old
+scheduler records without the new breakdown are unknown, not zero. Comparing
+ready counts across the observed period shows whether that queue grew or shrank;
+new arrivals, released holds, expiry, and source changes can all affect it. A
+falling count does not by itself prove delivery throughput or spare capacity.
+
+**Actual delivery throughput** counts each immutable contact-version/destination
+attempt once, at its first completed event. QRZ acceptance and successful LoTW
+readback are separate. Retries and repeated completion events never inflate the
+count. Corrections are new delivery versions, and sending one contact to two
+destinations counts twice. LoTW submission acknowledgements and adopted existing
+history are shown separately and never counted as completed deliveries. The
+hourly rate is the observed 24-hour total divided by 24, not an estimated maximum
+capacity or completion ETA.
+
+Successful source pages, drain rounds, and idle/deadline stop reasons remain in
+scheduler history. Contact and attempt counters count processing turns, not
+unique deliveries. Repeated time-budget stops with rising ready work suggest
+capacity pressure; an idle stop only means that run found no further progress.
+Missing finish checkpoints can indicate interrupted invocations. Source
+freshness, incomplete reads, destination errors, vendor cooldowns, and closed
+export gates help explain why a queue is not moving.
+
+Retained-input age describes when the oldest currently buffered input was
+stored. It is not the contact's date, a reliable queue-arrival timestamp, or
+proof the contact has been stuck for that duration. Vendor budget usage measures
 reserved requests in the current fixed window, not requests per second or an
-official vendor quota. Source timestamps describe successful pages, not proof
-that a whole log is current.
-
-Use heartbeat freshness, due work, unresolved-attempt age, source progress and
-vendor cooldowns together. Compare refreshes to see whether work is draining.
-Durable scheduler history begins with this deployment; missing history is
-unknown, never evidence of health. Run records retain seven days. Database
-summaries and retained run counters are operational evidence, not CPU, memory,
-billing measurements or a guarantee of spare capacity.
-
-Source buffers have no reliable local arrival timestamp today. Do not invent
-source queue latency from vendor timestamps or from `processed_at`, which is
-updated during processing. Unresolved attempt creation times and ledger due
-times provide honest age measures where available.
+official vendor quota. A successful source page does not prove the whole log is
+current. Scheduler history retains seven days; these metrics do not measure CPU,
+memory, billing, or guaranteed spare capacity.
 
 ## Access and invitation behavior
 
@@ -74,11 +108,11 @@ Expired and revoked invitations remain visible for 90 days after expiry.
 
 ## Follow-ups, in order
 
-1. **Progress trends and alerts.** Add durable local first-seen timestamps and
-   periodic aggregate snapshots, then show live/import backlog slopes, distinct
-   completions and oldest eligible age over time. Alert on stale cron, stalled
-   live work, expiring credentials and sustained throttling after observing a
-   representative baseline. Keep alert delivery an explicit operator setting.
+1. **Queue age and alerts.** Add durable local first-seen timestamps and oldest
+   eligible age. Build on the backlog and delivery history to alert on stale
+   cron, stalled live work, expiring credentials, and sustained throttling after
+   observing a representative baseline. Keep alert delivery an explicit
+   operator setting.
 2. **Account support drill-down.** Add paginated filters and sanitized failure
    categories, source/route progress and certificate-expiry metadata. Never put
    private contact contents or credentials in a global support view.
@@ -92,8 +126,12 @@ Expired and revoked invitations remain visible for 90 days after expiry.
 
 ## Shipping and operation
 
-Apply `0011_admin_metrics.sql` and `0012_admin_invitations.sql` before deploying
-this code to an existing database or running the updated invite CLI.
+Apply all outstanding migrations before deploying this code. The initial admin
+release requires `0011_admin_metrics.sql` and `0012_admin_invitations.sql`; the
+workload breakdown and trend samples additionally require
+`0015_admin_workload.sql`. Classified backlog history starts after deployment;
+old samples cannot supply the missing breakdown. Completed delivery events can
+be counted from existing history.
 Build both browser entry points with `mise run build`; verify with
 `mise run check`. Existing export configuration stays in effect. No real
 invitation, vendor upload or production migration is part of development tests.

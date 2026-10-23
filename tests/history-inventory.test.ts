@@ -10,6 +10,7 @@ import {
   historyCandidatesBatch,
   historyInventoryGuard,
   pruneHistoryInventory,
+  QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY,
 } from "../src/history-inventory.ts";
 import { Store } from "../src/store.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
@@ -563,6 +564,7 @@ test("rejected QRZ base and verification reads remain incomplete, while a valid 
       fetcher: async () => new Response("RESULT=FAIL&COUNT=0"),
     };
     await assert.rejects(historyCandidates(store, input, options), /rejected/);
+    options.now += QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY;
     await historyCandidates(store, input, {
       ...options,
       fetcher: async () => qrzResponse([{ ...record, APP_QRZLOG_LOGID: "1" }]),
@@ -578,6 +580,7 @@ test("rejected QRZ base and verification reads remain incomplete, while a valid 
         .first())!.n,
       0,
     );
+    options.now += QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY;
     const empty = await historyCandidates(store, input, {
       ...options,
       fetcher: async () => qrzResponse([]),
@@ -593,6 +596,253 @@ test("rejected QRZ base and verification reads remain incomplete, while a valid 
   } finally {
     await mf.dispose();
   }
+});
+test("ambiguous QRZ selections share a durable bounded retry across contacts and resume only when due", async () => {
+  const h = await fixture();
+  try {
+    const second = { ...h.input, qso: "q2", generation: "g2" };
+    await h.store.observe(
+      { ...h.key, qso: second.qso },
+      second.generation,
+      "hash2",
+      30,
+      false,
+    );
+    const inputs = [h.input, second];
+    let calls = 0;
+    const failed = await historyCandidatesBatch(h.store, inputs, {
+      now: h.now,
+      vendorNow: h.now,
+      fetcher: async () => {
+        calls++;
+        return new Response("RESULT=FAIL&COUNT=0");
+      },
+    });
+    assert.equal(calls, 1);
+    assert(
+      failed.every(
+        (result) => result.state === "pending" && "failure" in result,
+      ),
+    );
+    const row = (await h.store
+      .statement(
+        "SELECT state,evidence,expires_at,history_bytes FROM partitions",
+      )
+      .first<{
+        state: string;
+        evidence: string;
+        expires_at: number;
+        history_bytes: number;
+      }>())!;
+    const saved = JSON.parse(row.evidence);
+    assert.equal(row.state, "inventory_pending");
+    assert.equal(row.history_bytes, 0);
+    assert.equal(saved.phase, "base");
+    assert.equal(saved.cursor, 0);
+    assert.equal(saved.pageCount, 0);
+    assert.equal(saved.recordCount, 0);
+    assert.equal(saved.retryStartedAt, h.now);
+    assert.equal(saved.retryAfter, h.now + QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY);
+    const options = {
+      now: h.now + QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY - 1,
+      fetcher: async () => assert.fail("held partition must not call QRZ"),
+    };
+    const restarted = new Store(h.store.db, h.store.keys);
+    const held = await historyCandidatesBatch(restarted, inputs, options);
+    const single = await historyCandidates(restarted, h.input, options);
+    for (const result of [...held, single]) {
+      assert.equal(result.state, "pending");
+      assert.equal(result.fetched, false);
+      assert.equal(result.freshCheckComplete, false);
+      assert.equal(result.fence, undefined);
+      assert.deepEqual(result.records, []);
+      assert.match(result.reason!, /ambiguous empty selection/);
+      assert(!("failure" in result));
+    }
+    const due = {
+      now: saved.retryAfter,
+      vendorNow: saved.retryAfter,
+      fetcher: async () => {
+        calls++;
+        return qrzResponse([{ ...record, APP_QRZLOG_LOGID: "1" }]);
+      },
+    };
+    const progressing = await historyCandidates(restarted, h.input, due);
+    assert.equal(progressing.state, "pending");
+    assert.equal(progressing.fetched, true);
+    assert.equal(calls, 2);
+    const after = JSON.parse(
+      (await h.store
+        .statement("SELECT evidence FROM partitions")
+        .first<{ evidence: string }>())!.evidence,
+    );
+    assert.equal(after.phase, "catchup");
+    assert.equal(after.retryAfter, undefined);
+    assert.equal(after.retryStartedAt, undefined);
+    for (const table of ["attempts", "history_inventory_guards"])
+      assert.equal(
+        (await h.store.statement(`SELECT COUNT(*) n FROM ${table}`).first())!.n,
+        0,
+      );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("ambiguous QRZ retry metadata cannot make malformed or future-clock coverage ready", async (t) => {
+  for (const name of [
+    "missing start",
+    "noninteger",
+    "overlong",
+    "past expiry",
+    "future clock",
+  ] as const)
+    await t.test(name, async () => {
+      const h = await fixture();
+      try {
+        await assert.rejects(
+          historyCandidates(h.store, h.input, {
+            now: h.now,
+            vendorNow: h.now,
+            fetcher: async () => new Response("RESULT=FAIL&COUNT=0"),
+          }),
+        );
+        const row = (await h.store
+          .statement("SELECT evidence,expires_at FROM partitions")
+          .first<{ evidence: string; expires_at: number }>())!;
+        const state = JSON.parse(row.evidence);
+        if (name === "missing start") delete state.retryStartedAt;
+        else if (name === "noninteger")
+          state.retryAfter = "private-invalid-value";
+        else if (name === "overlong") state.retryAfter += 1;
+        else if (name === "past expiry") {
+          state.retryStartedAt = row.expires_at;
+          state.retryAfter = row.expires_at + 1;
+        } else {
+          state.retryStartedAt = h.now + 60_000;
+          state.retryAfter =
+            state.retryStartedAt + QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY;
+        }
+        await h.store
+          .statement("UPDATE partitions SET evidence=?", JSON.stringify(state))
+          .run();
+        let calls = 0;
+        const result = await historyCandidates(h.store, h.input, {
+          now: h.now,
+          vendorNow: h.now,
+          fetcher: async () => {
+            calls++;
+            return qrzResponse([{ ...record, APP_QRZLOG_LOGID: "1" }]);
+          },
+        });
+        assert.equal(
+          calls,
+          1,
+          "invalid or future-clock retry metadata cannot suppress the bounded read",
+        );
+        assert.equal(result.state, "pending");
+        assert.equal(result.freshCheckComplete, false);
+        assert.equal(result.fence, undefined);
+        assert.deepEqual(result.records, []);
+      } finally {
+        await h.mf.dispose();
+      }
+    });
+});
+
+test("ambiguous QRZ retry holds follow credential and logical book scope, while changed source or lease prevents their commit", async (t) => {
+  for (const name of [
+    "credential",
+    "book",
+    "source race",
+    "lease race",
+  ] as const)
+    await t.test(name, async () => {
+      const h = await fixture();
+      try {
+        if (name.endsWith("race")) {
+          await assert.rejects(
+            historyCandidates(h.store, h.input, {
+              now: h.now,
+              vendorNow: h.now,
+              fetcher: async () => {
+                if (name === "source race")
+                  await h.store.observe(h.key, "g2", "new", 30, false);
+                else
+                  await h.store
+                    .statement(
+                      "UPDATE leases SET expires_at=0 WHERE scope LIKE 'history:%'",
+                    )
+                    .run();
+                return new Response("RESULT=FAIL&COUNT=0");
+              },
+            }),
+            /history (source changed|lease lost)/,
+          );
+          const state = JSON.parse(
+            (await h.store
+              .statement("SELECT evidence FROM partitions")
+              .first<{ evidence: string }>())!.evidence,
+          );
+          assert.equal(state.retryAfter, undefined);
+        } else {
+          await assert.rejects(
+            historyCandidates(h.store, h.input, {
+              now: h.now,
+              vendorNow: h.now,
+              fetcher: async () => new Response("RESULT=FAIL&COUNT=0"),
+            }),
+          );
+          if (name === "credential") {
+            await (
+              await h.store.putPrivate("a", "destination", "v2", "credential", {
+                apiKey: "synthetic-new-key",
+              })
+            ).run();
+            await h.store
+              .statement(
+                "UPDATE connections SET credential_version='v2' WHERE tenant='a' AND id='destination'",
+              )
+              .run();
+          } else
+            await h.store
+              .statement(
+                "UPDATE connections SET remote_identity='new-logical-book',config=json_set(config,'$.bookId','new-book') WHERE tenant='a' AND id='destination'",
+              )
+              .run();
+          const input = {
+            ...h.input,
+            destination: (await h.store.connection("a", "destination"))!,
+          };
+          let calls = 0;
+          const result = await historyCandidates(h.store, input, {
+            now: h.now,
+            vendorNow: h.now,
+            fetcher: async () => {
+              calls++;
+              return qrzResponse([{ ...record, APP_QRZLOG_LOGID: "1" }]);
+            },
+          });
+          assert.equal(calls, 1);
+          assert.equal(result.state, "pending");
+          assert.equal(result.fence, undefined);
+          assert.equal(
+            (await h.store
+              .statement("SELECT COUNT(*) n FROM partitions")
+              .first())!.n,
+            2,
+          );
+        }
+        assert.equal(
+          (await h.store
+            .statement("SELECT COUNT(*) n FROM history_inventory_guards")
+            .first())!.n,
+          0,
+        );
+      } finally {
+        await h.mf.dispose();
+      }
+    });
 });
 test("QRZ catch-up authentication and protocol failures do not trigger a verification reset", async (t) => {
   for (const response of ["RESULT=AUTH", "RESULT=OK&COUNT=1"]) {

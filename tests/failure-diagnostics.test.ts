@@ -60,6 +60,14 @@ test("known protocol, report, retention and D1 guard errors have fixed codes", (
       "qrz_response_utf8",
     ],
     [new QrzError("rejected", "private rejection"), "qrz_rejected"],
+    [
+      new QrzError(
+        "rejected",
+        "private rejection",
+        "ambiguous_empty_selection",
+      ),
+      "qrz_ambiguous_empty_selection",
+    ],
     [new LotwLoginError("credentials"), "lotw_credentials"],
     [new LotwLoginError("unavailable"), "lotw_login_unavailable"],
     [

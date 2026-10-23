@@ -201,6 +201,34 @@ test("unrecognized QRZ body failures and rejected FETCH never expose vendor reas
     });
   }
 });
+test("only the observed ambiguous empty FETCH framing receives a fixed detail and always remains rejected", async () => {
+  for (const [body, expected] of [
+    ["RESULT=FAIL&COUNT=0", "ambiguous_empty_selection"],
+    ["RESULT=FAIL&COUNT=00", undefined],
+    ["RESULT=FAIL&COUNT=1", undefined],
+    ["RESULT=FAIL", undefined],
+    ["RESULT=FAIL&COUNT=0&ADIF=", undefined],
+    ["RESULT=FAIL&COUNT=0&REASON=", undefined],
+    ["RESULT=FAIL&COUNT=0&REASON=private", undefined],
+    ["RESULT=UNKNOWN&COUNT=0", undefined],
+  ] as const) {
+    const client = new QrzClient("synthetic", {
+      fetch: async () => new Response(body),
+    });
+    await assert.rejects(client.fetchPage(), (error: unknown) => {
+      assert(error instanceof QrzError);
+      assert.equal(error.kind, "rejected");
+      assert.equal(error.detail, expected);
+      const diagnostics = createFailureDiagnostics();
+      diagnostics.record(error, "history_read", "qrz");
+      assert.deepEqual(Object.keys(diagnostics.counts), [
+        `history_read:qrz:${expected ? "qrz_ambiguous_empty_selection" : "qrz_rejected"}`,
+      ]);
+      assert.doesNotMatch(JSON.stringify(diagnostics.counts), /private/);
+      return true;
+    });
+  }
+});
 test("page completion depends on parsed records, not global COUNT", async () => {
   const requests: URLSearchParams[] = [];
   const client = new QrzClient("secret", {

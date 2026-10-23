@@ -172,7 +172,9 @@ function failureCode(error: unknown): string {
       case "auth":
         return "qrz_auth";
       case "rejected":
-        return "qrz_rejected";
+        return ownString(error, "detail") === "ambiguous_empty_selection"
+          ? "qrz_ambiguous_empty_selection"
+          : "qrz_rejected";
       case "transient":
         return "qrz_transient";
       case "uncertain":

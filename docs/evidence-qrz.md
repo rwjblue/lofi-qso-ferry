@@ -1,6 +1,6 @@
 # QRZ and template implementation evidence
 
-Checked 2026-10-22. No QRZ account or logbook was read or modified during this investigation. Synthetic fixtures establish local behavior only. Production writes remain disabled.
+Initial implementation review: 2026-10-22, using documentation and synthetic fixtures. Subsequent read-only observations are dated below. No QRZ writes were performed; production exports remain disabled.
 
 The problem is that QRZ replacement is a duplicate operation with possible confirmation loss, while adopted history must retain its narrative. The adapter uses conservative readback, a fixed HTTPS form-POST endpoint and an identifiable User-Agent; it does not invent an update-by-LOGID request. A bounded interpreted Liquid subset supplies forward-only narrative rendering.
 
@@ -15,6 +15,50 @@ The API guide says `OPTION=REPLACE` overwrites duplicates, including confirmed r
 A read-only live probe established STATUS identity/date field names (`BOOKID`, `CALLSIGN`, `START_DATE`, `END_DATE`) and the raw HTML-entity-encoded ADIF response tail. Adding an explicit `STATUS:ALL` caused a generic `FAIL` for a nonempty book, while omitting it returned a record. The adapter therefore relies on the documented all-status default, never requests confirmed-only inventory, and separates the ADIF tail before parsing metadata. Single-pass entity decoding preserves literal entities, ampersands, plus signs and percent signs; percent-encoded synthetic responses remain supported. No personal record contents are checked into fixtures. A scoped test logbook is still required to establish actual empty-fetch behavior, API duplicate matching including mode aliases and time precision, portable-location readback, replacement LOGID behavior, preservation of remote-owned fields and confirmation effects. `verifyBook` fails closed if expected book/callsign/date evidence is absent or differs. Do not enable replacement from parser fixtures alone.
 
 A lost connection, error HTTP response, malformed body, or inconsistent mutation receipt is `uncertain`. The adapter never escalates a duplicate INSERT to REPLACE. Reconciliation must observe the exact transmitted revision, not only identity presence. Empty readback after a timeout is not proof the upload was rejected; no helper authorizes blind retry. Cleanup eligibility requires Ferry-created provenance, a durable acknowledged new mapping, different IDs, and fresh evidence for the old identity. Automatic deletion is intentionally not exposed before the vendor contract is proven.
+
+### Ambiguous empty selections (2026-10-23)
+
+At **23:31:06 UTC**, a protected four-request diagnostic used the existing QRZ
+credentials and shared background request budget. All four requests were FETCH;
+there were no vendor writes or application ledger, cache or cursor changes.
+Only fixed result categories and presence flags were retained. Dates, LOGIDs,
+raw counts, reasons, credentials and ADIF records were not logged.
+
+| Read                                       | Observed response                                 |
+| ------------------------------------------ | ------------------------------------------------- |
+| Pending base partition, `MAX:1`            | HTTP 200; `FAIL`, zero count, no ADIF or reason   |
+| Same selection, `MAX:0`                    | HTTP 200; `FAIL`, zero count, no ADIF or reason   |
+| Unfiltered `MAX:1` control                 | HTTP 200; `OK`, positive count, one parsed record |
+| Control record's exact date with `BETWEEN` | HTTP 200; `OK`, positive count, ADIF present      |
+
+This narrows the observed failure to the selected range; it does not support an
+authentication failure or universally broken date-filter syntax. An empty
+selection is the leading explanation, not proven absence. The
+[QRZ FETCH contract](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html)
+supports `MAX:0` for count-only requests, but defines `FAIL` broadly for parameter
+or other problems. It does not give this zero-count failure an unambiguous
+absence meaning. The count-only probe therefore supplies no safe alternative.
+Provider clarification or separately scoped contract evidence remains needed.
+A successfully completed broader covering read could supply independent
+evidence; treating the failed selection itself as empty cannot.
+
+The adapter now distinguishes only the exact observed framing as
+`qrz_ambiguous_empty_selection`, while preserving its rejected-read behavior.
+An incomplete base or verification partition stores a fifteen-minute retry hold
+under the existing lease, source generation, credential and logical-book guards.
+The hold preserves the cursor and retained pages, never marks coverage complete,
+and is shared across contacts and invocations. Invalid or future-clock retry
+metadata cannot create an indefinite delay; credential/book scope changes use
+independent inventory. Due reads resume normally, and valid progress clears the
+hold. The four-hour cache expiry remains unchanged. Rejected modification
+catch-up still discards partial evidence and requires a full verification pass.
+
+Held contacts remain inventory-pending with no adoption fence or fresh absence
+proof. This reduces repeated failed reads; it does not clear the backlog or make
+those contacts exportable. Reproduce the diagnostic locally with
+`tests/qrz-read-diagnostic.test.ts`; adapter, telemetry and retry regressions are
+in `tests/qrz.test.ts`, `tests/failure-diagnostics.test.ts` and
+`tests/history-inventory.test.ts`.
 
 ## ADIF and template profile
 

@@ -11,6 +11,7 @@ export class QrzError extends Error {
       | "protocol"
       | "blocked",
     message: string,
+    public readonly detail?: "ambiguous_empty_selection",
   ) {
     super(message);
   }
@@ -341,7 +342,16 @@ export class QrzClient {
     const result = await this.request("FETCH", { OPTION: filters.join(",") });
     // A generic FAIL must never authorize missing-history backfill.
     if (result.RESULT !== "OK")
-      throw new QrzError("rejected", "QRZ inventory incomplete or rejected");
+      throw new QrzError(
+        "rejected",
+        "QRZ inventory incomplete or rejected",
+        result.RESULT === "FAIL" &&
+          result.COUNT === "0" &&
+          !Object.hasOwn(result, "ADIF") &&
+          !Object.hasOwn(result, "REASON")
+          ? "ambiguous_empty_selection"
+          : undefined,
+      );
     if (!/^\d+$/.test(result.COUNT ?? ""))
       throw new QrzError("protocol", "Missing QRZ inventory count");
     const document = parseAdif(result.ADIF ?? "");

@@ -9,6 +9,9 @@ import { vendorFetch } from "./vendor-requests.ts";
 
 const DAY = 86_400_000;
 export const HISTORY_INVENTORY_TTL = 4 * 3_600_000;
+export const QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY = 15 * 60_000;
+const qrzRetryReason =
+  "QRZ returned an ambiguous empty selection; bounded retry is scheduled";
 const MAX_PARTITIONS = 2048;
 const MAX_SCOPE_BYTES = 128 * 1024 * 1024;
 const MAX_PARTITION_BYTES = 2 * 1024 * 1024;
@@ -186,6 +189,8 @@ interface Manifest extends Range {
   completedAt?: number;
   children?: Range[];
   reason?: string;
+  retryStartedAt?: number;
+  retryAfter?: number;
 }
 interface Partition {
   id: string;
@@ -237,7 +242,18 @@ function manifest(row: Partition): Manifest | null {
       value.pageCount > MAX_PAGES ||
       !Number.isInteger(value.recordCount) ||
       value.recordCount < 0 ||
-      value.recordCount > MAX_RECORDS
+      value.recordCount > MAX_RECORDS ||
+      ((value.retryAfter !== undefined || value.retryStartedAt !== undefined) &&
+        (typeof value.retryAfter !== "number" ||
+          typeof value.retryStartedAt !== "number" ||
+          !Number.isSafeInteger(value.retryAfter) ||
+          !Number.isSafeInteger(value.retryStartedAt) ||
+          value.retryStartedAt < value.createdAt ||
+          value.retryAfter <= value.retryStartedAt ||
+          value.retryAfter - value.retryStartedAt >
+            QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY ||
+          value.retryAfter > row.expires_at ||
+          !["base", "verify"].includes(value.phase)))
     )
       return null;
     return value;
@@ -249,6 +265,17 @@ function requireManifest(row: Partition): Manifest {
   const value = manifest(row);
   if (!value) throw new Error("Invalid history coverage manifest");
   return value;
+}
+function retryHeld(state: Manifest, now: number): boolean {
+  // A clock moving backward must not turn a bounded retry into an arbitrary
+  // future hold. Retry metadata is scheduling information, never coverage.
+  return (
+    state.retryStartedAt !== undefined &&
+    state.retryAfter !== undefined &&
+    state.retryStartedAt <= now &&
+    state.retryAfter > now &&
+    state.retryAfter - now <= QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY
+  );
 }
 function credentialVersion(input: HistoryInventoryInput): string {
   const version = input.destination.credential_version;
@@ -678,6 +705,8 @@ async function advance(
   partition?: Partition;
 }> {
   const now = () => options.now ?? Date.now();
+  if (retryHeld(requireManifest(row), now()))
+    return { fetched: false, progressed: false, complete: false };
   const lease = await store.claim(
     input.source.tenant,
     `history:${row.id}`,
@@ -723,6 +752,8 @@ async function advance(
     );
     let records: AdifRecord[];
     let next: Manifest = { ...prior };
+    delete next.retryStartedAt;
+    delete next.retryAfter;
     if (input.destination.kind === "qrz") {
       if (!credentials?.apiKey)
         return {
@@ -744,6 +775,30 @@ async function advance(
             : {}),
         });
       } catch (error) {
+        if (
+          ["base", "verify"].includes(prior.phase) &&
+          error instanceof QrzError &&
+          error.kind === "rejected" &&
+          error.detail === "ambiguous_empty_selection"
+        ) {
+          const checkedAt = now();
+          await save(
+            store,
+            input,
+            row,
+            lease,
+            {
+              ...prior,
+              retryStartedAt: checkedAt,
+              retryAfter: Math.min(
+                checkedAt + QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY,
+                row.expires_at,
+              ),
+            },
+            [],
+            checkedAt,
+          );
+        }
         if (
           prior.phase !== "catchup" ||
           !(error instanceof QrzError) ||
@@ -977,6 +1032,7 @@ async function readHistoryCandidates(
     if (state.phase === "blocked")
       return { ...result, state: "unavailable", reason: state.reason };
     if (state.phase !== "done" || row.state !== "complete") {
+      if (retryHeld(state, now())) return { ...result, reason: qrzRetryReason };
       if (!result.fetched) {
         const progress = await advance(
           store,
@@ -1222,6 +1278,7 @@ interface BatchMember {
   required: Partition[];
   advance?: string;
   unavailable?: string;
+  held?: boolean;
   hash: string;
 }
 function partitionRows(
@@ -1322,6 +1379,7 @@ async function readHistoryBatch(
       member.required = [];
       member.advance = undefined;
       member.unavailable = undefined;
+      member.held = false;
       for (let index = 0; index < member.wanted.length; index++) {
         const wanted = member.wanted[index];
         const row = retained.get(wanted.id);
@@ -1346,8 +1404,10 @@ async function readHistoryBatch(
         if (state.phase === "blocked")
           member.unavailable =
             state.reason ?? "History partition requires review";
-        else if (state.phase !== "done" || row.state !== "complete")
-          member.advance ??= row.id;
+        else if (state.phase !== "done" || row.state !== "complete") {
+          if (retryHeld(state, now())) member.held = true;
+          else member.advance ??= row.id;
+        }
         member.required.push(row);
       }
     }
@@ -1365,7 +1425,8 @@ async function readHistoryBatch(
         state: "unavailable",
         reason: member.unavailable,
       };
-    } else if (member.advance && !advances.has(member.advance))
+    } else if (member.held) results[member.ordinal].reason = qrzRetryReason;
+    else if (member.advance && !advances.has(member.advance))
       advances.set(member.advance, member);
   }
   if (allowAdvance && advances.size) {
@@ -1448,7 +1509,7 @@ async function readHistoryBatch(
     return refreshed;
   }
   const ready = active.filter(
-    (member) => !member.advance && !member.unavailable,
+    (member) => !member.advance && !member.unavailable && !member.held,
   );
   const leaves = new Map<string, Partition>();
   for (const member of ready)

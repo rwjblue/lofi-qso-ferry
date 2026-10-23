@@ -2,21 +2,21 @@
 
 Verified 2026-10-23 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
 
-| Resource                 | Current value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Worker                   | `lofi-qso-ferry`, environment `production`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| Deployed source revision | `57a64b02285f55f3dee25fdf52674ac54cd3893f`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| Worker version           | `25628683-a870-40e5-835f-e697adbc7f44`, created `2026-10-23T21:03:33.920866Z`                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Deployment               | `2ffee833-2ed7-4c2f-be6e-3f4a62c2fee0`, `2026-10-23T21:03:35.194215Z`, 100% of traffic                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| Migrations               | `0001_foundation`, `0002_auth`, `0004_intake`, `0005_cutover`, `0006_account_templates`, `0007_invitations`, `0008_connection_policy`, `0009_vendor_requests`, `0010_source_priority`, `0011_admin_metrics`, `0012_admin_invitations`, `0013_lotw_trust`, `0014_retire_lotw_trust`, `0015_admin_workload`, `0016_reproject_general_log_station`, `0017_history_inventory`, `0018_reconciliation_work`, `0019_scheduler_throughput`, `0020_test_operation_review`, `0021_scheduler_admission`; all 20 independently verified at `2026-10-23T20:44:30.960Z` |
-| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| Schedule                 | `*/5 * * * *`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| Alternate origins        | workers.dev and version previews disabled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| Artifact                 | 1,776.68 KiB raw / 343.36 KiB gzip; reported startup 32 ms                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Resource                 | Current value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Worker                   | `lofi-qso-ferry`, environment `production`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Deployed source revision | `cec488febcad419ff55a4aa677619a1aef61fcd5`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Worker version           | `3c1f615e-bf2d-403f-9d54-1aed519da582`, created `2026-10-23T21:29:17.720637Z`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Deployment               | `55df0cef-37db-4a20-9b10-4ed7f49d2640`, `2026-10-23T21:29:18.881251Z`, 100% of traffic                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Migrations               | `0001_foundation`, `0002_auth`, `0004_intake`, `0005_cutover`, `0006_account_templates`, `0007_invitations`, `0008_connection_policy`, `0009_vendor_requests`, `0010_source_priority`, `0011_admin_metrics`, `0012_admin_invitations`, `0013_lotw_trust`, `0014_retire_lotw_trust`, `0015_admin_workload`, `0016_reproject_general_log_station`, `0017_history_inventory`, `0018_reconciliation_work`, `0019_scheduler_throughput`, `0020_test_operation_review`, `0021_scheduler_admission`, `0022_source_context_members`; all 21 independently verified at `2026-10-23T21:29:44.834Z` |
+| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Schedule                 | `*/5 * * * *`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Alternate origins        | workers.dev and version previews disabled                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Artifact                 | 1,778.02 KiB raw / 343.73 KiB gzip; reported startup 31 ms                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
 
@@ -40,7 +40,7 @@ ROLLOUT_QSO_IDS_JSON=[]
 - Session endpoint returns unauthenticated state with `signupAllowed=false`. The public landing shows an invite-only notice and passkey sign-in; the signup form is hidden. A live uninvited signup probe returned 403 before proof creation or sending.
 - Following the invitation link stays at `/join`, serves the app without the asset-canonicalization redirect, reveals invited enrollment and focuses its email field. Both confirmation inputs expose six-digit numeric/one-time-code attributes.
 - Remote settings independently confirm every closed gate, exact origin/RP, dedicated D1 and sender allowlist. Production local-mailbox and alternate workers.dev endpoints return 404. Email-content previews remain disabled, and no secrets were rotated.
-- The current diagnostic follow-up passes **548 tests**, formatting, lint, both TypeScript checks and the Worker build locally. [Release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40023892103) passed all 548 tests and required checks. The preceding admission release passed all 531 tests and required checks in CI. Prior release-specific CI results and browser/Worker evidence remain in the dated follow-up sections below; they do not substitute for this release's production measurement.
+- The current context-index and QRZ-decoding follow-up passes **553 tests**, formatting, lint, both TypeScript checks and the Worker build locally. [Release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40025951354) passed all 553 tests and required checks. The preceding diagnostic release passed all 548 tests and required checks in CI. Prior release-specific CI results and browser/Worker evidence remain in the dated follow-up sections below; they do not substitute for this release's production measurement.
 - Read-only remote D1 probes verified that the invite task must use query results, rather than bulk-file import summaries, to establish an exact email/deadline grant. Existing OAuth includes Email Sending write access. No real invitation grant/send was performed; CLI sends still require recipient-specific delivery confirmation.
 - The initial deployment delivered one real verification message to the owner's inbox through the same native provider path; only fixed delivery metadata was inspected. That smoke test enrolled no production account and initially observed zero account/connection/ledger/attempt rows. These are historical counts, not a claim about subsequent personal use. New branded mail was rendered/tested locally; email-client/device autofill remains unverified.
 
@@ -63,7 +63,6 @@ The owner has enrolled and connected LoFi, QRZ and LoTW. Keep exports disabled w
 
 Existing users sign in with their passkey. To enroll someone new, run `mise run invite -- person@example.com`; they follow `/join`, confirm the exact invited address and create a passkey. Add an independent backup passkey, then connect only the services you use. Settings and account-default templates need no connections. LoTW connection import requires the personal P12 and its export password, if set. Ferry checks the certificate/private key, dates, serial status and optional website login, then leaves certificate-authority validation to LoTW during upload processing. See [certificate checks](lotw-certificates.md); there is no root configuration or updater. Keep all vendor exports disabled throughout this review; deployment authorization does not grant live-write authorization.
 
-
 ## Connection passkey freshness fix
 
 Deployed `cbe9e63af1bf` after a stale signed-in session exposed a missing passkey prompt on LoFi approval. Protected buttons now verify freshness automatically; cancellation retains form data and sends no connection request. Typed precondition errors permit one bounded retry, while vendor, CSRF/origin and ambiguous failures do not. Account/CSRF snapshots stay pinned during another-tab refreshes.
@@ -79,7 +78,6 @@ The dashboard top counts now describe source ingestion, with destination activit
 All 196 tests plus strict lint/format/types/build pass. Actual isolated Worker/D1/Chromium resident/UV-passkey signup/link/pause/resume verifies the expected saved COMMENT prediction, duplicate409 before a second approval request, zero attempts/outbox, retained unsaved edits and 375px without overflow or console errors. Independent review fixed a stale diagnostic race using exact lease fencing. Deleted operations are skipped and failed/partial operation reads yield fairly. These fixture results do not prove live replay guarantees or vendor writes.
 
 Live HTTPS serves the new review HTML and separate delivery metrics; unauthenticated review returns401/no-store. Cloudflare settings independently confirm all export gates closed, exact RP/origin, dedicated D1 and disabled alternate origins. Seven migrations are applied. Aggregate metadata at verification shows one active LoFi, 492 contacts, 176 live operations and initial backfill generation 5; the scan is still in progress. With no destination connected there are zero ledger rows and attempts, and no connection-guard residue. Operator verification read aggregate metadata only; it did not inspect source contents or credentials or edit real log entries. The first-page counts recorded earlier are historical; dashboard counts advance with cron.
-
 
 ## Vendor budgets and live-priority deployment
 
@@ -100,7 +98,6 @@ The scheduler drains repeated fair rounds within a 90-second soft deadline inste
 Version JSON independently confirmed all five closed export gates, exact production origin/RP, dedicated D1 `45ad64ad-92bb-491a-b6e6-1d2b17450144`, and the native `EMAIL` sender restriction to `signup@ferry.n1rwj.com`. Public health returned HTTP 200 with `{"status":"ok","exportsEnabled":false}`. Unauthenticated `/api/review` returned 401 with `Cache-Control: no-store`; `/api/auth/session` reported unauthenticated state with `signupAllowed=false`; `/api/auth/local-mailbox` returned 404. The SHA-256 hashes for `/`, `/app.js` and `/style.css` each matched the locally built files. Verification directly invoked no vendor uploads or account messages.
 
 All 292 tests, formatting, lint, types and Worker build passed before the focused commits. The uploaded artifact is 1,605.00 KiB raw / 305.51 KiB gzip. This deployment reported no startup measurement; the earlier 29 ms result belongs to the previous version.
-
 
 ## Historical managed LoTW trust deployment
 
@@ -128,7 +125,6 @@ logbook entry was uploaded or changed.
 [GitHub CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39901830697)
 passed for this deployed revision.
 
-
 ## Historical automatic LoTW trust discovery deployment
 
 Deployed signed main revision `a20660b41f9aea4adb20798820ea1e2638705020`
@@ -150,7 +146,6 @@ passed for the deployed revision. Public health returns `status=ok` with exports
 disabled, and deployment metadata independently confirms every write gate is
 closed. Verification performed authenticated certificate reads only; no real
 logbook entry was uploaded or changed.
-
 
 ## LoTW preflight simplification deployment
 
@@ -179,7 +174,6 @@ JavaScript exactly match the release files; unauthenticated review remains 401
 with no-store and the production local mailbox remains absent. Deployment metadata
 independently confirms every export gate is closed. Verification submitted no
 contacts and changed no real logbook entries.
-
 
 ## Classified admin workload deployment
 
@@ -252,7 +246,6 @@ still contained zero delivery attempts and zero cutovers. Its first observed run
 zero contact turns; the scheduling follow-up below addresses that remaining
 bottleneck.
 
-
 ## Reconciliation scheduling follow-up
 
 Deployed signed main revision `634517d0de72002c585da4815bf728ccbd182b13`
@@ -308,7 +301,6 @@ Production still had zero attempts and zero cutovers, every export gate stayed
 closed, and all verification queries wrote zero rows. No real QSO was signed,
 inserted, replaced, deleted or uploaded.
 
-
 ## Reconciliation investigation release (2026-10-23)
 
 Deployed signed revision `cf34ac0a82e4f3f845b058684a04128f91c0b147` as Worker
@@ -348,7 +340,6 @@ hold was requeued, not independently proven reconciled. New precision-specific
 reasons were stored for one QRZ and two LoTW rows, all still review holds.
 Export attempts and source cutovers both remained zero.
 
-
 ## Reconciliation throughput and test-operation release (2026-10-23)
 
 Deployed signed source revision `bbc2346c0e4da2754a7a1971697ce5d7eccf7a13`,
@@ -385,7 +376,6 @@ must not be treated as results from this implementation. Observe newly started
 runs and multiple windows before claiming a drain rate, complete reconciliation
 or 200,000-contact capacity. Deployment and local checks do not authorize
 exports or resolve precision/routing exceptions.
-
 
 ## Reconciliation round-trip and QRZ catch-up follow-up (2026-10-23)
 
@@ -433,7 +423,6 @@ before the 16:37:10 UTC deployment remain evidence for their earlier version,
 even if they finish afterward. Observe new runs and multiple windows before
 claiming sustained throughput, backlog completion or 200,000-contact capacity.
 No export gate was opened by this release.
-
 
 ## Background lane fairness follow-up (2026-10-23)
 
@@ -499,7 +488,6 @@ rate. Runs started before this deployment remain evidence for the earlier
 version even if they finish afterward. Exports remain disabled; neither release
 validation nor scheduling fairness completes exception review or establishes
 200,000-contact capacity.
-
 
 ## Guarded reconciliation cohorts (2026-10-23)
 
@@ -628,8 +616,8 @@ seconds. It recorded 33 errors and four deferrals. QRZ entity decoding accounts
 for eleven diagnostic events affecting twenty history routes; ten separate QRZ
 rejection events affected twelve routes. One LoTW unavailable event and four
 budget-deferral events account for the remaining categories. Events are not
-physical request counts. The entity failure is now localized to numeric Unicode
-validation, but its exact input pattern still needs a bounded diagnostic probe.
+physical request counts. This diagnostic run localized the entity failure to numeric Unicode
+validation; the later 21:29 UTC follow-up addresses the observed valid pairs.
 
 D1 used 702 RPCs and 3,624 statements, with 84.089 seconds of wall time and
 97.357 seconds of cumulative request time. Metadata covered 3,395 statements:
@@ -639,3 +627,41 @@ The uncovered 229 statements and last-attempt-only SQL reporting prevent
 attributing the wait gap purely to network latency. This points to further
 round-trip reduction and query profiling, not a reason to raise budgets.
 The 21:08:59 UTC snapshot confirms zero attempts, cutovers or temporary guards.
+
+## Context lookup index and QRZ Unicode compatibility (2026-10-23)
+
+Current checkpoint, 2026-10-23 21:29 UTC: signed revision
+`cec488febcad419ff55a4aa677619a1aef61fcd5` is deployed as Worker
+`3c1f615e-bf2d-403f-9d54-1aed519da582` at 100% traffic. The follow-up adds
+migration `0022` to keep context/event lookups independent of ordinary contact
+counts, and lossless decoding of QRZ's observed adjacent Unicode surrogate
+entities. Invalid pairs and split ADIF fields still fail closed. All **553 tests**
+and required checks pass locally and in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40025951354).
+Independent 21:29:45 UTC checks confirm closed export gates, healthy service
+and matching assets. D1 has twenty-one migrations, with zero attempts,
+cutovers or temporary guards.
+
+The first new run, 21:30:42–21:32:15 UTC, completed 117 contact turns and
+166 destination classifications, including eighteen adoptions, in 92.576 seconds.
+It advanced seventeen history inventories and four source rescan pages, with
+twenty errors and one deferral. No entity-decoding failures were recorded in this
+sample. QRZ still reported eight rejected routes, nine scope-mismatch routes,
+one invalid/repeated log-ID route and two uncategorized failed routes. The LoFi
+rescan contributed the budget deferral. These are affected routes, not requests.
+
+The run used 838 RPCs and 4,135 statements; metadata covered 3,856 statements,
+reporting 1.812 seconds of SQL, 1,117,936 rows read, 9,990 rows written and no
+additional retries. Database wall time was 86.934 seconds. It still reached the
+deadline: this mixed-work sample establishes neither a sustained speedup nor a
+whole-run scan reduction. The local context-index result remains valid, but the
+production scan attribution needs query-level profiling. Remaining QRZ failures
+must stay held until their scope, identity and parse evidence is understood.
+At 21:32:48 UTC, attempts, cutovers and temporary guards remain zero.
+
+The exact context fence reads 4,003→3 rows and the context query 4,004→4 in a
+local 4,000-contact fixture. A bounded live QRZ read with the new parser returned
+121 records with well-formed Unicode. An earlier post-patch probe still failed
+with a generic protocol error; these samples do not prove complete QRZ recovery.
+The next larger performance task is memory-bounded history-leaf batching, followed
+by dependency parking, larger measured source pages and full workload acceptance.
+Review holds and export-readiness requirements remain open.

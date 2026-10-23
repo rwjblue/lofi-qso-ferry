@@ -7,13 +7,40 @@ logbook writes or treat a partial inventory as absence.
 
 ## Implementation status
 
-The diagnostic follow-up deployed read-only at 21:03:35 UTC in signed revision
+The source-context index and QRZ decoding fixes deployed read-only in signed
+revision `cec488febcad419ff55a4aa677619a1aef61fcd5`, including index commit
+`3719f43979fffd1b5890d6d10b653720f8eb188e`. Worker
+`3c1f615e-bf2d-403f-9d54-1aed519da582` was created at
+`2026-10-23T21:29:17.720637Z` and activated at `21:29:18.881251 UTC`, receiving
+100% of traffic. All 553 tests and required checks passed locally and in
+[release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40025951354).
+Independent 21:29:45 UTC verification confirms all five gates closed, HTTP 200
+health and matching assets. The 21:29:44.834 UTC D1 snapshot confirms twenty-one
+migrations through `0022` and zero attempts, cutovers or temporary guards.
+The first new run, 21:30:42–21:32:15 UTC, completed 117 contact turns and
+166 destination classifications, including eighteen adoptions, in 92.576 seconds.
+It advanced seventeen history inventories and four source rescan pages, with
+twenty errors and one deferral. No entity-decoding failures were recorded in this
+sample. QRZ still reported eight rejected routes, nine scope-mismatch routes,
+one invalid/repeated log-ID route and two uncategorized failed routes. The LoFi
+rescan contributed the budget deferral. These are affected routes, not requests.
+
+The run used 838 RPCs and 4,135 statements; metadata covered 3,856 statements,
+reporting 1.812 seconds of SQL, 1,117,936 rows read, 9,990 rows written and no
+additional retries. Database wall time was 86.934 seconds. It still reached the
+deadline: this mixed-work sample establishes neither a sustained speedup nor a
+whole-run scan reduction. The local context-index result remains valid, but the
+production scan attribution needs query-level profiling. Remaining QRZ failures
+must stay held until their scope, identity and parse evidence is understood.
+At 21:32:48 UTC, attempts, cutovers and temporary guards remain zero.
+
+The preceding diagnostic follow-up deployed read-only at 21:03:35 UTC in signed revision
 `57a64b02285f55f3dee25fdf52674ac54cd3893f` (including QRZ change `8b1cdcc`),
-Worker `25628683-a870-40e5-835f-e697adbc7f44`, at 100% traffic. All 548 tests
-and required checks pass locally; [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40023892103)
-passed all 548 tests and required checks. Independent 21:05:18 UTC verification confirms all five gates closed,
-HTTP 200 health and matching assets. No new migrations were needed; twenty
-remain applied through `0021`. The first refined-counter run follows.
+Worker `25628683-a870-40e5-835f-e697adbc7f44`, then at 100% traffic. All 548 tests
+and required checks passed locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40023892103).
+Independent 21:05:18 UTC verification confirmed closed gates, HTTP 200 health and
+matching assets. No new migrations were needed; twenty were then applied through
+`0021`. The following refined-counter run belongs to that earlier release.
 
 This follow-up changes diagnostics, not scheduler behavior or write uncertainty.
 QRZ errors distinguish fixed parse/body categories without retaining private
@@ -30,8 +57,8 @@ seconds. It recorded 33 errors and four deferrals. QRZ entity decoding accounts
 for eleven diagnostic events affecting twenty history routes; ten separate QRZ
 rejection events affected twelve routes. One LoTW unavailable event and four
 budget-deferral events account for the remaining categories. Events are not
-physical request counts. The entity failure is now localized to numeric Unicode
-validation, but its exact input pattern still needs a bounded diagnostic probe.
+physical request counts. This run localized the entity failure to numeric Unicode
+validation; the bounded probe below subsequently established a specific input shape.
 
 D1 used 702 RPCs and 3,624 statements, with 84.089 seconds of wall time and
 97.357 seconds of cumulative request time. Metadata covered 3,395 statements:
@@ -42,6 +69,50 @@ attributing the wait gap purely to network latency. This points to further
 round-trip reduction and query profiling, not a reason to raise budgets.
 The 21:08:59 UTC snapshot confirms zero attempts, cutovers or temporary guards.
 
+The source-context index and QRZ decoding follow-up deployed at 21:29 UTC in
+`cec488f`, after all 553 tests and required local/CI checks passed.
+Migration `0022_source_context_members.sql` adds an index on
+`(tenant, source, operation_id)` restricted to `kind='operation' OR is_event=1`.
+On 4,000 contacts, the exact context fence reads **4,003→3 rows** and the context
+query **4,004→4 rows**. Regressions preserve deleted-event filtering and rejection
+of missing current-event ciphertext, revoked payloads and expired context.
+This is a local scan reduction, not a demonstrated fix for
+the 84.089-second production database wait.
+
+One budgeted read-only QRZ FETCH on 2026-10-23 observed 22 numeric entities:
+seven high surrogates, seven low surrogates and seven adjacent valid pairs, with
+zero out-of-range values. QRZ's read decoder now combines those valid adjacent
+UTF-16 pairs once, losslessly; lone, reversed, separated or out-of-range entities
+remain errors. A field-boundary check rejects a declared ADIF length that splits
+the resulting character. Generic ADIF length rules, ASCII export encoding and
+exact identity checks remain unchanged.
+
+One post-patch probe still produced an unlocalized generic protocol failure.
+A later single full-client FETCH parsed 121 records with all fields well formed
+and the same aggregate entity/pair counts. No raw private payload is recorded
+here. These bounded samples do not establish that the same inventory partition
+was revisited, that every QRZ parser failure is repaired, or that any history
+association/export is authorized. Production exception counts still need review.
+
+Before attributing another production scan reduction, add bounded counters by
+fixed query family: projection/adoption guards, inventory reads/saves, source
+invalidation and cleanup. Record statement metadata coverage, rows and SQL time
+without retaining SQL text, parameters or returned data. Attribute binding wall
+time once per RPC family, not once per statement in a batch. The first new run
+read 9,555 rows per contact turn versus 9,401 in the preceding run, with seventeen
+successful inventory advances versus three; changed workload prevents causal
+attribution from these aggregate samples.
+
+The next round-trip reduction is bounded leaf-read batching, not implemented yet.
+Up to four leaves per RPC could turn 40 leaf reads into ten and reduce the
+mixed-date fixture from about 57 to 27 cohort RPCs. This estimate requires one
+request-wide **8 MiB budget for encrypted and index reads**, one shared candidate
+cap, SQL payload caps and retained per-leaf epoch/evidence guards. Naively
+combining four maximum-size leaves is unsafe once index data is included.
+Acceptance must cover budget exhaustion, expiry/revocation/replacement races,
+concurrent epochs, deadline/failure draining and unchanged classifications, while
+incomplete reads remain unable to establish absence. Measure bytes, SQL work,
+RPCs and production database time independently before claiming a speedup.
 
 The second slice deployed read-only at 20:44:21 UTC in signed revision
 `8863bd9439681122e71bc3c2a31174a72aa30bb2`, Worker

@@ -1,6 +1,42 @@
 # Implementation progress
 
-Current checkpoint, 2026-10-23 21:03 UTC: signed revision
+Current checkpoint, 2026-10-23 21:29 UTC: signed revision
+`cec488febcad419ff55a4aa677619a1aef61fcd5` is deployed as Worker
+`3c1f615e-bf2d-403f-9d54-1aed519da582` at 100% traffic. The follow-up adds
+migration `0022` to keep context/event lookups independent of ordinary contact
+counts, and lossless decoding of QRZ's observed adjacent Unicode surrogate
+entities. Invalid pairs and split ADIF fields still fail closed. All **553 tests**
+and required checks pass locally and in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40025951354).
+Independent 21:29:45 UTC checks confirm closed export gates, healthy service
+and matching assets. D1 has twenty-one migrations, with zero attempts,
+cutovers or temporary guards.
+
+The first new run, 21:30:42–21:32:15 UTC, completed 117 contact turns and
+166 destination classifications, including eighteen adoptions, in 92.576 seconds.
+It advanced seventeen history inventories and four source rescan pages, with
+twenty errors and one deferral. No entity-decoding failures were recorded in this
+sample. QRZ still reported eight rejected routes, nine scope-mismatch routes,
+one invalid/repeated log-ID route and two uncategorized failed routes. The LoFi
+rescan contributed the budget deferral. These are affected routes, not requests.
+
+The run used 838 RPCs and 4,135 statements; metadata covered 3,856 statements,
+reporting 1.812 seconds of SQL, 1,117,936 rows read, 9,990 rows written and no
+additional retries. Database wall time was 86.934 seconds. It still reached the
+deadline: this mixed-work sample establishes neither a sustained speedup nor a
+whole-run scan reduction. The local context-index result remains valid, but the
+production scan attribution needs query-level profiling. Remaining QRZ failures
+must stay held until their scope, identity and parse evidence is understood.
+At 21:32:48 UTC, attempts, cutovers and temporary guards remain zero.
+
+The exact context fence reads 4,003→3 rows and the context query 4,004→4 in a
+local 4,000-contact fixture. A bounded live QRZ read with the new parser returned
+121 records with well-formed Unicode. An earlier post-patch probe still failed
+with a generic protocol error; these samples do not prove complete QRZ recovery.
+The next larger performance task is memory-bounded history-leaf batching, followed
+by dependency parking, larger measured source pages and full workload acceptance.
+Review holds and export-readiness requirements remain open.
+
+Previous checkpoint, 2026-10-23 21:03 UTC: signed revision
 `57a64b02285f55f3dee25fdf52674ac54cd3893f` deployed as Worker
 `25628683-a870-40e5-835f-e697adbc7f44` at 100% traffic. The diagnostic
 follow-up preserves fixed QRZ read-response failure categories and measures
@@ -17,8 +53,8 @@ seconds. It recorded 33 errors and four deferrals. QRZ entity decoding accounts
 for eleven diagnostic events affecting twenty history routes; ten separate QRZ
 rejection events affected twelve routes. One LoTW unavailable event and four
 budget-deferral events account for the remaining categories. Events are not
-physical request counts. The entity failure is now localized to numeric Unicode
-validation, but its exact input pattern still needs a bounded diagnostic probe.
+physical request counts. This diagnostic run localized the entity failure to numeric Unicode
+validation; the later 21:29 UTC follow-up addresses the observed valid pairs.
 
 D1 used 702 RPCs and 3,624 statements, with 84.089 seconds of wall time and
 97.357 seconds of cumulative request time. Metadata covered 3,395 statements:
@@ -28,7 +64,6 @@ The uncovered 229 statements and last-attempt-only SQL reporting prevent
 attributing the wait gap purely to network latency. This points to further
 round-trip reduction and query profiling, not a reason to raise budgets.
 The 21:08:59 UTC snapshot confirms zero attempts, cutovers or temporary guards.
-
 
 Previous checkpoint, 2026-10-23 20:44 UTC: signed revision
 `8863bd9439681122e71bc3c2a31174a72aa30bb2` deployed as Worker
@@ -165,7 +200,6 @@ hold was requeued, not independently proven reconciled. New precision-specific
 reasons were stored for one QRZ and two LoTW rows, all still review holds.
 Export attempts and source cutovers both remained zero.
 
-
 Immediate fixes are signed on `main`: `32758f5` (general-log projection and scoped migration), `789d652` (precision review reasons), and `fa822ba` (cleanup). Local checks passed 391 tests; the final unrelated-neighbor correction passed all 35 focused QRZ/reconciliation tests and TypeScript/lint. Release [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39974178346) passed all 392 tests after the roadmap formatting correction, and `cf34ac0` is deployed. Live readback confirms all gates closed and the affected source row requeued.
 
 The owner requested four individual investigations. Results and the ordered implementation/acceptance plan are recorded in [reconciliation exceptions and capacity](docs/reconciliation-investigation.md).
@@ -195,10 +229,10 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 - The follow-up keeps canonical source sync first, processes a retained background contact before historical rescan/reread work, and prefers contacts with available base operation context over known context holds. Complete context, routing, history, source-proof and export checks remain enforced. A pre-deployment read-only selection experiment found available base context for only two of the first ten contacts under the old ordering versus all ten under the new ordering; it wrote zero rows. This does not establish complete event coverage for every selected contact.
 - Follow-up `634517d0` passed **377 tests**, formatting, lint, types and build locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39965786804). Concurrent upstream documentation revision `854259b` was integrated and preserved. The first observed production run confirms contact processing and specific readback outcomes; sustained draining and complete history acceptance remain outstanding.
 
-## Current production deployment (21:03 UTC)
+## Current production deployment (21:29 UTC)
 
-- Latest deployment: revision `57a64b02285f55f3dee25fdf52674ac54cd3893f`, Worker `25628683-a870-40e5-835f-e697adbc7f44`, created at `2026-10-23T21:03:33.920866Z` and confirmed at 100% traffic. Host/RP remains `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, with five-minute cron. Independent version readback confirms all gates closed and health `status=ok`, `exportsEnabled=false`; root HTML and both browser bundles match the local build. See [deployment evidence](docs/deployment.md).
-- Dedicated D1 `ferry-production` has all twenty migrations independently verified at 20:44:30 UTC. The initial throughput deployment applied migrations 0017–0020; independent background admission adds migration 0021. Attempts, cutovers and temporary inventory/adoption guard rows remain zero. No application secrets changed.
+- Latest deployment: revision `cec488febcad419ff55a4aa677619a1aef61fcd5`, Worker `3c1f615e-bf2d-403f-9d54-1aed519da582`, created at `2026-10-23T21:29:17.720637Z` and confirmed at 100% traffic. Host/RP remains `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, with five-minute cron. Independent version readback confirms all gates closed and health `status=ok`, `exportsEnabled=false`; root HTML and both browser bundles match the local build. See [deployment evidence](docs/deployment.md).
+- Dedicated D1 `ferry-production` has all twenty-one migrations independently verified at 21:29:44 UTC. The initial throughput deployment applied migrations 0017–0020; independent background admission adds 0021 and bounded context lookups add 0022. Attempts, cutovers and temporary inventory/adoption guard rows remain zero. No application secrets changed.
 - Every export gate is closed: `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, empty `LIVE_WRITE_AUTHORIZATION` and `ROLLOUT_QSO_IDS_JSON=[]`. There is no LoTW root-policy binding or root updater; LoTW validates certificate authority during upload processing.
 - The saved LoTW connection is active with unrevoked serial status. Existing encrypted credentials do not need reimport because local trust flags were removed. Successful preflight and login are not signed-upload acceptance evidence.
 - Native `EMAIL` sender restricted to `signup@ferry.n1rwj.com`; sending DNS verified, existing Fastmail MX preserved, email-content previews disabled. Existing Wrangler OAuth includes Email Sending write access; no new credentials are needed for invites.

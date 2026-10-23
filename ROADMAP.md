@@ -4,38 +4,28 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-23)
 
-The latest read-only deployment is signed revision `57a64b02` at 21:03 UTC.
-It adds precise safe QRZ response categories and D1 SQL/metadata coverage
-metrics to investigate the remaining failures and latency. All **548 tests**
-and required checks pass locally; [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40023892103)
-passed all 548 tests and required checks. Independent live checks confirm all export gates closed. The first
-run completed 104 contact turns and 158 classifications. It localized twenty
-affected QRZ history routes to numeric entity decoding and measured 84.089
-seconds of D1 wall time versus 1.425 seconds of reported SQL across 3,395 of
-3,624 statements. Parser diagnosis and further database-call reduction remain
-active; those timings do not isolate pure network delay.
+Signed revision `cec488febcad419ff55a4aa677619a1aef61fcd5` deployed read-only
+at 21:29 UTC as Worker `3c1f615e-bf2d-403f-9d54-1aed519da582`. All **553 tests**
+and required checks passed locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40025951354).
+Live verification confirms healthy service, matching assets, twenty-one migrations,
+all export gates closed, and zero attempts or cutovers.
 
-The [capacity plan](docs/capacity-plan.md) defines the implementation sequence
-for 100 accounts creating 10,000 contacts daily alongside large imports.
-Signed revision `8863bd94` deployed read-only at 20:44 UTC with independent
-background account/source admission, shared mixed-date history checks and
-bounded failure diagnostics. All **531 tests** and required checks pass locally;
-release CI passed all 531 tests and required checks. The first new run completed 22 contact turns and 27
-classifications in 100.130 seconds, with 11 errors and 97.563 seconds of
-database wall time. It does not establish a production speedup; the new
-counters narrow the remaining failures to QRZ responses, LoTW availability
-and budget deferral. Independent verification
-confirms all five export gates closed, twenty migrations and zero attempts or
-cutovers. The 20-contact/20-week fixture uses 57 cohort RPCs and 128 whole-run
-RPCs, preserving 40 outcomes and four-way cold-history concurrency.
+Completed throughput work includes batched intake and guarded reconciliation,
+shared history across dates, indexed retries, independent background account/source
+turns, precise diagnostics, the context/event index, and QRZ Unicode compatibility.
+The first latest-release run processed **117 contact turns and 166 destination
+classifications**, with no entity-decoding errors recorded. It still reached the
+deadline, with twenty other errors, 86.934 seconds of database wait and 1.12 million
+reported rows read. The local context-index fixture improves 4,003→3 rows, but
+production scan attribution and sustained throughput remain unproven. The
+[capacity plan](docs/capacity-plan.md) records measurements and acceptance targets.
 
-The 100-account admission fixture proves background turn order across restarts;
-it does not prove full service capacity. General live/vendor fairness, adaptive
-polling, targeted dependency parking, larger measured source pages, multi-contact
-delivery, durable continuations and the full workload matrix remain open.
+The 100-account fixture proves background admission order, including restarts;
+it does not prove full live/vendor fairness or 200,000-contact import capacity.
+Timestamp/grid precision, routing and source-validity holds still require review.
 
 Core feature paths, owner enrollment and service linking are implemented. Production remains read-only. The immediate work is to resolve the reconciliation backlog and prove rollout readiness; linking credentials and waiting for cron do not establish that readiness. Fractional-timestamp exports also need durable outbound identity claims before they can be enabled safely.
-1. **Finish read-only reconciliation and improve capacity.** Batched intake, indexed retries, shared encrypted history, rotating source lanes and independent background account turns are deployed. Use the new fixed failure categories to diagnose shared history failures and measure sustained unique outcomes, context progress and database cost. Next, measure larger source pages and checkpoints under existing vendor allowances; implement dependency parking, live/vendor fairness and durable continuations, then run the full 100-account/10,000-contact daily workload alongside 4,000/200,000-contact imports. Complete context/rescans and review exceptions before first writes. See the [measurements and ordered capacity plan](docs/capacity-plan.md). Waiting for cron alone does not complete these steps.
+1. **Finish read-only reconciliation and improve capacity.** Batched intake, indexed retries, shared encrypted history, rotating source lanes and independent background account turns are deployed. Next, attribute remaining database scans by query, batch complete history reads under a request-shared memory bound, and diagnose QRZ scope, log-ID and parse failures. Measure sustained unique outcomes and larger source pages/checkpoints under existing vendor allowances; implement dependency parking, live/vendor fairness and durable continuations, then run the full 100-account/10,000-contact daily workload alongside 4,000/200,000-contact imports. Complete context/rescans and review exceptions before first writes. See the [measurements and ordered capacity plan](docs/capacity-plan.md). Waiting for cron alone does not complete these steps.
 2. **Establish the source contract and remaining personal checks.** Complete exhaustive LoFi UUID/tombstone inventory and replay/cutover evidence; verify an independent backup passkey, secret backup and representative deployed signing/resource behavior. Preserve `SOURCE_BOUNDARY_VERIFIED=false` until supported by that evidence.
 3. **Complete outbound identity collision protection.** Implement durable identity claims for both QRZ and LoTW before fractional-timestamp exports can enter the canary. Establish a separate precision-aware historical-association policy and the outbound policy for eight-character source grids; diagnostic review holds do not authorize truncation or adoption. Adoption reservations and quarantine now protect competing source contacts in local tests; that protection does not provide outbound claims or make a later edit exportable through a collision.
 4. **Run explicitly authorized first writes.** Select exact new source UUIDs and destinations, prove QRZ mutation/narrative/location behavior and Worker-signed LoTW acceptance through readback, and record the deployed revision and results. Keep prior QRZ identities retained until cleanup is separately proven safe.

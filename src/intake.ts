@@ -24,7 +24,7 @@ import {
   seal,
   sha256,
 } from "./security.ts";
-import type { Connection, Store } from "./store.ts";
+import type { Connection, Ledger, Store } from "./store.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
 export interface IntakeContact extends Contact {
@@ -709,14 +709,37 @@ export async function observeContact(
   now = Date.now(),
   routedDestinations?: Connection[],
 ) {
-  const settings = await store
-    .statement("SELECT quiet_minutes FROM accounts WHERE id=?", source.tenant)
-    .first<{ quiet_minutes: number }>();
+  // Read a fresh, consistent metadata snapshot for this contact in one request.
+  // Reuse its ledger rows for both route retention and narrative policy.
+  const metadata = await store.db.batch([
+    store.statement(
+      "SELECT quiet_minutes FROM accounts WHERE id=?",
+      source.tenant,
+    ),
+    store.statement(
+      "SELECT * FROM ledger WHERE tenant=? AND source=? AND qso=?",
+      source.tenant,
+      source.id,
+      contact.id,
+    ),
+    ...(routedDestinations === undefined
+      ? [
+          store.statement(
+            "SELECT * FROM connections WHERE tenant=? AND kind!='lofi' AND status='active' ORDER BY created_at",
+            source.tenant,
+          ),
+        ]
+      : []),
+  ]);
+  const settings = metadata[0].results[0] as
+    | { quiet_minutes: number }
+    | undefined;
+  const existing = metadata[1].results as Ledger[];
+  const previousByDestination = new Map(
+    existing.map((previous) => [previous.destination, previous]),
+  );
   const destinations =
-    routedDestinations ??
-    (await store.connections(source.tenant)).filter(
-      (c) => c.kind !== "lofi" && c.status === "active",
-    );
+    routedDestinations ?? (metadata[2].results as Connection[]);
   if (
     destinations.some(
       (destination) =>
@@ -745,16 +768,6 @@ export async function observeContact(
     ),
   ];
   if (routedDestinations !== undefined) {
-    const existing = (
-      await store
-        .statement(
-          "SELECT destination,remote_id,state FROM ledger WHERE tenant=? AND source=? AND qso=?",
-          source.tenant,
-          source.id,
-          contact.id,
-        )
-        .all<{ destination: string; remote_id: string | null; state: string }>()
-    ).results;
     const routed = new Set(destinations.map((destination) => destination.id));
     for (const previous of existing) {
       if (routed.has(previous.destination)) continue;
@@ -797,7 +810,7 @@ export async function observeContact(
       qso: contact.id,
       destination: destination.id,
     };
-    const previous = await store.ledger(key);
+    const previous = previousByDestination.get(destination.id);
     const hash = await sourceFingerprint(
       contact,
       destination.kind as "qrz" | "lotw",

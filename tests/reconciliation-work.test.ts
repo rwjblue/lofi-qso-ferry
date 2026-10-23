@@ -4,9 +4,11 @@ import { database, keys, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 import { Store } from "../src/store.ts";
 import { lockRestoredDatabase } from "../src/restore.ts";
+import { measuredDatabase } from "../src/database-metrics.ts";
 import {
   finishReconciliationWork,
   reconciliationCheckDue,
+  reconciliationPreflight,
   recordReconciliationCheck,
   selectReconciliationWork,
   syncReconciliationPolicy,
@@ -80,6 +82,105 @@ async function hold(store: Store) {
   assert(await finishReconciliationWork(store, source, "q1", v, now));
   return v;
 }
+
+test("one-query reconciliation preflight preserves generation, memo, attempt and tenant fences", async () => {
+  const h = await fixture();
+  try {
+    await qso(h.store, "q1");
+    await h.store.observe(key, "generation", "hash", 30);
+    const measured = measuredDatabase(h.db);
+    const store = new Store(measured.database, h.store.keys);
+    const candidate = await reconciliationPreflight(
+      store,
+      key,
+      "generation",
+      now,
+    );
+    assert.equal(candidate?.source_hash, "hash");
+    assert.equal(measured.metrics.calls, 1);
+    assert.equal(measured.metrics.statements, 1);
+    assert.equal(
+      await reconciliationPreflight(store, key, "stale-generation", now),
+      null,
+    );
+    for (const changed of [
+      { tenant: "other" },
+      { source: "other" },
+      { qso: "other" },
+      { destination: "other" },
+    ])
+      assert.equal(
+        await reconciliationPreflight(
+          store,
+          { ...key, ...changed },
+          "generation",
+          now,
+        ),
+        null,
+      );
+    await recordReconciliationCheck(
+      h.store,
+      key,
+      "generation",
+      { state: "history_ambiguous" },
+      now,
+      await version(h.store),
+    );
+    assert.equal(
+      await reconciliationPreflight(store, key, "generation", now),
+      null,
+    );
+    assert(
+      await reconciliationPreflight(store, key, "generation", now + 86400000),
+    );
+    await h.store
+      .statement("UPDATE reconciliation_checks SET generation='old'")
+      .run();
+    assert(await reconciliationPreflight(store, key, "generation", now));
+    await h.store.db.batch([
+      h.store.statement(
+        "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a','attempt','source','q1','destination','generation','payload','hash','v1',0,'hash')",
+      ),
+      h.store.statement(
+        "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','attempt','prepared',0,0)",
+      ),
+    ]);
+    for (const state of [
+      "prepared",
+      "uncertain",
+      "submitted",
+      "reconciliation_required",
+    ]) {
+      await h.store.statement("UPDATE attempt_state SET state=?", state).run();
+      assert.equal(
+        await reconciliationPreflight(store, key, "generation", now),
+        null,
+      );
+    }
+    for (const state of ["delivered", "observed", "rejected", "cancelled"]) {
+      await h.store.statement("UPDATE attempt_state SET state=?", state).run();
+      assert(await reconciliationPreflight(store, key, "generation", now));
+    }
+    for (const values of [
+      ["changed", "unknown", null],
+      ["inventory_pending", "adoption_conflict", null],
+      ["inventory_pending", "unknown", "mapped"],
+    ] as const) {
+      await h.store
+        .statement(
+          "UPDATE ledger SET state=?,provenance=?,remote_id=?",
+          ...values,
+        )
+        .run();
+      assert.equal(
+        await reconciliationPreflight(store, key, "generation", now),
+        null,
+      );
+    }
+  } finally {
+    await h.mf.dispose();
+  }
+});
 
 test("indexed scheduling preserves live priority, context preference, cutoff and tenant fences", async () => {
   const h = await fixture();

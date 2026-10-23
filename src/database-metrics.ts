@@ -3,12 +3,21 @@ export interface DatabaseMetrics {
   calls: number;
   statements: number;
   durationMs: number;
+  /** Wall time with at least one database RPC in flight. */
+  wallMs: number;
 }
 export function measuredDatabase(database: D1Database): {
   database: D1Database;
   metrics: DatabaseMetrics;
 } {
-  const metrics: DatabaseMetrics = { calls: 0, statements: 0, durationMs: 0 };
+  const metrics: DatabaseMetrics = {
+    calls: 0,
+    statements: 0,
+    durationMs: 0,
+    wallMs: 0,
+  };
+  let active = 0;
+  let activeSince = 0;
   const originals = new WeakMap<D1PreparedStatement, D1PreparedStatement>();
   const measured = async <T>(
     count: number,
@@ -17,10 +26,13 @@ export function measuredDatabase(database: D1Database): {
     metrics.calls++;
     metrics.statements += count;
     const started = Date.now();
+    if (active++ === 0) activeSince = started;
     try {
       return await work();
     } finally {
-      metrics.durationMs += Math.max(0, Date.now() - started);
+      const finished = Date.now();
+      metrics.durationMs += Math.max(0, finished - started);
+      if (--active === 0) metrics.wallMs += Math.max(0, finished - activeSince);
     }
   };
   const statement = (original: D1PreparedStatement): D1PreparedStatement => {

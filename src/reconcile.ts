@@ -1,7 +1,7 @@
 import type { AdifRecord } from "./adif.ts";
 import { matchQrzHistory, sameQrzIdentity } from "./qrz.ts";
 import { canonical, randomToken, sha256 } from "./security.ts";
-import type { LedgerKey, Store } from "./store.ts";
+import type { Connection, Ledger, LedgerKey, Store } from "./store.ts";
 import { lotwMode } from "./signing.ts";
 
 export interface ReconciliationEvidence {
@@ -253,13 +253,16 @@ export async function adoptHistory(
   adoptedSourceHash?: string,
   inventoryGuard?: { sql: string; params: (string | number | null)[] },
 ): Promise<{ applied: boolean; reason?: string }> {
-  const ledger = await store.ledger(key);
-  const destination = await store.connection(key.tenant, key.destination);
-  if (
-    !ledger ||
-    !destination ||
-    destination.kind !== outcome.evidence.destination
-  )
+  const ledger = await store
+    .statement(
+      "SELECT l.*,d.kind AS destination_kind FROM ledger l JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination WHERE l.tenant=? AND l.source=? AND l.qso=? AND l.destination=?",
+      key.tenant,
+      key.source,
+      key.qso,
+      key.destination,
+    )
+    .first<Ledger & { destination_kind: Connection["kind"] }>();
+  if (!ledger || ledger.destination_kind !== outcome.evidence.destination)
     return { applied: false, reason: "tenant_or_destination_missing" };
   if (
     outcome.evidence.capturedGeneration !== generation ||
@@ -324,19 +327,19 @@ export async function adoptHistory(
     ? await sha256(canonical(comparableRemote(remote)))
     : null;
   const remoteId = remote
-    ? destination.kind === "qrz"
+    ? ledger.destination_kind === "qrz"
       ? (remote.APP_QRZLOG_LOGID ?? null)
       : await lotwRemoteIdentity(remote)
     : null;
   if (outcome.state === "adopted_existing" && !remoteId)
     return { applied: false, reason: "remote_identity_missing" };
   const retainedClaim =
-    destination.kind === "lotw" && remoteId
+    ledger.destination_kind === "lotw" && remoteId
       ? await store.lotwIdentityClaimGuard(key, remoteId)
       : { sql: "1", params: [] };
   const adoption = store.statement(
     `UPDATE ledger SET confirmed=COALESCE(?,confirmed),state=?,reason=?,baseline_hash=COALESCE(?,source_hash),source_hash=COALESCE(?,source_hash),remote_hash=?,remote_id=?,provenance=CASE WHEN ?='adopted_existing' THEN 'adopted' ELSE provenance END,narrative=CASE WHEN ?='adopted_existing' AND ?='qrz' THEN 'remote_preserved' ELSE narrative END,updated_at=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND source_hash=? AND sent_hash IS NULL AND template_version IS NULL AND provenance NOT IN('ferry_created','adoption_conflict') AND NOT EXISTS(SELECT 1 FROM ledger other WHERE other.tenant=? AND other.destination=? AND other.remote_id=? AND (other.source!=? OR other.qso!=?)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND ${retainedClaim.sql} AND (${currentInventory.sql}) RETURNING qso`,
-    outcome.state === "adopted_existing" && destination.kind === "lotw"
+    outcome.state === "adopted_existing" && ledger.destination_kind === "lotw"
       ? outcome.remote?.QSL_RCVD === "Y"
         ? 1
         : 0
@@ -349,7 +352,7 @@ export async function adoptHistory(
     remoteId,
     outcome.state,
     outcome.state,
-    destination.kind,
+    ledger.destination_kind,
     now,
     key.tenant,
     key.source,
@@ -370,7 +373,7 @@ export async function adoptHistory(
     ...currentInventory.params,
   );
   const identity =
-    destination.kind === "lotw" && remote && remoteId
+    ledger.destination_kind === "lotw" && remote && remoteId
       ? await store.lotwIdentityStatement(
           key,
           { remoteId, identity: canonicalLotwIdentity(remote) },

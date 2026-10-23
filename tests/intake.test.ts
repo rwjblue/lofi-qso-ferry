@@ -188,6 +188,103 @@ function countedStore(store: Store) {
   return { store: new Store(db, store.keys), calls };
 }
 
+test("observations batch fresh contact metadata and preserve adopted narrative across tenants", async (t) => {
+  const { store, source, now, mf } = await setup();
+  t.after(() => mf.dispose());
+  await seed(store, "other");
+  const foreignKey = {
+    tenant: "other",
+    source: source.id,
+    qso: String(loose.uuid),
+    destination: "destination",
+  };
+  await store.observe(foreignKey, "foreign", "foreign-hash", 55, false, now);
+  await store
+    .statement(
+      "UPDATE ledger SET narrative='remote_preserved' WHERE tenant='other'",
+    )
+    .run();
+  await store
+    .statement("UPDATE accounts SET quiet_minutes=25 WHERE id='a'")
+    .run();
+  await store
+    .statement(
+      "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,created_at) VALUES('a','lotw','lotw','lotw-1','LoTW','active',0)",
+    )
+    .run();
+  const destinations = (await store.connections("a")).filter(
+    (destination) => destination.kind !== "lofi",
+  );
+  await pollSource(
+    store,
+    source,
+    async () => response([], [{ ...loose, notes: "original source notes" }]),
+    now,
+  );
+  const [first] = await pendingContacts(store, source, 40, now + 1);
+  assert.ok(first);
+  const measured = countedStore(store);
+  await observeContact(measured.store, source, first, now + 1, destinations);
+  assert.equal(measured.calls.length, 2);
+  assert.deepEqual(
+    measured.calls.map((call) => call.method),
+    ["batch", "batch"],
+  );
+  assert.equal(measured.calls[0].statements, 2);
+  t.diagnostic(
+    `observing two routed destinations: ${measured.calls.length} database calls`,
+  );
+  for (const destination of destinations) {
+    const ledger = await store.ledger({
+      ...foreignKey,
+      tenant: "a",
+      destination: destination.id,
+    });
+    assert.equal(ledger?.due_at, now + 1 + 25 * 60_000);
+    assert.equal(
+      ledger?.source_hash,
+      await sourceFingerprint(first, destination.kind as "qrz" | "lotw"),
+    );
+  }
+  const adoptedHash = await sourceFingerprint(first, "qrz", true);
+  await store
+    .statement(
+      "UPDATE ledger SET state='adopted_existing',narrative='remote_preserved',source_hash=?,baseline_hash=?,remote_id='adopted-logid',provenance='adopted' WHERE tenant='a' AND destination='destination'",
+      adoptedHash,
+      adoptedHash,
+    )
+    .run();
+  await pollSource(
+    store,
+    source,
+    async () =>
+      response(
+        [],
+        [{ ...loose, notes: "edited source notes", syncedAtMillis: 200 }],
+      ),
+    now + 2,
+  );
+  const [edited] = await pendingContacts(store, source, 40, now + 3);
+  assert.ok(edited);
+  measured.calls.length = 0;
+  await observeContact(measured.store, source, edited, now + 3, destinations);
+  assert.equal(measured.calls.length, 2);
+  const adopted = await store.ledger({ ...foreignKey, tenant: "a" });
+  assert.equal(adopted?.state, "adopted_existing");
+  assert.equal(adopted?.source_hash, adoptedHash);
+  assert.equal(adopted?.baseline_hash, adoptedHash);
+  assert.equal(adopted?.remote_id, "adopted-logid");
+  assert.equal(adopted?.narrative, "remote_preserved");
+  assert.equal((await store.ledger(foreignKey))?.source_hash, "foreign-hash");
+  measured.calls.length = 0;
+  await observeContact(measured.store, source, edited, now + 4);
+  assert.equal(measured.calls.length, 2);
+  assert.equal(measured.calls[0].statements, 3);
+  t.diagnostic(
+    `observing discovered destinations: ${measured.calls.length} database calls`,
+  );
+});
+
 test("synced test operations remain retained without destination work while ordinary contacts continue", async (t) => {
   const state = await setup();
   const { store, source, now, mf } = state;

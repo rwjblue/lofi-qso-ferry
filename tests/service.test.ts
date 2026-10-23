@@ -1182,6 +1182,86 @@ test("expired history resumes through background repair without resetting forwar
   }
 });
 
+test("read-only background history overlaps at most four contacts and preserves every classification", async () => {
+  const h = await schedulerFixture();
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const timeout = setTimeout(() => release(), 3000);
+  try {
+    const qrz = { ...h.qrzRecords[0] };
+    const lotw = { ...h.lotwRecords[0] };
+    h.qrzRecords.length = 0;
+    h.lotwRecords.length = 0;
+    h.changes.operations.length = 0;
+    h.changes.qsos.length = 0;
+    for (let index = 0; index < 8; index++) {
+      const startAtMillis = Date.UTC(2025, index, 15, 12, 0, 1);
+      const call = `K1PAR${index}`;
+      h.changes.qsos.push({
+        ...h.qso,
+        uuid: `parallel-${index}`,
+        operation: null,
+        startAtMillis,
+        their: { call },
+        our: { stationCall: "W1AW", grid: "FN31AA", dxccCode: 291 },
+        syncedAtMillis: 110 + index,
+      });
+      const fields = {
+        CALL: call,
+        QSO_DATE: new Date(startAtMillis)
+          .toISOString()
+          .slice(0, 10)
+          .replaceAll("-", ""),
+      };
+      h.qrzRecords.push({
+        ...qrz,
+        ...fields,
+        APP_QRZLOG_LOGID: String(500 + index),
+      });
+      h.lotwRecords.push({ ...lotw, ...fields });
+    }
+    let active = 0;
+    let maximum = 0;
+    let arrivals = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      const history =
+        url.pathname === "/lotwuser/lotwreport.adi" ||
+        (url.hostname === "logbook.qrz.com" &&
+          new URLSearchParams(String(init?.body)).get("ACTION") === "FETCH");
+      if (!history) return h.fetcher(input, init);
+      active++;
+      maximum = Math.max(maximum, active);
+      try {
+        if (++arrivals <= 4) {
+          if (arrivals === 4) release();
+          await barrier;
+        }
+        return await h.fetcher(input, init);
+      } finally {
+        active--;
+      }
+    };
+    const result = await tick(h.env, fetcher, FIXTURE_NOW);
+    assert.equal(maximum, 4);
+    assert.equal(result.errors, 0);
+    assert.equal(result.contacts, 8);
+    assert.equal(result.throughput?.classifiedDestinations, 16);
+    const database = result.throughput!.database;
+    assert(database.wallMs <= result.elapsedMs);
+    assert(database.durationMs >= database.wallMs);
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+    assert.equal(h.calls.lotwUploads, 0);
+  } finally {
+    clearTimeout(timeout);
+    release();
+    await h.mf.dispose();
+  }
+});
+
 test("twenty historical contacts share inventory and unchanged review holds stay quiet", async () => {
   const h = await schedulerFixture();
   try {
@@ -1283,5 +1363,177 @@ test("source changes during shared history cannot commit a stale association", a
     } finally {
       await h.mf.dispose();
     }
+  }
+});
+
+test("a failed contact finalizer retains the source lease until delayed workers settle", async () => {
+  const h = await schedulerFixture();
+  const slowDate = "2025-02-15";
+  let releaseSlow!: () => void;
+  const slowBarrier = new Promise<void>((resolve) => {
+    releaseSlow = resolve;
+  });
+  let announceSlow!: () => void;
+  const slowStarted = new Promise<void>((resolve) => {
+    announceSlow = resolve;
+  });
+  let announceFailure!: () => void;
+  const failureInjected = new Promise<void>((resolve) => {
+    announceFailure = resolve;
+  });
+  let announcePrematureRelease!: () => void;
+  const prematureRelease = new Promise<void>((resolve) => {
+    announcePrematureRelease = resolve;
+  });
+  let announceFinished!: () => void;
+  const slowFinished = new Promise<void>((resolve) => {
+    announceFinished = resolve;
+  });
+  let injected = false;
+  let delayed = false;
+  let finalized = false;
+  let tickSettled = false;
+  let running: ReturnType<typeof tick> | undefined;
+  try {
+    const qrz = { ...h.qrzRecords[0] };
+    const lotw = { ...h.lotwRecords[0] };
+    h.qrzRecords.length = 0;
+    h.lotwRecords.length = 0;
+    h.changes.operations.length = 0;
+    h.changes.qsos.length = 0;
+    for (const [index, id] of ["finalizer-fails", "worker-delayed"].entries()) {
+      const startAtMillis = Date.UTC(2025, index, 15, 12, 0, 1);
+      const call = `K1WAIT${index}`;
+      h.changes.qsos.push({
+        ...h.qso,
+        uuid: id,
+        operation: null,
+        startAtMillis,
+        their: { call },
+        our: { stationCall: "W1AW", grid: "FN31AA", dxccCode: 291 },
+        syncedAtMillis: 110 + index,
+      });
+      const fields = {
+        CALL: call,
+        QSO_DATE: new Date(startAtMillis)
+          .toISOString()
+          .slice(0, 10)
+          .replaceAll("-", ""),
+      };
+      h.qrzRecords.push({
+        ...qrz,
+        ...fields,
+        APP_QRZLOG_LOGID: String(500 + index),
+      });
+      h.lotwRecords.push({ ...lotw, ...fields });
+    }
+    const wrap = (
+      statement: D1PreparedStatement,
+      sql: string,
+      values: unknown[] = [],
+    ): D1PreparedStatement =>
+      new Proxy(statement, {
+        get(target, property) {
+          if (property === "bind")
+            return (...bound: unknown[]) =>
+              wrap(target.bind(...bound), sql, bound);
+          const member = Reflect.get(target, property, target);
+          if (property === "run")
+            return async () => {
+              if (
+                sql.startsWith(
+                  "UPDATE reconciliation_work SET next_due_at=COALESCE",
+                )
+              ) {
+                if (values[4] === "finalizer-fails" && !injected) {
+                  injected = true;
+                  announceFailure();
+                  throw new Error("synthetic finalizer database failure");
+                }
+                const result = await member.call(target);
+                if (values[4] === "worker-delayed") {
+                  finalized = true;
+                  announceFinished();
+                }
+                return result;
+              }
+              if (values[1] === "cycle:source" && injected && !finalized)
+                announcePrematureRelease();
+              return member.call(target);
+            };
+          return typeof member === "function" ? member.bind(target) : member;
+        },
+      });
+    const database = new Proxy(h.env.DB, {
+      get(target, property) {
+        if (property === "prepare")
+          return (sql: string) => {
+            const statement = target.prepare(sql);
+            return sql.startsWith(
+              "UPDATE reconciliation_work SET next_due_at=COALESCE",
+            ) || sql.startsWith("UPDATE leases SET expires_at=0")
+              ? wrap(statement, sql)
+              : statement;
+          };
+        const member = Reflect.get(target, property, target);
+        return typeof member === "function" ? member.bind(target) : member;
+      },
+    });
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (!delayed && url.hostname === "logbook.qrz.com") {
+        const options =
+          new URLSearchParams(String(init?.body)).get("OPTION") ?? "";
+        const range = /BETWEEN:([\d-]+)\+([\d-]+)/.exec(options);
+        if (range && range[1] <= slowDate && slowDate <= range[2]) {
+          delayed = true;
+          announceSlow();
+          await slowBarrier;
+        }
+      }
+      return h.fetcher(input, init);
+    };
+    running = tick({ ...h.env, DB: database }, fetcher, FIXTURE_NOW).finally(
+      () => {
+        tickSettled = true;
+      },
+    );
+    await Promise.all([slowStarted, failureInjected]);
+    const releasedEarly = await new Promise<boolean>((resolve) => {
+      const timeout = setTimeout(() => resolve(false), 500);
+      void prematureRelease.then(() => {
+        clearTimeout(timeout);
+        resolve(true);
+      });
+    });
+    assert.equal(
+      releasedEarly,
+      false,
+      "failed worker must not release another worker's cycle lease",
+    );
+    assert.equal(tickSettled, false, "tick must wait for every started worker");
+    const lease = await h.store
+      .statement(
+        "SELECT expires_at FROM leases WHERE tenant='a' AND scope='cycle:source'",
+      )
+      .first<{ expires_at: number }>();
+    assert((lease?.expires_at ?? 0) > FIXTURE_NOW);
+    releaseSlow();
+    const result = await running;
+    assert(finalized);
+    assert.equal(result.errors, 1);
+    assert.equal(result.contacts, 2);
+    assert.equal(
+      await count(h, "leases", "scope='cycle:source' AND expires_at>0"),
+      0,
+    );
+    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+    assert.equal(h.calls.lotwUploads, 0);
+  } finally {
+    releaseSlow();
+    if (running) await running.catch(() => undefined);
+    if (delayed && !finalized) await slowFinished;
+    await h.mf.dispose();
   }
 });

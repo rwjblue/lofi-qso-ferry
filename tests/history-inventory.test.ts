@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { serializeAdifRecord, type AdifRecord } from "../src/adif.ts";
+import { type AdifRecord, serializeAdifRecord } from "../src/adif.ts";
+import { measuredDatabase } from "../src/database-metrics.ts";
 import {
+  HISTORY_INVENTORY_TTL,
+  type HistoryInventoryInput,
   historyCandidates,
   historyInventoryGuard,
   pruneHistoryInventory,
-  HISTORY_INVENTORY_TTL,
-  type HistoryInventoryInput,
 } from "../src/history-inventory.ts";
+import { Store } from "../src/store.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
 import { database, seed } from "./helpers.ts";
 
@@ -198,6 +200,227 @@ test("QRZ resumes bounded pages, completes modification catch-up, and reuses enc
     await mf.dispose();
   }
 });
+test("rejected QRZ modification catch-up discards old evidence and requires a complete fresh verification pass", async () => {
+  const { mf, store, input, now } = await fixture();
+  try {
+    const old = { ...record, APP_QRZLOG_LOGID: "1" };
+    const verified = Array.from({ length: 251 }, (_, index) => ({
+      ...record,
+      CALL: index === 0 ? record.CALL : `K${index}TEST`,
+      APP_QRZLOG_LOGID: String(index + 100),
+    }));
+    let calls = 0;
+    const options = {
+      now,
+      vendorNow: now,
+      fetcher: async (_: RequestInfo | URL, init?: RequestInit) => {
+        calls++;
+        const body = new URLSearchParams(String(init?.body));
+        assert.equal(body.get("ACTION"), "FETCH");
+        const filters = body.get("OPTION")!;
+        assert.match(filters, /BETWEEN:/);
+        if (calls === 1) return qrzResponse([old]);
+        if (calls === 2) {
+          assert.match(filters, /MODSINCE:/);
+          return new Response("RESULT=FAIL&COUNT=0");
+        }
+        assert(!filters.includes("MODSINCE:"));
+        const after = Number(/AFTERLOGID:(\d+)/.exec(filters)![1]);
+        return qrzResponse(
+          verified
+            .filter((record) => Number(record.APP_QRZLOG_LOGID) >= after)
+            .slice(0, 250),
+          verified.length,
+        );
+      },
+    };
+    assert.equal(
+      (await historyCandidates(store, input, options)).state,
+      "pending",
+    );
+    const before = await store
+      .statement("SELECT evidence FROM partitions")
+      .first<{ evidence: string }>();
+    const reset = await historyCandidates(store, input, options);
+    assert.equal(reset.state, "pending");
+    assert.equal(reset.fetched, true);
+    assert.equal(reset.progressed, true);
+    assert.deepEqual(reset.records, []);
+    assert.equal(reset.fence, undefined);
+    assert.deepEqual(reset.completedPartitions, []);
+    const saved = await store
+      .statement("SELECT state,evidence,history_bytes FROM partitions")
+      .first<{ state: string; evidence: string; history_bytes: number }>();
+    assert.equal(saved!.state, "inventory_pending");
+    assert.equal(saved!.history_bytes, 0);
+    const state = JSON.parse(saved!.evidence);
+    assert.equal(state.phase, "verify");
+    assert.equal(state.cursor, 0);
+    assert.equal(state.pageCount, 0);
+    assert.equal(state.recordCount, 0);
+    assert.notEqual(state.epoch, JSON.parse(before!.evidence).epoch);
+    for (const table of [
+      "history_inventory_pages",
+      "history_inventory_neighborhoods",
+      "history_inventory_guards",
+    ])
+      assert.equal(
+        (await store.statement(`SELECT COUNT(*) n FROM ${table}`).first())!.n,
+        0,
+      );
+    assert.equal(
+      (await store
+        .statement(
+          "SELECT COUNT(*) n FROM private_data WHERE kind='history_inventory'",
+        )
+        .first())!.n,
+      0,
+    );
+    const partial = await historyCandidates(store, input, options);
+    assert.equal(partial.state, "pending");
+    assert.deepEqual(partial.records, []);
+    assert.equal(partial.fence, undefined);
+    assert.equal(calls, 3, "each invocation performs at most one vendor read");
+    const completed = await historyCandidates(store, input, options);
+    assert.equal(completed.state, "ready");
+    assert.deepEqual(
+      completed.records.map((record) => record.APP_QRZLOG_LOGID),
+      ["100"],
+      "the removed first-pass record cannot remain in the candidate index",
+    );
+    assert.equal(completed.freshCheckComplete, false);
+    assert.equal(completed.completedPartitions.length, 1);
+    assert.equal(calls, 4);
+    const reused = await historyCandidates(store, input, {
+      ...options,
+      fetcher: async () => assert.fail("completed verification was not reused"),
+    });
+    assert.equal(reused.state, "ready");
+    assert.equal(reused.fetched, false);
+    assert.deepEqual(reused.records, completed.records);
+    assert.equal(
+      (await store.statement("SELECT COUNT(*) n FROM attempts").first())!.n,
+      0,
+    );
+  } finally {
+    await mf.dispose();
+  }
+});
+test("rejected QRZ base and verification reads remain incomplete, while a valid empty verification never supplies a fresh absence check", async () => {
+  const { mf, store, input, key, now } = await fixture();
+  try {
+    const options = {
+      now,
+      vendorNow: now,
+      fetcher: async () => new Response("RESULT=FAIL&COUNT=0"),
+    };
+    await assert.rejects(historyCandidates(store, input, options), /rejected/);
+    await historyCandidates(store, input, {
+      ...options,
+      fetcher: async () => qrzResponse([{ ...record, APP_QRZLOG_LOGID: "1" }]),
+    });
+    assert.equal(
+      (await historyCandidates(store, input, options)).state,
+      "pending",
+    );
+    await assert.rejects(historyCandidates(store, input, options), /rejected/);
+    assert.equal(
+      (await store
+        .statement("SELECT COUNT(*) n FROM partitions WHERE state='complete'")
+        .first())!.n,
+      0,
+    );
+    const empty = await historyCandidates(store, input, {
+      ...options,
+      fetcher: async () => qrzResponse([]),
+    });
+    assert.equal(empty.state, "ready");
+    assert.deepEqual(empty.records, []);
+    assert.equal(empty.freshCheckComplete, false);
+    assert.equal((await store.ledger(key))?.state, "inventory_pending");
+    assert.equal(
+      (await store.statement("SELECT COUNT(*) n FROM attempts").first())!.n,
+      0,
+    );
+  } finally {
+    await mf.dispose();
+  }
+});
+test("QRZ catch-up authentication and protocol failures do not trigger a verification reset", async (t) => {
+  for (const response of ["RESULT=AUTH", "RESULT=OK&COUNT=1"]) {
+    await t.test(response, async () => {
+      const { mf, store, input, now } = await fixture();
+      try {
+        const options = { now, vendorNow: now };
+        await historyCandidates(store, input, {
+          ...options,
+          fetcher: async () =>
+            qrzResponse([{ ...record, APP_QRZLOG_LOGID: "1" }]),
+        });
+        const before = await store
+          .statement("SELECT evidence,history_bytes FROM partitions")
+          .first();
+        await assert.rejects(
+          historyCandidates(store, input, {
+            ...options,
+            fetcher: async () => new Response(response),
+          }),
+        );
+        assert.deepEqual(
+          await store
+            .statement("SELECT evidence,history_bytes FROM partitions")
+            .first(),
+          before,
+        );
+      } finally {
+        await mf.dispose();
+      }
+    });
+  }
+});
+test("QRZ verification reset rejects a source generation change and preserves the incomplete evidence transactionally", async () => {
+  const { mf, store, input, key, now } = await fixture();
+  try {
+    const options = { now, vendorNow: now };
+    await historyCandidates(store, input, {
+      ...options,
+      fetcher: async () => qrzResponse([{ ...record, APP_QRZLOG_LOGID: "1" }]),
+    });
+    const before = await store
+      .statement("SELECT evidence,history_bytes FROM partitions")
+      .first();
+    await assert.rejects(
+      historyCandidates(store, input, {
+        ...options,
+        fetcher: async () => {
+          await store.observe(key, "g2", "changed", 30, false);
+          return new Response("RESULT=FAIL&COUNT=0");
+        },
+      }),
+      /history source changed/,
+    );
+    assert.deepEqual(
+      await store
+        .statement("SELECT evidence,history_bytes FROM partitions")
+        .first(),
+      before,
+    );
+    assert.equal(
+      (await store
+        .statement("SELECT COUNT(*) n FROM history_inventory_pages")
+        .first())!.n,
+      1,
+    );
+    assert.equal(
+      (await store
+        .statement("SELECT COUNT(*) n FROM history_inventory_guards")
+        .first())!.n,
+      0,
+    );
+  } finally {
+    await mf.dispose();
+  }
+});
 test("QRZ neighborhoods include UTC date edges while filtering calls and bands locally without hiding modes", async () => {
   const { mf, store, input, now } = await fixture();
   try {
@@ -274,6 +497,85 @@ test("LoTW completes once, shares daily call neighborhoods, and retains lower-pr
       (await historyCandidates(store, input, options)).fetched,
       false,
     );
+    assert.equal(calls, 1);
+  } finally {
+    await mf.dispose();
+  }
+});
+test("inventory batches bounded reads while retaining credential and expiry checks on cache hits", async (t) => {
+  const { mf, store, input, now } = await fixture("lotw");
+  try {
+    const measured = measuredDatabase(store.db);
+    const counted = new Store(measured.database, store.keys);
+    const options = {
+      now,
+      vendorNow: now,
+      fetcher: async () => lotwResponse([record]),
+    };
+    const cold = await historyCandidates(counted, input, options);
+    assert.equal(cold.state, "ready");
+    t.diagnostic(`cold inventory: ${measured.metrics.calls} database calls`);
+    assert(measured.metrics.calls <= 13);
+    const before = measured.metrics.calls;
+    const cached = await historyCandidates(counted, input, {
+      ...options,
+      fetcher: async () => assert.fail("cache hit refetched vendor history"),
+    });
+    assert.equal(cached.state, "ready");
+    assert.deepEqual(cached.records, cold.records);
+    t.diagnostic(
+      `cached inventory: ${measured.metrics.calls - before} database calls`,
+    );
+    assert(measured.metrics.calls - before <= 4);
+    await store
+      .statement(
+        "UPDATE private_data SET revoked_at=? WHERE connection='destination' AND kind='credential'",
+        now,
+      )
+      .run();
+    const revoked = await historyCandidates(counted, input, {
+      ...options,
+      fetcher: async () =>
+        assert.fail("revoked credential made a vendor request"),
+    });
+    assert.notEqual(revoked.state, "ready");
+    assert.deepEqual(revoked.records, []);
+  } finally {
+    await mf.dispose();
+  }
+});
+test("concurrent contacts sharing a history partition use one vendor read and wait for the leased inventory", async () => {
+  const { mf, store, input, now } = await fixture("lotw");
+  try {
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let finish!: (response: Response) => void;
+    const response = new Promise<Response>((resolve) => {
+      finish = resolve;
+    });
+    let calls = 0;
+    const options = {
+      now,
+      vendorNow: now,
+      fetcher: async () => {
+        calls++;
+        entered();
+        return response;
+      },
+    };
+    const owner = historyCandidates(store, input, options);
+    await started;
+    const waiting = await historyCandidates(store, input, options);
+    assert.equal(waiting.state, "pending");
+    assert.equal(waiting.fetched, false);
+    assert.deepEqual(waiting.records, []);
+    finish(lotwResponse([record]));
+    assert.equal((await owner).state, "ready");
+    const cached = await historyCandidates(store, input, options);
+    assert.equal(cached.state, "ready");
+    assert.equal(cached.fetched, false);
     assert.equal(calls, 1);
   } finally {
     await mf.dispose();

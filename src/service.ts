@@ -25,7 +25,7 @@ import {
 } from "./history-inventory.ts";
 import {
   finishReconciliationWork,
-  reconciliationCheckDue,
+  reconciliationPreflight,
   recordReconciliationCheck,
   syncReconciliationPolicy,
 } from "./reconciliation-work.ts";
@@ -124,25 +124,7 @@ async function reconcileContact(
     qso: contact.id,
     destination: destination.id,
   };
-  const ledger = await store.ledger(key);
-  if (
-    !ledger ||
-    ledger.remote_id ||
-    ledger.state === "changed" ||
-    ledger.provenance === "adoption_conflict"
-  )
-    return;
-  if (
-    await store
-      .statement(
-        "SELECT 1 n FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled') LIMIT 1",
-        key.tenant,
-        key.source,
-        key.qso,
-        key.destination,
-      )
-      .first()
-  )
+  if (!(await reconciliationPreflight(store, key, contact.generation, now)))
     return;
   let record: ReturnType<typeof contactReconciliationAdif>;
   try {
@@ -152,8 +134,6 @@ async function reconcileContact(
       "Source fields cannot be represented in ADIF; review contact",
     );
   }
-  if (!(await reconciliationCheckDue(store, key, contact.generation, now)))
-    return;
   const input = {
     source,
     destination,
@@ -432,8 +412,33 @@ export async function tick(
             (c) => c.kind !== "lofi" && c.status === "active",
           )
         : [];
-      for (const contact of batch.contacts) {
-        if (expired()) break;
+      const historyTurns = new Map<string, Promise<void>>();
+      const historyTurn = async (
+        destination: Connection,
+        contact: IntakeContact,
+        work: () => Promise<void>,
+      ) => {
+        // Contacts in the same week share inventory. Let the first read finish
+        // before another contact asks for that coverage in this source batch.
+        const key = JSON.stringify([
+          destination.id,
+          Math.floor(contact.startAtMillis / (7 * 86_400_000)),
+        ]);
+        const previous = historyTurns.get(key);
+        let release!: () => void;
+        const turn = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        historyTurns.set(key, turn);
+        await previous;
+        try {
+          if (!expired()) await work();
+        } finally {
+          release();
+          if (historyTurns.get(key) === turn) historyTurns.delete(key);
+        }
+      };
+      const processContact = async (contact: IntakeContact) => {
         const now = currentTime();
         try {
           result.contacts++;
@@ -478,18 +483,20 @@ export async function tick(
             const destination = candidates[0];
             let preparing = false;
             try {
-              await measure("history", () =>
-                reconcileContact(
-                  store,
-                  source,
-                  destination,
-                  contact,
-                  gates,
-                  fetcher,
-                  now,
-                  priority,
-                  clock,
-                  throughput,
+              await historyTurn(destination, contact, () =>
+                measure("history", () =>
+                  reconcileContact(
+                    store,
+                    source,
+                    destination,
+                    contact,
+                    gates,
+                    fetcher,
+                    now,
+                    priority,
+                    clock,
+                    throughput,
+                  ),
                 ),
               );
               if (expired()) break;
@@ -558,7 +565,28 @@ export async function tick(
             currentTime(),
           );
         }
-      }
+      };
+      // Read-only background work can overlap database latency. Live work and
+      // any enabled export path retain their sequential dispatch ordering.
+      const concurrency =
+        priority === "background" && !exportsEffective(gates) ? 4 : 1;
+      let nextContact = 0;
+      const workers = await Promise.allSettled(
+        Array.from(
+          { length: Math.min(concurrency, batch.contacts.length) },
+          async () => {
+            while (!expired()) {
+              const contact = batch.contacts[nextContact++];
+              if (!contact) return;
+              await processContact(contact);
+            }
+          },
+        ),
+      );
+      // Retain the cycle lease until all started work has settled, even if a
+      // worker's final queue update fails outside the contact error handler.
+      const failed = workers.find((worker) => worker.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
       return batch.selected;
     };
     let retainedSelected = 0;

@@ -7,11 +7,15 @@ logbook writes or treat a partial inventory as absence.
 
 ## Implementation status
 
-The larger throughput implementation is locally validated and awaits production
-deployment. Batched intake/context access, indexed due-work selection, durable
-exception retry scheduling, shared encrypted history and scheduler telemetry are
-implemented. The release/CI evidence for this work must be recorded separately
-from the earlier production observations below. Exports remain disabled.
+The larger throughput implementation is deployed in signed revision `bbc2346c`
+as Worker `c592733f-171f-406e-bb8d-827b7ffd7fd9` at 16:12 UTC. Batched
+intake/context access, indexed due-work selection, durable exception retries,
+shared encrypted history and scheduler telemetry are implemented. All 452 tests
+and required checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39983716440).
+Independent readback confirms nineteen migrations, closed export gates and zero
+attempts/cutovers. This deployment also includes test-operation exclusion from
+`0000073`. The earlier observations below predate this release; sustained
+production throughput still needs measurement. Exports remain disabled.
 
 The earlier immediate repairs are signed on `main`: canonical general-log station
 projection and scoped reprojection migration `32758f5`, precision review
@@ -88,6 +92,39 @@ are unchanged. New queue triggers also required direct `RETURNING` results for
 guarded update counts, because D1 aggregate change counts include trigger writes;
 the affected delivery, verification, maintenance and restore paths have local
 regression coverage.
+
+## First throughput release: production bottlenecks and follow-up
+
+The first new run, **16:15:43–16:17:17 UTC**, processed four contacts in
+**93.7 seconds**, with four destination classifications, one adoption and four
+QRZ errors. It recorded 289 database requests / 414 SQL statements, with
+**73.4 seconds** of cumulative database wait and 67.5 seconds in history work.
+It populated four complete LoTW partitions; four QRZ partitions remained in
+catch-up. This cold-cache result is insufficient capacity, not a successful
+4,000/200,000-contact throughput acceptance.
+
+One bounded background-budget diagnostic identified QRZ's catch-up response as
+HTTP 200, `RESULT=FAIL`, `COUNT=0`, without ADIF or a reason. It completed in
+276 ms. Credentials and raw contact data were not persisted; there were no
+vendor writes or application ledger/cache/cursor changes. Generic rejection
+still cannot prove empty coverage.
+
+The follow-up implementation discards incomplete first-pass QRZ evidence on a
+rejected catch-up, then performs a bounded full verification scan. Only valid,
+complete responses become reusable positive evidence. It also reduces
+observation from five to two database requests, preflight from three to one,
+and adoption metadata from two to one. LoTW inventory fixtures use thirteen
+requests cold and four cached. Up to four read-only background contacts overlap
+database latency; live and export-enabled work remain sequential. Contacts
+sharing a destination/week wait for the preceding history turn, and the source
+cycle lease remains held until every started worker settles. These follow-up
+changes pass all 465 tests and required local checks; deployment and production
+measurements are next.
+
+Cumulative stage/database durations may overlap under concurrency. The new
+`database.wallMs` reports elapsed time with any database request in flight;
+`durationMs` continues to sum individual request latency. Neither measures
+billed CPU. All export gates remain closed.
 
 ## Earlier production observation (before throughput changes)
 

@@ -1,11 +1,11 @@
 import type { AdifRecord } from "./adif.ts";
 import { LotwClient } from "./lotw.ts";
-import { adifInstant, QrzClient } from "./qrz.ts";
-import { canonical, open, randomToken, sha256 } from "./security.ts";
+import { adifInstant, QrzClient, QrzError, type QrzPage } from "./qrz.ts";
 import type { Envelope } from "./security.ts";
+import { canonical, open, randomToken, sha256 } from "./security.ts";
 import type { Connection, Lease, LedgerKey, Store } from "./store.ts";
-import { vendorFetch } from "./vendor-requests.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
+import { vendorFetch } from "./vendor-requests.ts";
 
 const DAY = 86_400_000;
 export const HISTORY_INVENTORY_TTL = 4 * 3_600_000;
@@ -172,7 +172,7 @@ interface Manifest extends Range {
   version: 1;
   epoch: string;
   destinationVersion: string;
-  phase: "base" | "catchup" | "done" | "split" | "blocked";
+  phase: "base" | "catchup" | "verify" | "done" | "split" | "blocked";
   cursor: number;
   pageCount: number;
   recordCount: number;
@@ -212,7 +212,9 @@ function manifest(row: Partition): Manifest | null {
     if (
       value.version !== 1 ||
       !value.epoch ||
-      !["base", "catchup", "done", "split", "blocked"].includes(value.phase) ||
+      !["base", "catchup", "verify", "done", "split", "blocked"].includes(
+        value.phase,
+      ) ||
       !Number.isSafeInteger(value.cursor) ||
       value.cursor < 0 ||
       !Number.isSafeInteger(value.createdAt) ||
@@ -515,14 +517,16 @@ async function save(
   next: Manifest,
   records: AdifRecord[],
   now: number,
+  restart = false,
 ) {
   const prior = requireManifest(row);
   const chunks = retainedPages(records);
   const serializedBytes = retainedBytes(chunks);
+  const addedBytes = serializedBytes - (restart ? row.history_bytes : 0);
   if (
     next.recordCount > MAX_RECORDS ||
     next.pageCount > MAX_PAGES ||
-    row.history_bytes + serializedBytes > MAX_PARTITION_BYTES
+    row.history_bytes + addedBytes > MAX_PARTITION_BYTES
   )
     throw new Error("History partition exceeds retained evidence bound");
   for (let eviction = 0; ; eviction++) {
@@ -534,7 +538,7 @@ async function save(
         input.destination.id,
       )
       .first<{ bytes: number }>();
-    if ((total?.bytes ?? 0) + serializedBytes <= MAX_SCOPE_BYTES) break;
+    if ((total?.bytes ?? 0) + addedBytes <= MAX_SCOPE_BYTES) break;
     // Leave room for a worst-case 48-page save within the coordinator's
     // 200-statement allowance; later turns can continue bounded eviction.
     if (eviction >= 8 || !(await evictOne(store, input, now, row.id)))
@@ -543,18 +547,20 @@ async function save(
   const statements: D1PreparedStatement[] = [];
   const guardId = randomToken();
   statements.push(
-    guardStatement(
-      store,
-      input,
-      row,
-      lease,
-      now,
-      guardId,
-      records.length ? serializedBytes : 0,
-    ),
+    guardStatement(store, input, row, lease, now, guardId, addedBytes),
   );
+  if (restart)
+    statements.push(
+      store.statement(
+        "DELETE FROM history_inventory_pages WHERE tenant=? AND source=? AND destination=? AND partition=?",
+        input.source.tenant,
+        input.source.id,
+        input.destination.id,
+        row.id,
+      ),
+    );
   for (let offset = 0; offset < chunks.length; offset++) {
-    const page = prior.pageCount + offset + 1;
+    const page = (restart ? 0 : prior.pageCount) + offset + 1;
     const values = chunks[offset];
     const payloadId = `history:${row.id}:${prior.epoch}:${page}`;
     statements.push(
@@ -608,16 +614,17 @@ async function save(
       ),
     );
   }
+  const updatedIndex = statements.length;
   statements.push(
     store.statement(
-      "UPDATE partitions SET state=?,evidence=?,history_bytes=history_bytes+?,history_accessed_at=? WHERE tenant=? AND source=? AND destination=? AND id=?",
+      "UPDATE partitions SET state=?,evidence=?,history_bytes=history_bytes+?,history_accessed_at=? WHERE tenant=? AND source=? AND destination=? AND id=? RETURNING *",
       next.phase === "done"
         ? "complete"
         : next.phase === "blocked"
           ? "blocked"
           : "inventory_pending",
       canonical(next),
-      records.length ? serializedBytes : 0,
+      addedBytes,
       now,
       input.source.tenant,
       input.source.id,
@@ -628,7 +635,10 @@ async function save(
   statements.push(
     store.statement("DELETE FROM history_inventory_guards WHERE id=?", guardId),
   );
-  await store.db.batch(statements);
+  const results = await store.db.batch<Partition>(statements);
+  const updated = results[updatedIndex].results[0];
+  if (!updated) throw new Error("History partition changed during save");
+  return updated;
 }
 async function advance(
   store: Store,
@@ -640,6 +650,7 @@ async function advance(
   progressed: boolean;
   complete: boolean;
   noReadAccess?: boolean;
+  partition?: Partition;
 }> {
   const now = () => options.now ?? Date.now();
   const lease = await store.claim(
@@ -650,30 +661,34 @@ async function advance(
   );
   if (!lease) return { fetched: false, progressed: false, complete: false };
   try {
+    const guard = scopeGuard(input, now());
     const latest = await store
       .statement(
-        "SELECT * FROM partitions WHERE tenant=? AND source=? AND destination=? AND id=?",
+        `SELECT h.*,p.envelope credential_envelope FROM partitions h JOIN private_data p ON p.tenant=h.tenant AND p.connection=h.destination AND p.id=? AND p.kind='credential' WHERE h.tenant=? AND h.source=? AND h.destination=? AND h.id=? AND ${guard.sql}`,
+        credentialVersion(input),
         input.source.tenant,
         input.source.id,
         input.destination.id,
         row.id,
+        ...guard.params,
       )
-      .first<Partition>();
-    if (
-      !latest ||
-      latest.evidence !== row.evidence ||
-      !(await current(store, input, now()))
-    )
+      .first<Partition & { credential_envelope: string }>();
+    if (!latest || latest.evidence !== row.evidence)
       return { fetched: false, progressed: false, complete: false };
     const prior = requireManifest(row);
-    const credentials = await store.private<{
+    const credentials = await open<{
       apiKey?: string;
       query?: { username: string; password: string };
     }>(
-      input.source.tenant,
-      input.destination.id,
-      credentialVersion(input),
-      "credential",
+      JSON.parse(latest.credential_envelope) as Envelope,
+      {
+        tenant: input.source.tenant,
+        connection: input.destination.id,
+        id: credentialVersion(input),
+        kind: "credential",
+        purpose: "storage",
+      },
+      store.keys,
     );
     const transport = vendorFetch(
       store,
@@ -691,16 +706,48 @@ async function advance(
           complete: false,
           noReadAccess: true,
         };
-      const page = await new QrzClient(credentials.apiKey, {
-        fetch: transport,
-      }).fetchPage({
-        between: [prior.startDate, prior.endDate],
-        afterLogId: prior.cursor,
-        max: PAGE_SIZE,
-        ...(prior.phase === "catchup"
-          ? { modifiedSince: date(prior.createdAt) }
-          : {}),
-      });
+      let page: QrzPage;
+      try {
+        page = await new QrzClient(credentials.apiKey, {
+          fetch: transport,
+        }).fetchPage({
+          between: [prior.startDate, prior.endDate],
+          afterLogId: prior.cursor,
+          max: PAGE_SIZE,
+          ...(prior.phase === "catchup"
+            ? { modifiedSince: date(prior.createdAt) }
+            : {}),
+        });
+      } catch (error) {
+        if (
+          prior.phase !== "catchup" ||
+          !(error instanceof QrzError) ||
+          error.kind !== "rejected"
+        )
+          throw error;
+        // QRZ can reject an empty MODSINCE selection without explaining why.
+        // That response proves nothing. Discard the incomplete first pass and
+        // require a new, successful full scan before returning any evidence.
+        await save(
+          store,
+          input,
+          row,
+          lease,
+          {
+            ...prior,
+            epoch: randomToken(),
+            phase: "verify",
+            cursor: 0,
+            pageCount: 0,
+            recordCount: 0,
+            createdAt: now(),
+          },
+          [],
+          now(),
+          true,
+        );
+        return { fetched: true, progressed: true, complete: false };
+      }
       records = compact(page.records, input, prior);
       if (page.nextAfterLogId !== null) next.cursor = page.nextAfterLogId;
       else if (prior.phase === "base") {
@@ -792,8 +839,13 @@ async function advance(
       );
       return { fetched: true, progressed: true, complete: false };
     }
-    await save(store, input, row, lease, next, records, now());
-    return { fetched: true, progressed: true, complete: next.phase === "done" };
+    const saved = await save(store, input, row, lease, next, records, now());
+    return {
+      fetched: true,
+      progressed: true,
+      complete: next.phase === "done",
+      partition: saved,
+    };
   } finally {
     await store.release(lease);
   }
@@ -895,15 +947,7 @@ export async function historyCandidates(
         result.progressed ||= progress.progressed;
         if (progress.complete) {
           result.completedPartitions.push(row.id);
-          const refreshed = await store
-            .statement(
-              "SELECT * FROM partitions WHERE tenant=? AND source=? AND destination=? AND id=?",
-              input.source.tenant,
-              input.source.id,
-              input.destination.id,
-              row.id,
-            )
-            .first<Partition>();
+          const refreshed = progress.partition;
           if (
             refreshed &&
             refreshed.state === "complete" &&
@@ -929,16 +973,27 @@ export async function historyCandidates(
   const candidates: AdifRecord[] = [];
   for (const row of required) {
     const state = requireManifest(row);
-    const available = await store
-      .statement(
+    const [availability, neighborhoods] = await store.db.batch([
+      store.statement(
         "SELECT COUNT(*) n FROM history_inventory_pages h JOIN private_data p ON p.tenant=h.tenant AND p.connection=h.destination AND p.id=h.payload_id AND p.kind='history_inventory' WHERE h.tenant=? AND h.source=? AND h.destination=? AND h.partition=? AND p.revoked_at IS NULL AND p.expires_at>?",
         input.source.tenant,
         input.source.id,
         input.destination.id,
         row.id,
         now(),
-      )
-      .first<{ n: number }>();
+      ),
+      store.statement(
+        "SELECT n.page,json_group_array(n.record_index) record_indices,h.payload_id,p.envelope FROM history_inventory_neighborhoods n JOIN history_inventory_pages h ON h.tenant=n.tenant AND h.source=n.source AND h.destination=n.destination AND h.partition=n.partition AND h.page=n.page JOIN private_data p ON p.tenant=h.tenant AND p.connection=h.destination AND p.id=h.payload_id AND p.kind='history_inventory' WHERE n.tenant=? AND n.source=? AND n.destination=? AND n.partition=? AND n.neighborhood_hash=? AND p.revoked_at IS NULL AND p.expires_at>? GROUP BY n.page,h.payload_id,p.envelope LIMIT ?",
+        input.source.tenant,
+        input.source.id,
+        input.destination.id,
+        row.id,
+        wantedHash,
+        now(),
+        MAX_PAGES + 1,
+      ),
+    ]);
+    const available = availability.results[0] as { n: number } | undefined;
     if (available?.n !== state.pageCount)
       return {
         ...result,
@@ -946,25 +1001,12 @@ export async function historyCandidates(
         reason:
           "Retained history page expired or was revoked; coverage is incomplete",
       };
-    const indexed = (
-      await store
-        .statement(
-          "SELECT n.page,json_group_array(n.record_index) record_indices,h.payload_id,p.envelope FROM history_inventory_neighborhoods n JOIN history_inventory_pages h ON h.tenant=n.tenant AND h.source=n.source AND h.destination=n.destination AND h.partition=n.partition AND h.page=n.page JOIN private_data p ON p.tenant=h.tenant AND p.connection=h.destination AND p.id=h.payload_id AND p.kind='history_inventory' WHERE n.tenant=? AND n.source=? AND n.destination=? AND n.partition=? AND n.neighborhood_hash=? AND p.revoked_at IS NULL AND p.expires_at>? GROUP BY n.page,h.payload_id,p.envelope LIMIT ?",
-          input.source.tenant,
-          input.source.id,
-          input.destination.id,
-          row.id,
-          wantedHash,
-          now(),
-          MAX_PAGES + 1,
-        )
-        .all<{
-          page: number;
-          record_indices: string;
-          payload_id: string;
-          envelope: string;
-        }>()
-    ).results;
+    const indexed = neighborhoods.results as {
+      page: number;
+      record_indices: string;
+      payload_id: string;
+      envelope: string;
+    }[];
     if (
       indexed.length > MAX_PAGES ||
       indexed.reduce(
@@ -1021,42 +1063,27 @@ export async function historyCandidates(
       }
     }
   }
-  for (const row of required) {
-    const retained = await store
-      .statement(
+  const comparedAt = now();
+  const guard = scopeGuard(input, comparedAt);
+  const validations = await store.db.batch([
+    ...required.map((row) =>
+      store.statement(
         "SELECT 1 n FROM partitions h WHERE h.tenant=? AND h.source=? AND h.destination=? AND h.id=? AND h.evidence=? AND h.state='complete' AND h.expires_at>? AND (SELECT COUNT(*) FROM history_inventory_pages pg JOIN private_data p ON p.tenant=pg.tenant AND p.connection=pg.destination AND p.id=pg.payload_id AND p.kind='history_inventory' WHERE pg.tenant=h.tenant AND pg.source=h.source AND pg.destination=h.destination AND pg.partition=h.id AND p.revoked_at IS NULL AND p.expires_at>?)=?",
         input.source.tenant,
         input.source.id,
         input.destination.id,
         row.id,
         row.evidence,
-        now(),
-        now(),
+        comparedAt,
+        comparedAt,
         requireManifest(row).pageCount,
-      )
-      .first();
-    if (!retained)
-      return {
-        ...result,
-        records: [],
-        state: "unavailable",
-        reason:
-          "Retained history changed during comparison; coverage is incomplete",
-      };
-  }
-  if (
-    !(await current(store, input, now())) ||
-    required.some((row) => row.expires_at <= now())
-  )
-    return {
-      ...result,
-      reason: "History source, connection or credential changed",
-    };
-  await store.db.batch(
-    required.map((row) =>
+      ),
+    ),
+    store.statement(`SELECT 1 n WHERE ${guard.sql}`, ...guard.params),
+    ...required.map((row) =>
       store.statement(
         "UPDATE partitions SET history_accessed_at=? WHERE tenant=? AND source=? AND destination=? AND id=? AND evidence=?",
-        now(),
+        comparedAt,
         input.source.tenant,
         input.source.id,
         input.destination.id,
@@ -1064,7 +1091,27 @@ export async function historyCandidates(
         row.evidence,
       ),
     ),
-  );
+  ]);
+  if (
+    validations
+      .slice(0, required.length)
+      .some((result) => !result.results.length)
+  )
+    return {
+      ...result,
+      records: [],
+      state: "unavailable",
+      reason:
+        "Retained history changed during comparison; coverage is incomplete",
+    };
+  if (
+    !validations[required.length].results.length ||
+    required.some((row) => row.expires_at <= now())
+  )
+    return {
+      ...result,
+      reason: "History source, connection or credential changed",
+    };
   return {
     ...result,
     state: "ready",

@@ -1,5 +1,5 @@
 import type { Work } from "./intake.ts";
-import type { Connection, LedgerKey, Store } from "./store.ts";
+import type { Connection, Ledger, LedgerKey, Store } from "./store.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
 
 const retryDelay = 5 * 60_000;
@@ -106,6 +106,26 @@ export async function reconciliationCheckDue(
     )
     .first();
   return !checked;
+}
+
+/** One read for scheduling eligibility; the eventual commit still rechecks every guard. */
+export async function reconciliationPreflight(
+  store: Store,
+  key: LedgerKey,
+  generation: string,
+  now: number,
+): Promise<Ledger | null> {
+  return store
+    .statement(
+      "SELECT l.* FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=?4 AND l.generation=?5 AND l.remote_id IS NULL AND l.state!='changed' AND l.provenance!='adoption_conflict' AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND NOT EXISTS(SELECT 1 FROM reconciliation_checks c WHERE c.tenant=l.tenant AND c.source=l.source AND c.qso=l.qso AND c.destination=l.destination AND c.generation=?5 AND c.next_due_at>?6)",
+      key.tenant,
+      key.source,
+      key.qso,
+      key.destination,
+      generation,
+      now,
+    )
+    .first<Ledger>();
 }
 
 /** Persist only successful classifications, never a transport failure or defer. */

@@ -13,6 +13,8 @@ import {
 } from "../src/reconcile.ts";
 import { database, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
+import { measuredDatabase } from "../src/database-metrics.ts";
+import { Store } from "../src/store.ts";
 const source = {
   STATION_CALLSIGN: "N0TEST/P",
   CALL: "W1AW",
@@ -36,6 +38,39 @@ const evidence: ReconciliationEvidence = {
   catchupComplete: true,
   freshCheckComplete: true,
 };
+test("adoption loads its tenant-bound ledger and destination in one RPC", async () => {
+  const h = await database();
+  try {
+    const key = await seed(h.store);
+    const foreign = await seed(h.store, "b");
+    await h.store.observe(key, "g1", "hash", 30);
+    await h.store.observe(foreign, "g1", "foreign-hash", 30);
+    await h.store
+      .statement(
+        "UPDATE connections SET kind='lotw' WHERE tenant='b' AND id='destination'",
+      )
+      .run();
+    const measured = measuredDatabase(h.db);
+    const store = new Store(measured.database, h.store.keys);
+    const outcome = classifyHistory(source, [remote], evidence);
+    const result = await adoptHistory(store, key, "g1", outcome);
+    assert.equal(result.applied, true);
+    assert.equal(measured.metrics.calls, 2);
+    assert.equal((await h.store.ledger(key))?.remote_id, "100");
+    assert.equal((await h.store.ledger(foreign))?.remote_id, null);
+    assert.equal(
+      (await adoptHistory(store, foreign, "g1", outcome)).reason,
+      "tenant_or_destination_missing",
+    );
+    assert.equal(
+      (await adoptHistory(store, { ...key, source: "missing" }, "g1", outcome))
+        .reason,
+      "tenant_or_destination_missing",
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
 test("fractional source times adopt only a unique seconds projection and cannot share one remote claim", async () => {
   for (const destination of ["qrz", "lotw"] as const) {
     const { mf, store } = await database();

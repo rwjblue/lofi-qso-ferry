@@ -91,6 +91,17 @@ One of two destination rescans remained required. A follow-up aggregate SELECT i
 
 The same read-only observation confirmed zero export attempts, zero mapped QRZ rows and one active account with one active passkey. The audit changed no production rows. All export gates remain closed and the source-boundary report remains false. Exact identifiers and source contents were not included in the retained report.
 
+### Follow-up after scheduled rescan completion
+
+At **2026-10-23T22:19:49.925Z**, a repeat aggregate audit found both destination
+rescans complete and zero destinations requiring rescan. Forward generation was
+282 and complete context generation was 898. Retained contact/event/operation
+counts, zero missing births, available current payloads and the two deleted-operation
+dependency holds were unchanged. Attempts and cutovers remained zero, with one
+active account/passkey. The report still explicitly returns
+`sourceBoundaryVerified: false`: completed local scans do not supply the server
+replay, tombstone or retention contract.
+
 ### Evidence packet still required
 
 Keep the following distinct in the personal canary record:

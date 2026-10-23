@@ -1,6 +1,60 @@
 # Implementation progress
 
-Current checkpoint, 2026-10-23 21:29 UTC: signed revision
+Current checkpoint, 2026-10-23 22:42 UTC: signed revision
+`a8b592bead90a22e4e7fe36f005e390727002df9` is deployed as Worker
+`fd752a85-83e5-4afd-810c-1f4a2c4e3633` at 100% traffic. Migration `0024` repairs and
+prevents identity gaps when an older scheduled invocation finishes after a new
+migration: LoTW mapping writes acquire ownership atomically, and QRZ mappings
+retain exact reservations unless linked receipt or guarded adoption evidence
+establishes ownership. Conflicts roll back; old reservations cannot be overwritten.
+All **606 tests** and required checks pass locally; [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40034841991) also passed.
+
+At 22:43:14 UTC, all five export gates remain closed, service/assets match, and
+all twenty-three migrations are applied. There are 370 LoTW claims, zero uncovered
+mappings, zero attempts/cutovers and no temporary or legacy reservation residue.
+The earlier 22:26 release initially had complete coverage, but a subsequent audit
+caught three mappings added by the old cron after its migration seed. This
+follow-up preserves ownership at the database boundary as well as in the Worker.
+No real QRZ mutation or LoTW upload occurred.
+
+The first new scheduled run, 22:45:42.955–22:46:04.921 UTC, processed 204 contact
+turns and 186 destination classifications, including eight adoptions. It stopped
+at the database budget after 21.966 seconds. All 70 failed routes were categorized
+QRZ rejected reads; four additional routes were vendor-budget deferred. This is
+one mixed-work sample, not unique completion throughput or a cleared backlog.
+At 22:47:21.247 UTC, 378 LoTW claims cover every mapped identity; attempts,
+cutovers, temporary guards and legacy holds remain zero.
+
+Both destination rescans are complete. Source replay/deletion/retention proof,
+the two deleted-operation holds, backup passkey/secret-manager confirmation and
+exact-contact first-write review remain the next work; see the
+[rollout checklist](docs/rollout-checklist.md). A larger capacity claim still needs
+its separate workload acceptance evidence.
+
+Previous checkpoint, 2026-10-23 22:26 UTC: signed revision
+`1182c47ac50f58b562185f12f419813114706163` is deployed as Worker
+`edd20bdf-af0c-46c9-9c6b-37e72af92705` at 100% traffic. Durable identity claims now
+protect adoption, preparation and dispatch, including fractional source timestamps,
+uncertain outcomes and current source/dependency/lease fences. The release also
+preserves eight-character LoTW grids, adds bounded read-only legacy QRZ binding,
+and supplies the aggregate source audit. All **598 tests** and required checks
+pass locally; [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40033047750) also passed.
+
+Independent checks at 22:26:17 UTC confirm closed export gates, healthy service
+and matching assets. Twenty-two migrations are applied. The new migration retained
+355 LoTW claims, with zero unclaimed LoTW mappings or unreserved QRZ mappings.
+Attempts, cutovers, legacy outbound/QRZ holds and temporary guards are all zero.
+No real QRZ mutation or LoTW upload was performed.
+
+Both destination rescans completed by the 22:19 UTC audit. Current payloads and
+retained birth evidence are locally consistent; two contacts tied to deleted
+operations remain held. Server replay, tombstone and retention guarantees remain
+unproved, so `SOURCE_BOUNDARY_VERIFIED` stays false. The account has one active
+passkey; backup sign-in access and secure secret-manager backup remain rollout
+prerequisites. The [personal checklist](docs/rollout-checklist.md) records the exact
+contact/destination packet required before any live-write authorization.
+
+Previous checkpoint, 2026-10-23 21:29 UTC: signed revision
 `cec488febcad419ff55a4aa677619a1aef61fcd5` is deployed as Worker
 `3c1f615e-bf2d-403f-9d54-1aed519da582` at 100% traffic. The follow-up adds
 migration `0022` to keep context/event lookups independent of ordinary contact
@@ -181,7 +235,7 @@ pass; canonical freshness polling and all export gates remain unchanged.
 
 The first new production run processed only four contacts in 93.7 seconds, with four QRZ errors and 73.4 seconds of cumulative database wait. That observation exposed a rejected QRZ modification query and excessive sequential round trips. A follow-up now adds a full verification fallback, further batched reads and at most four concurrent read-only background contacts; all 465 tests and required local checks pass, and the follow-up deployed at 16:37 UTC. The first follow-up run processed **20 contacts and 29 destination classifications in 95.3 seconds**, with three errors, eight deferrals and zero attempts. Historical rescan/context pages did not advance: background lane starvation is corrected in the 16:53 release, with its first run advancing two rescan pages, two context pages and 23 contacts. This is a first-run improvement, not sustained capacity acceptance. See the [measured bottleneck and follow-up](docs/reconciliation-investigation.md#first-throughput-release-production-bottlenecks-and-follow-up).
 
-Remaining capacity work: measure the deployed cohort/admission path and resource use, complete general live/vendor fairness and dependency parking, validate larger LoFi source pages, share source coverage where safe, implement outbound identity claims and safe multi-member delivery, add durable queue continuations and run the full 100-account/10,000-contact daily workload alongside 4,000/200,000-contact interruption/fairness/import scenarios. Source pages remain **25 contacts** under the existing vendor budgets. Neither a full 200,000-contact benchmark nor the proposed one-day target is complete. See the [measurement details and acceptance plan](docs/reconciliation-investigation.md).
+Remaining capacity work: measure the deployed cohort/admission path and resource use, complete general live/vendor fairness and dependency parking, validate larger LoFi source pages, share source coverage where safe, build on the completed outbound identity claims with safe multi-member delivery, add durable queue continuations and run the full 100-account/10,000-contact daily workload alongside 4,000/200,000-contact interruption/fairness/import scenarios. Source pages remain **25 contacts** under the existing vendor budgets. Neither a full 200,000-contact benchmark nor the proposed one-day target is complete. See the [measurement details and acceptance plan](docs/reconciliation-investigation.md).
 
 The separate [workload investigation](docs/admin-workload-investigation.md) shows the context backlog is held work awaiting pending operation rereads, not 767 malformed contacts. At 13:23 UTC, the new read-only classification found **1,423 ready for processing**, **2,704 held for operation context**, **five held for routing**, **one held for history review** and **one blocked by callsign validation**. All were background work. LoFi history and context reads share four background requests per five-minute window. A completed operation-list scan does not finish every operation's contacts/events; normal bounded reads must continue, and the historical callsign hold was traced to canonical `our.call` parsing and corrected in deployed revision `32758f5`, without changing owner data. These counts are time-specific and do not establish upload eligibility or a completion estimate.
 
@@ -204,7 +258,7 @@ Immediate fixes are signed on `main`: `32758f5` (general-log projection and scop
 
 The owner requested four individual investigations. Results and the ordered implementation/acceptance plan are recorded in [reconciliation exceptions and capacity](docs/reconciliation-investigation.md).
 - Three QRZ FETCH samples each returned one otherwise matching candidate with only minute precision; the generic ambiguity reason conceals this distinction. Keep a review hold and exact write guards.
-- Two LoTW queries returned six-character grids matching the prefix of the source's eight-character grid, with one exact identity and all other compared location fields agreeing. Do not call this conflicting geography or silently adopt it. Historical precision policy and eight-character outbound grid handling remain open.
+- Two LoTW queries returned six-character grids matching the prefix of the source's eight-character grid, with one exact identity and all other compared location fields agreeing. Do not call this conflicting geography or silently adopt it. Historical precision policy remains open; the later eight-character outbound signer preserves the full supported source grid.
 - The general-log callsign hold contains canonical `our.call`; the narrow parser compatibility fix is implemented with a scoped reprojection migration. The five station-route holds correctly exclude other transmitting stations, including a test suffix. No owner log edits or new routes were made.
 - The five completed runs from 14:05–14:25 UTC each examined two contacts in 128.8–140.7 seconds. At 14:38, 134 operation contexts were complete and 42 pending, with 734 unexpired context-held contacts and both rescans unfinished. Canonical sync was forward. These are processing/dependency observations, not completed reconciliation.
 - Exact production DELETE query plans and local fixtures identified a correlated cleanup scan. The tuple-key rewrite preserves resolution/tenant boundaries and reduces local cleanup from 1,240 ms to 2.74 ms at 4,000 contacts; at 200,000 it takes 172 ms. These are local query measurements, not a deployed throughput claim. Before the new batching work, a 25-record unchanged rescan made 56 sequential database calls and the 200,000-row one-contact selector took 1.36–1.58 seconds locally. The new local measurements above supersede those costs for the implemented paths.
@@ -221,7 +275,7 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 ## Deployed repair evidence
 
 - A retained production sample of 12 generic reconciliation failures contained nonzero milliseconds in all 12 contacts. Projection succeeded for each; strict outbound ADIF conversion rejected the timestamp before vendor requests. The sample establishes this failure path, not the cause of every error or unavailable operation context.
-- Added `contactReconciliationAdif` for read-only identity lookup, matching PoLo/HaLo whole-second truncation while preserving raw source milliseconds and the source fingerprint. Outbound preparation remains blocked for fractional timestamps with `subsecond_export_requires_identity_claim`; durable collision claims are still required for both QRZ and LoTW before those records can be exported.
+- Added `contactReconciliationAdif` for read-only identity lookup, matching PoLo/HaLo whole-second truncation while preserving raw source milliseconds and the source fingerprint. At that checkpoint outbound preparation remained blocked for fractional timestamps with `subsecond_export_requires_identity_claim`; the later identity-claim release replaces that blanket restriction while preserving all rollout gates.
 - Adoption collision quarantine is implemented and tested. If a second source contact claims an already adopted remote identity, both its untransmitted adopted owner and contender become `history_ambiguous`, the existing reservation remains, and later source edits cannot auto-export either contact. This does not grant new timestamp-precision write eligibility.
 - Persist renewed LoFi bearer credentials using a guarded compare-and-set, so stale work cannot overwrite a newer credential version. This fixes a local persistence defect; its contribution to the production context backlog is unconfirmed.
 - Preserve actual history diagnostics while exports are disabled. Projection, credential and preparation errors are distinguished from destination-readback failures instead of being collapsed into a generic reconciliation failure.
@@ -263,13 +317,12 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 
 ## Next action and rollout boundaries
 
-1. Measure and improve the deployed throughput implementation with all gates closed. Verify sustained unique classifications, shared inventory reuse, context/rescan progress, live fairness, retry behavior and resource use from the new telemetry. Keep larger verified source pages, queue continuations and complete 4,000/200,000-contact capacity acceptance open; retain precision and routing holds until their explicit resolution conditions are met.
-2. Complete read-only owner-history reconciliation and review adopted, missing, ambiguous, mismatched and unverified outcomes. Pending rows and elapsed sync time do not prove readiness; a partial/failed inventory cannot establish absence.
-3. Establish the LoFi exhaustive UUID/tombstone/replay boundary, verify backup passkey and secret backup, and complete deployed runtime/resource checks. The owner's existing enrollment and service connections are complete; no fresh signup or root configuration is required.
-4. Implement durable outbound identity collision claims before allowing fractional-timestamp records to export to either destination. Read-only seconds normalization does not authorize lossy outbound identity conversion.
-5. Obtain explicit authorization naming the first exact new source UUIDs, QRZ book and LoTW account; verify scoped QRZ mutation/preservation and Worker-signed LoTW acceptance through readback. Only then review expansion of the allowlist.
+1. Obtain independent source replay/tombstone/retention proof. The 22:19 UTC audit confirms both destination rescans complete, consistent retained births and current payloads, plus two contacts attached to deleted operations. Those contacts stay held; zero pending operation rereads is not evidence they can export.
+2. Diagnose the persistent QRZ read rejections and review the exact trial contacts and every routed destination, including fractional timestamps, full station grids, certificates, identity claims and fresh remote checks. Historical minute-only time, lower grid precision, location mismatch and routing holds require explicit evidence; cron does not approve them.
+3. Add an independent backup passkey (the live account has one active key), confirm secure key backup and prepare the exact first-write packet in the [rollout checklist](docs/rollout-checklist.md).
+4. After those prerequisites, obtain explicit authorization for the named UUIDs, QRZ book and LoTW account. Verify QRZ receipt/readback and LoTW observed acceptance, then close the gates and review before broader scope.
 
-Keep exports disabled throughout backlog recovery. Remaining acceptance work includes source proof, complete owner-history review, exact station/location/mode checks, physical/synced-passkey and mail-client autofill checks, scoped live vendor evidence, deployed resource/cost measurements and a restore/revocation drill. Retain prior QRZ identities until cleanup is separately proven safe. Staging remains intentionally undeployed. See [roadmap](ROADMAP.md), [deployment](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md).
+All five gates remain closed. Unrelated historical exceptions may remain isolated during an explicitly scoped trial; broad automatic coverage needs its own review. Replacement and old-identity cleanup remain disabled until separately proven. Continue resource/cost, restore/revocation, browser/passkey and full workload acceptance before expansion. Staging remains undeployed. See [roadmap](ROADMAP.md), [deployment](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md).
 
 ## Previous follow-up: LoFi connection freshness
 

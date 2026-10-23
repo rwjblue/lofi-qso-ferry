@@ -326,10 +326,11 @@ poll age and oldest eligible work, not just completed turns.
 
 ### 3. Make live delivery economical without weakening write safety
 
-First implement durable outbound identity claims for both vendors, including
-fractional timestamps, collisions and edits. They remain a prerequisite for
-exports. Keep historical precision and eight-character source-grid policy as
-separate review decisions.
+Durable outbound identity claims are implemented for both vendors, including
+fractional timestamps, collisions, edits and retained uncertain attempts.
+Lossless eight-character LoTW station grids are also implemented. These remove
+implementation blockers; historical precision associations, source proof and
+scoped live vendor acceptance remain separate prerequisites for exports.
 
 Introduce immutable attempt membership before enabling multi-contact LoTW
 artifacts. Group only compatible tenant/account, certificate, station location
@@ -344,8 +345,8 @@ blind resubmission. An upload receipt does not prove every member was observed.
 Share certificate validation only within its validated scope and dispatch turn.
 
 For QRZ, retain the final write-adjacent duplicate check and immutable write
-intent. Determine which earlier readbacks can be safely coalesced after identity
-claims exist. Batch readback neighborhoods where responses prove complete
+intent. Determine which earlier readbacks can be safely coalesced using the
+durable identity claims. Batch readback neighborhoods where responses prove complete
 coverage; do not treat cached absence as authority to write. Model required
 calls for sparse and bursty accounts before deciding whether vendor-approved
 budget changes are needed.

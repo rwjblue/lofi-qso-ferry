@@ -4,11 +4,13 @@ All checked-in environments disable exports. Local tests and synthetic signature
 
 ## Current production target
 
-On 2026-10-22 the operator selected `https://ferry.n1rwj.com`, with RP ID `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. Dedicated D1 `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) has all 19 migrations independently verified at `2026-10-23T16:53:42.060Z`. The Worker `lofi-qso-ferry` is deployed read-only at the selected hostname as version `aea20af6-c08d-4718-bc41-2e450d8cc2e4`, source `cb9ea362e2a03e29b7d53793bae95276de7d7341`, with 100% of traffic from `2026-10-23T16:53:28.594528Z`. Its version, deployed revision and live endpoint checks are recorded in [deployment evidence](deployment.md).
+The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
 Production uses the native Cloudflare `EMAIL` binding restricted to `signup@ferry.n1rwj.com`, with that address in `MAIL_FROM`. Sending domain `ferry.n1rwj.com` (`e69af8ef82a140b38eeaef98d417ef30`) is enabled and its `preview_enabled=false` setting was read back. Cloudflare and Google DNS-over-HTTPS both resolved its bounce MX/SPF, DKIM and DMARC records; the parent domain's Fastmail MX records remain unchanged. One verification message was delivered to the owner’s Fastmail inbox through the live signup form. The initial smoke test created no account. Hosted enrollment is now invite only; existing users retain their passkeys and sessions.
 
 Independent `KEK_V1`, `AUTH_SECRET` and `EMAIL_CODE_SECRET` secrets have been provisioned. Their protected local backup is `~/.config/lofi-qso-ferry/production.secrets.json` (file mode `0600`, directory `0700`); 1Password CLI was signed out, so that backup remains necessary until secure secret-manager storage is completed. Never print its contents or commit it. Preserve these keys when resuming deployment rather than generating replacements.
+
+The 21:58 UTC read-only readiness audit found one active account with one active passkey. Register an independent backup key before the first export trial. The protected local application-secret backup exists; secure secret-manager storage remains unconfirmed. See the [personal rollout checklist](rollout-checklist.md) for the exact first-write packet and the distinction between automatic inventory work and manual exception review.
 
 The production configuration keeps `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, `LIVE_WRITE_AUTHORIZATION` empty and `ROLLOUT_QSO_IDS_JSON=[]`. Production `workers.dev` and preview URLs are disabled. The staging placeholder is intentionally undeployed.
 
@@ -55,6 +57,19 @@ migrations or deploy the Worker; `mise run deploy-readonly` builds both browser
 entry points, applies migrations and deploys with the existing export gates
 closed when deployment is requested.
 
+The later readiness release adds `0023_outbound_identity_claims.sql` after
+`0021_scheduler_admission.sql` and `0022_source_context_members.sql`. Permanent
+identity claims and immutable attempt links prevent another source contact from
+reusing a reserved whole-second destination identity. Do not clear these tables
+to unblock a contact. Legacy QRZ mappings are bound only after bounded exact-ID
+reads; unresolved legacy outbound attempts require explicit review. See
+[ownership evidence](evidence-qrz.md#durable-outbound-ownership), including the
+retention requirement for pre-migration LoTW prior-identity evidence. Migration
+`0024_identity_mapping_overlap.sql` repairs mappings created by an older in-flight
+Worker after the initial seed and reserves subsequent mapping changes at the
+ledger boundary. Observe both immediate migration coverage and coverage after
+older scheduled work settles; do not clear a reservation to make that audit pass.
+
 The authenticated Cloudflare CLI remains available through the project task:
 
 ```sh
@@ -98,7 +113,7 @@ The enablement flags are operational gates, not authorization obtained from this
 
 ## Failures, throttling and revocation
 
-Read-only reconciliation compares fractional source timestamps using PoLo/HaLo's whole-second ADIF representation while retaining the full source timestamp and fingerprint. Export preparation still blocks fractional timestamps with `subsecond_export_requires_identity_claim`; this read-only projection does not authorize outbound rounding. See [timestamp and identity evidence](evidence-qrz.md). Source ADIF validation and saved-credential failures have distinct fixed diagnostics; unexpected failures never expose raw vendor errors. Closed export gates do not replace a contact's reconciliation diagnosis with an allowlist warning.
+Read-only reconciliation compares fractional source timestamps using PoLo/HaLo's whole-second ADIF representation while retaining the full source timestamp and fingerprint. Guarded export preparation now requires a durable destination identity claim and immutable attempt linkage before omitting fractional seconds. Claims survive cancellation, uncertainty, source edits and credential revocation; a competing source UUID stays blocked. This local safeguard does not establish the source boundary or authorize live writes. See [timestamp and identity evidence](evidence-qrz.md). Source ADIF validation and saved-credential failures have distinct fixed diagnostics; unexpected failures never expose raw vendor errors. Closed export gates do not replace a contact's reconciliation diagnosis with an allowlist warning.
 
 LoFi token renewal is saved automatically in encrypted storage after successful renewal, even if the following page fails or hits a request budget. Concurrent credential changes, revocation and newer renewals take precedence. This does not advance a failed page's cursor or require reconnecting the account. Pending operation context and unfinished destination rescans still need their normal bounded read turns; the source contact total is not a count of completed destination reconciliations.
 

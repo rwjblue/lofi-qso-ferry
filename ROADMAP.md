@@ -4,6 +4,12 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-23)
 
+The [capacity plan](docs/capacity-plan.md) defines the next implementation sequence
+for 100 accounts creating 10,000 contacts daily alongside large imports. Work has
+started on shared reconciliation reads and guarded batch updates. Fair account
+scheduling, multi-contact delivery, durable continuations and full workload
+verification remain planned; none is implied by the existing throughput release.
+
 Core feature paths, owner enrollment and service linking are implemented. Production remains read-only. The immediate work is to resolve the reconciliation backlog and prove rollout readiness; linking credentials and waiting for cron do not establish that readiness. Fractional-timestamp exports also need durable outbound identity claims before they can be enabled safely.
 1. **Finish read-only reconciliation and improve capacity.** Batched intake, indexed retries, shared encrypted history, four-way background processing and fair source scheduling are deployed (`bbc2346c`, `471e8620`, `cb9ea362`). All 467 tests and required checks pass locally and in CI. The first two fairness runs processed 23 and 15 contacts and advanced source context, with every export gate closed. Next: batch comparisons and guarded writes for contacts sharing history, add targeted wakeups, verify larger source pages, then add durable continuations and run full 4,000/200,000-contact capacity tests. Complete context/rescans and review exceptions before considering first writes. See the [measurements and ordered capacity plan](docs/reconciliation-investigation.md). Waiting for cron alone does not complete these steps.
 2. **Establish the source contract and remaining personal checks.** Complete exhaustive LoFi UUID/tombstone inventory and replay/cutover evidence; verify an independent backup passkey, secret backup and representative deployed signing/resource behavior. Preserve `SOURCE_BOUNDARY_VERIFIED=false` until supported by that evidence.

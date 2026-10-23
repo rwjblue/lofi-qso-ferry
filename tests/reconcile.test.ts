@@ -725,3 +725,173 @@ test("LoTW adoption compares supported location only and requires meaningful fre
     "adopted_existing",
   );
 });
+test("LoTW lower grid precision receives a review hold without truncating or adopting the source", () => {
+  const scope = { ...evidence, destination: "lotw" as const };
+  for (const [localGrid, remoteGrid] of [
+    ["FN31PR12", "FN31PR"],
+    ["FN31PR12", "FN31"],
+    ["FN31PR", "FN31"],
+    ["fn31pr12", "fn31pr"],
+  ]) {
+    const current = Object.freeze({
+      ...source,
+      MY_GRIDSQUARE: localGrid,
+      FREQ: "14.074",
+      MY_STATE: "CT",
+      MODE: "MFSK",
+      SUBMODE: "FT4",
+    });
+    const candidate = Object.freeze({
+      ...remote,
+      MY_GRIDSQUARE: remoteGrid,
+      FREQ: "14.07400",
+      MY_STATE: "CT",
+      MODE: "DATA",
+      APP_LOTW_MODE: "FT4",
+    });
+    const outcome = classifyHistory(current, [candidate], scope);
+    assert.equal(outcome.state, "history_ambiguous");
+    assert.equal(
+      outcome.reason,
+      "LoTW history has lower MY_GRIDSQUARE precision; review the station location before exporting",
+    );
+    assert.equal(outcome.remote, undefined);
+    assert.equal(current.MY_GRIDSQUARE, localGrid);
+    assert.equal(candidate.MY_GRIDSQUARE, remoteGrid);
+  }
+  const current = { ...source, MY_GRIDSQUARE: "FN31PR12" };
+  const candidate = { ...remote, MY_GRIDSQUARE: "FN31PR" };
+  assert.equal(
+    classifyHistory(current, [candidate], evidence).state,
+    "history_mismatch",
+  );
+  assert.equal(
+    classifyHistory(
+      current,
+      [{ ...candidate, MY_GRIDSQUARE: "FN31PR12" }],
+      scope,
+    ).state,
+    "adopted_existing",
+  );
+});
+test("LoTW grid precision review requires valid nested grids and agreement on every other comparison", () => {
+  const scope = { ...evidence, destination: "lotw" as const };
+  const current = {
+    ...source,
+    MY_GRIDSQUARE: "FN31PR12",
+    FREQ: "14.074",
+    MY_STATE: "CT",
+  };
+  const candidate = {
+    ...remote,
+    MY_GRIDSQUARE: "FN31PR",
+    FREQ: "14.074",
+    MY_STATE: "CT",
+  };
+  for (const [expected, candidates, state] of [
+    [current, [{ ...candidate, MY_GRIDSQUARE: "FN31PS" }], "history_mismatch"],
+    [current, [{ ...candidate, MY_GRIDSQUARE: "FN31P?" }], "history_mismatch"],
+    [current, [{ ...candidate, MY_GRIDSQUARE: "FN31P" }], "history_mismatch"],
+    [current, [{ ...candidate, MY_GRIDSQUARE: "FN" }], "history_mismatch"],
+    [current, [{ ...candidate, MY_GRIDSQUARE: "" }], "history_ambiguous"],
+    [{ ...current, MY_GRIDSQUARE: "FN31PR1" }, [candidate], "history_mismatch"],
+    [
+      { ...current, MY_GRIDSQUARE: "FN31PRAB" },
+      [candidate],
+      "history_mismatch",
+    ],
+    [{ ...current, MY_GRIDSQUARE: "FN31" }, [candidate], "history_mismatch"],
+    [current, [{ ...candidate, FREQ: "14.075" }], "history_mismatch"],
+    [current, [{ ...candidate, FREQ: "" }], "history_ambiguous"],
+    [current, [{ ...candidate, MY_STATE: "NY" }], "history_mismatch"],
+    [current, [{ ...candidate, MODE: "SSB" }], "history_ambiguous"],
+    [current, [{ ...candidate, TIME_ON: "1200" }], "history_ambiguous"],
+    [current, [candidate, candidate], "history_ambiguous"],
+  ] as const) {
+    const outcome = classifyHistory(expected, [...candidates], scope);
+    assert.equal(outcome.state, state);
+    assert.doesNotMatch(outcome.reason ?? "", /lower MY_GRIDSQUARE precision/);
+    assert.equal(outcome.remote, undefined);
+  }
+});
+test("LoTW grid precision review ignores unrelated neighbors but requires one exact normalized identity", () => {
+  const scope = { ...evidence, destination: "lotw" as const };
+  const current = {
+    ...source,
+    MY_GRIDSQUARE: "FN31PR12",
+    MODE: "MFSK",
+    SUBMODE: "FT4",
+  };
+  const candidate = {
+    ...remote,
+    MY_GRIDSQUARE: "FN31PR",
+    MODE: "DATA",
+    APP_LOTW_MODE: "FT4",
+  };
+  const neighbor = { ...candidate, TIME_ON: "120002" };
+  for (const candidates of [
+    [candidate, neighbor],
+    [neighbor, candidate],
+  ]) {
+    const outcome = classifyHistory(current, candidates, scope);
+    assert.equal(outcome.state, "history_ambiguous");
+    assert.equal(
+      outcome.reason,
+      "LoTW history has lower MY_GRIDSQUARE precision; review the station location before exporting",
+    );
+    assert.equal(outcome.remote, undefined);
+  }
+  const competing = classifyHistory(
+    current,
+    [candidate, neighbor, { ...candidate, MODE: "MFSK", SUBMODE: "FT4" }],
+    scope,
+  );
+  assert.equal(competing.state, "history_ambiguous");
+  assert.equal(
+    competing.reason,
+    "No unique exact identity, including time precision and mode",
+  );
+  assert.equal(competing.remote, undefined);
+});
+test("precision review outcomes persist as holds without a remote association or an attempt", async () => {
+  const { mf, store } = await database();
+  try {
+    const baseKey = await seed(store);
+    for (const destination of ["qrz", "lotw"] as const) {
+      const key = { ...baseKey, qso: `${destination}-precision` };
+      await store
+        .statement(
+          "UPDATE connections SET kind=? WHERE id='destination'",
+          destination,
+        )
+        .run();
+      const current = { ...source, MY_GRIDSQUARE: "FN31PR12" };
+      const candidate =
+        destination === "qrz"
+          ? { ...remote, MY_GRIDSQUARE: "FN31PR12", TIME_ON: "1200" }
+          : { ...remote, MY_GRIDSQUARE: "FN31PR" };
+      const outcome = classifyHistory(current, [candidate], {
+        ...evidence,
+        destination,
+      });
+      await store.observe(key, "g1", "unchanged-source", 30, false, 0);
+      assert((await adoptHistory(store, key, "g1", outcome, 1)).applied);
+      const held = (await store.ledger(key))!;
+      assert.equal(held.state, "history_ambiguous");
+      assert.equal(held.reason, outcome.reason);
+      assert.equal(held.remote_id, null);
+      assert.equal(held.remote_hash, null);
+      assert.equal(held.source_hash, "unchanged-source");
+      assert.equal(held.provenance, "unknown");
+      assert.deepEqual(await store.lotwIdentities(key), []);
+    }
+    assert.equal(
+      (await store
+        .statement("SELECT COUNT(*) n FROM attempts")
+        .first<{ n: number }>())!.n,
+      0,
+    );
+  } finally {
+    await mf.dispose();
+  }
+});

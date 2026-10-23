@@ -1,5 +1,5 @@
 import type { AdifRecord } from "./adif.ts";
-import { matchQrzHistory } from "./qrz.ts";
+import { matchQrzHistory, sameQrzIdentity } from "./qrz.ts";
 import { canonical, sha256 } from "./security.ts";
 import type { LedgerKey, Store } from "./store.ts";
 import { lotwMode } from "./signing.ts";
@@ -134,6 +134,31 @@ export function classifyHistory(
         );
     }
   const match = matchQrzHistory(matchingSource, matchingRemote);
+  if (evidence.destination === "lotw" && match.state === "history_mismatch") {
+    const exact = matchingRemote.filter((record) =>
+      sameQrzIdentity(matchingSource, record),
+    );
+    const candidate = exact.length === 1 ? exact[0] : undefined;
+    const localGrid = (matchingSource.MY_GRIDSQUARE ?? "").toUpperCase();
+    const remoteGrid = (candidate?.MY_GRIDSQUARE ?? "").toUpperCase();
+    const validGrid = /^[A-R]{2}[0-9]{2}(?:[A-X]{2}(?:[0-9]{2})?)?$/;
+    if (
+      candidate &&
+      validGrid.test(localGrid) &&
+      validGrid.test(remoteGrid) &&
+      remoteGrid.length < localGrid.length &&
+      localGrid.startsWith(remoteGrid) &&
+      // This projection is diagnostic only: every other comparison must agree,
+      // and a lower-precision location never becomes an adopted association.
+      matchQrzHistory({ ...matchingSource, MY_GRIDSQUARE: remoteGrid }, [
+        candidate,
+      ]).state === "adopted_existing"
+    )
+      return result(
+        "history_ambiguous",
+        "LoTW history has lower MY_GRIDSQUARE precision; review the station location before exporting",
+      );
+  }
   if (match.state === "adopted_existing") {
     if (
       evidence.destination === "qrz" &&

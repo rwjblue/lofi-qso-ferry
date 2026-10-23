@@ -558,12 +558,53 @@ export function matchQrzHistory(
       reason: "Source operating location evidence is unavailable",
     };
   const exact = candidates.filter((record) => sameQrzIdentity(source, record));
-  if (exact.length !== 1)
+  if (exact.length !== 1) {
+    // Explain a precision-only hold without weakening the identity comparison
+    // shared by adoption and writes. Competing candidates remain ambiguous.
+    const candidate = candidates.length === 1 ? candidates[0] : undefined;
+    if (
+      candidate &&
+      lowerTimePrecision(source, candidate) &&
+      !operatingEvidenceMismatch(source, candidate)
+    )
+      return {
+        state: "history_ambiguous",
+        reason:
+          "Destination history has minute-only TIME_ON precision; source includes seconds and requires association review",
+      };
     return {
       state: "history_ambiguous",
       reason: "No unique exact identity, including time precision and mode",
     };
+  }
   const remote = exact[0];
+  return (
+    operatingEvidenceMismatch(source, remote) ?? {
+      state: "adopted_existing",
+      record: remote,
+    }
+  );
+}
+function lowerTimePrecision(source: AdifRecord, remote: AdifRecord): boolean {
+  if (
+    !/^\d{6}$/.test(source.TIME_ON ?? "") ||
+    !/^\d{4}$/.test(remote.TIME_ON ?? "") ||
+    source.TIME_ON.slice(0, 4) !== remote.TIME_ON ||
+    !sameQrzIdentity({ ...source, TIME_ON: remote.TIME_ON }, remote)
+  )
+    return false;
+  try {
+    adifInstant(source);
+    adifInstant(remote);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function operatingEvidenceMismatch(
+  source: AdifRecord,
+  remote: AdifRecord,
+): Extract<QrzMatch, { reason: string }> | null {
   for (const field of ["FREQ", "FREQ_RX"])
     if (source[field]) {
       const local = normalizedFrequency(source[field]);
@@ -601,7 +642,7 @@ export function matchQrzHistory(
         state: remote[field] ? "history_mismatch" : "history_ambiguous",
         reason: `Operating location ${field} differs or is absent`,
       };
-  return { state: "adopted_existing", record: remote };
+  return null;
 }
 /** Cleanup is deliberately unavailable until the duplicate/deletion contract is live-proven. */
 export function mayCleanOldQrzIdentity(evidence: {

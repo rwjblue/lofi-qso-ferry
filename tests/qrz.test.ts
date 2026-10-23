@@ -6,6 +6,7 @@ import {
   parseQrzResponse,
   mergeQrzCorrection,
   matchQrzHistory,
+  sameQrzIdentity,
   mayCleanOldQrzIdentity,
 } from "../src/qrz.ts";
 import { parseAdif, serializeAdifRecord } from "../src/adif.ts";
@@ -115,6 +116,75 @@ test("adoption requires exact precision and own location, leaves narrative untou
     "history_ambiguous",
   );
   assert.equal(matchQrzHistory(contact, []).state, "missing_current_identity");
+});
+test("a single compatible minute-only history record gets a precision review reason without matching write identity", () => {
+  const expected = { ...contact, FREQ: "14.074" };
+  const minuteOnly = { ...remote, TIME_ON: "1200", FREQ: "14.07400" };
+  for (const time of ["120000", "120001", "120059"]) {
+    const current = { ...expected, TIME_ON: time };
+    assert.equal(sameQrzIdentity(current, minuteOnly), false);
+    assert.deepEqual(matchQrzHistory(current, [minuteOnly]), {
+      state: "history_ambiguous",
+      reason:
+        "Destination history has minute-only TIME_ON precision; source includes seconds and requires association review",
+    });
+  }
+});
+test("time precision review does not hide competing, invalid or otherwise conflicting history", () => {
+  const expected = { ...contact, FREQ: "14.074" };
+  const minuteOnly = { ...remote, TIME_ON: "1200", FREQ: "14.074" };
+  for (const [current, candidates] of [
+    [expected, [minuteOnly, minuteOnly]],
+    [expected, [{ ...minuteOnly, TIME_ON: "1201" }]],
+    [expected, [{ ...minuteOnly, TIME_ON: "120" }]],
+    [expected, [{ ...minuteOnly, TIME_ON: "" }]],
+    [expected, [{ ...minuteOnly, CALL: "W2AW" }]],
+    [expected, [{ ...minuteOnly, MODE: "SSB" }]],
+    [expected, [{ ...minuteOnly, FREQ: "14.075" }]],
+    [expected, [{ ...minuteOnly, FREQ: "" }]],
+    [expected, [{ ...minuteOnly, MY_GRIDSQUARE: "FN32" }]],
+    [expected, [{ ...minuteOnly, MY_GRIDSQUARE: "" }]],
+    [{ ...expected, TIME_ON: "120060" }, [minuteOnly]],
+    [{ ...expected, TIME_ON: "240001" }, [{ ...minuteOnly, TIME_ON: "2400" }]],
+    [
+      { ...expected, QSO_DATE: "20260230" },
+      [{ ...minuteOnly, QSO_DATE: "20260230" }],
+    ],
+  ] as const) {
+    const match = matchQrzHistory(current, [...candidates]);
+    assert.equal(match.state, "history_ambiguous");
+    assert("reason" in match);
+    assert.equal(
+      match.reason,
+      "No unique exact identity, including time precision and mode",
+    );
+  }
+});
+test("minute-only history cannot authorize either QRZ replacement path", async () => {
+  const actions: (string | null)[] = [];
+  const client = new QrzClient("synthetic", {
+    writesEnabled: true,
+    replacementContractVerified: true,
+    fetch: async (_, init) => {
+      const action = new URLSearchParams(String(init?.body)).get("ACTION");
+      actions.push(action);
+      assert.equal(action, "FETCH");
+      return encode({
+        RESULT: "OK",
+        COUNT: "1",
+        ADIF: serializeAdifRecord({ ...remote, TIME_ON: "1200" }),
+      });
+    },
+  });
+  await assert.rejects(
+    client.replaceSafely("40", contact, "remote_preserved"),
+    /identity differs/,
+  );
+  await assert.rejects(
+    client.replacePrepared("40", contact, "remote_preserved"),
+    /mapping changed/,
+  );
+  assert.deepEqual(actions, ["FETCH", "FETCH"]);
 });
 test("structured correction preserves adopted narrative and remote-owned fields", () => {
   const merged = mergeQrzCorrection(

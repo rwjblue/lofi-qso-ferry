@@ -35,14 +35,14 @@ Source review separately includes eight test contacts and one blocked contact.
 Waiting for cron advances available inventory and retry work; it does not approve
 ambiguous identities, lower-precision locations or missing routes.
 
-| Readiness item            | Evidence and remaining work                                                                                                                                                                                              |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Accounts and connections  | Owner enrollment and all three connections are complete. The live audit found one active passkey; add an independent backup key. Secure secret-manager backup remains unconfirmed.                                       |
-| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.  |
-| Source boundary           | Local replay, tombstone and cutover guards are implemented. Exhaustive UUID/tombstone coverage and the live replay/retention contract are not established. A completed cursor alone is insufficient.                     |
-| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified. |
-| LoTW station location     | Lossless eight-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Historical lower-precision associations and live ARRL acceptance remain unproved.                     |
-| First vendor writes       | No first-write trial is authorized or performed. Prepare exact source UUIDs, destination identities, projected fields and expected readback before requesting it.                                                        |
+| Readiness item            | Evidence and remaining work                                                                                                                                                                                                       |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered. A second key is recommended, not an export gate; operator recovery remains possible. Secure secret-manager backup remains unconfirmed. |
+| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.           |
+| Source boundary           | Local replay, tombstone and cutover guards are implemented. Exhaustive UUID/tombstone coverage and the live replay/retention contract are not established. A completed cursor alone is insufficient.                              |
+| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.          |
+| LoTW station location     | Lossless eight-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Historical lower-precision associations and live ARRL acceptance remain unproved.                              |
+| First vendor writes       | No first-write trial is authorized or performed. Prepare exact source UUIDs, destination identities, projected fields and expected readback before requesting it.                                                                 |
 
 ## Finish reconciliation and review exceptions
 
@@ -85,8 +85,13 @@ merely to bypass a safety check.
 Prepare this restricted packet before asking for live-write authorization. Keep
 private contact details out of repository documentation.
 1. Record the signed deployed revision, closed-gate readback and completed source
-   boundary evidence. Verify access to the existing production key backup and an
-   independent sign-in recovery method; do not rotate or recreate keys.
+   boundary evidence. Verify access to the existing production encryption-key
+   backup; do not rotate or recreate keys. A second independent passkey is
+   recommended but is not a hard requirement for this owner-operated pilot.
+   Operator database recovery can associate a newly verified passkey with the
+   existing account; there is no automated recovery tool, and the lost private
+   passkey cannot be reconstructed. Record and review any such recovery, revoke
+   lost credentials and sessions, and preserve tenant/connection ownership.
 2. Select one genuine new source UUID, then freeze its source/operation generation,
    exact timestamp and projected station/contact fields. Prefer a normal contact
    that exercises fractional time and the actual eight-character station grid.

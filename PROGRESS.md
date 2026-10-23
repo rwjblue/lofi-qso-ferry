@@ -26,7 +26,7 @@ At 22:47:21.247 UTC, 378 LoTW claims cover every mapped identity; attempts,
 cutovers, temporary guards and legacy holds remain zero.
 
 Both destination rescans are complete. Source replay/deletion/retention proof,
-the two deleted-operation holds, backup passkey/secret-manager confirmation and
+the two deleted-operation holds, encryption-key backup confirmation and
 exact-contact first-write review remain the next work; see the
 [rollout checklist](docs/rollout-checklist.md). A larger capacity claim still needs
 its separate workload acceptance evidence.
@@ -319,7 +319,7 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 
 1. Obtain independent source replay/tombstone/retention proof. The 22:19 UTC audit confirms both destination rescans complete, consistent retained births and current payloads, plus two contacts attached to deleted operations. Those contacts stay held; zero pending operation rereads is not evidence they can export.
 2. Diagnose the persistent QRZ read rejections and review the exact trial contacts and every routed destination, including fractional timestamps, full station grids, certificates, identity claims and fresh remote checks. Historical minute-only time, lower grid precision, location mismatch and routing holds require explicit evidence; cron does not approve them.
-3. Add an independent backup passkey (the live account has one active key), confirm secure key backup and prepare the exact first-write packet in the [rollout checklist](docs/rollout-checklist.md).
+3. Confirm the existing encryption-key backup and prepare the exact first-write packet in the [rollout checklist](docs/rollout-checklist.md). A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account. The live account still has one active key.
 4. After those prerequisites, obtain explicit authorization for the named UUIDs, QRZ book and LoTW account. Verify QRZ receipt/readback and LoTW observed acceptance, then close the gates and review before broader scope.
 
 All five gates remain closed. Unrelated historical exceptions may remain isolated during an explicitly scoped trial; broad automatic coverage needs its own review. Replacement and old-identity cleanup remain disabled until separately proven. Continue resource/cost, restore/revocation, browser/passkey and full workload acceptance before expansion. Staging remains undeployed. See [roadmap](ROADMAP.md), [deployment](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md).

@@ -282,3 +282,61 @@ test("an expired anchor does not bypass CA authorization or signature checks", a
     false,
   );
 });
+
+test("renewed pinned CA certificates sharing a subject and key both establish trust", async () => {
+  const retired = certificate("LoTW same-key CA renewal", rootKey, {
+    ca: true,
+    to: "2025-01-01T00:00:00Z",
+  });
+  const renewed = certificate("LoTW same-key CA renewal", rootKey, {
+    ca: true,
+    from: "2024-01-01T00:00:00Z",
+    to: "2034-01-01T00:00:00Z",
+  });
+  assert.notEqual(pem(retired), pem(renewed));
+  const leaf = certificate("Current station", leafKey, { issuer: renewed });
+  for (const roots of [
+    [pem(retired), pem(renewed)],
+    [pem(renewed), pem(retired)],
+  ])
+    assert.equal(
+      await verifySigningCredentialTrust(credential(leaf), roots, now),
+      true,
+    );
+});
+
+test("renewed same-key intermediates find a current path while expired-only paths fail", async () => {
+  const anchor = certificate("Pinned renewal root", rootKey, { ca: true });
+  const expired = certificate("LoTW same-key intermediate", intermediateKey, {
+    issuer: anchor,
+    ca: true,
+    to: "2026-01-01T00:00:00Z",
+  });
+  const renewed = certificate("LoTW same-key intermediate", intermediateKey, {
+    issuer: anchor,
+    ca: true,
+    from: "2025-01-01T00:00:00Z",
+    to: "2030-01-01T00:00:00Z",
+  });
+  const leaf = certificate("Current station", leafKey, { issuer: renewed });
+  for (const chain of [
+    [expired, renewed],
+    [renewed, expired],
+  ])
+    assert.equal(
+      await verifySigningCredentialTrust(
+        credential(leaf, chain),
+        [pem(anchor)],
+        now,
+      ),
+      true,
+    );
+  assert.equal(
+    await verifySigningCredentialTrust(
+      credential(leaf, [expired]),
+      [pem(anchor)],
+      now,
+    ),
+    false,
+  );
+});

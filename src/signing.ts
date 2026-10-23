@@ -247,32 +247,53 @@ async function verifyTrustedChain(
       forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes();
     const trusted = new Set(roots.map(fingerprint));
     const candidates = [...input.filter((cert) => cert !== leaf), ...roots];
-    let child = leaf;
-    const seen = new Set<string>();
-    for (let depth = 0; depth < 8; depth++) {
+    const allowedCritical = new Set(["2.5.29.19", "2.5.29.15"]);
+    const supportedConstraints = (cert: forge.pki.Certificate) =>
+      !cert.extensions.some(
+        (ext) => ext.critical && !allowedCritical.has(ext.id),
+      );
+    let visited = 0;
+    const walk = async (
+      child: forge.pki.Certificate,
+      depth: number,
+      seen: Set<string>,
+    ): Promise<boolean> => {
+      if (depth >= 8 || ++visited > 64) return false;
       const id = fingerprint(child);
       if (seen.has(id)) return false;
-      seen.add(id);
       // Exact, explicitly configured CA anchors are trust inputs, not members
       // of the prospective certification path (RFC 5280 section 6.1.1).
       if (trusted.has(id)) return child !== leaf;
-      if (now < child.validity.notBefore || now > child.validity.notAfter)
+      if (
+        now < child.validity.notBefore ||
+        now > child.validity.notAfter ||
+        !supportedConstraints(child)
+      )
         return false;
-      const issuers = candidates.filter((parent) => child.isIssuer(parent));
-      const unique = [
+      const path = new Set([...seen, id]);
+      const issuers = [
         ...new Map(
-          issuers.map((parent) => [fingerprint(parent), parent]),
+          candidates
+            .filter((parent) => child.isIssuer(parent))
+            .map((parent) => [fingerprint(parent), parent]),
         ).values(),
       ];
-      const validIssuers: forge.pki.Certificate[] = [];
-      for (const parent of unique) {
+      // Prefer anchors, but allow alternate paths for renewed certificates
+      // sharing an issuer name and key. A unique issuer DN is not required.
+      issuers.sort(
+        (left, right) =>
+          Number(trusted.has(fingerprint(right))) -
+          Number(trusted.has(fingerprint(left))),
+      );
+      for (const parent of issuers) {
         const basic: unknown = parent.getExtension("basicConstraints");
         const usage: unknown = parent.getExtension("keyUsage");
         if (
           !basic ||
           typeof basic !== "object" ||
           !("cA" in basic) ||
-          basic.cA !== true
+          basic.cA !== true ||
+          !supportedConstraints(parent)
         )
           continue;
         if (
@@ -288,28 +309,18 @@ async function verifyTrustedChain(
             usage.keyCertSign !== true)
         )
           continue;
-        // Unknown critical constraints must not be silently ignored.
-        const allowedCritical = new Set(["2.5.29.19", "2.5.29.15"]);
         if (
-          [child, parent].some((cert) =>
-            cert.extensions.some(
-              (ext) => ext.critical && !allowedCritical.has(ext.id),
-            ),
-          )
+          (await verifyCertificateSignature(child, parent)) &&
+          (await walk(parent, depth + 1, path))
         )
-          continue;
-        if (await verifyCertificateSignature(child, parent))
-          validIssuers.push(parent);
+          return true;
       }
-      // ARRL rotates keys while retaining CA names. A matching issuer DN
-      // alone cannot disambiguate current and historical trust anchors.
-      if (validIssuers.length !== 1) return false;
-      child = validIssuers[0];
-    }
+      return false;
+    };
+    return await walk(leaf, 0, new Set());
   } catch {
     return false;
   }
-  return false;
 }
 /** Recheck normalized public certificates against the current trust policy.
  * Previously saved trust booleans and uploaded issuers never establish trust.

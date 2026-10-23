@@ -60,7 +60,7 @@ export async function purgeResolvedSource(store: Store) {
       `DELETE FROM private_data WHERE kind='source' AND EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=private_data.tenant AND w.source=private_data.connection AND w.private_id=private_data.id AND (w.tenant,w.source,w.private_id) IN(${resolved}))`,
     ),
     store.statement(
-      "UPDATE source_work SET state='archived',expires_at=0,reason=NULL WHERE kind='qso' AND is_event=0 AND NOT EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=source_work.tenant AND p.connection=source_work.source AND p.id=source_work.private_id AND p.kind='source')",
+      `UPDATE source_work SET state='archived',expires_at=0,reason=NULL WHERE kind='qso' AND is_event=0 AND (tenant,source,private_id) IN(${resolved}) AND NOT EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=source_work.tenant AND p.connection=source_work.source AND p.id=source_work.private_id AND p.kind='source')`,
     ),
   ]);
 }

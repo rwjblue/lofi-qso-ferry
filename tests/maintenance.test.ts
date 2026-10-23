@@ -117,3 +117,29 @@ test("resolved source purge keeps server watermark and never purges another tena
     await mf.dispose();
   }
 });
+
+test("expired unresolved source metadata stays available for background repair", async () => {
+  const { mf, store, db } = await database();
+  try {
+    await intakeSchema(db);
+    const key = await seed(store);
+    await store.observe(key, "g", "h", 30);
+    await store
+      .statement(
+        "INSERT INTO source_work(tenant,source,id,kind,private_id,revision,state,reason,expires_at) VALUES('a','source','q1','qso','expired-body','r1','expired','source payload expired; current reread required',0)",
+      )
+      .run();
+    await purgeResolvedSource(store);
+    assert.deepEqual(
+      await store
+        .statement("SELECT state,reason FROM source_work WHERE id='q1'")
+        .first(),
+      {
+        state: "expired",
+        reason: "source payload expired; current reread required",
+      },
+    );
+  } finally {
+    await mf.dispose();
+  }
+});

@@ -48,6 +48,8 @@ The default quiet period is 30 minutes, configurable between 20 and 60 minutes. 
 
 Use per-tenant/destination leases with expirations and fencing tokens, uniqueness constraints, and conditional updates. [D1 batches are transactional](https://developers.cloudflare.com/d1/worker-api/d1-database/), but they cannot make a database commit and an external request atomic. Do not hold a transaction across network I/O or promise exactly-once vendor delivery. Design retries and uncertain outcomes explicitly. Apply bounded backoff with jitter, honor vendor throttling, and isolate authentication, validation, and transient network failures.
 
+Persist one atomic request budget and cooldown per vendor across tenants and Worker invocations. Reads, pagination, certificate/authentication requests and uploads share the budget; background history consumes a smaller allowance within it. Honor `Retry-After` on 429 and 503 without clearing cooldowns at window boundaries. Reserve scheduler capacity for forward arrivals and meaningful corrections, while retaining separate bounded history turns. Pin each prepared attempt's traffic class so historical readback remains background. Admission denial before network I/O preserves the same unsent artifact; ambiguous dispatched writes require readback. See [operations](operations.md#failures-throttling-and-revocation) for current policies and migration requirements.
+
 ## Minimal retained state
 
 The stable ledger key is `(tenant, linked LoFi account, QSO UUID, logical destination)`. A logical QRZ destination includes the account/book; a logical LoTW destination identifies the account. Key rotation, certificate renewal, and reconnecting the same destination preserve that identity and its history.

@@ -1,5 +1,18 @@
 # Implementation progress
 
+Local follow-up, 2026-10-23: the next reconciliation cohort slice is implemented
+in separate logical commits and passes **512 tests**, formatting, lint, types and
+the Worker build. It shares observation/history reads and guarded outcomes while
+preserving per-contact source/evidence fences, collision quarantine and failed
+partition isolation. The warm 20-contact fixture uses **19 cohort RPCs** instead
+of 400 and **86 complete-tick RPCs** instead of 467; SQL falls from 939 to 556.
+Reproduce with `mise exec -- npx tsx scripts/benchmark-reconciliation-cohort.ts`.
+Push and deployment are pending; the latest attempt to sign the push failed in
+1Password before remote publication. Production still runs the fairness release
+below with exports disabled. See the [capacity plan](docs/capacity-plan.md) for
+remaining work, including fair account admission, economical live delivery and
+full workload acceptance.
+
 Last checkpoint: 2026-10-23 17:05 UTC. The source-lane fairness correction is deployed as signed revision `cb9ea362e2a03e29b7d53793bae95276de7d7341`, Worker `aea20af6-c08d-4718-bc41-2e450d8cc2e4`, at 100% traffic. It rotates contact processing, historical scans and context recovery so a slow batch cannot repeatedly starve other background work. The initial batching/shared-history release and QRZ/concurrency follow-up are also deployed. All **467 tests** and required checks passed locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39991118470), after correcting a documentation-format error. That CI revision changes only documentation from the deployed code. Nineteen migrations are applied. Independent deployed settings and health confirm all five export gates closed; zero attempts and cutovers were verified again at 17:03:59 UTC. The first two fairness runs processed 23 and 15 contacts, respectively, while advancing source context; all three rotation positions were exercised. Full reconciliation and end-to-end capacity remain unfinished. The owner authorizes signed logical commits directly to `origin/main`; no PRs. Backlog repair and deployment do not authorize real logbook writes.
 
 Current follow-up: measure sustained production classification/context progress and remaining bottlenecks before planning exact-contact first writes. The owner has enrolled and linked LoFi, QRZ and LoTW. The pre-repair production snapshot found **4,134 source contacts**, including **3,106 pending** and **767 context-unavailable** contacts. Separately, each destination had **255 ledger rows**: **253 generic readback errors**, one pending row, and one QRZ-ambiguous or LoTW-mismatched row. There were **zero export attempts**. These are the historical diagnostic baseline; the dated snapshots below show limited recovery before the throughput work, not a cleared backlog.

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { serializeAdifRecord } from "../src/adif.ts";
 import { tick } from "../src/service.ts";
 import { seed } from "./helpers.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
@@ -21,6 +22,146 @@ async function count(
     .statement(`SELECT COUNT(*) n FROM ${table} WHERE ${where}`)
     .first<{ n: number }>())!.n;
 }
+test("an idle drain polls a completed source and processes each contact only once", async (t) => {
+  const h = await schedulerFixture();
+  const wallClock = t.mock.method(Date, "now", () => FIXTURE_NOW);
+  try {
+    const result = await tick(h.env, h.fetcher, FIXTURE_NOW);
+    assert.equal(result.stopReason, "idle");
+    assert.equal(result.elapsedMs, 0);
+    assert.equal(result.errors, 0);
+    assert.equal(result.contacts, 1);
+    assert.equal(result.attempts, 0);
+    assert.equal(h.calls.sourceSync, 1);
+    assert.equal(h.calls.reread, 1);
+    assert.equal(h.calls.qrzReads, 1);
+    assert.equal(h.calls.lotwQueries, 1);
+  } finally {
+    wallClock.mock.restore();
+    await h.mf.dispose();
+  }
+});
+test("one invocation resumes incomplete source pages and stops polling at completion", async () => {
+  const h = await schedulerFixture();
+  try {
+    await h.store
+      .statement("UPDATE connections SET status='disabled' WHERE kind!='lofi'")
+      .run();
+    let pages = 0;
+    const pagedSource: typeof fetch = async (input, init) => {
+      if (new URL(String(input)).pathname !== "/v1/sync")
+        return h.fetcher(input, init);
+      pages++;
+      assert(pages <= 2);
+      const body = JSON.parse(String(init?.body));
+      if (pages === 2) assert.equal(body.meta.sync.qsos.cursor, "page-two");
+      return Response.json({
+        account: { uuid: "account-fixture" },
+        operations: [],
+        qsos: [
+          {
+            ...h.qso,
+            uuid: `page-${pages}`,
+            operation: null,
+            our: { stationCall: "W1AW", grid: "FN31AA", dxccCode: 291 },
+            syncedAtMillis: 200 - pages,
+          },
+        ],
+        meta: {
+          operations: { records_left: 0 },
+          qsos:
+            pages === 1
+              ? { records_left: 1, next_cursor: "page-two" }
+              : { records_left: 0 },
+        },
+      });
+    };
+    const result = await tick(h.env, pagedSource, FIXTURE_NOW);
+    assert.equal(result.stopReason, "idle");
+    assert.equal(result.errors, 0);
+    assert.equal(result.contacts, 2);
+    assert(result.rounds > 1);
+    assert.equal(pages, 2);
+    assert.equal(h.calls.reread, 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+test("an empty incomplete source page yields without repeatedly spending the vendor budget", async (t) => {
+  const h = await schedulerFixture();
+  const wallClock = t.mock.method(Date, "now", () => FIXTURE_NOW);
+  let pages = 0;
+  const emptySource: typeof fetch = async (input, init) => {
+    if (new URL(String(input)).pathname !== "/v1/sync")
+      return h.fetcher(input, init);
+    pages++;
+    return Response.json({
+      account: { uuid: "account-fixture" },
+      operations: [],
+      qsos: [],
+      meta: {
+        operations: { records_left: 0 },
+        qsos: { records_left: 1 },
+      },
+    });
+  };
+  try {
+    const result = await tick(h.env, emptySource, FIXTURE_NOW);
+    assert.equal(result.stopReason, "idle");
+    assert.equal(result.errors, 0);
+    assert.equal(result.deferred, 0);
+    assert.equal(result.contacts, 0);
+    assert.equal(pages, 1);
+    const cursor = await h.store
+      .statement("SELECT cursor FROM cursors WHERE stream='sync'")
+      .first<{ cursor: string }>();
+    assert.equal(JSON.parse(cursor!.cursor).mode, "backfill");
+  } finally {
+    wallClock.mock.restore();
+    await h.mf.dispose();
+  }
+});
+test("failed operation context reads yield the invocation instead of spinning", async (t) => {
+  const h = await schedulerFixture();
+  h.errors.reread = true;
+  const wallClock = t.mock.method(Date, "now", () => FIXTURE_NOW);
+  try {
+    const result = await tick(h.env, h.fetcher, FIXTURE_NOW);
+    assert.equal(result.stopReason, "idle");
+    assert.equal(result.errors, 1);
+    assert.equal(result.contacts, 0);
+    assert.equal(h.calls.sourceSync, 1);
+    assert.equal(h.calls.reread, 1);
+  } finally {
+    wallClock.mock.restore();
+    await h.mf.dispose();
+  }
+});
+test("the wall-time deadline stops a drain before starting more vendor work", async (t) => {
+  const h = await schedulerFixture();
+  let wall = FIXTURE_NOW;
+  const wallClock = t.mock.method(Date, "now", () => wall);
+  const slowSource: typeof fetch = async (input, init) => {
+    const response = await h.fetcher(input, init);
+    if (new URL(String(input)).pathname === "/v1/sync") wall += 90_001;
+    return response;
+  };
+  try {
+    const result = await tick(h.env, slowSource, FIXTURE_NOW);
+    assert.equal(result.stopReason, "deadline");
+    assert.equal(result.elapsedMs, 90_001);
+    assert.equal(result.errors, 0);
+    assert.equal(result.contacts, 0);
+    assert.equal(result.attempts, 0);
+    assert.equal(h.calls.sourceSync, 1);
+    assert.equal(h.calls.reread, 0);
+    assert.equal(h.calls.qrzReads, 0);
+    assert.equal(h.calls.lotwQueries, 0);
+  } finally {
+    wallClock.mock.restore();
+    await h.mf.dispose();
+  }
+});
 test("full scheduler adopts both vendors read-only, purges raw source and ignores template-only changes", async () => {
   const h = await schedulerFixture();
   try {
@@ -310,7 +451,7 @@ test("no-query LoTW permits only a durably new forward UUID after cutover, inclu
   }
 });
 
-test("failed sources and confirmation turns cannot starve a third isolated tenant", async () => {
+test("one invocation visits every failed source and confirmation turns remain fair", async () => {
   const h = await schedulerFixture();
   try {
     for (const tenant of ["b", "c"]) {
@@ -325,7 +466,6 @@ test("failed sources and confirmation turns cannot starve a third isolated tenan
     const unavailable = async () =>
       new Response("unavailable", { status: 503 });
     await tick(h.env, unavailable as typeof fetch, FIXTURE_NOW);
-    await tick(h.env, unavailable as typeof fetch, FIXTURE_NOW + 300000);
     const sources = (
       await h.store
         .statement(
@@ -335,6 +475,7 @@ test("failed sources and confirmation turns cannot starve a third isolated tenan
     ).results;
     assert.equal(sources.length, 3);
     assert(sources.every((row) => row.last_poll_at !== null));
+    await tick(h.env, unavailable as typeof fetch, FIXTURE_NOW + 300000);
     const health = (
       await h.store
         .statement("SELECT config FROM connections WHERE kind='lofi'")
@@ -359,7 +500,7 @@ test("failed sources and confirmation turns cannot starve a third isolated tenan
   }
 });
 
-test("unresolved attempts yield bounded outbox slots without becoming retryable", async () => {
+test("one invocation drains unresolved attempts without repeating them or making them retryable", async () => {
   const h = await schedulerFixture();
   try {
     for (let i = 0; i < 9; i++) {
@@ -390,19 +531,21 @@ test("unresolved attempts yield bounded outbox slots without becoming retryable"
         )
         .run();
     }
-    await tick(h.env, h.fetcher, FIXTURE_NOW);
+    const first = await tick(h.env, h.fetcher, FIXTURE_NOW);
+    assert.equal(first.attempts, 9);
     assert.equal(
       await count(h, "attempt_state", `updated_at=${FIXTURE_NOW}`),
-      6,
+      9,
     );
-    await tick(h.env, h.fetcher, FIXTURE_NOW + 1);
+    const repeated = await tick(h.env, h.fetcher, FIXTURE_NOW + 1);
+    assert.equal(repeated.attempts, 0);
     const row = await h.store
       .statement(
         "SELECT state,updated_at FROM attempt_state WHERE tenant='a' AND attempt='unresolved-8'",
       )
       .first<{ state: string; updated_at: number }>();
     assert.equal(row?.state, "submitted");
-    assert.equal(row?.updated_at, FIXTURE_NOW + 1);
+    assert.equal(row?.updated_at, FIXTURE_NOW);
     assert.equal(h.calls.qrzWrites + h.calls.lotwUploads, 0);
     assert.equal(await count(h, "attempts"), 9);
   } finally {
@@ -424,7 +567,10 @@ test("new forward arrivals precede historical reconciliation, even with old QSO 
       });
     const first = await tick(h.env, h.fetcher, FIXTURE_NOW);
     assert.equal(first.errors, 0);
-    assert.equal(first.contacts, 4);
+    assert.equal(first.contacts, 11);
+    assert(first.rounds > 1);
+    assert.equal(first.stopReason, "idle");
+    assert.equal(h.calls.sourceSync, 1);
     h.changes.qsos.push({
       ...h.qso,
       uuid: "offline-new",
@@ -445,7 +591,8 @@ test("new forward arrivals precede historical reconciliation, even with old QSO 
     };
     const second = await tick(h.env, observed, FIXTURE_NOW + 300000);
     assert.equal(second.errors, 0);
-    assert.equal(second.contacts, 5);
+    // The initial LoTW background allowance leaves q1 awaiting readback too.
+    assert.equal(second.contacts, 12);
     assert.match(lookups[0]!, /CALL:N9LIVE/);
     assert(await h.store.ledger({ ...key("destination"), qso: "offline-new" }));
     assert.equal(
@@ -461,7 +608,7 @@ test("new forward arrivals precede historical reconciliation, even with old QSO 
   }
 });
 
-test("historical attempts receive two turns while six live turns stay reserved", async () => {
+test("successive fair rounds drain live and historical attempts in one invocation", async () => {
   const h = await schedulerFixture();
   try {
     for (const priority of ["background", "live"] as const)
@@ -494,14 +641,16 @@ test("historical attempts receive two turns while six live turns stay reserved",
       }
     const result = await tick(h.env, h.fetcher, FIXTURE_NOW);
     assert.equal(result.errors, 0);
-    assert.equal(result.attempts, 8);
+    assert.equal(result.attempts, 18);
+    assert(result.rounds > 1);
+    assert.equal(result.stopReason, "idle");
     assert.equal(
       await count(
         h,
         "attempt_state",
         `priority='live' AND updated_at=${FIXTURE_NOW}`,
       ),
-      6,
+      9,
     );
     assert.equal(
       await count(
@@ -509,9 +658,80 @@ test("historical attempts receive two turns while six live turns stay reserved",
         "attempt_state",
         `priority='background' AND updated_at=${FIXTURE_NOW}`,
       ),
-      2,
+      9,
     );
     assert.equal(h.calls.lotwUploads, 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("live delivery keeps request capacity instead of accumulating prepared uploads", async () => {
+  const h = await schedulerFixture();
+  const scopedReadback: typeof fetch = async (input, init) => {
+    const response = await h.fetcher(input, init);
+    const url = new URL(String(input));
+    if (url.pathname !== "/lotwuser/lotwreport.adi") return response;
+    await response.body?.cancel();
+    const date = url.searchParams.get("qso_startdate")!.replaceAll("-", "");
+    const records = h.lotwRecords.filter((record) => record.QSO_DATE === date);
+    return new Response(
+      `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:${String(records.length).length}>${records.length}<EOH>${records.map(serializeAdifRecord).join("")}<APP_LOTW_EOF>`,
+    );
+  };
+  try {
+    await tick(h.env, scopedReadback, FIXTURE_NOW);
+    await h.store
+      .statement("UPDATE connections SET status='disabled' WHERE kind='qrz'")
+      .run();
+    h.enable();
+    h.env.ROLLOUT_QSO_IDS_JSON = '["*"]';
+    for (let i = 1; i <= 10; i++)
+      h.changes.qsos.push({
+        ...h.qso,
+        uuid: `live-upload-${i}`,
+        operation: null,
+        startAtMillis: Number(h.qso.startAtMillis) + i * 86400000,
+        our: {
+          stationCall: "W1AW",
+          grid: "FN31AA",
+          state: "CT",
+          county: "Tolland",
+          dxccCode: 291,
+          cqZone: 5,
+          ituZone: 8,
+        },
+        syncedAtMillis: 200 + i,
+      });
+    const observed = await tick(h.env, scopedReadback, FIXTURE_NOW + 5 * 60000);
+    assert.equal(observed.errors, 0);
+    assert.equal(observed.contacts, 10);
+    assert.equal(h.calls.lotwUploads, 0);
+    assert.equal(
+      await count(
+        h,
+        "source_work",
+        "id LIKE 'live-upload-%' AND priority='live'",
+      ),
+      10,
+    );
+    const due = await tick(h.env, scopedReadback, FIXTURE_NOW + 36 * 60000);
+    assert.equal(due.errors, 0);
+    assert.equal(due.stopReason, "idle");
+    assert(h.calls.lotwUploads > 0);
+    assert(due.deferred > 0);
+    assert.equal(
+      await count(
+        h,
+        "attempt_state",
+        "state='prepared' AND attempt IN(SELECT id FROM attempts WHERE destination='lotw')",
+      ),
+      0,
+    );
+    const budget = await h.store
+      .statement("SELECT requests FROM vendor_requests WHERE vendor='lotw'")
+      .first<{ requests: number }>();
+    assert.equal(budget?.requests, 40);
   } finally {
     await h.mf.dispose();
   }

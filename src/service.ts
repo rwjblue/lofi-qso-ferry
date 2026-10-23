@@ -12,6 +12,7 @@ import type { DeliveryGates } from "./delivery.ts";
 import {
   expireSource,
   observeContact,
+  pendingContactBatch,
   pendingContacts,
   pollSource,
   rereadOperation,
@@ -174,15 +175,19 @@ async function reconcileContact(
       : undefined,
   );
 }
-/** Bounded cron work. One tenant/source cycle lease protects projection and staging. */
+/** Drain fair rounds until idle or out of time, with fenced source cycles. */
 export async function tick(
   env: Env,
   fetcher: typeof fetch = fetch,
   clock?: number,
 ) {
-  const now = clock ?? Date.now();
-  const deps = { fetcher, ...(clock === undefined ? {} : { now }) };
-  const deadline = Date.now() + 90_000;
+  const startedAt = Date.now();
+  const currentTime = () => clock ?? Date.now();
+  const now = currentTime();
+  const nowAtStart = now;
+  const deps = { fetcher, ...(clock === undefined ? {} : { now: clock }) };
+  const deadline = startedAt + 90_000;
+  const expired = () => Date.now() >= deadline;
   await purgeAuth(env, now);
   const store = new Store(env.DB, keyring(env));
   const gates = deliveryGates(env);
@@ -192,7 +197,7 @@ export async function tick(
   const sources = (
     await store
       .statement(
-        "SELECT c.*,COALESCE(json_extract(p.cursor,'$.mode'),'backfill') AS sync_mode FROM connections c LEFT JOIN cursors p ON p.tenant=c.tenant AND p.connection=c.id AND p.stream='sync' WHERE c.kind='lofi' AND c.status='active' ORDER BY ROW_NUMBER() OVER(PARTITION BY COALESCE(json_extract(p.cursor,'$.mode'),'backfill') ORDER BY COALESCE(c.last_poll_at,0),c.tenant,c.id),CASE WHEN json_extract(p.cursor,'$.mode')='forward' THEN 0 ELSE 1 END,c.tenant,c.id LIMIT 2",
+        "SELECT c.*,COALESCE(json_extract(p.cursor,'$.mode'),'backfill') AS sync_mode FROM connections c LEFT JOIN cursors p ON p.tenant=c.tenant AND p.connection=c.id AND p.stream='sync' WHERE c.kind='lofi' AND c.status='active' ORDER BY ROW_NUMBER() OVER(PARTITION BY COALESCE(json_extract(p.cursor,'$.mode'),'backfill') ORDER BY COALESCE(c.last_poll_at,0),c.tenant,c.id),CASE WHEN json_extract(p.cursor,'$.mode')='forward' THEN 0 ELSE 1 END,c.tenant,c.id",
       )
       .all<Connection & { sync_mode: "backfill" | "forward" }>()
   ).results;
@@ -203,77 +208,120 @@ export async function tick(
     errors: 0,
     deferred: 0,
     exportsEnabled: exportsEffective(gates),
+    rounds: 0,
+    elapsedMs: 0,
+    stopReason: "idle" as "idle" | "deadline",
   };
+  const completedPolls = new Set<string>();
+  const completedRescans = new Map<string, Set<string>>();
+  const stoppedRereads = new Set<string>();
   const processSource = async (
     source: (typeof sources)[number],
     priority: VendorPriority,
   ) => {
-    if (Date.now() >= deadline) return;
+    if (expired()) return 0;
+    const now = currentTime();
+    const sourceKey = JSON.stringify([source.tenant, source.id]);
+    const rereadKey = JSON.stringify([source.tenant, source.id, priority]);
+    let progress = 0;
     const lease = await store.claim(
       source.tenant,
       `cycle:${source.id}`,
       now,
       5 * 60_000,
     );
-    if (!lease) return;
+    if (!lease) return 0;
     const canonicalTurn =
       (source.sync_mode === "forward" ? "live" : "background") === priority;
+    const pollTurn = canonicalTurn && !completedPolls.has(sourceKey);
     try {
-      if (canonicalTurn) {
+      if (pollTurn) {
         try {
-          await pollSource(store, source, fetcher, now, "sync", clock ?? null);
-          result.sources++;
+          const page = await pollSource(
+            store,
+            source,
+            fetcher,
+            currentTime(),
+            "sync",
+            clock ?? null,
+          );
+          result.sources += page.pages;
+          progress += page.pages;
+          if (page.complete || page.pages === 0 || page.records === 0)
+            completedPolls.add(sourceKey);
         } catch (error) {
+          completedPolls.add(sourceKey);
           if (!(error instanceof VendorDeferredError)) throw error;
           result.deferred++;
         }
       }
+      if (expired()) return progress;
+      const rescans = completedRescans.get(sourceKey) ?? new Set<string>();
+      completedRescans.set(sourceKey, rescans);
       const rescan =
         priority === "background"
           ? await store
               .statement(
-                "SELECT stream FROM cursors WHERE tenant=? AND connection=? AND (stream='repair' OR stream LIKE 'rescan:%' AND EXISTS(SELECT 1 FROM connections d WHERE d.tenant=cursors.tenant AND d.id=substr(cursors.stream,8) AND d.status='active')) AND COALESCE(json_extract(cursor,'$.rescanComplete'),0)=0 ORDER BY updated_at LIMIT 1",
+                "SELECT stream FROM cursors WHERE tenant=? AND connection=? AND (stream='repair' OR stream LIKE 'rescan:%' AND EXISTS(SELECT 1 FROM connections d WHERE d.tenant=cursors.tenant AND d.id=substr(cursors.stream,8) AND d.status='active')) AND COALESCE(json_extract(cursor,'$.rescanComplete'),0)=0 AND stream NOT IN(SELECT value FROM json_each(?)) ORDER BY updated_at,stream LIMIT 1",
                 source.tenant,
                 source.id,
+                JSON.stringify([...rescans]),
               )
               .first<{ stream: string }>()
           : null;
       if (rescan)
         try {
-          await pollSource(
+          const page = await pollSource(
             store,
             source,
             fetcher,
-            now,
+            currentTime(),
             rescan.stream,
             clock ?? null,
           );
+          progress += page.pages;
+          if (page.complete || page.pages === 0 || page.records === 0)
+            rescans.add(rescan.stream);
         } catch (error) {
+          rescans.add(rescan.stream);
           if (error instanceof VendorDeferredError) result.deferred++;
           else result.errors++;
         }
-      try {
-        await rereadOperation(
-          store,
-          source,
-          fetcher,
-          now,
-          priority,
-          clock ?? null,
-        );
-      } catch (error) {
-        if (error instanceof VendorDeferredError) result.deferred++;
-        else result.errors++;
+      if (expired()) return progress;
+      if (!stoppedRereads.has(rereadKey)) {
+        try {
+          const reread = await rereadOperation(
+            store,
+            source,
+            fetcher,
+            currentTime(),
+            priority,
+            clock ?? null,
+            nowAtStart,
+          );
+          progress += reread.pages;
+        } catch (error) {
+          stoppedRereads.add(rereadKey);
+          if (error instanceof VendorDeferredError) result.deferred++;
+          else result.errors++;
+        }
       }
-      await establishCutovers(store, source, gates, now);
-      for (const contact of await pendingContacts(
+      if (expired()) return progress;
+      await establishCutovers(store, source, gates, currentTime());
+      if (expired()) return progress;
+      const batch = await pendingContactBatch(
         store,
         source,
-        priority === "live" ? 20 : 4,
-        now,
+        1,
+        currentTime(),
         priority,
-      )) {
-        if (Date.now() >= deadline) break;
+        undefined,
+        nowAtStart,
+      );
+      progress += batch.selected;
+      for (const contact of batch.contacts) {
+        if (expired()) break;
+        const now = currentTime();
         try {
           result.contacts++;
           const destinations = (await store.connections(source.tenant)).filter(
@@ -288,7 +336,7 @@ export async function tick(
           await observeContact(store, source, contact, now, routed);
           const routingIssues: string[] = [];
           for (const kind of ["qrz", "lotw"] as const) {
-            if (Date.now() >= deadline) break;
+            if (expired()) break;
             const candidates = destinations.filter(
               (c) => c.kind === kind && routeMatches(c, contact),
             );
@@ -330,6 +378,7 @@ export async function tick(
                 priority,
                 clock,
               );
+              if (expired()) break;
               const key = {
                 tenant: source.tenant,
                 source: source.id,
@@ -390,7 +439,7 @@ export async function tick(
         await store
           .statement(
             "UPDATE connections SET config=json_set(config,'$.lastError','Source sync requires attention','$.lastSyncFailureAt',?) WHERE tenant=? AND id=?",
-            now,
+            currentTime(),
             source.tenant,
             source.id,
           )
@@ -400,7 +449,7 @@ export async function tick(
       try {
         // A failed source still consumes its scheduling turn. Otherwise two
         // unavailable accounts can permanently starve every other tenant.
-        if (canonicalTurn)
+        if (pollTurn)
           await store
             .statement(
               "UPDATE connections SET last_poll_at=MAX(COALESCE(last_poll_at,0),?) WHERE tenant=? AND id=? AND status='active'",
@@ -413,9 +462,11 @@ export async function tick(
         await store.release(lease);
       }
     }
+    return progress;
   };
   const processAttempts = async (priority: VendorPriority, limit: number) => {
-    if (limit === 0) return 0;
+    if (limit === 0 || expired()) return 0;
+    const now = currentTime();
     const attempts = (
       await store
         .statement(
@@ -434,7 +485,8 @@ export async function tick(
     ).results;
     let turns = 0;
     for (const attempt of attempts) {
-      if (Date.now() >= deadline) break;
+      if (expired()) break;
+      const now = currentTime();
       turns++;
       try {
         if (attempt.state === "prepared") {
@@ -462,6 +514,7 @@ export async function tick(
             return matches.length === 1 ? matches : [];
           });
           await observeContact(store, source, contact, now, routed);
+          if (expired()) continue;
           await dispatchAttempt(store, attempt.tenant, attempt.attempt, gates, {
             ...deps,
             priority,
@@ -500,31 +553,50 @@ export async function tick(
     }
     return turns;
   };
-  // Reserve the first phase for forward changes and their prepared deliveries.
-  // Historical imports cannot spend these contact/attempt or request budgets.
-  for (const source of sources) await processSource(source, "live");
-  await processAttempts("live", 6);
-  // Finish saved imports before inventory reads can spend the next window's
-  // background allowance. Newly prepared imports may use any remaining turns.
-  const backgroundTurns = await processAttempts("background", 2);
-  for (const source of sources) await processSource(source, "background");
-  await processAttempts("background", 2 - backgroundTurns);
+  let sourceOffset = 0;
+  let passProgress = 0;
+  while (!expired()) {
+    result.rounds++;
+    const round = sources.slice(sourceOffset, sourceOffset + 2);
+    // Small contact turns leave request capacity for delivery. Poll live
+    // changes before dispatch so newly observed edits can cancel stale bytes.
+    for (const source of round)
+      passProgress += await processSource(source, "live");
+    passProgress += await processAttempts("live", 6);
+    // Saved historical uploads precede new history inventory, which could
+    // otherwise consume the entire background request allowance.
+    const backgroundTurns = await processAttempts("background", 2);
+    passProgress += backgroundTurns;
+    for (const source of round)
+      passProgress += await processSource(source, "background");
+    passProgress += await processAttempts("background", 2 - backgroundTurns);
+    sourceOffset += round.length;
+    // A quiet pair does not imply later accounts are idle. Finish the entire
+    // fair pass before stopping, including when there are no active sources.
+    if (sourceOffset >= sources.length) {
+      if (passProgress === 0) break;
+      sourceOffset = 0;
+      passProgress = 0;
+    }
+  }
   const tenants = (
     await store
       .statement(
         "SELECT c.tenant FROM connections c LEFT JOIN leases l ON l.tenant=c.tenant AND l.scope='confirmation-refresh' WHERE c.kind='lotw' AND c.status='active' AND COALESCE(l.expires_at,0)<=? GROUP BY c.tenant ORDER BY COALESCE(MAX(l.fence),0),c.tenant LIMIT 2",
-        now,
+        currentTime(),
       )
       .all<{ tenant: string }>()
   ).results;
   for (const { tenant } of tenants)
     try {
-      if (Date.now() >= deadline) break;
+      if (expired()) break;
       await refreshConfirmations(store, tenant, deps);
     } catch (error) {
       if (error instanceof VendorDeferredError) result.deferred++;
       else result.errors++;
     }
   await purgeResolvedSource(store);
+  result.elapsedMs = Math.max(0, Date.now() - startedAt);
+  result.stopReason = expired() ? "deadline" : "idle";
   return result;
 }

@@ -36,3 +36,11 @@ Last checkpoint: 2026-10-22, invite-only onboarding deployed read-only. The owne
 Reload Ferry and use an existing passkey, or invite a new address with the task. Add an independent backup passkey; connect only desired services and review read-only adoption. No implementation/deployment blocker remains for this follow-up.
 
 Keep exports disabled. Remaining acceptance inputs: exhaustive LoFi UUID/tombstone replay evidence, complete owner-history review, authorized LoTW P12/password/trust/status/station inputs, physical/synced-passkey and mail-client autofill checks, separately authorized scoped QRZ/LoTW writes, deployed resource/cost measurements and restore drill. Staging remains intentionally undeployed. See [deployment](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md).
+
+## Current follow-up: LoFi connection freshness
+
+- Initial tree clean at `8f122307852e`; upstream unchanged. Read-only production metadata confirmed the user's active session was beyond the five-minute recent-passkey window, with no LoFi connection saved. No source records or credentials were read or changed.
+- Implemented automatic session/CSRF preflight and passkey assertion for protected connection/account actions; cancellation retains inputs and sends no protected request. Typed pre-dispatch auth errors permit one bounded retry; vendor, origin/CSRF and post-request failures never do. The original account and CSRF snapshot are pinned through concurrent refresh/retry.
+- Focused client/backend checks pass; actual isolated Worker/Chromium verifies stale/fresh/canceled approval flows and real signature checks with contained vendor fixtures. Review added stale+invalid-CSRF ordering and preservation of an unverified add-passkey ceremony on a retryable freshness refusal.
+- Full `mise run check` passes **180 tests**, formatting, strict lint, both TypeScript checks and Worker build (292.78 KiB gzip). Browser cancellation/retry, immutable CSRF/account snapshots, stale+invalid-CSRF precedence and add-key ceremony preservation have regression coverage.
+- Next: commit and push, redeploy with all vendor export gates closed, verify production asset/gate state and final CI, then update the deployed revision/version. Production secrets, data, passkeys and existing connections must be preserved. No live vendor requests were made during this fix.

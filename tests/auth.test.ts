@@ -171,6 +171,41 @@ test("email policy preserves local case, dots and plus tags and canonicalizes on
     assert.throws(() => normalizeEmail(value));
 });
 
+test("authentication CSRF and origin failures have distinct safe codes without creating proofs", async (context) => {
+  const { env, mf, db } = await setup();
+  context.after(() => mf.dispose());
+  const browser = new Browser(env);
+  await browser.refresh();
+  for (const [headers, code] of [
+    [{ "X-CSRF-Token": "wrong" }, "csrf_invalid"],
+    [{ Cookie: "" }, "csrf_invalid"],
+    [{ Origin: "https://other.example.test" }, "origin_invalid"],
+    [{ "Sec-Fetch-Site": "cross-site" }, "origin_invalid"],
+  ] as const) {
+    const response = await browser.request(
+      "signup",
+      { email: "fixture@example.test" },
+      headers,
+    );
+    assert.equal(response.status, 403);
+    assert.equal(response.body.code, code);
+    assert.notEqual(response.body.code, "reauth_required");
+  }
+  assert.equal(
+    (await db.prepare("SELECT count(*) n FROM signups").first<{ n: number }>())
+      ?.n,
+    0,
+  );
+  assert.equal(
+    (
+      await db
+        .prepare("SELECT count(*) n FROM local_mailbox")
+        .first<{ n: number }>()
+    )?.n,
+    0,
+  );
+});
+
 test("native email confirms browser-bound signup and email changes while passkey login sends no mail", async (context) => {
   const { env, mf, db } = await setup();
   try {
@@ -970,6 +1005,101 @@ test("wrong registration origin/RP/UV, expired and wrong-purpose ceremonies fail
   } finally {
     await mf.dispose();
   }
+});
+
+test("an add-key registration can retry its untouched ceremony after freshness-only rejection and real reauthentication", async (context) => {
+  const { env, mf, db } = await setup();
+  context.after(() => mf.dispose());
+  const browser = new Browser(env);
+  const first = await enrolled(browser, "freshness-retry@example.test");
+  const backup = await authenticator();
+  const options = await browser.request("passkeys/options", {});
+  assert.equal(options.status, 200);
+  const registration = await backup.registration(
+    options.body.options as Record<string, unknown>,
+  );
+  const payload = {
+    ceremonyId: options.body.ceremonyId,
+    response: registration,
+    label: "Backup",
+  };
+  await db.prepare("UPDATE sessions SET verified_at=0").run();
+  assert.equal((await browser.refresh()).body.recent, false);
+  const stale = await browser.request("passkeys/verify", payload);
+  assert.equal(stale.status, 403);
+  assert.equal(stale.body.code, "reauth_required");
+  const consumed = async (id: unknown) =>
+    (
+      await db
+        .prepare("SELECT consumed_at FROM ceremonies WHERE id=?")
+        .bind(id)
+        .first<{ consumed_at: number | null }>()
+    )?.consumed_at;
+  assert.equal(
+    await consumed(options.body.ceremonyId),
+    null,
+    "pre-verification freshness rejection must retain the valid ceremony",
+  );
+  const reauth = await browser.request("reauth/options", {});
+  assert.equal(reauth.status, 200);
+  assert.equal(
+    (
+      await browser.request("reauth/verify", {
+        ceremonyId: reauth.body.ceremonyId,
+        response: await first.key.assertion(
+          reauth.body.options as Record<string, unknown>,
+          first.user,
+        ),
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await browser.refresh()).body.recent, true);
+  assert.equal(
+    (await browser.request("passkeys/verify", payload)).status,
+    200,
+    "the exact original authenticator payload succeeds after reauthentication",
+  );
+  assert.ok(await consumed(options.body.ceremonyId));
+  assert.equal(
+    (await browser.request("passkeys/verify", payload)).status,
+    400,
+    "the successfully consumed ceremony still rejects replay",
+  );
+  const invalidKey = await authenticator();
+  const invalidOptions = await browser.request("passkeys/options", {});
+  assert.equal(
+    (
+      await browser.request("passkeys/verify", {
+        ceremonyId: invalidOptions.body.ceremonyId,
+        response: await invalidKey.registration(
+          invalidOptions.body.options as Record<string, unknown>,
+          { flags: 0x59 },
+        ),
+      })
+    ).status,
+    400,
+  );
+  assert.ok(
+    await consumed(invalidOptions.body.ceremonyId),
+    "a real verification failure must still consume its ceremony",
+  );
+  assert.equal(
+    (
+      await browser.request("passkeys/verify", {
+        ceremonyId: invalidOptions.body.ceremonyId,
+        response: await invalidKey.registration(
+          invalidOptions.body.options as Record<string, unknown>,
+        ),
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (await db.prepare("SELECT count(*) n FROM passkeys").first<{ n: number }>())
+      ?.n,
+    2,
+  );
 });
 
 test("additional keys and email changes require fresh passkeys; last key and other tenants are protected", async () => {

@@ -230,3 +230,7 @@ contracts remain distinct acceptance checks.
 The initial read-only deployment evidence above is historical. Existing users keep their passkeys and sessions; invitations do not reset accounts. No live invitations were sent during implementation. See [authentication](docs/authentication.md) and [operations](docs/operations.md).
 
 Deployed follow-up revision `58a965d7c54d`, Worker version `0bf32d19-13c7-43da-b179-702ab49ad3d6`; six migrations applied. Live invite-only/join/gate checks and [deployed-code CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39884975858) pass. Branded mail/client autofill remains a separate device check; no real invites or vendor log writes were sent.
+
+## Connection passkey freshness follow-up
+
+The LoFi approval form now obtains a fresh passkey assertion automatically when needed, with preserved input and no connection request on cancellation. Auth/CSRF failures are distinct from scrubbed vendor errors; only a known pre-dispatch freshness failure can retry once. Concurrent session/account-switch and passkey-ceremony boundaries have focused coverage. Actual local Worker/Chromium tests exercise real signatures and contained vendor requests. Full checks and the next disabled deployment are coordinated through [progress](PROGRESS.md).

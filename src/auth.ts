@@ -68,10 +68,18 @@ interface Passkey {
   metadata: string;
   user_handle: string;
 }
-class AuthError extends Error {
+export type AuthErrorCode =
+  | "session_required"
+  | "reauth_required"
+  | "csrf_invalid"
+  | "origin_invalid";
+export class AuthError extends Error {
   constructor(
     readonly status: number,
     message = "Authentication failed",
+    readonly code: AuthErrorCode | undefined = status === 401
+      ? "session_required"
+      : undefined,
   ) {
     super(message);
   }
@@ -173,7 +181,7 @@ export function requireRecent(
 ): asserts identity is SessionIdentity {
   if (!identity) throw new AuthError(401, "Sign in with a passkey");
   if (identity.verifiedAt <= Date.now() - fiveMinutes)
-    throw new AuthError(403, "Verify your passkey again");
+    throw new AuthError(403, "Verify your passkey again", "reauth_required");
 }
 
 /** Expired proofs cannot authenticate; remove their bounded retained state. */
@@ -197,17 +205,26 @@ export async function checkCsrf(request: Request, env: Env): Promise<void> {
     request.headers.get("Origin") !== env.ORIGIN ||
     request.headers.get("Sec-Fetch-Site") === "cross-site"
   )
-    throw new AuthError(403, "Same-origin request required");
+    throw new AuthError(403, "Same-origin request required", "origin_invalid");
   if (
     request.headers.get("Content-Type")?.split(";")[0].trim() !==
     "application/json"
   )
     throw new AuthError(415, "JSON request required");
   const browser = cookie(request, browserCookie);
-  if (!browser) throw new AuthError(403, "Refresh this page before continuing");
+  if (!browser)
+    throw new AuthError(
+      403,
+      "Refresh this page before continuing",
+      "csrf_invalid",
+    );
   const expected = await csrf(request, env, browser);
   if (!(await same(expected, request.headers.get("X-CSRF-Token") ?? "")))
-    throw new AuthError(403, "Refresh this page before continuing");
+    throw new AuthError(
+      403,
+      "Refresh this page before continuing",
+      "csrf_invalid",
+    );
 }
 async function same(a: string, b: string): Promise<boolean> {
   return timingSafeEqual(unb64(await sha256(a)), unb64(await sha256(b)));
@@ -224,7 +241,12 @@ async function csrf(
 }
 async function browserHash(request: Request): Promise<string> {
   const browser = cookie(request, browserCookie);
-  if (!browser) throw new AuthError(403, "Refresh this page before continuing");
+  if (!browser)
+    throw new AuthError(
+      403,
+      "Refresh this page before continuing",
+      "csrf_invalid",
+    );
   return sha256(browser);
 }
 async function rate(
@@ -1152,7 +1174,13 @@ export async function authRoute(
     }
     return json({ error: "Not found" }, 404);
   } catch (error) {
-    if (failedCeremony && failedBinding) {
+    // Freshness is checked before verification. Preserve that unexpired
+    // ceremony for a bounded retry after reauthentication; other failures burn it.
+    if (
+      failedCeremony &&
+      failedBinding &&
+      !(error instanceof AuthError && error.code === "reauth_required")
+    ) {
       try {
         await statement(
           env,
@@ -1166,7 +1194,10 @@ export async function authRoute(
       }
     }
     if (error instanceof AuthError)
-      return json({ error: error.message }, error.status);
+      return json(
+        { error: error.message, ...(error.code ? { code: error.code } : {}) },
+        error.status,
+      );
     return json(
       {
         error:

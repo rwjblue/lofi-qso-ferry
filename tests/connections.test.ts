@@ -132,11 +132,19 @@ test("connection routes enforce passkey freshness, CSRF, tenant ownership and re
     null,
   );
   assert.equal(anonymous?.status, 401);
+  assert.equal(
+    ((await anonymous!.json()) as { code: string }).code,
+    "session_required",
+  );
   const stale = await connectionRoute(await request("/qrz", {}, env), env, {
     ...identity,
     verifiedAt: 0,
   });
   assert.equal(stale?.status, 403);
+  assert.equal(
+    ((await stale!.json()) as { code: string }).code,
+    "reauth_required",
+  );
   const noCsrf = await connectionRoute(
     new Request("http://localhost:8787/api/connections/disable", {
       method: "POST",
@@ -147,6 +155,10 @@ test("connection routes enforce passkey freshness, CSRF, tenant ownership and re
     identity,
   );
   assert.equal(noCsrf?.status, 403);
+  assert.equal(
+    ((await noCsrf!.json()) as { code: string }).code,
+    "csrf_invalid",
+  );
   const listed = await connectionRoute(
     new Request("http://localhost/api/connections"),
     env,
@@ -172,6 +184,107 @@ test("connection routes enforce passkey freshness, CSRF, tenant ownership and re
   );
   assert.equal(crossed?.status, 404);
   assert.equal((await store.connection("b", other.id))?.status, "active");
+});
+
+test("LoFi approval distinguishes preflight authentication from vendor403 and post-request guard failures", async (t) => {
+  const { env, store, mf } = await setup();
+  t.after(() => mf.dispose());
+  let outbound = 0;
+  const preflightFetcher: typeof fetch = async () => {
+    outbound++;
+    throw new Error("A preflight failure must never contact LoFi");
+  };
+  for (const [failure, code] of [
+    ["stale", "reauth_required"],
+    ["csrf", "csrf_invalid"],
+    ["origin", "origin_invalid"],
+    ["cross-site", "origin_invalid"],
+    ["stale-csrf", "csrf_invalid"],
+    ["stale-origin", "origin_invalid"],
+  ] as const) {
+    const input = await request(
+      "/lofi/start",
+      { email: "fixture@example.test" },
+      env,
+    );
+    if (failure.endsWith("csrf")) input.headers.delete("X-CSRF-Token");
+    if (failure.endsWith("origin"))
+      input.headers.set("Origin", "https://other.example.test");
+    if (failure === "cross-site")
+      input.headers.set("Sec-Fetch-Site", "cross-site");
+    const response = await connectionRoute(
+      input,
+      env,
+      {
+        ...identity,
+        verifiedAt: failure.startsWith("stale")
+          ? Date.now() - 300_001
+          : Date.now(),
+      },
+      { fetcher: preflightFetcher },
+    );
+    assert.equal(response?.status, 403);
+    const body = (await response!.json()) as { error: string; code: string };
+    assert.equal(body.code, code);
+    assert.equal(outbound, 0);
+  }
+  assert.equal(
+    (
+      await store
+        .statement("SELECT count(*) n FROM rate_limits")
+        .first<{ n: number }>()
+    )?.n,
+    0,
+    "preflight failures have no request side effects",
+  );
+  for (const failure of ["register403", "permissions403", "guard"] as const) {
+    await store
+      .statement(
+        "UPDATE sessions SET verified_at=? WHERE tenant='a'",
+        Date.now(),
+      )
+      .run();
+    let calls = 0;
+    const response = await connectionRoute(
+      await request("/lofi/start", { email: "fixture@example.test" }, env),
+      env,
+      { ...identity, verifiedAt: Date.now() },
+      {
+        fetcher: async (input) => {
+          calls++;
+          if (
+            failure === "register403" ||
+            String(input).endsWith("/permissions")
+          )
+            return new Response("private-provider-diagnostic-must-not-escape", {
+              status: 403,
+            });
+          assert.ok(String(input).endsWith("/client"));
+          if (failure === "guard")
+            await store
+              .statement("UPDATE sessions SET verified_at=0 WHERE tenant='a'")
+              .run();
+          return Response.json({ token: "private-fixture-token" });
+        },
+      },
+    );
+    assert.equal(response?.status, 400);
+    const body = (await response!.json()) as { error: string; code: string };
+    assert.equal(body.code, "connection_verification_failed", failure);
+    assert.ok(!JSON.stringify(body).includes("private-"));
+    assert.equal(calls, failure === "permissions403" ? 2 : 1);
+  }
+  assert.equal(
+    (
+      await store
+        .statement(
+          "SELECT count(*) n FROM connections WHERE status='approval_pending'",
+        )
+        .first<{ n: number }>()
+    )?.n,
+    1,
+    "a vendor permission failure can follow a durable pending connection; it is not a preflight retry",
+  );
 });
 test("QRZ linking uses STATUS proof, never INSERT, and preserves stable book on key renewal", async (t) => {
   const { env, store, mf } = await setup();

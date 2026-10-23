@@ -1,4 +1,5 @@
 import {
+  AuthError,
   checkCsrf,
   normalizeEmail,
   requireRecent,
@@ -226,7 +227,7 @@ export async function connectionRoute(
   if (path !== "/api/connections" && !path.startsWith("/api/connections/"))
     return null;
   try {
-    if (!identity) throw new ConnectionError(401, "Sign in with a passkey");
+    if (!identity) throw new AuthError(401, "Sign in with a passkey");
     const store = new Store(env.DB, keyring(env));
     if (request.method === "GET" && path === "/api/connections")
       return json({
@@ -236,8 +237,8 @@ export async function connectionRoute(
       });
     if (request.method !== "POST")
       return json({ error: "Unknown connection endpoint" }, 404);
-    requireRecent(identity);
     await checkCsrf(request, env);
+    requireRecent(identity);
     const input = await boundedJson(request, 400 * 1024);
     if (path === "/api/connections/lofi/start") {
       const email = normalizeEmail(input.email);
@@ -559,23 +560,17 @@ export async function connectionRoute(
     }
     return json({ error: "Unknown connection endpoint" }, 404);
   } catch (error) {
-    if (error instanceof ConnectionError)
-      return json({ error: error.message }, error.status);
-    if (
-      error instanceof Error &&
-      "status" in error &&
-      typeof error.status === "number"
-    )
+    if (error instanceof AuthError)
       return json(
-        {
-          error:
-            "Passkey verification and a valid same-origin request are required",
-        },
+        { error: error.message, ...(error.code ? { code: error.code } : {}) },
         error.status,
       );
+    if (error instanceof ConnectionError)
+      return json({ error: error.message }, error.status);
     // Vendor exceptions, input parsing and crypto errors may embed secrets; never echo them.
     return json(
       {
+        code: "connection_verification_failed",
         error:
           "Connection could not be verified. Check credentials, approval, trust configuration and vendor availability.",
       },

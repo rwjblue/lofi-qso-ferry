@@ -1,4 +1,4 @@
-import { authRoute, checkCsrf, session } from "./auth.ts";
+import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
 import { connectionRoute } from "./connections.ts";
 import { boundedJson, keyring } from "./security.ts";
 import { deliveryGates, exportsEffective, tick } from "./service.ts";
@@ -228,6 +228,16 @@ export default {
       }
       return secured(Response.json({ error: "Not found" }, { status: 404 }));
     } catch (error) {
+      if (error instanceof AuthError)
+        return secured(
+          Response.json(
+            {
+              error: error.message,
+              ...(error.code ? { code: error.code } : {}),
+            },
+            { status: error.status },
+          ),
+        );
       const status =
         typeof error === "object" &&
         error !== null &&

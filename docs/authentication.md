@@ -68,6 +68,10 @@ Adding or revoking a passkey and changing email require a fresh passkey assertio
 
 Security-sensitive connection changes listed in [credential security](security.md) use the same fresh-assertion policy.
 
+The browser refreshes the session and CSRF token before a connection change, passkey change or email change. If the five-minute verification has expired, it prompts for the existing account's passkey and then continues with the captured form data. Cancellation sends no protected action and leaves the form available. Settings and templates do not require this additional assertion.
+
+Authentication failures use explicit owned error codes. Only `reauth_required`, raised before the protected action has any effect, permits one bounded retry after passkey verification. CSRF/origin rejection, vendor failures and failures after an external request are never replayed automatically. Each protected request pins the original account and uses its verified CSRF snapshot, so a concurrent account switch cannot lend another account's token to the pending payload. A still-valid add-passkey ceremony remains available when its verification was refused solely for this precondition; actual failed verification still consumes it.
+
 ## Recovery and acceptance
 
 After signup, encourage a second passkey in an independent provider or security key. A synced passkey in 1Password can naturally remain available across devices; [FIDO describes third-party providers including 1Password](https://fidoalliance.org/passkeys-2/). Another registered passkey or the user's provider recovery can restore access without any Ferry reset. Multiple devices holding one synced credential are not independent backup credentials.

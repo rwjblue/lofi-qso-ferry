@@ -1,21 +1,22 @@
-import {
-  browserSupportsWebAuthnAutofill,
-  WebAuthnAbortService,
-  startAuthentication,
-  startRegistration,
-} from "@simplewebauthn/browser";
 import type {
   AuthenticationResponseJSON,
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
 } from "@simplewebauthn/browser";
+import {
+  browserSupportsWebAuthnAutofill,
+  startAuthentication,
+  startRegistration,
+  WebAuthnAbortService,
+} from "@simplewebauthn/browser";
+import { createApiClient } from "./browser-api.ts";
+
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const value = document.getElementById(id);
   if (!value) throw new Error(`Missing element ${id}`);
   return value as T;
 };
-let csrf = "";
 let signupId = "";
 let lofiId = "";
 let emailId = "";
@@ -44,24 +45,10 @@ function message(value: string, error = false) {
     if (messageSequence === sequence) node.hidden = true;
   }, 8000);
 }
-async function api<T = Record<string, unknown>>(
-  path: string,
-  body?: unknown,
-): Promise<T> {
-  const response = await fetch(path, {
-    method: body === undefined ? "GET" : "POST",
-    headers:
-      body === undefined
-        ? {}
-        : { "Content-Type": "application/json", "X-CSRF-Token": csrf },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    credentials: "same-origin",
-  });
-  const result = (await response.json()) as T & { error?: string };
-  if (!response.ok)
-    throw new Error(result.error ?? "Request failed; try again.");
-  return result;
-}
+const { request: api } = createApiClient(async () => {
+  message("Verify your passkey to continue.");
+  await ceremony("reauth");
+});
 function bind(id: string, callback: () => Promise<void>) {
   element(id).addEventListener("click", () => {
     void run(callback);
@@ -205,7 +192,6 @@ async function load() {
     email?: string;
     signupAllowed?: boolean;
   }>("/api/auth/session");
-  csrf = session.csrf;
   element("welcome").hidden = session.authenticated;
   element("dashboard").hidden = !session.authenticated;
   if (!session.authenticated) {

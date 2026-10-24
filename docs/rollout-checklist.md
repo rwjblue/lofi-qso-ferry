@@ -46,11 +46,41 @@ bytes, 36 migrations and zero attempts, cutovers, proofs, pins or raw references
 No production restore or vendor write occurs. Populated raw-reference recovery
 remains unverified while that table is empty.
 
-Keep exports disabled. Actual exception review, fresh exact source/vendor
-evidence on the current release and scoped first-write acceptance remain open.
-The earlier successful **21:10:12.733 UTC** cloud QRZ read-path check used `5a427a30`;
-its proof expired normally and grants no current authority. Sustained capacity
-remains a separate expansion requirement.
+Later exact-`f2c41cb3` observations:
+- **22:03:28.032 UTC:** one Cloudflare invocation collected current source
+  evidence, minted a proof and completed the same-contact QRZ book/neighborhood
+  checks. The same proof remained current after the complete empty response.
+- **22:36:54.773 UTC:** SELECT-only review saved the exact same-contact QRZ
+  payload, narrative, serialization and hashes. The protected operator packet
+  passes 22 native cases; its separate recovery verifier passes 21 lifecycle and
+  isolated-restore cases, with independent review. A specific owner instruction
+  for the actual trial is pending.
+- **22:42:33.579 UTC:** a new normal source proof stayed current through one
+  complete empty three-day LoTW report. This was a host diagnostic, not scheduled
+  Worker execution, signing or upload acceptance. An earlier pre-GET hold did not
+  recur; its cause remains unknown.
+- **22:43:13.471 UTC:** the protected post-diagnostic backup verifies all 3,327
+  exact ownership records, one proof with matching retention, 2,803 QRZ
+  owners/markers, zero attempts/pins/cutovers and two isolated quarantines.
+  Coverage remains complete. The separate 22:43:58.546 UTC immutable comparison
+  preserves every claim, owner, marker and exact evidence field from the
+  21:28 UTC baseline, with additions only.
+- **23:00:35.114 UTC:** one budgeted LoTW certificate-status GET reported the
+  same-contact selected certificate unrevoked. The inner diagnostic used
+  78 D1 RPCs / 88 SQL statements in 8.121 seconds, with one ordinary budget
+  reservation and no source/history request, proof, signing, stage or attempt.
+
+Keep exports disabled. Finite proofs expire normally and must be renewed by the
+normal path immediately before a separately authorized trial. QRZ still needs
+one real INSERT acknowledgement, exact readback and post-attempt recovery;
+LoTW additionally needs signing and upload/readback acceptance, with renewed
+current certificate and source/history checks. See the [restricted QRZ pilot](qrz-pilot.md),
+[QRZ observations](evidence-qrz.md) and [LoTW observations](evidence-lotw.md).
+Contradictory historical locations remain held. Neither resolving every such
+exception nor finishing the 200,000-contact capacity plan is a prerequisite for
+that restricted QRZ trial; sustained capacity remains a separate expansion
+requirement. All eight controls were independently confirmed closed again at
+**23:00:34.070 UTC**.
 
 ### Earlier ownership release evidence (5a427a30)
 
@@ -441,8 +471,9 @@ LoTW associations; unresolved identity, location and route conflicts remain held
 - [ ] Finish reconciliation and review actual exceptions; do not label every
   stale or unprocessed hold a manual exception.
 - [x] Exercise exact deployed-source proof creation and same-contact fresh QRZ
-  absence checks in one cloud invocation. At 21:10:12.733 UTC, two source reads,
-  one proof batch and three QRZ reads pass with the same proof current afterward.
+  absence checks in one cloud invocation. The later `f2c41cb3` check at
+  22:03:28.032 UTC used two source reads, one proof batch and three QRZ reads,
+  with the same proof current afterward.
   No attempt, staging, signature or export occurs; all eight controls stay closed.
 - [ ] Remint exact source/vendor evidence on the then-deployed release immediately
   before a separately authorized scoped trial. Keep exports disabled until the
@@ -513,15 +544,15 @@ Keep every export control closed while doing this work, including the deployed d
 birth evidence, current context and destination reservations; clearing counts or
 forcing a contact into an eligible state is not reconciliation.
 
-| Outcome                                                          | Next action                                                                                                       | Can scheduled work resolve it?                                                                                                                                                                                                                                 |
-| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Inventory/context pending                                        | Let bounded reads finish; diagnose persistent vendor failures and expired or missing dependencies.                | Yes, when the dependency is obtainable and retries succeed.                                                                                                                                                                                                    |
-| Waiting for current source verification                          | Obtain fresh exact QSO/base/event observations and a complete final canonical drain under the ordinary budget.    | Proof creation is skipped while exports are disabled. Once explicitly authorized, complete subsets and later singleton turns can progress; a budget-limited singleton receives an exact-version ten-minute delay. More than three collection reads stays held. |
-| QRZ minute-only or nonunique identity                            | Require complete current coverage, bidirectional uniqueness and durable LOGID ownership on the deployed path.     | Minute precision alone can resolve through guarded association; actual competing or unknown relevant candidates remain held.                                                                                                                                   |
-| QRZ/LoTW shorter historical grid versus more precise source grid | Use each vendor's guarded historical association policy; keep full-grid upload receipt verification exact.        | Yes, when the remaining identity, location and ownership checks pass; neither grid value is truncated.                                                                                                                                                         |
-| Other location mismatch                                          | Compare exact station fields and authoritative source context. Keep the hold until the discrepancy is understood. | Only a meaningful source/remote correction can change the evidence.                                                                                                                                                                                            |
-| Missing or ambiguous route                                       | Select the intended station/book/account coverage.                                                                | No; the scheduler cannot invent destination coverage.                                                                                                                                                                                                          |
-| Test or invalid contact                                          | Tests stay excluded; correct an invalid real source record through its normal source application.                 | Test exclusion is intentional. Invalid source data needs a correction.                                                                                                                                                                                         |
+| Outcome                                                          | Next action                                                                                                       | Can scheduled work resolve it?                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Inventory/context pending                                        | Let bounded reads finish; diagnose persistent vendor failures and expired or missing dependencies.                | Yes, when the dependency is obtainable and retries succeed.                                                                                                                                                                                                                                                                                      |
+| Waiting for current source verification                          | Obtain fresh exact QSO/base/event observations and a complete final canonical drain under the ordinary budget.    | Scheduled proof collection is skipped while exports are disabled. Approved read-only diagnostics can collect finite proofs. Once exports are explicitly authorized, complete subsets and later singleton turns can progress; a budget-limited singleton receives an exact-version ten-minute delay. More than three collection reads stays held. |
+| QRZ minute-only or nonunique identity                            | Require complete current coverage, bidirectional uniqueness and durable LOGID ownership on the deployed path.     | Minute precision alone can resolve through guarded association; actual competing or unknown relevant candidates remain held.                                                                                                                                                                                                                     |
+| QRZ/LoTW shorter historical grid versus more precise source grid | Use each vendor's guarded historical association policy; keep full-grid upload receipt verification exact.        | Yes, when the remaining identity, location and ownership checks pass; neither grid value is truncated.                                                                                                                                                                                                                                           |
+| Other location mismatch                                          | Compare exact station fields and authoritative source context. Keep the hold until the discrepancy is understood. | Only a meaningful source/remote correction can change the evidence.                                                                                                                                                                                                                                                                              |
+| Missing or ambiguous route                                       | Select the intended station/book/account coverage.                                                                | No; the scheduler cannot invent destination coverage.                                                                                                                                                                                                                                                                                            |
+| Test or invalid contact                                          | Tests stay excluded; correct an invalid real source record through its normal source application.                 | Test exclusion is intentional. Invalid source data needs a correction.                                                                                                                                                                                                                                                                           |
 
 A narrow first-export trial does not require approving every historical exception.
 Its selected contacts must have complete current context, unambiguous routing,
@@ -618,12 +649,31 @@ enforced separation from the global cutover/no-query effects described above,
 then current evidence for the exact scope. The proposed order remains QRZ first,
 followed by LoTW. Keep private contact details out of repository documentation.
 
-The latest completed recovery receipt is the **21:13:06.917 UTC** postdiagnostic
+The latest completed recovery receipt is the **22:43:13.471 UTC** postdiagnostic
+backup of `f2c41cb3`: **42,862,933 bytes**, all 36 migrations, all **3,327 populated
+exact ownership records**, one immutable source proof and its matching retention
+row. Original AAD/key/HMAC/ownership bindings, three credentials and the tenant
+key, integrity/FKs and two isolated quarantines pass. Attempts, pins, cutovers
+and raw historical references remain zero; all 9,981 ownership inputs are
+covered, with none pending, held or unhashed. The separate 22:43:58.546 UTC
+comparison preserves the complete immutable 21:28 UTC baseline. This does not
+exercise a nonzero real attempt or permit restoring production over an accepted
+vendor write. Refresh the backup and current guards before any future trial.
+
+The concrete packet, reviewed payload and stop/recovery rules are in the
+[restricted QRZ pilot guide](qrz-pilot.md). Its 22 native execution/review and 21
+recovery cases are offline evidence; actual first-write acceptance is still
+unproved. General automatic scope expansion requires a separate explicit
+decision after that acceptance.
+
+### Earlier recovery checkpoints
+
+The earlier **21:13:06.917 UTC** postdiagnostic
 backup of `5a427a30`: **41,584,787 bytes**, all 36 migrations, **3,294 populated
 exact ownership records**, one immutable source proof and its exact retention
 row. All decryptions, original AAD/key/HMAC/ownership bindings, integrity/FKs and
 two isolated quarantines pass. Attempts, cutovers, pins and transient guards are
-zero; no production restore or vendor mutation occurs. Coverage remains unfinished
+zero; no production restore or vendor mutation occurs. Coverage was then unfinished
 (1,981 pending / 3,360 held inputs), and raw historical references remain empty.
 This verifies recovery of populated proof state as well as copied exact evidence.
 

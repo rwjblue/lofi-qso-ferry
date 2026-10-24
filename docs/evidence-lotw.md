@@ -1,10 +1,34 @@
 # LoTW actual-contact preflight evidence
 
-Updated **2026-10-24 18:43 EDT**. Production exports remain disabled. This page
-records an unsigned snapshot check and a later fresh query for one actual contact. The
+Updated **2026-10-24 19:00 EDT**. Production exports remain disabled. This page
+records unsigned checks, history queries and a serial-status observation for one actual contact. The
 [signing evidence](evidence-signing.md) separately documents synthetic signatures,
 released TQSL source and local Worker compatibility; the
 [certificate checks](lotw-certificates.md) explain the preflight limits.
+
+## Current-release certificate status
+
+At **23:00:35.114 UTC**, a separate exact-`f2c41cb3` diagnostic completed one
+normal, budgeted certificate-status GET. ARRL reported the selected certificate
+**unrevoked**. The helper selected the actual decrypted credential's unique
+certificate for the same contact, checked its dates and key-material presence,
+and rechecked the unchanged contact, route, credential and ownership bindings
+around admission and transport. Its protected packet passed **29 offline cases**,
+types, formatting and independent source/host review.
+
+The inner run took **8.121 seconds / 78 D1 RPCs / 88 SQL statements**, including
+the two live attestation calls and excluding proxy startup/disposal. Its sole database mutation was one
+ordinary vendor-budget reservation. It made no source or history request and
+created no proof, stage, attempt, claim or cutover. The final independent
+**23:00:34.070 UTC** attestation confirmed the same production Worker and all
+eight controls closed; the proxy was disposed afterward.
+
+This is a finite serial-status observation, not certificate-issuer verification,
+proof that the private key can sign an accepted artifact, or ARRL upload
+acceptance. It neither renews the earlier source/history evidence nor supplies
+write authority. Signing, upload and exact supported-projection readback remain
+unobserved. The normal path must repeat current checks before any separately
+authorized LoTW trial; a QRZ-only authorization cannot authorize that trial.
 
 ## Current-release three-day diagnostic
 
@@ -66,8 +90,9 @@ a vendor write.
 All eight controls remained closed. No signing, preparation, attempt, upload or
 vendor mutation occurred. The verified **22:29:48.108 UTC** pre-run backup has
 36 migrations, all 3,327 exact ownership records, zero attempts/proofs/pins and
-two isolated quarantines. Certificate status, actual signing/upload acceptance
-and supported-projection readback remain separate requirements. This diagnostic
+two isolated quarantines. The separate later serial-status observation is
+recorded above; actual signing/upload acceptance and supported-projection
+readback remain open. This diagnostic
 does not delay the restricted QRZ first-insert trial.
 
 ## Unsigned snapshot check
@@ -137,9 +162,12 @@ current proof and complete fresh checks under its separately reviewed policy.
 
 ## Remaining acceptance boundary
 
-Both diagnostic packets report `sourceExportProofVerified`, `freshVendorChecksComplete`,
-`arrlUploadAcceptanceVerified` and `writesAuthorized` as false. Together they supply
-field/certificate-date compatibility and a finite scoped absence observation. Before a
+The earlier unsigned snapshot and single-day diagnostic packets report
+`sourceExportProofVerified`, `freshVendorChecksComplete`,
+`arrlUploadAcceptanceVerified` and `writesAuthorized` as false. Those observations
+supply field/certificate-date compatibility and a finite scoped absence observation.
+The later current-release three-day and serial-status checks above retain their
+separate, dated scopes; no packet grants continuing write authority. Before a
 future LoTW trial, the normal path still needs current source proof and complete
 dependency checks, fresh destination absence or a reviewed exact association,
 current certificate status, explicit contact/destination scope and authorization.

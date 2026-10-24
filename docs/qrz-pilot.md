@@ -51,6 +51,12 @@ source, producer/consumer, protected-file and deterministic-bundle reviews found
 no material blocker. These local tools do not change the deployed scheduler or
 authorize a write.
 
+Launch the protected host entry from a saved script with its reviewed outer
+timeout and diagnostic suppression. Do not use an eval with
+`--input-type=module`: Wrangler's Node worker threads inherit that flag, which
+rejects file-based worker startup. The read-only host check passed when launched
+from a saved `.mts` file; this changes no application guard or permission.
+
 The SELECT-only payload review succeeded at **2026-10-24 22:36:54.773 UTC** for
 the same selected contact, using **52 D1 RPCs / 58 SQL statements**. It retained
 the exact record, serialized ADIF, template/book binding and hashes in protected
@@ -91,6 +97,18 @@ supports `ROLLOUT_QSO_IDS_JSON=["*"]` with exact QRZ destination IDs. This inclu
 eligible older missing contacts as well as future arrivals. It is not a
 future-only cutoff. Use explicit QSO IDs if that backfill scope is unwanted.
 Empty or missing scopes authorize nothing.
+
+The normal cron path already reconciles, collects a proof and immediately
+prepares/dispatches within the same source turn. It bounds a proof cohort to
+20 contacts and 64 dependencies, with four source requests and ordinary tick
+budgets. Stale known-unsent work is cancelled and rebuilt with a new proof;
+uncertain/submitted work instead enters read-only reconciliation. Thirteen
+targeted native scheduler/delivery and gate cases passed in the later audit.
+Actual successful scheduled preparation/dispatch remains unobserved while
+exports are disabled. Observe a singleton scheduled turn before broadening QSO
+scope. The one-contact operator trial separately supplies durable expected bytes
+and exact post-ACK readback; normal clean-ACK delivery does not automatically
+perform that extra field comparison.
 
 Keep the universal source-boundary and LoTW capabilities false, and corrections
 and deletion unavailable. Measure modest live delay/cost and review per-user

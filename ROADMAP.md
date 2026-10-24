@@ -12,7 +12,7 @@ This roadmap is the handoff for implementation in this repository. Checked items
 | Source comparison and ownership | Clean 4,146-contact index; all 9,981 ownership inputs covered at the recorded checkpoint            | Observe ongoing intake and sustained cost/throughput                                                           |
 | QRZ first-insert evidence       | Current-release source proof and complete empty neighborhood observed for one contact               | Renew normal evidence immediately before any separately authorized trial                                       |
 | QRZ delivery                    | Disabled; no vendor write acceptance claimed                                                        | One reviewed payload, durable recovery capture, at most one INSERT, exact acknowledged-record readback         |
-| LoTW delivery                   | Disabled; same-contact source proof and empty three-day report observed                             | Certificate/signing checks, upload/readback acceptance and populated-evidence recovery                         |
+| LoTW delivery                   | Disabled; source proof, empty three-day report and unrevoked serial observed                        | Renew current checks; prove signing, upload/readback acceptance and populated-evidence recovery                |
 | Broader rollout                 | Disabled                                                                                            | Accept the restricted QRZ trial, then explicitly approve destination scope and eligible older-contact backfill |
 
 The next decision is the restricted QRZ trial described in
@@ -131,8 +131,12 @@ verifies all 3,327 exact ownership records, 2,798 QRZ owners/markers, zero
 attempts and two isolated quarantines. A separate LoTW diagnostic passed at
 **22:42:33.579 UTC**: a newly collected proof stayed current through one complete
 empty three-day GET. Its earlier pre-GET failure did not recur and remains
-unexplained. Certificate status, signing and upload/readback acceptance remain
-open; see [LoTW evidence](docs/evidence-lotw.md).
+unexplained. A separate **23:00:35.114 UTC** diagnostic made one budgeted
+certificate-status GET and reported the selected certificate unrevoked. Its
+inner run used **78 D1 RPCs / 88 SQL statements** in **8.121 seconds**, with no
+source/history read, proof, signing, stage or attempt. Independent attestation at
+**23:00:34.070 UTC** confirmed all eight controls closed. This finite observation
+does not prove signing or upload acceptance; see [LoTW evidence](docs/evidence-lotw.md).
 
 The **22:43:13.471 UTC** post-diagnostic backup verifies all 3,327 exact ownership
 records, one proof with matching retention, 2,803 QRZ owners/markers, zero

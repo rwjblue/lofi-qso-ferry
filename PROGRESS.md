@@ -1,26 +1,52 @@
 # Implementation progress
 
-Latest local checkpoint, **2026-10-24 10:09 UTC**: the independent LoTW first-insert
-path is implemented and remains disabled/unreleased. It requires a complete empty
-three-day report before signing and again before dispatch, immutable authorization
-and source-proof pins, and exact single-contact upload validation after vendor
-admission. Service, review counts and browser status distinguish each vendor's
-first-insert permission from source-boundary authority.
+Signed revision `12f636b312c9192b755188faf06d66171d485da5` deployed read-only at **2026-10-24 07:59 EDT**
+(`2026-10-24T11:59:10.901859Z`), as Worker `bd6ff427-351d-463c-9b7d-4395e256117d` at 100% traffic.
+All **1,338 tests** and required release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40090915890).
+Independent readback verified all **eight export controls closed**, healthy HTTPS,
+and matching dashboard assets. All 31 migrations through `0032` are installed;
+source membership is ready, all 4,500 retained rows have bodies/incarnations,
+380 LoTW identity claims remain covered, and export attempts, cutovers, pins and
+temporary write guards remain zero. Diagnostic source proofs are temporary and
+are not write authorization.
 
-All **1,338 tests** and the full `mise run check` pass: formatting, lint, both
-TypeScript checks and the Worker bundle. The runtime is committed locally through
-`74a0ef2e`; the full check's test phase took 865,489 ms. Populated migration upgrade,
-atomic rollback, older-reader compatibility and 23 new delivery cases pass. The
-09:52 local rehearsal preserved all 56 tables and 38,547 rows from the verified
-production backup, with clean integrity/FK checks and unchanged existing triggers.
-The 09:55 public health check still reported exports disabled, no active mode and
-source-boundary verification false; it did not attest every deployment variable.
+Exports remain disabled. The separate QRZ and LoTW first-insert safeguards,
+source collector expansion and bounded proof-clock admission are now deployed.
+Next: refresh the exact contact's source proof and fresh QRZ evidence on this
+release, then prepare its read-only trial packet. LoTW separately needs a complete
+empty three-day report, current certificate checks, and eventual signed upload
+and exact readback acceptance. No trial runs under the keep-disabled instruction.
+Global source completeness, historical exception review and sustained capacity
+remain separate unresolved work. Closed-gate cron continues reconciliation but
+skips export proof creation; waiting for cron alone cannot close those checks.
 
-Push and read-only deployment remain pending 1Password signing. Production has
-not been changed by this work. Refresh source/vendor evidence on the final release;
-actual QRZ then LoTW acceptance still needs a separately authorized bounded trial.
-Keep every export gate closed. The [capacity plan](docs/capacity-plan.md#cost-of-the-pending-lotw-first-insert-path)
-records the new path's request cost and the remaining scale limitations.
+The fresh 11:48 UTC protected backup passed isolated restore, three credential
+decryptions and repeated recovery quarantine. The 11:49 migration rehearsal
+preserved all 56 tables and 33,903 rows, with unchanged existing triggers and
+clean integrity/foreign-key checks. Migration `0032` was then applied remotely
+only by the guarded disabled deployment. No vendor write or production restore
+occurred.
+
+The first completed scheduled run after deployment ran from **08:01:51 to
+08:03:23 EDT** (12:01:51–12:03:23 UTC): 63 contact turns and 42 destination
+classifications in 92.154 seconds, with zero attempt turns. It stopped at the
+soft deadline after 600 D1 calls/1,837 statements and 86.767 seconds of database
+wall time. Nine affected-contact errors were two LoTW-unavailable, two QRZ
+history-scope mismatches and five QRZ missing-ADIF-time results; 21 vendor-budget
+deferrals were separate. These remain held rather than becoming absent or
+exportable. This verifies scheduled reconciliation on the new release, not the
+export-proof/signing path or sustained throughput.
+
+A protected LoTW three-day diagnostic stopped at **08:03:26 EDT** before any
+remote database or vendor call: the pre-deployment snapshot yielded zero
+candidates satisfying the strict selection predicate. An isolated repeat confirmed
+one selection read, zero inspected candidates and zero writes. No alternate
+contact or weaker predicate was used. Thus fresh three-day LoTW evidence remains
+outstanding, as does the final-release joint source/QRZ proof refresh. The helper
+was independently reviewed against all 93 runtime file hashes and passed 16
+focused offline tests; that is implementation evidence, not a successful live read.
+
+## Earlier observations
 
 Current checkpoint, 2026-10-24 UTC; independent QRZ first-insert authority and
 bounded 100-record source baseline complete; cloud source/QRZ and LoTW reads passed:
@@ -89,9 +115,9 @@ seven closed controls were independently rechecked. See the
 
 The prepared collector fix requests 25 records but accepts bounded timestamp
 groups up to 100 per stream, with whole-page validation and unchanged proof/request
-limits. Its initial commit is signed and pushed; the final refinement is committed
-locally and awaiting 1Password signing. All **1,184 tests** and required local
-checks pass. Neither collector change is deployed yet.
+limits. Both collector changes later shipped in signed release `12f636b3`, whose
+full release CI passes 1,338 tests. The 1,184-test checkpoint described here
+predates that release.
 
 A new protected SQL backup passed verification at **08:14:29 UTC** against all
 30 installed migrations, with no pending migration applied. Isolated restore,
@@ -664,13 +690,13 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 
 ## Next action and rollout boundaries
 
-1. Complete signing and deployment of the reviewed collector, clock-admission and LoTW response-validation fixes with exports closed. The baseline/handoff is complete; the 09:20 two-module cloud comparison created a current proof, followed by protected host checks of fresh QRZ absence for the same contact. Repeat on the final release, including remaining scheduled Worker-path validation; preserve exact dependency, scope, generation and expiry guards.
+1. Signed release `12f636b3` has deployed the reviewed collector, clock-admission and LoTW fixes with all eight controls closed. The baseline/handoff is complete; the 09:20 two-module cloud comparison created a current proof, followed by protected host checks of fresh QRZ absence for the same contact. Repeat on the final release, including remaining scheduled Worker-path validation; preserve exact dependency, scope, generation and expiry guards.
 2. Keep the implemented authority split closed. Default-off QRZ first-insert mode excludes source-wide cutovers, no-query inference, LoTW, replacement and corrections. `SOURCE_BOUNDARY_VERIFIED` remains false: complete inventories and finite positive samples do not establish universal tombstone or purge guarantees.
-3. Prepare the exact QRZ first-write review packet using the successful 09:20 cloud-source/host-QRZ observation as evidence of the read path. Refresh its expiring source proof and vendor checks before any later authorized write. Historical precision, location and routing holds need explicit evidence; cron does not approve them. LoTW unsigned field/certificate compatibility and a fresh scoped absence query passed for one contact; the separate authority and repeated checks are implemented locally; release verification and live upload/readback acceptance remain open.
-4. Prepare the exact first-write packet read-only in the [rollout checklist](docs/rollout-checklist.md), preserving the verified 08:14 UTC current-schema SQL backup, including its first source proof, and refreshing it if needed before external changes. Off-device key storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account.
+3. Prepare the exact QRZ first-write review packet using the successful 09:20 cloud-source/host-QRZ observation as evidence of the read path. Refresh its expiring source proof and vendor checks before any later authorized write. Historical precision, location and routing holds need explicit evidence; cron does not approve them. LoTW unsigned field/certificate compatibility and a fresh scoped absence query passed for one contact; the separate authority and repeated checks are deployed and verified disabled; fresh three-day evidence and live upload/readback acceptance remain open.
+4. Prepare the exact first-write packet read-only in the [rollout checklist](docs/rollout-checklist.md), preserving the verified 11:48 UTC pre-`0032` SQL backup and refreshing it if needed before external changes. Off-device key storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account.
 5. Keep exports disabled. The latest instruction supersedes the earlier one- or two-contact trial authorization; no actual trial may run until the owner changes that instruction and all current proof/vendor checks pass.
 
-All seven controls remain closed. Unrelated historical exceptions may remain isolated during an explicitly scoped trial; broad automatic coverage needs its own review. Replacement and old-identity cleanup remain disabled until separately proven. Continue resource/cost, restore/revocation, browser/passkey and full workload acceptance before expansion. Staging remains undeployed. See [roadmap](ROADMAP.md), [deployment](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md).
+All eight controls remain closed. Unrelated historical exceptions may remain isolated during an explicitly scoped trial; broad automatic coverage needs its own review. Replacement and old-identity cleanup remain disabled until separately proven. Continue resource/cost, restore/revocation, browser/passkey and full workload acceptance before expansion. Staging remains undeployed. See [roadmap](ROADMAP.md), [deployment](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md).
 
 ## Previous follow-up: LoFi connection freshness
 

@@ -4,34 +4,49 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-24 UTC)
 
-**Latest local work (10:09 UTC):** the separate LoTW first-insert path is implemented
-with a three-day empty-history rule, immutable mode pins, repeated pre-sign and
-pre-upload checks, exact upload validation and a default-off vendor gate. All
-**1,338 tests** and the full release check pass. Migration upgrade, rollback and
-older-reader compatibility pass; an isolated rehearsal preserves the verified
-production backup with clean integrity/FK checks. Four implementation commits are
-local; signing, push and read-only deployment remain pending 1Password.
+Signed revision `12f636b312c9192b755188faf06d66171d485da5` deployed read-only at **2026-10-24 07:59 EDT**
+(`2026-10-24T11:59:10.901859Z`), as Worker `bd6ff427-351d-463c-9b7d-4395e256117d` at 100% traffic.
+All **1,338 tests** and required release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40090915890).
+Independent readback verified all **eight export controls closed**, healthy HTTPS,
+and matching dashboard assets. All 31 migrations through `0032` are installed;
+source membership is ready, all 4,500 retained rows have bodies/incarnations,
+380 LoTW identity claims remain covered, and export attempts, cutovers, pins and
+temporary write guards remain zero. Diagnostic source proofs are temporary and
+are not write authorization.
 
-Exports remain disabled. Next: deploy the reviewed fixes with all eight controls
-closed, refresh bounded source/QRZ evidence on that release, and complete scheduled
-Worker validation. Prepare the exact QRZ acceptance packet, then LoTW; no trial
-runs under the current keep-disabled instruction. Global source completeness,
-historical exceptions and sustained capacity remain separate unresolved work.
-The [LoTW evidence](docs/evidence-lotw.md#separate-lotw-first-insert-implementation)
-and [request-cost limits](docs/capacity-plan.md#cost-of-the-pending-lotw-first-insert-path)
-distinguish completed safeguards from live acceptance and scale readiness.
+Exports remain disabled. The separate QRZ and LoTW first-insert safeguards,
+source collector expansion and bounded proof-clock admission are now deployed.
+Next: refresh the exact contact's source proof and fresh QRZ evidence on this
+release, then prepare its read-only trial packet. LoTW separately needs a complete
+empty three-day report, current certificate checks, and eventual signed upload
+and exact readback acceptance. No trial runs under the keep-disabled instruction.
+Global source completeness, historical exception review and sustained capacity
+remain separate unresolved work. Closed-gate cron continues reconciliation but
+skips export proof creation; waiting for cron alone cannot close those checks.
 
-The separate, default-disabled QRZ first-insert capability is deployed. It retains
-mandatory source proofs while excluding source-wide cutovers, no-query inference,
-LoTW, replacement and corrections. It remains disabled. The policy-aware review
-audit and bounded 100-record baseline pages are deployed in `02e3dc89b99a`.
-Production baseline/handoff completed at 06:35:44.881 UTC. At 09:20, a temporary
-cloud comparison with the committed clock fix minted a source proof; a protected
-host check verified fresh QRZ absence for that same contact and current proof.
-A subsequent LoTW query also returned an empty scoped report. Final fix deployment,
-scheduled Worker validation, vendor write acceptance and sustained capacity
-remain outstanding. The pre-LoTW-authorization fixes passed all 1,233 tests and the
-full local release check; signing remains blocked on 1Password.
+See [deployment evidence](docs/deployment.md), [LoTW safeguards](docs/evidence-lotw.md)
+and [capacity limits](docs/capacity-plan.md#cost-of-the-lotw-first-insert-path).
+
+The first completed scheduled run after deployment ran from **08:01:51 to
+08:03:23 EDT** (12:01:51–12:03:23 UTC): 63 contact turns and 42 destination
+classifications in 92.154 seconds, with zero attempt turns. It stopped at the
+soft deadline after 600 D1 calls/1,837 statements and 86.767 seconds of database
+wall time. Nine affected-contact errors were two LoTW-unavailable, two QRZ
+history-scope mismatches and five QRZ missing-ADIF-time results; 21 vendor-budget
+deferrals were separate. These remain held rather than becoming absent or
+exportable. This verifies scheduled reconciliation on the new release, not the
+export-proof/signing path or sustained throughput.
+
+A protected LoTW three-day diagnostic stopped at **08:03:26 EDT** before any
+remote database or vendor call: the pre-deployment snapshot yielded zero
+candidates satisfying the strict selection predicate. An isolated repeat confirmed
+one selection read, zero inspected candidates and zero writes. No alternate
+contact or weaker predicate was used. Thus fresh three-day LoTW evidence remains
+outstanding, as does the final-release joint source/QRZ proof refresh. The helper
+was independently reviewed against all 93 runtime file hashes and passed 16
+focused offline tests; that is implementation evidence, not a successful live read.
+
+### Earlier observations (before this release)
 
 Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
 at 06:09:06 UTC as Worker `da7b7b70-6b7e-4cab-b9f6-f4b88f38390d`, at 100% traffic.
@@ -72,9 +87,9 @@ The evidence expires and must be refreshed before any future authorized write.
 
 The prepared collector fix requests 25 records but accepts bounded timestamp
 groups up to 100 per stream, with whole-page validation and unchanged proof/request
-limits. Its initial commit is signed and pushed; the final refinement is committed
-locally and awaiting 1Password signing. All **1,184 tests** and required local
-checks pass. Neither collector change is deployed yet.
+limits. Both collector changes later shipped in signed release `12f636b3`, whose
+full release CI passes 1,338 tests. The 1,184-test checkpoint described here
+predates that release.
 
 The earlier 07:38:44 QRZ-only check observed absence without a source proof;
 the 08:12:53 combined observation above closes that evidence gap for one sample.
@@ -117,20 +132,22 @@ The 100-account fixture proves background admission order, including restarts;
 it does not prove full live/vendor fairness or 200,000-contact import capacity.
 Timestamp/grid precision, routing and source-validity holds still require review.
 
+## Remaining work before exports
+
 Core feature paths, owner enrollment and service linking are implemented. The next milestone is a safe one- or two-user export trial; the full large-scale capacity plan follows separately. Production remains read-only. Linking credentials and waiting for cron do not establish export readiness. See the [personal acceptance checklist](docs/rollout-checklist.md) for exact prerequisites and the first-write packet.
 Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-character LoTW signing and the aggregate source audit are implemented, tested and deployed. Claims protect adoption, preparation and dispatch across cancellation, uncertainty, source edits and payload expiry. Historical precision holds and live vendor acceptance remain separate.
-1. **Release and repeat per-contact source verification.** The production baseline,
+1. **Repeat per-contact source verification on the deployed release.** The production baseline,
    forward drain and quarantine handoff are complete: all 4,500 retained rows
    were witnessed, with 4,130 contacts eligible for reconciliation. The immutable
    proof mint succeeded for one contact at 08:12:53 under its original atomic
-   guard. Deploy the reviewed timestamp-expansion collector fix after final
-   signing and checks, then repeat collection/drain and complete scheduled Worker
-   validation. A 09:05 cloud Worker diagnostic reproduced the atomic proof
+   guard. The reviewed timestamp-expansion and clock-admission fixes are deployed.
+   Repeat collection/drain on that release; a completed disabled cron does not
+   validate proof creation or delivery. A 09:05 cloud Worker diagnostic reproduced the atomic proof
    rejection after successful collection/drain; later predicates all passed.
-   The bounded admission fix is committed locally and passed a 09:20 cloud
+   The bounded admission fix is deployed and previously passed a 09:20 cloud
    comparison: one proof batch succeeded with all original times and guards.
    That sample needed one clock read and no wait; controlled tests separately
-   verify catch-up under lag. Release the fix and distinguish this comparison
+   verify catch-up under lag. Distinguish this comparison
    from scheduled production validation. The diagnostic follows normal context
    refresh order, while retaining strict current eligibility and proof checks
    before QRZ. Its earlier zero-candidate precheck was too restrictive; that
@@ -162,10 +179,11 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    changes that instruction and the remaining evidence checks pass.
    The proposed sequence remains QRZ first, then LoTW. Both contact and destination allowlists must be
    exact, so LoTW remains excluded during QRZ work. A fresh protected production
-   SQL backup was verified at 08:14 UTC: isolated restore with all 30 installed
-   migrations and no pending migration, integrity/foreign-key checks, three credential
-   decryptions and repeated quarantine passed, preserving 380 claims, one source
-   proof and its retention row, and zero attempts/cutovers. Preserve its evidence and
+   SQL backup was verified at 11:48 UTC: isolated restore with all 30 then-installed
+   migrations, integrity/foreign-key checks, three credential decryptions and
+   repeated quarantine passed, preserving 380 claims and zero attempts/cutovers.
+   An isolated rehearsal preserved all 56 tables before production migration `0032`.
+   The backup itself remains a pre-migration snapshot. Preserve its evidence and
    refresh it if needed before external changes. Earlier restore rehearsals
    remain recorded in the deployment history. Preserve each contact's
    actual 4/6/8-character grid. No
@@ -177,13 +195,13 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    certificate/date compatibility for one retained contact. It remains held at
    first-insert classification. A fresh scoped LoTW query at 09:20:55 returned
    zero records with stable context, but established no signing or upload
-   acceptance. QRZ's mode excludes LoTW; release and verify the separate LoTW authority before its
-   trial while keeping the global source-boundary gate closed. The
+   acceptance. QRZ's mode excludes LoTW; the separate LoTW authority is now
+   deployed and disabled, while the global source-boundary gate stays closed. The
    [LoTW implementation](docs/evidence-lotw.md#separate-lotw-first-insert-implementation)
    now includes strict response-scope validation, a conservative three-day empty-
    report check, separate immutable authorization, fresh dispatch checks and
-   default-off service wiring. Finish release validation and deploy with its new
-   gate closed. The current one-day LoTW observation does not satisfy the three-
+   default-off service wiring. Release validation and disabled deployment
+   are complete. The current one-day LoTW observation does not satisfy the three-
    day policy; obtain fresh bounded evidence on the final release before any trial.
 5. **Expand automatic coverage and prove capacity.** Source policy and fresh
    positive evidence must protect main exports, not only the trial. Then review
@@ -332,6 +350,8 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 **Acceptance:** changing a template generates no historical scan, invalidation, hash recomputation, or job. In-flight requests and retries keep their pinned version. An actual later source change uses current data with that version. Adopted text survives structured corrections; note-only source edits do not take ownership. Lost responses do not cause blind inserts or deletes.
 
 ## 6. Deliver signed contacts to LoTW
+
+- [x] Deploy separate default-off first-insert authority, complete three-day absence checks before signing and dispatch, immutable mode/proof pins and exact final upload validation. All eight production controls remain closed; actual upload/readback acceptance remains open.
 
 - [x] Integrate the proven Worker signer, versioned field/configuration tables, certificate selection, and per-location grouping.
 - [x] Persist immutable encrypted signed batches with exact member UUIDs, source generations, and certificate/configuration versions until their outcomes resolve. Commit membership and member attempt states together. One-contact artifacts are acceptable initially; bound batch work and isolate invalid records without resubmitting unrelated history.

@@ -31,7 +31,7 @@ The failed batch lasted 42 ms; the later SELECT observed D1 14 ms past proof
 creation and 47 ms behind the Worker at that SELECT's start. This supports a
 clock-ordering hypothesis without identifying the failed predicate inside the
 transaction. The failure is reproducible in a cloud Worker, not only Node. A
-bounded pre-mint database-clock check is now committed locally; proof timestamps,
+bounded pre-mint database-clock check was then committed; proof timestamps,
 expiry and the atomic guards remain unchanged.
 
 The temporary preview was disposed. Independent before/after checks confirmed
@@ -40,7 +40,8 @@ controls. This was diagnostic cloud execution, not scheduled production traffic
 or capacity evidence. A preceding local preflight stopped before remote execution
 because bundle comments depended on the working directory; pinning the build
 directory fixed that check without changing the Worker bundle. A separate
-timestamp-group response-bound fix is also awaiting final signing/deployment.
+timestamp-group response-bound fix and the clock-admission fix later shipped in
+signed release `12f636b3` at 11:59 UTC with all eight export controls closed.
 Current evidence must be refreshed before any write.
 
 At **09:20:14 UTC**, a separately reviewed remote comparison applied only the

@@ -4,10 +4,10 @@ Current status, 2026-10-24 UTC: baseline/drain/quarantine completed at 06:35:44
 for all 4,500 retained rows. At 08:12:53, a protected exact-deployed-code diagnostic
 minted one source proof and verified fresh QRZ absence for the same contact, using
 two source and three QRZ reads. That bounded sample does not establish sustained
-capacity or scheduled Worker/write acceptance. The collector refinement remains
-awaiting signing/deployment, and all export controls remain closed.
+capacity or scheduled Worker/write acceptance. The collector refinement and independent LoTW authority are deployed in
+`12f636b3`; all eight export controls remain closed.
 
-## Cost of the pending LoTW first-insert path
+## Cost of the LoTW first-insert path
 
 The default-off LoTW capability repeats a complete three-day history query and
 certificate-status query before signing and before upload. One successful contact
@@ -28,6 +28,21 @@ checks and separately reviewed multi-contact signing/upload, retaining per-conta
 source proofs, durable ownership and uncertain-delivery protection. Revisit the
 application budget only with vendor evidence and measured resource headroom;
 raising it alone is not a throughput result. No budget was increased here.
+
+## First scheduled run of `12f636b3`
+
+The first completed scheduled run after deployment ran from **08:01:51 to
+08:03:23 EDT** (12:01:51–12:03:23 UTC): 63 contact turns and 42 destination
+classifications in 92.154 seconds, with zero attempt turns. It stopped at the
+soft deadline after 600 D1 calls/1,837 statements and 86.767 seconds of database
+wall time. Nine affected-contact errors were two LoTW-unavailable, two QRZ
+history-scope mismatches and five QRZ missing-ADIF-time results; 21 vendor-budget
+deferrals were separate. These remain held rather than becoming absent or
+exportable. This verifies scheduled reconciliation on the new release, not the
+export-proof/signing path or sustained throughput.
+
+The new vendor-policy field invalidates prior reconciliation fingerprints once.
+This run is a release follow-up, not a steady-state capacity sample.
 
 ## Release and earlier throughput observations
 
@@ -677,14 +692,14 @@ has occurred. Exact small-cohort acceptance, 100-account steady-state capacity a
 200,000-contact end-to-end completion remain unproved; later work includes
 incremental evidence collection, pacing and separately measured larger source pages.
 
-The separate collector compatibility fix is prepared but not deployed: nominal
+The collector compatibility fix is deployed in `12f636b3`: nominal
 requests remain 25, while responses may contain up to 100 records per stream to
 accommodate complete timestamp groups. A combined 1 MiB parsed-record cap and the
 existing 2 MiB transport cap bound each response. Every returned row validates
 before new witnesses publish. The four-request budget, reserved final drain and
 120-second collection deadline remain unchanged; larger ties still hold. All
-1,184 tests and required local checks pass. Final signing is blocked in 1Password,
-so this change supplies no new production throughput measurement yet.
+1,338 tests and required release CI checks pass. Deployment alone supplies no
+new sustained production throughput measurement.
 
 ### 3. Make live delivery economical without weakening write safety
 

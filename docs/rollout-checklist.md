@@ -6,7 +6,48 @@ proofs, fresh vendor evidence and exact contact review; finishing the 200,000-co
 plan is a separate expansion milestone. No real logbook entry has been inserted,
 replaced, deleted or uploaded during this implementation work.
 
-## Current evidence (2026-10-24 UTC)
+## Current evidence (2026-10-24)
+
+Signed revision `12f636b312c9192b755188faf06d66171d485da5` deployed read-only at **2026-10-24 07:59 EDT**
+(`2026-10-24T11:59:10.901859Z`), as Worker `bd6ff427-351d-463c-9b7d-4395e256117d` at 100% traffic.
+All **1,338 tests** and required release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40090915890).
+Independent readback verified all **eight export controls closed**, healthy HTTPS,
+and matching dashboard assets. All 31 migrations through `0032` are installed;
+source membership is ready, all 4,500 retained rows have bodies/incarnations,
+380 LoTW identity claims remain covered, and export attempts, cutovers, pins and
+temporary write guards remain zero. Diagnostic source proofs are temporary and
+are not write authorization.
+
+Exports remain disabled. The separate QRZ and LoTW first-insert safeguards,
+source collector expansion and bounded proof-clock admission are now deployed.
+Next: refresh the exact contact's source proof and fresh QRZ evidence on this
+release, then prepare its read-only trial packet. LoTW separately needs a complete
+empty three-day report, current certificate checks, and eventual signed upload
+and exact readback acceptance. No trial runs under the keep-disabled instruction.
+Global source completeness, historical exception review and sustained capacity
+remain separate unresolved work. Closed-gate cron continues reconciliation but
+skips export proof creation; waiting for cron alone cannot close those checks.
+
+The first completed scheduled run after deployment ran from **08:01:51 to
+08:03:23 EDT** (12:01:51–12:03:23 UTC): 63 contact turns and 42 destination
+classifications in 92.154 seconds, with zero attempt turns. It stopped at the
+soft deadline after 600 D1 calls/1,837 statements and 86.767 seconds of database
+wall time. Nine affected-contact errors were two LoTW-unavailable, two QRZ
+history-scope mismatches and five QRZ missing-ADIF-time results; 21 vendor-budget
+deferrals were separate. These remain held rather than becoming absent or
+exportable. This verifies scheduled reconciliation on the new release, not the
+export-proof/signing path or sustained throughput.
+
+A protected LoTW three-day diagnostic stopped at **08:03:26 EDT** before any
+remote database or vendor call: the pre-deployment snapshot yielded zero
+candidates satisfying the strict selection predicate. An isolated repeat confirmed
+one selection read, zero inspected candidates and zero writes. No alternate
+contact or weaker predicate was used. Thus fresh three-day LoTW evidence remains
+outstanding, as does the final-release joint source/QRZ proof refresh. The helper
+was independently reviewed against all 93 runtime file hashes and passed 16
+focused offline tests; that is implementation evidence, not a successful live read.
+
+### Earlier observations
 
 The owner has enrolled and linked LoFi, QRZ and LoTW.
 Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
@@ -48,9 +89,9 @@ The evidence expires and must be refreshed before any future authorized write.
 
 The prepared collector fix requests 25 records but accepts bounded timestamp
 groups up to 100 per stream, with whole-page validation and unchanged proof/request
-limits. Its initial commit is signed and pushed; the final refinement is committed
-locally and awaiting 1Password signing. All **1,184 tests** and required local
-checks pass. Neither collector change is deployed yet.
+limits. Both collector changes later shipped in signed release `12f636b3`, whose
+full release CI passes 1,338 tests. The 1,184-test checkpoint described here
+predates that release.
 
 The earlier 07:38:44 QRZ-only check observed absence without a source proof;
 the 08:12:53 combined observation above closes that evidence gap for one sample.
@@ -104,7 +145,7 @@ ambiguous identities, lower-precision locations or missing routes.
 
 ## Finish reconciliation and review exceptions
 
-Keep every export control closed while doing this work, including the new default-off `LOTW_FRESH_INSERTS_ENABLED` control before deploying its implementation. Preserve cursors, source
+Keep every export control closed while doing this work, including the deployed default-off `LOTW_FRESH_INSERTS_ENABLED` control. Preserve cursors, source
 birth evidence, current context and destination reservations; clearing counts or
 forcing a contact into an eligible state is not reconciliation.
 
@@ -225,12 +266,19 @@ pre-export Time Travel bookmark and verification manifest remain in protected
 storage outside Git. No production restore or vendor mutation occurred. Preserve
 the backup and key; refresh them before external changes when state warrants it.
 
+A newer protected pre-migration backup completed at **07:48:34 EDT (11:48:34 UTC)**.
+It passed isolated restore, three credential decryptions, integrity/foreign-key
+checks and repeated quarantine with 30 applied migrations and `0032` pending.
+The isolated `0032` rehearsal preserved all 56 tables and 33,903 rows before
+production deployment. See the [release and backup record](deployment.md#disabled-release-and-backup-2026-10-24-07480759-edt).
+This snapshot predates `0032`; refresh it before an external trial when needed.
+
 The [08:15 unsigned LoTW preflight](evidence-lotw.md) validated one actual
 contact's projected fields and stored certificate/date fit in that snapshot.
 Its LoTW route remains `inventory_pending`, with `first_insert_candidate=0`.
-No fresh LoTW read, signature or upload occurred. Separate LoTW authorization
-work is required because the QRZ first-insert mode excludes it; keep the global
-source-boundary gate closed while defining that policy.
+No fresh LoTW read, signature or upload occurred. Separate LoTW authorization is now deployed and disabled; the QRZ mode still
+excludes LoTW. Keep the global
+source-boundary gate closed until its separate contract is established.
 
 The earlier protected production SQL backup was verified at **04:25:27 UTC on
 2026-10-24**, before the mandatory-proof release. Its isolated restore passed all

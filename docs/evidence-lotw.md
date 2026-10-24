@@ -1,6 +1,6 @@
 # LoTW actual-contact preflight evidence
 
-Updated **2026-10-24 10:09 UTC**. Production exports remain disabled. This page
+Updated **2026-10-24 07:59 EDT**. Production exports remain disabled. This page
 records an unsigned snapshot check and a later fresh query for one actual contact. The
 [signing evidence](evidence-signing.md) separately documents synthetic signatures,
 released TQSL source and local Worker compatibility; the
@@ -82,8 +82,8 @@ An upload acknowledgement would establish **submitted**; exact subsequent
 supported-projection readback is required for **observed** acceptance. QSL
 confirmation is separate.
 
-Production LoTW delivery still requires source-boundary authorization. A separate
-first-insert mode is now implemented locally and remains unreleased and disabled.
+Production now has separate default-off LoTW first-insert authority. It is
+deployed and disabled; broader source-boundary authority remains unproved.
 The QRZ result and a per-contact source proof cannot themselves turn on LoTW or
 assert the global source-boundary contract. Keep `SOURCE_BOUNDARY_VERIFIED=false`
 and all export controls closed. No live signature, upload, gate change or ARRL
@@ -91,8 +91,9 @@ acceptance claim follows from these checks.
 
 ## Separate LoTW first-insert implementation
 
-The following implementation is local and passes the full release check; signed
-push, deployment and live acceptance remain outstanding:
+The following implementation is signed, pushed and deployed with all eight
+controls closed. All 1,338 tests and release CI pass; live acceptance remains
+outstanding:
 1. Validate every returned LoTW record against the sent dates and optional
    station/worked-call filters before evaluating absence. Reject malformed
    identities while preserving valid minute precision and historical modes.
@@ -112,8 +113,7 @@ push, deployment and live acceptance remain outstanding:
 5. Add default-off `LOTW_FRESH_INSERTS_ENABLED`, independent service admission,
    reconciliation-policy refresh, health/admin reporting and deployment checks.
    Combined first-insert status never claims source completeness. Every configured
-   environment has eight closed controls; production still has its seven original
-   controls until the new configuration is deployed.
+   environment has eight closed controls, independently verified in production.
 
 The scheduler fixture proves one LoTW upload followed by separate submitted and
 observed receipts, with no QRZ write or source-wide cutover. All 13 source-export
@@ -148,7 +148,7 @@ empty subsequent readback cannot authorize resubmission. See ARRL's
 [submission contract](https://lotw.arrl.org/lotw-help/developer-submit-qsos/).
 QRZ release and acceptance remain the first rollout milestone.
 
-The final combined runtime through local revision `74a0ef2e` passes all
+The final combined runtime in signed release `12f636b3` passes all
 **1,338 tests** and `mise run check`: formatting, lint, both TypeScript checks and
 the Worker build. The test phase took 865,489 ms. This includes 23 new delivery
 cases, populated migration/rollback tests and the older QRZ/source-boundary paths.
@@ -156,8 +156,26 @@ Independent delivery and service reviews found no remaining blocker. The run
 caught and fixed a lease-release race in the new known-unsent history hold:
 dispatch now awaits the fenced retry transition before releasing its lease.
 
-The four implementation commits are local. Signed push and read-only deployment
-remain pending 1Password signing. No production authorization flag or delivery
-policy changed, and no live signature/upload occurred. Fresh three-day production
+Signed release `12f636b3` and migration `0032` are deployed. All eight controls
+remain closed, and no live signature/upload occurred. Fresh three-day production
 history, final-release source proof/certificate checks and actual ARRL acceptance
 remain outstanding; the older one-day observation cannot substitute for them.
+
+## Final-release three-day diagnostic (2026-10-24, 08:03 EDT)
+
+The release-specific helper verifies the exact signed `12f636b3` runtime, the
+explicit deployed Worker, all eight closed controls, and the same private
+candidate before and after one normally budgeted GET. It uses the actual
+three-day first-insert helper and admits no source, proof, ledger or attempt
+writes, signing or upload. Source/QRZ freshness remains explicitly unverified.
+Sixteen offline tests and independent review passed.
+
+The actual invocation at **12:03:26 UTC** stopped during local snapshot selection:
+zero candidates satisfied the predicate in the verified 11:48 pre-deployment
+backup. One isolated selection read confirmed that result, with zero inspected
+candidates. The generic `candidate_changed` stop did not establish that a selected
+contact had changed: no candidate was selected. No remote proxy, budget reservation,
+certificate check or vendor request occurred. No source/QRZ proof was refreshed.
+Fresh three-day history and ARRL acceptance therefore remain open. Use current
+eligible metadata for the next bounded packet; do not relax the selection checks
+or treat this stop as destination absence.

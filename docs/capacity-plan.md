@@ -419,9 +419,19 @@ stopping after two pages needs confirmation before extrapolating a rate.
 The 02:48:09 UTC protected
 backup passed an isolated restore with both pending migrations, integrity and
 foreign-key checks, three current credential decryptions and repeated quarantine.
-Fresh-positive collection, witness storage and proof foundation are uncommitted
-work in an isolated worktree, outside this release. They are not deployed;
-stage/dispatch integration and runtime fresh-positive enforcement are outstanding.
+Fresh-positive collection, witness storage, canonical completed-drain markers,
+immutable proofs, indexed observation anchors and shared cohort coordination are
+signed and pushed through `e16f987441fc`, with exact-key lookup correction
+`3d7b0cac782a`. All 1,098 tests pass and the foundation deployed read-only at
+04:13 UTC with migrations `0027`–`0029`. Mandatory database proof binding,
+last-moment dispatch validation and scheduler integration are in progress.
+
+The 04:18:08 UTC production snapshot has all 218 operations and 800 QSO-stream
+records in the current epoch, still in backfill with zero eligible exports.
+The 04:15 run processed four source pages and 110 records in 15.674 seconds,
+with 138 D1 calls, 723 statements, 14.573 seconds of D1 wall time and 419 ms of
+reported SQL time. No errors or attempts occurred; one vendor-budget deferral
+was recorded. This is an individual baseline run, not sustained capacity acceptance.
 
 Runtime background pages remain **25 rows** with at most **four shared LoFi
 background requests per five minutes**. A QSO pass alone therefore has ideal
@@ -430,6 +440,33 @@ forward drain, context, competing accounts and retries add time. The protected
 [inventory audit](../scripts/source-inventory-audit.ts) requests 200 rows per
 stream, but it neither changes runtime page size nor establishes production
 checkpoint capacity. Larger runtime pages remain a separately measured change.
+
+The 03:42:54 UTC snapshot had current membership for 100 operations and 100
+QSO-stream records, including three events. The 03:35 run committed three source
+checkpoints and 100 records; the 03:40 run committed two checkpoints and 50 records.
+Thus the first run does not establish a fixed one-useful-page pattern. At a
+hypothetical one useful 25-row QSO page per five minutes, the QSO pass alone takes
+13 hours 20 minutes for 4,000 rows or 27 days 18 hours 40 minutes for 200,000.
+Two useful pages halve those times; four give the ideal lower bounds above.
+These are arithmetic scenarios, not observed sustained rates; events and tombstones
+also occupy the QSO stream.
+
+HaLo's inspected `eb1a54ced637bfdd3c5b361a31df0e843edf9867` client distinguishes
+[page-loop delay from idle check period](https://github.com/ham2k/halo/blob/eb1a54ced637bfdd3c5b361a31df0e843edf9867/packages/halo_core/lib/src/sync/sync_engine.dart#L119).
+Its [response parser](https://github.com/ham2k/halo/blob/eb1a54ced637bfdd3c5b361a31df0e843edf9867/packages/halo_core/lib/src/sync/sync_engine.dart#L1204)
+reads camelCase metadata, snake_case metadata, then `meta.flags` snake_case; loop
+delay is milliseconds and permits zero. This is primary client evidence, not proof
+of the deployed server's current values or the cause of Ferry's empty responses.
+Ferry does not yet honor these knobs. Next measure validated numeric timing/batch
+hints, per-stream useful/empty-incomplete counts, cursor-advanced booleans, response
+bytes and maximum checkpoint wall/SQL time. Do not log raw cursors or records.
+Then evaluate bounded per-source pacing and a separately measured page-size change
+without raising shared vendor limits or splitting atomic checkpoints.
+
+With witness storage, the local 100-operation/100-QSO fixture uses nine D1 binding
+calls and 1,508 statements in one atomic checkpoint, versus 1,308 statements in the
+deployed baseline. This proves a bounded local transaction, not production headroom
+under D1's execution limits.
 
 Fresh positive source validation is a separate export prerequisite. A hard purge
 may leave no tombstone, so all-client forward completion cannot prove continued

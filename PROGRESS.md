@@ -1,12 +1,12 @@
 # Implementation progress
 
-Current checkpoint, 2026-10-24 UTC; all-client baseline deployed read-only:
+Current checkpoint, 2026-10-24 UTC; source-proof foundation deployed read-only:
 
-Signed revision `ce238cdcfea72ed5cbc7b624ec6a7efc01978154` deployed at 03:28:48 UTC
-as Worker `aabdd51c-1665-480a-8806-fe993967bc27`, at 100% traffic. All **1,031 tests**
-and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40057488314).
-Independent 03:29:42–03:29:43 checks confirm healthy service, all three asset
-hashes matching, all six export gates closed, 25 migrations, 380 LoTW identity
+Signed revision `3d7b0cac782af45bcd6684129f77da4cd8f159e2` deployed at 04:13:24 UTC
+as Worker `4a8c5a8b-8eb1-4569-b0b5-33a7acd2a043`, at 100% traffic. All **1,098 tests**
+and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40060259245).
+Independent 04:18:07–04:18:08 checks confirm healthy service, all three asset
+hashes matching, all six export gates closed, 28 migrations, 380 LoTW identity
 claims and zero uncovered mappings, attempts, cutovers or stage/history guards.
 The first scheduled run activated one all-client policy at 03:30:43.295 UTC.
 At 03:31:37.477 it remained in backfill, with 25 operations and 25 QSOs marked
@@ -54,10 +54,41 @@ passed before the 03:28 release. Migrations `0025`/`0026` preserve historical
 births, quarantine unseen dependencies and fence old-worker checkpoints and
 stale dispatch. During this phased rollout, policy fences are dormant when no
 policy row exists; main exports must require a current ready policy for every
-exporting source. Fresh-positive collection, witness storage and proof foundation
-are separate uncommitted work in an isolated worktree; they are not deployed and
-supply no stage or dispatch authority.
-Runtime fresh positive source/context enforcement remains a prerequisite.
+exporting source. Fresh-positive collection, canonical witness storage, completed-drain markers,
+immutable per-contact proofs, indexed observation anchors and shared cohort
+coordination are signed and pushed through `e16f987441fc84a65b517aac07ba67a235fe09e1`.
+The corrected foundation passed [full CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40060259245)
+and is deployed with migrations `0027`–`0029`. These building blocks grant no
+stage or dispatch authority. Mandatory proof binding at both boundaries and scheduler integration
+are in progress in the isolated worktree. Missing policies and null context must
+fail closed; prepared attempts must retain their original proof ID.
+The combined focused run passed 367 of 368 cases and exposed an anchor-index
+query-plan regression. Fix `3d7b0cac782a` pins witness lookup to the exact source
+identity key; its focused D1 regression, types, scoped checks and full release
+CI pass.
+
+At 03:55:42 UTC, current membership covered all 218 operations and 300 QSO-stream
+records, including three events. The policy remains in backfill with no ready
+source or eligible exports. QRZ has 37 complete and three pending history
+partitions; the single complete covering plan still contains 98 surrounding
+records and zero target records. Its ledger has 3,435 ambiguous and 398 pending
+rows. Attempts, cutovers and temporary guards remain zero.
+
+At 04:18:08 UTC, current membership covered all 218 operations and 800 QSO-stream
+records, including five events. The policy remains in backfill with zero ready
+sources or eligible exports. The 04:15 run processed four source pages and 110
+records in 15.674 seconds, with no errors, one budget deferral, 138 D1 calls and
+723 statements. Its SQL timings total 419 ms versus 14.573 seconds of D1 wall
+time; this single run does not establish sustained throughput. No attempts or
+cutovers were created.
+
+A fresh protected SQL backup completed at 03:50:46 UTC: 25 production migrations,
+380 identity claims, zero attempts/cutovers, successful isolated application of
+`0027`–`0029`, integrity and foreign-key checks, and decryption of three current
+credentials. The migrations preserve existing counts and policy membership,
+initialize no positive observation or proof, and assign source-body incarnation
+versions. Repeated restore quarantine preserved attempts and claims. Production
+was not restored.
 
 The refreshed protected SQL backup completed at 02:48:09 UTC with all 23 current
 migrations, 380 identity claims and zero attempts or cutovers. Its isolated restore

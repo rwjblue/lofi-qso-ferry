@@ -4,16 +4,16 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-24 UTC)
 
-Signed revision `ce238cdcfea72ed5cbc7b624ec6a7efc01978154` deployed read-only
-at 03:28:48 UTC as Worker `aabdd51c-1665-480a-8806-fe993967bc27`, at 100% traffic.
-All **1,031 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40057488314).
-Independent 03:29:42–03:29:43 checks confirm healthy service, matching assets,
-all six export gates closed, 25 migrations, 380 LoTW identity claims and zero
-uncovered mappings, attempts, cutovers or stage/history guards. The first scheduled
-run activated one all-client policy; at 03:31:37 it was in backfill with 25
-operations and 25 QSOs in the current epoch, no ready policy and zero eligible
-exports. Continued baseline progress and handoff remain to be observed.
-Fresh-positive proof work remains undeployed.
+Signed revision `3d7b0cac782af45bcd6684129f77da4cd8f159e2` deployed read-only
+at 04:13:24 UTC as Worker `4a8c5a8b-8eb1-4569-b0b5-33a7acd2a043`, at 100% traffic.
+All **1,098 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40060259245).
+Independent 04:18:07–04:18:08 checks confirm healthy service, matching assets,
+all six export gates closed, 28 migrations, 380 LoTW identity claims and zero
+uncovered mappings, attempts, cutovers or stage/history guards. The all-client
+policy remains in backfill, with all 218 operations and 800 QSO-stream records
+in the current epoch, no ready policy and zero eligible exports. Baseline handoff
+remains unfinished. Fresh-positive proof building blocks are deployed; mandatory
+preparation/dispatch binding and scheduler integration remain in progress.
 
 At 02:52:53 UTC, QRZ had 35 complete and five pending history partitions, with
 the same single completed 98-record cover and zero target records. Its ledger
@@ -47,14 +47,18 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    is signed and pushed through `339590e08e22`, followed by delivery test fixture
    fixes in `ce238cdcfea7`. The [first CI run](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40055506398)
    was cancelled after a leaked `workerd` process; [replacement CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40057488314)
-   passed, and `ce238cdcfea7` is deployed with gates closed.
+   passed before the initial baseline deployment at 03:28 UTC.
    It fences old Workers, keeps recovered rows historical and holds unseen
    members. Transitional guards are dormant without a policy row: main exports
    must require current ready policy membership. Fresh positive source/context
    validation remains a separate implementation prerequisite for future hard
-   purges. Collection, witness storage and proof foundation are uncommitted work
-   in an isolated worktree, excluded from this release; stage/dispatch integration
-   is not ready. Keep `SOURCE_BOUNDARY_VERIFIED=false`.
+   purges. Collection, witness storage, drain markers, immutable proofs, indexed
+   observation anchors and shared cohort coordination are signed and pushed
+   through `e16f987441fc`, with exact-key lookup correction `3d7b0cac782a`; all
+   1,098 tests pass and that foundation is deployed read-only at 04:13 UTC.
+   Mandatory preparation/dispatch proof binding and scheduler integration are in
+   progress. Missing policy/null context must fail closed, and an attempt must
+   retain its original proof ID. Keep `SOURCE_BOUNDARY_VERIFIED=false`.
 2. **Observe integrated QRZ coverage and review an eligible cohort.** History
    fallback and fresh pre-write collision checks are implemented and deployed.
    History requires two matching complete bounded covers; cached metadata only
@@ -63,8 +67,8 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    ambiguous associations and lower-precision locations remain review holds.
 3. **Run the authorized one- or two-contact trial when evidence is sufficient.**
    QRZ comes first, then LoTW. Both contact and destination allowlists must be
-   exact, so LoTW remains excluded during QRZ work. The refreshed 02:48:09 UTC
-   protected production backup passed isolated restore, both pending migrations,
+   exact, so LoTW remains excluded during QRZ work. The refreshed 03:50:46 UTC
+   protected production backup passed isolated restore, pending `0027`–`0029`,
    all three credential decryptions and repeat quarantine checks. It retained
    380 identity claims and zero attempts or cutovers. Preserve each contact's
    actual 4/6/8-character grid. No

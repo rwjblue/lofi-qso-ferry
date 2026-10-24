@@ -206,11 +206,16 @@ fences remain dormant for sources with no policy row, so main exports must requi
 current ready policy membership explicitly. The first scheduled run activated one
 all-client policy at 03:30:43.295 UTC. The 03:31:37.477 snapshot showed backfill
 with 25 operations and 25 QSOs in the current epoch, no ready policy and zero
-eligible exports; baseline completion and handoff remain unobserved. Fresh-positive collection, witness
-storage and proof foundation are uncommitted work in an isolated worktree,
-excluded from this release and not integrated with stage/dispatch. Runtime positive
-source/context enforcement is still a separate prerequisite; these diagnostic reads
-cannot establish future upstream presence after a hard purge.
+eligible exports; baseline completion and handoff remain unobserved. Fresh-positive
+collection, witness storage, completed-drain markers, immutable proofs, indexed
+observation anchors and shared cohort coordination are signed and pushed through
+`e16f987441fc`, with exact-key lookup correction `3d7b0cac782a`. All 1,098 tests
+pass and the foundation deployed read-only at 04:13 UTC with migrations
+`0027`–`0029`. At 04:18:08 the current epoch covered all 218 operations and 800
+QSO-stream records, but the policy remained in backfill with zero eligible exports.
+Mandatory stage/dispatch binding and scheduler integration remain in progress.
+Runtime positive source/context enforcement remains a prerequisite;
+these diagnostic reads cannot establish future upstream presence after a hard purge.
 
 ### Independent membership probe and conflicting purge evidence
 

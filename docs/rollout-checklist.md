@@ -9,16 +9,16 @@ replaced, deleted or uploaded during this implementation work.
 ## Current evidence (2026-10-24 UTC)
 
 The owner has enrolled and linked LoFi, QRZ and LoTW.
-Signed revision `ce238cdcfea72ed5cbc7b624ec6a7efc01978154` deployed read-only
-at 03:28:48 UTC as Worker `aabdd51c-1665-480a-8806-fe993967bc27`, at 100% traffic.
-All **1,031 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40057488314).
-Independent 03:29:42–03:29:43 checks confirm healthy service, matching assets,
-all six export gates closed, 25 migrations, 380 LoTW identity claims and zero
-uncovered mappings, attempts, cutovers or stage/history guards. The first scheduled
-run activated one all-client policy; at 03:31:37 it remained in backfill with
-25 operations and 25 QSOs in the current epoch, no ready policy and zero eligible
-exports. Continued baseline progress and handoff remain to be observed;
-fresh-positive enforcement is not part of this release.
+Signed revision `3d7b0cac782af45bcd6684129f77da4cd8f159e2` deployed read-only
+at 04:13:24 UTC as Worker `4a8c5a8b-8eb1-4569-b0b5-33a7acd2a043`, at 100% traffic.
+All **1,098 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40060259245).
+Independent 04:18:07–04:18:08 checks confirm healthy service, matching assets,
+all six export gates closed, 28 migrations, 380 LoTW identity claims and zero
+uncovered mappings, attempts, cutovers or stage/history guards. At 04:18:08 the
+all-client policy remained in backfill with all 218 operations and 800 QSO-stream
+records in the current epoch, no ready policy and zero eligible exports.
+Fresh-positive proof building blocks are deployed; mandatory preparation/dispatch
+binding and scheduler integration remain in progress.
 
 At 02:52:53 UTC, QRZ had 35 complete and five pending history partitions. The
 same single complete covering plan contained 98 surrounding records and zero
@@ -128,11 +128,13 @@ passed, and `ce238cdcfea7` deployed at 03:28:48 UTC with all six gates closed.
 Observe production baseline/drain/quarantine completion after activation.
 The transitional policy fences are dormant where no policy row exists; main
 exports must require current ready policy membership for each exporting source.
-Fresh-positive collection, witness storage and proof foundation are uncommitted
-work in an isolated worktree, outside this release. They are not deployed or
-integrated with stage/dispatch. Runtime source/context enforcement is still outstanding. The diagnostic
-observations and signed guards do not open the global source gate or authorize a
-trial before those remaining prerequisites.
+Fresh-positive collection, canonical witness storage, completed-drain markers,
+immutable proofs, indexed observation anchors and shared cohort coordination are
+signed and pushed through `e16f987441fc`, with exact-key lookup correction
+`3d7b0cac782a`. All 1,098 tests pass and the foundation deployed at 04:13 UTC.
+It grants no export authority. Mandatory proof binding at both boundaries and
+scheduler integration remain in progress. The diagnostic observations and signed
+guards do not open the global source gate or authorize a trial before those prerequisites.
 
 ## First-export trial packet
 
@@ -140,10 +142,10 @@ The owner has authorized a one- or two-contact trial with QRZ first, followed by
 LoTW. Prepare this restricted packet and satisfy the evidence prerequisites before
 executing that scope. Keep private contact details out of repository documentation.
 
-A refreshed protected production SQL backup completed at **02:48:09 UTC on
+A refreshed protected production SQL backup completed at **03:50:46 UTC on
 2026-10-24**. It restored successfully into isolated in-memory SQLite with valid
-integrity, zero foreign-key violations and all 23 current migrations; pending
-migrations `0025`/`0026` also applied successfully in that isolated copy. It retained
+integrity, zero foreign-key violations and all 25 current migrations; pending
+migrations `0027`–`0029` also applied successfully in that isolated copy. It retained
 380 identity claims and zero attempts or cutovers. The separately protected
 encryption-key backup decrypted all three current credentials. Quarantine was applied twice to
 the isolated copy: accounts, connections, sessions, credentials and leases were

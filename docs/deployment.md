@@ -2,21 +2,21 @@
 
 Verified 2026-10-24 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
 
-| Resource                 | Current value                                                                                             |
-| ------------------------ | --------------------------------------------------------------------------------------------------------- |
-| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                     |
-| Worker                   | `lofi-qso-ferry`, environment `production`                                                                |
-| Deployed source revision | `ce238cdcfea72ed5cbc7b624ec6a7efc01978154`                                                                |
-| Worker version           | `aabdd51c-1665-480a-8806-fe993967bc27`, created `2026-10-24T03:28:46.8142Z`                               |
-| Deployment               | `bc0bf26d-1deb-4f09-b861-bae0cf102208`, `2026-10-24T03:28:48.483616Z`, 100% of traffic                    |
-| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                             |
-| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                          |
-| Migrations               | All 25 migrations through `0026_source_read_guards`; independently verified at `2026-10-24T03:29:42.840Z` |
-| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                         |
-| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                      |
-| Schedule                 | `*/5 * * * *`                                                                                             |
-| Alternate origins        | workers.dev and version previews disabled                                                                 |
-| Artifact                 | 1,842.12 KiB raw / 356.85 KiB gzip; reported startup 29 ms                                                |
+| Resource                 | Current value                                                                                                  |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                          |
+| Worker                   | `lofi-qso-ferry`, environment `production`                                                                     |
+| Deployed source revision | `3d7b0cac782af45bcd6684129f77da4cd8f159e2`                                                                     |
+| Worker version           | `4a8c5a8b-8eb1-4569-b0b5-33a7acd2a043`, created `2026-10-24T04:13:22.852656Z`                                  |
+| Deployment               | `b8e9e7a4-5945-40ed-a911-4f7bbc465c33`, `2026-10-24T04:13:24.183263Z`, 100% of traffic                         |
+| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                                  |
+| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                               |
+| Migrations               | All 28 migrations through `0029_source_presence_anchors`; independently verified at `2026-10-24T04:18:07.379Z` |
+| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                              |
+| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                           |
+| Schedule                 | `*/5 * * * *`                                                                                                  |
+| Alternate origins        | workers.dev and version previews disabled                                                                      |
+| Artifact                 | 1,844.33 KiB raw / 357.32 KiB gzip; reported startup 32 ms                                                     |
 
 The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
 
@@ -41,15 +41,36 @@ ROLLOUT_DESTINATION_IDS_JSON=[]
 - Session endpoint returns unauthenticated state with `signupAllowed=false`. The public landing shows an invite-only notice and passkey sign-in; the signup form is hidden. A live uninvited signup probe returned 403 before proof creation or sending.
 - Following the invitation link stays at `/join`, serves the app without the asset-canonicalization redirect, reveals invited enrollment and focuses its email field. Both confirmation inputs expose six-digit numeric/one-time-code attributes.
 - Remote settings independently confirm every closed gate, exact origin/RP, dedicated D1 and sender allowlist. Production local-mailbox and alternate workers.dev endpoints return 404. Email-content previews remain disabled, and no secrets were rotated.
-- The current release passes **1,031 tests** and all required checks in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40057488314). The earlier run was cancelled after a delivery fixture leaked `workerd`; the signed fixture repair is included. The complete release-suite result is from CI.
+- The current release passes **1,098 tests** and all required checks in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40060259245). The foundation's first run exposed an index-choice regression; signed correction `3d7b0cac782a` preserves exact-key witness lookup and the complete release suite passes.
 - Read-only remote D1 probes verified that the invite task must use query results, rather than bulk-file import summaries, to establish an exact email/deadline grant. Existing OAuth includes Email Sending write access. No real invitation grant/send was performed; CLI sends still require recipient-specific delivery confirmation.
 - The initial deployment delivered one real verification message to the owner's inbox through the same native provider path; only fixed delivery metadata was inspected. That smoke test enrolled no production account and initially observed zero account/connection/ledger/attempt rows. These are historical counts, not a claim about subsequent personal use. New branded mail was rendered/tested locally; email-client/device autofill remains unverified.
 
 The reported startup is deployment evidence, not per-request billed CPU or peak memory. No representative monthly workload/cost has been measured. Physical and synced passkey behavior remains for the owner to verify at this permanent origin. See [rollout acceptance](rollout-checklist.md) for the remaining vendor checks.
 
+## Source-proof foundation (2026-10-24, 04:13 UTC)
+
+Signed `3d7b0cac782af45bcd6684129f77da4cd8f159e2` is deployed at 100% traffic as
+Worker `4a8c5a8b-8eb1-4569-b0b5-33a7acd2a043`. Independent 04:18:07–04:18:08 UTC
+checks confirm all six gates closed, healthy service, matching hashes for all
+three static assets, 28 migrations, 380 LoTW identity claims and zero attempts,
+cutovers, uncovered mappings or temporary guards. The all-client policy remains
+in backfill with all 218 operations and 800 QSO-stream records in the current
+epoch; no source is ready and no contact has export membership.
+
+Migrations `0027`–`0029` and the read-only foundation add canonical positive
+observations, completed-drain markers, immutable exact-dependency proofs and
+indexed anchors for bounded shared collection. They grant no export authority.
+Mandatory attempt proof binding and scheduler integration remain in progress.
+The 03:50:46 UTC protected backup passed isolated restore, all three pending
+migrations, integrity/foreign-key checks, three current credential decryptions
+and repeated quarantine before deployment. Production was not restored. An
+initial deployment failed during D1 authentication before applying migrations;
+Wrangler refreshed its OAuth credentials, a read-only query succeeded and the
+retry applied all three migrations and deployed successfully.
+
 ## Versioned all-client baseline (2026-10-24, 03:28 UTC)
 
-Signed `ce238cdcfea72ed5cbc7b624ec6a7efc01978154` is deployed at 100% traffic as
+Signed `ce238cdcfea72ed5cbc7b624ec6a7efc01978154` deployed at 100% traffic as
 Worker `aabdd51c-1665-480a-8806-fe993967bc27`. The 03:29:43.001 UTC verification
 confirmed all six gates closed, healthy service with `exportsEnabled:false`, and
 matching hashes for all three static assets. The 03:29:42.840 D1 read confirmed
@@ -67,8 +88,10 @@ The release migrates canonical source reads to a versioned all-client baseline,
 preserves historical births, quarantines unseen dependencies and fences old
 checkpoints and stale dispatch after policy activation. It does not establish
 global source-boundary authority. Fresh-positive collection, witness storage and
-proof foundation are separate uncommitted work in an isolated worktree; none is
-deployed or integrated with stage/dispatch. No real vendor write occurred.
+proof foundation, indexed observation anchors and shared cohort coordination are
+signed and pushed through `e16f987441fc`, followed by exact-key lookup correction
+`3d7b0cac782a` and the successful 04:13 foundation deployment above. Mandatory
+stage/dispatch integration remains in progress. No real vendor write occurred.
 
 ## Integrated QRZ coverage and destination scope (2026-10-24, 01:59 UTC)
 

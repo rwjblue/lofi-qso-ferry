@@ -21,6 +21,8 @@ export interface SyncState {
   operations: SideProgress;
   qsos: SideProgress;
   accountId?: string;
+  readerPolicy?: "all-clients-v1";
+  policyEpoch?: string;
 }
 
 export interface SyncPage {
@@ -321,13 +323,24 @@ export class LoFiClient {
     if (!Number.isSafeInteger(now) || now <= 0 || limit < 1 || limit > 200) {
       throw new LoFiError("invalid_sync_window");
     }
+    const tagged =
+      state.readerPolicy !== undefined || state.policyEpoch !== undefined;
+    if (
+      tagged &&
+      (state.readerPolicy !== "all-clients-v1" ||
+        typeof state.policyEpoch !== "string" ||
+        !state.policyEpoch ||
+        typeof state.accountId !== "string" ||
+        !state.accountId)
+    )
+      throw new LoFiError("invalid_reader_policy");
     const window = (progress: SideProgress): SourceRecord => ({
       ...(state.mode === "backfill"
         ? { syncedUntilMillis: progress.watermark ?? now }
         : { syncedSinceMillis: progress.watermark ?? 0 }),
       ...(progress.cursor ? { cursor: progress.cursor } : {}),
       limit,
-      anyClient: state.mode === "backfill",
+      anyClient: tagged || state.mode === "backfill",
     });
     const response = await this.request("/v1/sync", {
       meta: {
@@ -413,6 +426,9 @@ export class LoFiClient {
     };
     let next: SyncState = {
       mode: state.mode,
+      ...(tagged
+        ? { readerPolicy: state.readerPolicy, policyEpoch: state.policyEpoch }
+        : {}),
       ...(state.accountId ? { accountId: state.accountId } : {}),
       operations: advance("operations", operations),
       qsos: advance("qsos", qsos),

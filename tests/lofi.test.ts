@@ -33,6 +33,47 @@ const fake = (
   ) => Promise<Response>,
 ): typeof fetch => handler;
 
+test("validated reader policy keeps all-client forward requests and tags across page transitions", async () => {
+  const requests: unknown[] = [];
+  const client = new LoFiClient(
+    credentials,
+    fake(async (_input, init) => {
+      const body = JSON.parse(String(init?.body));
+      requests.push(body);
+      assert.equal(body.meta.sync.operations.anyClient, true);
+      assert.equal(body.meta.sync.qsos.anyClient, true);
+      return json(
+        reply(
+          [{ uuid: "op", syncedAtMillis: 100 }],
+          [{ uuid: "qso", syncedAtMillis: 100 }],
+          { records_left: 0 },
+          { records_left: 0 },
+        ),
+      );
+    }),
+  );
+  const first = await client.syncPage(
+    { ...initial, readerPolicy: "all-clients-v1", policyEpoch: "epoch" },
+    1000,
+  );
+  const second = await client.syncPage(first.next, 1100);
+  assert.equal(first.next.mode, "forward");
+  assert.equal(second.next.readerPolicy, "all-clients-v1");
+  assert.equal(second.next.policyEpoch, "epoch");
+  assert.equal(requests.length, 2);
+  for (const invalid of [
+    { readerPolicy: "other", policyEpoch: "epoch" },
+    { readerPolicy: "all-clients-v1" },
+    { policyEpoch: "epoch" },
+    { readerPolicy: "all-clients-v1", policyEpoch: "" },
+  ])
+    await assert.rejects(
+      client.syncPage({ ...initial, ...invalid } as SyncState, 1200),
+      /invalid_reader_policy/,
+    );
+  assert.equal(requests.length, 2, "invalid tags fail before a request");
+});
+
 test("LoFi pulls without mutations and resumes separate opaque cursors after restart", async () => {
   const requests: Record<string, unknown>[] = [];
   const fetcher = fake(async (input, init) => {

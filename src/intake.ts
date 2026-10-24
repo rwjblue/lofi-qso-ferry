@@ -17,6 +17,12 @@ import {
 } from "./projection.ts";
 import { selectReconciliationWork } from "./reconciliation-work.ts";
 import {
+  ensureSourceReadPolicy,
+  resetSourceReadPolicy,
+  sourceReadPolicy,
+  type SourceReadPolicy,
+} from "./source-read-policy.ts";
+import {
   canonical,
   type Envelope,
   open,
@@ -24,7 +30,7 @@ import {
   seal,
   sha256,
 } from "./security.ts";
-import type { Connection, Ledger, Store } from "./store.ts";
+import type { Connection, Lease, Ledger, Store } from "./store.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
 export interface IntakeContact extends Contact {
@@ -47,6 +53,7 @@ export interface Work {
   seen_epoch: string | null;
   deleted: number;
   priority: VendorPriority;
+  policy_seen_epoch?: string | null;
 }
 
 type SourceVersion = Pick<
@@ -59,6 +66,7 @@ type SourceVersion = Pick<
   | "priority"
   | "operation_id"
   | "is_event"
+  | "policy_seen_epoch"
 >;
 interface PageMetadata {
   records: Map<string, SourceVersion>;
@@ -83,7 +91,7 @@ async function pageMetadata(
     const rows = (
       await store
         .statement(
-          `SELECT w.id,w.kind,w.synced_at,w.revision,w.expires_at,w.priority,w.operation_id,w.is_event,${
+          `SELECT w.id,w.kind,w.synced_at,w.revision,w.expires_at,w.priority,w.operation_id,w.is_event,w.policy_seen_epoch,${
             replayDestination === undefined
               ? "0"
               : "w.kind='qso' AND EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=w.tenant AND l.source=w.source AND l.qso=w.id AND (?4 IS NULL OR l.destination=?4)) AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=w.tenant AND l.source=w.source AND l.qso=w.id AND (?4 IS NULL OR l.destination=?4) AND (l.state NOT IN('adopted_existing','delivered','observed','source_deleted') OR l.source_hash IS NOT l.baseline_hash)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=w.tenant AND a.source=w.source AND a.qso=w.id AND (?4 IS NULL OR a.destination=?4) AND s.state NOT IN('delivered','observed','rejected','cancelled'))"
@@ -134,6 +142,8 @@ export interface PollResult {
   records: number;
   complete: boolean;
   coverage: "client-contract-only";
+  /** A bounded baseline/handoff turn advanced despite an empty source page. */
+  policyProgress?: boolean;
 }
 
 async function sourceSession(
@@ -198,6 +208,63 @@ async function sourceSession(
   };
 }
 
+/** Classify bounded absent metadata without claiming a deletion or touching sent work. */
+async function quarantinePolicyAbsences(
+  store: Store,
+  source: Connection,
+  policy: SourceReadPolicy,
+  now: number,
+): Promise<D1PreparedStatement[]> {
+  const rows = (
+    await store
+      .statement(
+        "SELECT kind,id FROM source_work WHERE tenant=? AND source=? AND policy_seen_epoch IS NOT ? AND state!='missing_from_inventory' ORDER BY kind,id LIMIT 100",
+        source.tenant,
+        source.id,
+        policy.epoch,
+      )
+      .all<Pick<Work, "kind" | "id">>()
+  ).results;
+  if (!rows.length) return [];
+  const keys = JSON.stringify(rows.map((row) => [row.kind, row.id]));
+  const absent =
+    "SELECT w.* FROM source_work w WHERE w.tenant=? AND w.source=? AND w.policy_seen_epoch IS NOT ? AND (w.kind,w.id) IN(SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(?))";
+  const bindings = [source.tenant, source.id, policy.epoch, keys];
+  const affected = `EXISTS(SELECT 1 FROM (${absent}) w WHERE (w.kind='qso' AND w.id=l.qso) OR ((w.kind='operation' OR w.is_event=1) AND w.operation_id=l.operation_id))`;
+  const prepared = `SELECT a.id FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id JOIN ledger l ON l.tenant=a.tenant AND l.source=a.source AND l.qso=a.qso AND l.destination=a.destination WHERE a.tenant=? AND a.source=? AND s.state='prepared' AND ${affected}`;
+  const preparedBindings = [source.tenant, source.id, ...bindings];
+  return [
+    store.statement(
+      `UPDATE source_work SET state='missing_from_inventory',reason='not observed at current source version in complete all-client inventory' WHERE (tenant,source,kind,id) IN(SELECT tenant,source,kind,id FROM (${absent}))`,
+      ...bindings,
+    ),
+    store.statement(
+      `UPDATE ledger AS l SET reason='source_member_absent_from_all_client_inventory' WHERE l.tenant=? AND l.source=? AND ${affected}`,
+      source.tenant,
+      source.id,
+      ...bindings,
+    ),
+    store.statement(
+      `INSERT INTO attempt_events(tenant,attempt,state,at,reason) SELECT tenant,id,'cancelled',?,'source membership unavailable' FROM attempts WHERE tenant=? AND id IN(${prepared})`,
+      now,
+      source.tenant,
+      ...preparedBindings,
+    ),
+    store.statement(
+      `DELETE FROM private_data WHERE tenant=? AND kind='outbox' AND (connection,id) IN(SELECT destination,payload_id FROM attempts WHERE tenant=? AND id IN(${prepared}))`,
+      source.tenant,
+      source.tenant,
+      ...preparedBindings,
+    ),
+    store.statement(
+      `UPDATE attempt_state SET state='cancelled',reason='source membership unavailable',updated_at=? WHERE tenant=? AND state='prepared' AND attempt IN(${prepared})`,
+      now,
+      source.tenant,
+      ...preparedBindings,
+    ),
+  ];
+}
+
 /** A raw page and its work index commit before the opaque source cursor advances. */
 export async function pollSource(
   store: Store,
@@ -207,6 +274,7 @@ export async function pollSource(
   stream = "sync",
   vendorNow: number | null = now,
 ): Promise<PollResult> {
+  const startedAt = Date.now();
   const lease = await store.claim(
     connection.tenant,
     `poll:${connection.id}:${stream}`,
@@ -222,14 +290,47 @@ export async function pollSource(
     };
   let session: Awaited<ReturnType<typeof sourceSession>> | undefined;
   try {
-    const cursor = await store
-      .statement(
-        "SELECT cursor,generation FROM cursors WHERE tenant=? AND connection=? AND stream=?",
-        connection.tenant,
-        connection.id,
-        stream,
-      )
-      .first<{ cursor: string; generation: number }>();
+    let policyResult =
+      stream === "sync"
+        ? await ensureSourceReadPolicy(store, connection, lease, now)
+        : undefined;
+    if (
+      policyResult?.policy.phase === "ready" &&
+      (await store
+        .statement(
+          "SELECT 1 AS expired FROM source_work WHERE tenant=? AND source=? AND kind='operation' AND policy_seen_epoch=? AND expires_at<=? LIMIT 1",
+          connection.tenant,
+          connection.id,
+          policyResult.policy.epoch,
+          now,
+        )
+        .first())
+    )
+      policyResult = await resetSourceReadPolicy(
+        store,
+        connection,
+        lease,
+        {
+          epoch: policyResult.policy.epoch,
+          generation: policyResult.cursor.generation,
+        },
+        "context_expired",
+        now,
+      );
+    const policy = policyResult?.policy;
+    const cursor = policyResult
+      ? {
+          cursor: JSON.stringify(policyResult.cursor.cursor),
+          generation: policyResult.cursor.generation,
+        }
+      : await store
+          .statement(
+            "SELECT cursor,generation FROM cursors WHERE tenant=? AND connection=? AND stream=?",
+            connection.tenant,
+            connection.id,
+            stream,
+          )
+          .first<{ cursor: string; generation: number }>();
     const config = JSON.parse(connection.config) as { accountId?: string };
     const state: SyncState = cursor
       ? JSON.parse(cursor.cursor)
@@ -250,7 +351,9 @@ export async function pollSource(
         coverage: "client-contract-only",
       };
     const priority: VendorPriority =
-      stream === "sync" && state.mode === "forward" ? "live" : "background";
+      stream === "sync" && state.mode === "forward" && policy?.phase === "ready"
+        ? "live"
+        : "background";
     session = await sourceSession(
       store,
       connection,
@@ -266,7 +369,14 @@ export async function pollSource(
         priority === "live" ? 100 : 25,
       );
     } catch (error) {
-      await recoverSourceGap(store, connection, error, now, stream);
+      await recoverSourceGap(
+        store,
+        connection,
+        error,
+        now + Math.max(0, Date.now() - startedAt),
+        stream,
+        lease,
+      );
       throw error;
     }
     const checkpointGuard = sourceGuard(store, connection);
@@ -297,7 +407,9 @@ export async function pollSource(
               connection.id,
               String(raw.uuid),
               stream,
-              isSourceDeleted(raw) || isEventRecord(raw)
+              policy?.phase !== "ready" ||
+                isSourceDeleted(raw) ||
+                isEventRecord(raw)
                 ? "backfill"
                 : state.mode,
               (cursor?.generation ?? 0) + 1,
@@ -315,6 +427,7 @@ export async function pollSource(
             undefined,
             priority,
             replayDestination,
+            policy?.epoch,
           )),
         );
       }
@@ -333,17 +446,55 @@ export async function pollSource(
         connection.id,
       ),
     );
-    if (stream === "sync") {
+    if (stream === "sync" && policy) {
+      if (policy.phase === "quarantine")
+        work.push(
+          ...(await quarantinePolicyAbsences(store, connection, policy, now)),
+        );
+      const nextPhase =
+        policy.phase === "backfill" && page.complete
+          ? "drain"
+          : policy.phase === "drain" && page.complete
+            ? "quarantine"
+            : policy.phase;
       work.push(
         store.statement(
-          "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) VALUES(?,?,'context',?,1,?) ON CONFLICT(tenant,connection,stream) DO UPDATE SET cursor=excluded.cursor,generation=generation+1,updated_at=excluded.updated_at",
+          "UPDATE source_read_policies SET phase=?,completed_sync_generation=NULL,completed_at=NULL WHERE tenant=? AND source=? AND epoch=? AND phase=? AND phase!='ready'",
+          nextPhase,
           connection.tenant,
           connection.id,
-          JSON.stringify({
-            complete: page.complete,
-            syncComplete: page.complete,
-            coverage: page.coverage,
-          }),
+          policy.epoch,
+          policy.phase,
+        ),
+      );
+      if (
+        policy.phase === "quarantine" &&
+        state.mode === "forward" &&
+        page.complete
+      )
+        work.push(
+          store.statement(
+            "UPDATE source_read_policies SET phase='ready',completed_sync_generation=?,completed_at=? WHERE tenant=? AND source=? AND epoch=? AND phase='quarantine' AND NOT EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=source_read_policies.tenant AND w.source=source_read_policies.source AND w.policy_seen_epoch IS NOT source_read_policies.epoch AND w.state!='missing_from_inventory')",
+            (cursor?.generation ?? 0) + 1,
+            now,
+            connection.tenant,
+            connection.id,
+            policy.epoch,
+          ),
+        );
+      work.push(
+        store.statement(
+          "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) VALUES(?,?,'context',json_object('complete',json(CASE WHEN ? AND EXISTS(SELECT 1 FROM source_read_policies WHERE tenant=? AND source=? AND epoch=? AND phase='ready') THEN 'true' ELSE 'false' END),'syncComplete',json(CASE WHEN ? AND EXISTS(SELECT 1 FROM source_read_policies WHERE tenant=? AND source=? AND epoch=? AND phase='ready') THEN 'true' ELSE 'false' END),'coverage','client-contract-only'),1,?) ON CONFLICT(tenant,connection,stream) DO UPDATE SET cursor=excluded.cursor,generation=generation+1,updated_at=excluded.updated_at",
+          connection.tenant,
+          connection.id,
+          Number(page.complete),
+          connection.tenant,
+          connection.id,
+          policy.epoch,
+          Number(page.complete),
+          connection.tenant,
+          connection.id,
+          policy.epoch,
           now,
         ),
       );
@@ -372,13 +523,21 @@ export async function pollSource(
         ? page.next
         : { ...page.next, rescanComplete: page.complete },
       work,
-      now,
+      now + Math.max(0, Date.now() - startedAt),
     );
+    const committedPolicy =
+      policy?.phase === "quarantine" && page.complete
+        ? await sourceReadPolicy(store, connection.tenant, connection.id)
+        : policy;
     return {
       pages: 1,
       records: page.operations.length + page.qsos.length,
-      complete: page.complete,
+      complete:
+        page.complete && (!policy || committedPolicy?.phase === "ready"),
       coverage: page.coverage,
+      ...(policy && policy.phase !== "ready" && page.complete
+        ? { policyProgress: true }
+        : {}),
     };
   } finally {
     try {
@@ -434,6 +593,7 @@ async function operationContext(
   source: Connection,
   id: string,
   now: number,
+  policyEpoch?: string,
 ) {
   // One joined read per distinct operation replaces the dependency query and
   // a separate private-data read for every base/event of every contact.
@@ -452,6 +612,8 @@ async function operationContext(
   let expiresAt = Infinity;
   for (const dependency of dependencies) {
     if (dependency.kind === "qso" && dependency.deleted) continue;
+    if (policyEpoch && dependency.policy_seen_epoch !== policyEpoch)
+      throw new Error("source_policy_membership_unavailable");
     if (dependency.expires_at <= now)
       throw new Error("operation_context_expired");
     const value = await openSourcePayload(
@@ -484,11 +646,14 @@ export async function pendingContactBatch(
   processedBefore?: number,
   readyContextOnly = false,
 ): Promise<{ contacts: IntakeContact[]; selected: number }> {
+  const policy = await sourceReadPolicy(store, source.tenant, source.id);
+  if (policy && policy.phase !== "ready") return { contacts: [], selected: 0 };
   const context = await store
     .statement(
-      "SELECT cursor,generation FROM cursors WHERE tenant=? AND connection=? AND stream='context'",
+      "SELECT cursor,generation FROM cursors c WHERE tenant=? AND connection=? AND stream='context' AND (NOT EXISTS(SELECT 1 FROM source_read_policies p WHERE p.tenant=c.tenant AND p.source=c.connection) OR EXISTS(SELECT 1 FROM source_read_policy_ready p WHERE p.tenant=c.tenant AND p.source=c.connection AND p.epoch=?))",
       source.tenant,
       source.id,
+      policy?.epoch ?? null,
     )
     .first<{ cursor: string; generation: number }>();
   if (
@@ -539,6 +704,8 @@ export async function pendingContactBatch(
   const contacts: IntakeContact[] = [];
   for (const row of rows) {
     try {
+      if (policy && row.policy_seen_epoch !== policy.epoch)
+        throw new Error("source_policy_membership_unavailable");
       const raw = await openSourcePayload(
         store,
         source,
@@ -607,7 +774,13 @@ export async function pendingContactBatch(
       if (row.operation_id) {
         let saved = contexts.get(row.operation_id);
         if (!saved) {
-          saved = operationContext(store, source, row.operation_id, now);
+          saved = operationContext(
+            store,
+            source,
+            row.operation_id,
+            now,
+            policy?.epoch,
+          );
           contexts.set(row.operation_id, saved);
         }
         const value = await saved;
@@ -1098,7 +1271,7 @@ export async function expireSource(store: Store, now = Date.now()) {
     // An active backfill already covers these bases: retain its committed pages
     // until it reaches the expired operation instead of restarting each tick.
     store.statement(
-      "UPDATE cursors SET cursor=json_object('mode','backfill','operations',json('{}'),'qsos',json('{}'),'accountId',json_extract((SELECT config FROM connections c WHERE c.tenant=cursors.tenant AND c.id=cursors.connection),'$.accountId')),generation=generation+1 WHERE stream='sync' AND COALESCE(json_extract(cursor,'$.mode'),'')!='backfill' AND EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=cursors.tenant AND w.source=cursors.connection AND w.expires_at<=? AND w.kind='operation')",
+      "UPDATE cursors SET cursor=json_object('mode','backfill','operations',json('{}'),'qsos',json('{}'),'accountId',json_extract((SELECT config FROM connections c WHERE c.tenant=cursors.tenant AND c.id=cursors.connection),'$.accountId')),generation=generation+1 WHERE stream='sync' AND NOT EXISTS(SELECT 1 FROM source_read_policies p WHERE p.tenant=cursors.tenant AND p.source=cursors.connection) AND COALESCE(json_extract(cursor,'$.mode'),'')!='backfill' AND EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=cursors.tenant AND w.source=cursors.connection AND w.expires_at<=? AND w.kind='operation')",
       now,
     ),
     store.statement(
@@ -1146,6 +1319,7 @@ async function sourceStatements(
   epoch?: string,
   incomingPriority: VendorPriority = "background",
   replayDestination?: string | null,
+  policyEpoch?: string,
 ): Promise<D1PreparedStatement[]> {
   const id = String(raw.uuid);
   const syncedAt = Number(raw.syncedAtMillis);
@@ -1168,7 +1342,7 @@ async function sourceStatements(
   );
   // A null expected revision means an insert compare-and-set.
   const statements: D1PreparedStatement[] = [guard.sql];
-  const seen = () => {
+  const seen = (current = true) => {
     if (epoch)
       statements.push(
         store.statement(
@@ -1181,12 +1355,25 @@ async function sourceStatements(
           typeof raw.operation === "string" ? raw.operation : null,
         ),
       );
+    if (current && policyEpoch)
+      statements.push(
+        store.statement(
+          "UPDATE source_work SET policy_seen_epoch=?,state=CASE WHEN state='missing_from_inventory' THEN 'pending' ELSE state END,reason=CASE WHEN state='missing_from_inventory' THEN NULL ELSE reason END WHERE tenant=? AND source=? AND id=? AND kind=? AND revision=? AND synced_at=?",
+          policyEpoch,
+          connection.tenant,
+          connection.id,
+          id,
+          kind,
+          revision,
+          syncedAt,
+        ),
+      );
     statements.push(
       store.statement("DELETE FROM source_write_guards WHERE id=?", guard.id),
     );
     return statements;
   };
-  if (previous && previous.synced_at > syncedAt) return seen();
+  if (previous && previous.synced_at > syncedAt) return seen(false);
   if (
     replayDestination !== undefined &&
     kind === "qso" &&
@@ -1200,15 +1387,20 @@ async function sourceStatements(
     if (syncedAt > previous.synced_at) {
       statements.push(
         store.statement(
-          "UPDATE source_work SET synced_at=? WHERE tenant=? AND source=? AND id=? AND kind=?",
+          "UPDATE source_work SET synced_at=?,policy_seen_epoch=? WHERE tenant=? AND source=? AND id=? AND kind=?",
           syncedAt,
+          policyEpoch ?? null,
           connection.tenant,
           connection.id,
           id,
           kind,
         ),
       );
-      metadata.records.set(key, { ...previous, synced_at: syncedAt });
+      metadata.records.set(key, {
+        ...previous,
+        synced_at: syncedAt,
+        policy_seen_epoch: policyEpoch ?? null,
+      });
     }
     return seen();
   }
@@ -1254,7 +1446,7 @@ async function sourceStatements(
   );
   statements.push(
     store.statement(
-      "INSERT INTO source_work(tenant,source,id,kind,operation_id,private_id,revision,expires_at,synced_at,is_event,deleted,seen_epoch,priority) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,source,id,kind) DO UPDATE SET operation_id=excluded.operation_id,private_id=excluded.private_id,state='pending',reason=NULL,revision=excluded.revision,expires_at=excluded.expires_at,synced_at=excluded.synced_at,is_event=excluded.is_event,deleted=excluded.deleted,seen_epoch=COALESCE(excluded.seen_epoch,source_work.seen_epoch),priority=CASE WHEN source_work.priority='live' THEN 'live' ELSE excluded.priority END",
+      "INSERT INTO source_work(tenant,source,id,kind,operation_id,private_id,revision,expires_at,synced_at,is_event,deleted,seen_epoch,priority,policy_seen_epoch) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(tenant,source,id,kind) DO UPDATE SET operation_id=excluded.operation_id,private_id=excluded.private_id,state=CASE WHEN source_work.state='missing_from_inventory' AND excluded.policy_seen_epoch IS NULL THEN source_work.state ELSE 'pending' END,reason=CASE WHEN source_work.state='missing_from_inventory' AND excluded.policy_seen_epoch IS NULL THEN source_work.reason ELSE NULL END,revision=excluded.revision,expires_at=excluded.expires_at,synced_at=excluded.synced_at,is_event=excluded.is_event,deleted=excluded.deleted,seen_epoch=COALESCE(excluded.seen_epoch,source_work.seen_epoch),priority=CASE WHEN source_work.priority='live' THEN 'live' ELSE excluded.priority END,policy_seen_epoch=excluded.policy_seen_epoch",
       connection.tenant,
       connection.id,
       id,
@@ -1268,12 +1460,16 @@ async function sourceStatements(
       deleted ? 1 : 0,
       epoch ?? null,
       priority,
+      policyEpoch ??
+        (previous?.revision === revision && previous.synced_at === syncedAt
+          ? (previous.policy_seen_epoch ?? null)
+          : null),
     ),
   );
   if (kind === "operation" || event) {
     statements.push(
       store.statement(
-        "UPDATE source_work SET state='pending',reason='operation_context_changed',priority=CASE WHEN ?='live' THEN 'live' ELSE priority END WHERE tenant=? AND source=? AND operation_id=?",
+        "UPDATE source_work SET state='pending',reason='operation_context_changed',priority=CASE WHEN ?='live' THEN 'live' ELSE priority END WHERE tenant=? AND source=? AND operation_id=? AND state!='missing_from_inventory'",
         priority,
         connection.tenant,
         connection.id,
@@ -1306,6 +1502,11 @@ async function sourceStatements(
     priority,
     operation_id: op,
     is_event: event ? 1 : 0,
+    policy_seen_epoch:
+      policyEpoch ??
+      (previous?.revision === revision && previous.synced_at === syncedAt
+        ? (previous.policy_seen_epoch ?? null)
+        : null),
   });
   return statements;
 }
@@ -1320,13 +1521,22 @@ export async function rereadOperation(
   processedBefore?: number,
 ) {
   const startedAt = Date.now();
+  const policy = await sourceReadPolicy(
+    store,
+    connection.tenant,
+    connection.id,
+  );
+  if (policy && policy.phase !== "ready")
+    return { complete: false, records: 0, pages: 0 };
   const liveOperation = `(w.priority='live' OR EXISTS(SELECT 1 FROM source_work q WHERE q.tenant=w.tenant AND q.source=w.source AND q.operation_id=w.id AND q.kind='qso' AND ${liveWorkSql("q")}))`;
   const operation = await store
     .statement(
-      `SELECT w.*,CASE WHEN ${liveOperation} THEN 'live' ELSE 'background' END AS request_priority FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='operation' AND w.state='pending' AND w.deleted=0 AND w.expires_at>? ${priority ? `AND ${liveOperation}=${priority === "live" ? 1 : 0}` : ""} ${processedBefore === undefined ? "" : "AND w.processed_at<?"} ORDER BY ${liveOperation} DESC,w.processed_at,w.id LIMIT 1`,
+      `SELECT w.*,CASE WHEN ${liveOperation} THEN 'live' ELSE 'background' END AS request_priority FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='operation' AND w.state='pending' AND w.deleted=0 AND w.expires_at>? AND (? IS NULL OR (w.policy_seen_epoch=? AND EXISTS(SELECT 1 FROM source_read_policy_ready p WHERE p.tenant=w.tenant AND p.source=w.source AND p.epoch=w.policy_seen_epoch))) ${priority ? `AND ${liveOperation}=${priority === "live" ? 1 : 0}` : ""} ${processedBefore === undefined ? "" : "AND w.processed_at<?"} ORDER BY ${liveOperation} DESC,w.processed_at,w.id LIMIT 1`,
       connection.tenant,
       connection.id,
       now,
+      policy?.epoch ?? null,
+      policy?.epoch ?? null,
       ...(processedBefore === undefined ? [] : [processedBefore]),
     )
     .first<Work & { request_priority: VendorPriority }>();
@@ -1439,7 +1649,7 @@ export async function rereadOperation(
       );
       work.push(
         store.statement(
-          "UPDATE source_work SET state='pending',reason=NULL WHERE tenant=? AND source=? AND operation_id=? AND kind='qso' AND seen_epoch=?",
+          "UPDATE source_work SET state='pending',reason=NULL WHERE tenant=? AND source=? AND operation_id=? AND kind='qso' AND seen_epoch=? AND state!='missing_from_inventory'",
           connection.tenant,
           connection.id,
           operation.id,
@@ -1448,7 +1658,7 @@ export async function rereadOperation(
       );
       work.push(
         store.statement(
-          "UPDATE source_work SET state='missing_from_reread',reason='not observed in completed operation read' WHERE tenant=? AND source=? AND operation_id=? AND kind='qso' AND deleted=0 AND (seen_epoch IS NULL OR seen_epoch!=?)",
+          "UPDATE source_work SET state='missing_from_reread',reason='not observed in completed operation read' WHERE tenant=? AND source=? AND operation_id=? AND kind='qso' AND deleted=0 AND state!='missing_from_inventory' AND (seen_epoch IS NULL OR seen_epoch!=?)",
           connection.tenant,
           connection.id,
           operation.id,
@@ -1478,7 +1688,7 @@ export async function rereadOperation(
       );
       work.push(
         store.statement(
-          "UPDATE source_work SET state='context' WHERE tenant=? AND source=? AND operation_id=? AND kind='qso' AND is_event=1 AND deleted=1 AND seen_epoch IS NOT ?",
+          "UPDATE source_work SET state='context' WHERE tenant=? AND source=? AND operation_id=? AND kind='qso' AND is_event=1 AND deleted=1 AND state!='missing_from_inventory' AND seen_epoch IS NOT ?",
           connection.tenant,
           connection.id,
           operation.id,
@@ -1519,7 +1729,7 @@ export async function rereadOperation(
         complete: page.complete,
       },
       work,
-      now,
+      now + Math.max(0, Date.now() - startedAt),
     );
     return { complete: page.complete, records: page.qsos.length, pages: 1 };
   } catch (error) {
@@ -1562,6 +1772,7 @@ export async function recoverSourceGap(
   error: unknown,
   now = Date.now(),
   stream = "sync",
+  heldLease?: Lease,
 ): Promise<boolean> {
   if (
     !(error instanceof LoFiError) ||
@@ -1572,12 +1783,21 @@ export async function recoverSourceGap(
     ].includes(error.code)
   )
     return false;
-  const lease = await store.claim(
-    connection.tenant,
-    `recover:${connection.id}:${stream}`,
-    now,
-    60_000,
-  );
+  const policy =
+    stream === "sync"
+      ? await sourceReadPolicy(store, connection.tenant, connection.id)
+      : null;
+  const lease =
+    policy && heldLease
+      ? heldLease
+      : await store.claim(
+          connection.tenant,
+          policy
+            ? `poll:${connection.id}:sync`
+            : `recover:${connection.id}:${stream}`,
+          now,
+          60_000,
+        );
   if (!lease) return false;
   try {
     const saved = await store
@@ -1588,6 +1808,18 @@ export async function recoverSourceGap(
         stream,
       )
       .first<{ cursor: string; generation: number }>();
+    if (policy) {
+      if (!saved) throw new Error("source policy cursor unavailable");
+      await resetSourceReadPolicy(
+        store,
+        connection,
+        lease,
+        { epoch: policy.epoch, generation: saved.generation },
+        "cursor_gap",
+        now,
+      );
+      return true;
+    }
     const gap = `gap:${randomToken()}`;
     const config = JSON.parse(connection.config) as { accountId?: string };
     const reset = {
@@ -1640,6 +1872,6 @@ export async function recoverSourceGap(
     );
     return true;
   } finally {
-    await store.release(lease);
+    if (lease !== heldLease) await store.release(lease);
   }
 }

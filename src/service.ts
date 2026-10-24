@@ -13,7 +13,11 @@ import {
   refreshConfirmations,
 } from "./delivery.ts";
 import { createFailureDiagnostics } from "./failure-diagnostics.ts";
-import { historicalSourceCandidates } from "./historical-source-candidates.ts";
+import {
+  type HistoricalSourceCandidateResult,
+  historicalSourceCandidates,
+  historicalSourceCandidatesBatch,
+} from "./historical-source-candidates.ts";
 import type {
   HistoryInventoryInput,
   HistoryInventoryResult,
@@ -48,6 +52,7 @@ import { QrzClient, QrzError } from "./qrz.ts";
 import type {
   HistoryAdoptionInput,
   ReconciliationEvidence,
+  ReconciliationOutcome,
 } from "./reconcile.ts";
 import {
   adoptHistory,
@@ -302,6 +307,14 @@ export async function classifyReconciliationHistory(
     routeMatches,
     now,
   });
+  return withHistoricalSourceComparison(outcome, destination, comparison);
+}
+
+function withHistoricalSourceComparison(
+  outcome: ReconciliationOutcome,
+  destination: Connection,
+  comparison: HistoricalSourceCandidateResult,
+): ReconciliationOutcome {
   if (comparison.state !== "unique")
     return {
       state:
@@ -312,7 +325,7 @@ export async function classifyReconciliationHistory(
         comparison.state === "ambiguous"
           ? "Multiple source contacts match this destination record; review associations"
           : "Historical source coverage or context is incomplete; retry after it is current",
-      evidence,
+      evidence: outcome.evidence,
     };
   return {
     ...outcome,
@@ -653,7 +666,7 @@ async function reconcileReadOnlyBatch(
       groups.set(scope, group);
     }
     const pending = [...groups.values()];
-    const planned: { route: Route; adoption: HistoryAdoptionInput }[] = [];
+    const forwardPlans = new Map<Route, HistoryAdoptionInput>();
     let nextGroup = 0;
     // Await every started cohort before commits/finalization and cycle release.
     const workers = await Promise.allSettled(
@@ -737,11 +750,8 @@ async function reconcileReadOnlyBatch(
                 qso: route.contact.id,
                 destination: route.destination.id,
               };
-              let outcome = await classifyReconciliationHistory(
-                store,
-                source,
-                route.destination,
-                route.contact,
+              let outcome = classifyHistoricalAssociation(
+                route.input.record,
                 evidence.records,
                 {
                   destination: route.destination.kind as "qrz" | "lotw",
@@ -758,7 +768,6 @@ async function reconcileReadOnlyBatch(
                     !evidence.readAccess &&
                     (await proveNewAfterCutover(store, key)),
                 },
-                currentTime(),
               );
               if (evidence.state === "pending")
                 outcome = {
@@ -784,21 +793,18 @@ async function reconcileReadOnlyBatch(
                   reason:
                     "Source replay/cutover evidence is not yet verified; absence cannot authorize backfill",
                 };
-              planned.push({
-                route,
-                adoption: {
-                  key,
-                  generation: route.contact.generation,
-                  outcome,
-                  ledger,
-                  adoptedSourceHash:
-                    outcome.state === "adopted_existing" &&
-                    route.destination.kind === "qrz"
-                      ? await sourceFingerprint(route.contact, "qrz", true)
-                      : undefined,
-                  commitGuard: (at) =>
-                    reconciliationCommitGuard(key, route.contact, evidence, at),
-                },
+              forwardPlans.set(route, {
+                key,
+                generation: route.contact.generation,
+                outcome,
+                ledger,
+                adoptedSourceHash:
+                  outcome.state === "adopted_existing" &&
+                  route.destination.kind === "qrz"
+                    ? await sourceFingerprint(route.contact, "qrz", true)
+                    : undefined,
+                commitGuard: (at) =>
+                  reconciliationCommitGuard(key, route.contact, evidence, at),
               });
             }
           } catch (error) {
@@ -825,6 +831,106 @@ async function reconcileReadOnlyBatch(
     );
     const failed = workers.find((worker) => worker.status === "rejected");
     if (failed?.status === "rejected") throw failed.reason;
+    // Inventory groups finish independently, but reverse comparisons share one
+    // bounded source census across routes in the original contact order. Each
+    // result still carries its own unchanged source/context/inventory fences.
+    const positiveRoutes = routes.flatMap((route) => {
+      const adoption = forwardPlans.get(route);
+      const outcome = adoption?.outcome;
+      return adoption &&
+        outcome?.state === "adopted_existing" &&
+        outcome.associationOnly &&
+        outcome.remote
+        ? [{ route, adoption, remote: outcome.remote }]
+        : [];
+    });
+    type PositiveRoute = (typeof positiveRoutes)[number];
+    const compare = async (
+      group: PositiveRoute[],
+    ): Promise<PositiveRoute[]> => {
+      // An unexamined positive must not acquire an association or a success memo.
+      if (expired()) {
+        for (const { route } of group) forwardPlans.delete(route);
+        return [];
+      }
+      try {
+        const comparisons = await historicalSourceCandidatesBatch(
+          store,
+          source.tenant,
+          group.map(({ route, adoption, remote }) => ({
+            destination: route.destination,
+            remote,
+            selected: {
+              source: source.id,
+              qso: route.contact.id,
+              generation: route.contact.generation,
+            },
+            vendor: adoption.outcome.evidence.destination,
+            routeMatches,
+          })),
+          { now: currentTime() },
+        );
+        if (comparisons.length !== group.length)
+          throw new Error("Incomplete historical source comparison batch");
+        const split: PositiveRoute[] = [];
+        for (const [index, item] of group.entries()) {
+          const comparison = comparisons[index];
+          if (
+            group.length > 1 &&
+            comparison.state === "held" &&
+            comparison.reason === "cohort_bound"
+          ) {
+            split.push(item);
+            continue;
+          }
+          item.adoption.outcome = withHistoricalSourceComparison(
+            item.adoption.outcome,
+            item.route.destination,
+            comparison,
+          );
+        }
+        return split;
+      } catch (error) {
+        // A failed bounded comparison cannot strand other completed batches or
+        // turn its original positive candidate into an unguarded adoption.
+        for (const { route } of group) {
+          forwardPlans.delete(route);
+          diagnostics.record(error, "reconciliation", route.destination.kind);
+          if (error instanceof VendorDeferredError) result.deferred++;
+          else {
+            result.errors++;
+            diagnose(
+              route.contact,
+              route.destination,
+              reconciliationFailure(error, false),
+            );
+          }
+        }
+        return [];
+      }
+    };
+    for (let offset = 0; offset < positiveRoutes.length; offset += 20) {
+      const queue = [positiveRoutes.slice(offset, offset + 20)];
+      while (queue.length) {
+        const group = queue.shift();
+        if (!group) break;
+        // Only aggregate admission overflow may split. A binary tree has at
+        // most 2n-1 calls (39 for twenty routes); each node is attempted once.
+        // Unknown evidence, intrinsic bounds and DB/ack errors never retry.
+        // compare() releases its shared raw/projection results before the next
+        // call, retaining only each route's independent immutable guard.
+        const split = await compare(group);
+        if (split.length) {
+          const middle = Math.ceil(split.length / 2);
+          queue.unshift(split.slice(0, middle));
+          if (middle < split.length) queue.splice(1, 0, split.slice(middle));
+        }
+      }
+    }
+    const planned = routes.flatMap((route) => {
+      const adoption = forwardPlans.get(route);
+      return adoption ? [{ route, adoption }] : [];
+    });
     const applied = await adoptHistoryBatch(
       store,
       source,

@@ -311,6 +311,13 @@ export function sourceHistoricalIndexGuard(s: SourceHistoricalIndexSnapshot): {
     params: [s.tenant, s.keyId, s.epoch, s.clock],
   };
 }
+export interface SourceHistoricalIndexLookupInput {
+  workedCall: string;
+  startMs: number;
+  endMs: number;
+  limit?: number;
+  now?: number;
+}
 export type SourceHistoricalIndexLookup = {
   status: "ready" | "held";
   reason?:
@@ -318,6 +325,7 @@ export type SourceHistoricalIndexLookup = {
     | "index_key_unavailable"
     | "index_incomplete"
     | "candidate_bound"
+    | "cohort_bound"
     | "index_changed";
   snapshot?: SourceHistoricalIndexSnapshot;
   rows: SourceHistoricalIndexRow[];
@@ -416,6 +424,172 @@ export async function lookupSourceHistoricalIndex(
   // Partial/unknown keys are included, never discarded. The reverse projector
   // may exclude a proven test operation, but must hold unknown contacts.
   return { status: "ready", snapshot: captured, rows };
+}
+
+/** One tenant coverage/key snapshot for up to twenty comparisons. Only index
+ * metadata is returned: callers must admit the union of source bodies and context
+ * dependencies before fetching/decrypting them. A query or cohort bound never
+ * turns a truncated subset into complete source coverage.
+ */
+export async function lookupSourceHistoricalIndexBatch(
+  store: Store,
+  tenant: string,
+  inputs: readonly SourceHistoricalIndexLookupInput[],
+): Promise<SourceHistoricalIndexLookup[]> {
+  if (inputs.length > 20)
+    throw new Error("source_historical_lookup_batch_too_large");
+  const requested = inputs.map((input) => {
+    const worked = call(input.workedCall),
+      startMs = input.startMs,
+      endMs = input.endMs,
+      limit = input.limit ?? 128;
+    if (
+      !worked ||
+      !Number.isSafeInteger(startMs) ||
+      !Number.isSafeInteger(endMs) ||
+      startMs <= 0 ||
+      endMs < startMs ||
+      endMs - startMs > 122 * 60_000 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > MAX_CANDIDATES
+    )
+      throw new Error("invalid_source_historical_lookup");
+    return {
+      worked,
+      first: Math.floor(startMs / 60_000),
+      last: Math.floor(endMs / 60_000),
+      limit,
+    };
+  });
+  if (!requested.length) return [];
+  const held = (
+    reason: SourceHistoricalIndexLookup["reason"],
+    captured?: SourceHistoricalIndexSnapshot,
+  ): SourceHistoricalIndexLookup[] =>
+    requested.map(() => ({
+      status: "held",
+      reason,
+      ...(captured ? { snapshot: { ...captured } } : {}),
+      rows: [],
+    }));
+  const state = await store
+    .statement(
+      `SELECT *,(${coverage("h")}) AS covered FROM source_historical_state h WHERE tenant=?`,
+      tenant,
+    )
+    .first<State & { covered: number }>();
+  if (!state?.key_id || !state.key_envelope) return held("index_uninitialized");
+  let key: SourceHistoricalIndexKey;
+  try {
+    key = await decodeKey(store, tenant, state);
+  } catch (error) {
+    if (!(error instanceof SourceHistoricalIndexKeyUnavailableError))
+      throw error;
+    return held("index_key_unavailable");
+  }
+  const captured = snapshot(state);
+  if (!state.covered) return held("index_incomplete", captured);
+  // Bucket sets depend on minute intervals, not the caller's sub-minute bounds.
+  // Different limits share a SELECT at the largest requested bound, then each
+  // member independently rejects excess rows against its original limit.
+  const unique = new Map<
+    string,
+    {
+      worked: string;
+      first: number;
+      last: number;
+      limit: number;
+      rows?: SourceHistoricalIndexRow[];
+    }
+  >();
+  const keys = requested.map((input) => {
+    const id = JSON.stringify([input.worked, input.first, input.last]);
+    const prior = unique.get(id);
+    if (prior) prior.limit = Math.max(prior.limit, input.limit);
+    else unique.set(id, { ...input });
+    return id;
+  });
+  const signatures = new Map<string, Promise<string>>();
+  const hashed = (
+    scope: string,
+    worked: string | null,
+    minute: number | null,
+  ) => {
+    const tuple = ["bucket", tenant, scope, worked, minute],
+      id = JSON.stringify(tuple);
+    let value = signatures.get(id);
+    if (!value) {
+      value = sign(key.key, tuple);
+      signatures.set(id, value);
+    }
+    return value;
+  };
+  const statements: D1PreparedStatement[] = [];
+  for (const input of unique.values()) {
+    const hashes = [
+      hashed("call", input.worked, null),
+      hashed("unknown", null, null),
+    ];
+    for (let minute = input.first; minute <= input.last; minute++)
+      hashes.push(
+        hashed("exact", input.worked, minute),
+        hashed("minute", null, minute),
+      );
+    statements.push(
+      store.statement(
+        `SELECT i.source,i.qso,i.revision,i.synced_at AS syncedAt,i.private_id AS privateId,i.body_version AS bodyVersion,i.scope
+    FROM json_each(?1) requested CROSS JOIN source_historical_index i INDEXED BY source_historical_bucket ON i.tenant=?2 AND i.key_id=?3 AND i.bucket_hash=requested.value
+    JOIN connections c ON c.tenant=i.tenant AND c.id=i.source WHERE c.kind='lofi' AND c.status='active' AND i.dirty=0 LIMIT ?4`,
+        JSON.stringify(await Promise.all(hashes)),
+        tenant,
+        key.keyId,
+        input.limit + 1,
+      ),
+    );
+  }
+  const guard = sourceHistoricalIndexGuard(captured);
+  const results = await store.db.batch([
+    ...statements,
+    store.statement(`SELECT 1 AS ok WHERE ${guard.sql}`, ...guard.params),
+  ]);
+  if (!results[statements.length]?.results.length)
+    return held("index_changed", captured);
+  const union = new Map<string, SourceHistoricalIndexRow>();
+  let metadataBytes = 0,
+    index = 0;
+  for (const input of unique.values()) {
+    const result = results[index++];
+    if (!result || !Array.isArray(result.results))
+      throw new Error("source_historical_lookup_result_unavailable");
+    input.rows = result.results as unknown as SourceHistoricalIndexRow[];
+    // Over-bound requests are unavailable, not partial members of the union.
+    if (input.rows.length > input.limit) continue;
+    for (const row of input.rows) {
+      const id = JSON.stringify([row.source, row.qso]);
+      if (union.has(id)) continue;
+      union.set(id, row);
+      metadataBytes += encoder.encode(JSON.stringify(row)).byteLength;
+      if (union.size > MAX_CANDIDATES || metadataBytes > 1024 * 1024)
+        return held("cohort_bound", captured);
+    }
+  }
+  return requested.map((input, index) => {
+    const rows = unique.get(keys[index])?.rows;
+    if (!rows) throw new Error("source_historical_lookup_result_unavailable");
+    return rows.length > input.limit
+      ? {
+          status: "held",
+          reason: "candidate_bound",
+          snapshot: { ...captured },
+          rows: [],
+        }
+      : {
+          status: "ready",
+          snapshot: { ...captured },
+          rows: rows.map((row) => ({ ...row })),
+        };
+  });
 }
 
 /** Bounded local backfill; never-indexed missing bodies remain dirty and held.

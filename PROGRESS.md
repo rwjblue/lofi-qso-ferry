@@ -1,5 +1,27 @@
 # Implementation progress
 
+Latest local checkpoint, **2026-10-24 10:09 UTC**: the independent LoTW first-insert
+path is implemented and remains disabled/unreleased. It requires a complete empty
+three-day report before signing and again before dispatch, immutable authorization
+and source-proof pins, and exact single-contact upload validation after vendor
+admission. Service, review counts and browser status distinguish each vendor's
+first-insert permission from source-boundary authority.
+
+All **1,338 tests** and the full `mise run check` pass: formatting, lint, both
+TypeScript checks and the Worker bundle. The runtime is committed locally through
+`74a0ef2e`; the full check's test phase took 865,489 ms. Populated migration upgrade,
+atomic rollback, older-reader compatibility and 23 new delivery cases pass. The
+09:52 local rehearsal preserved all 56 tables and 38,547 rows from the verified
+production backup, with clean integrity/FK checks and unchanged existing triggers.
+The 09:55 public health check still reported exports disabled, no active mode and
+source-boundary verification false; it did not attest every deployment variable.
+
+Push and read-only deployment remain pending 1Password signing. Production has
+not been changed by this work. Refresh source/vendor evidence on the final release;
+actual QRZ then LoTW acceptance still needs a separately authorized bounded trial.
+Keep every export gate closed. The [capacity plan](docs/capacity-plan.md#cost-of-the-pending-lotw-first-insert-path)
+records the new path's request cost and the remaining scale limitations.
+
 Current checkpoint, 2026-10-24 UTC; independent QRZ first-insert authority and
 bounded 100-record source baseline complete; cloud source/QRZ and LoTW reads passed:
 
@@ -644,7 +666,7 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 
 1. Complete signing and deployment of the reviewed collector, clock-admission and LoTW response-validation fixes with exports closed. The baseline/handoff is complete; the 09:20 two-module cloud comparison created a current proof, followed by protected host checks of fresh QRZ absence for the same contact. Repeat on the final release, including remaining scheduled Worker-path validation; preserve exact dependency, scope, generation and expiry guards.
 2. Keep the implemented authority split closed. Default-off QRZ first-insert mode excludes source-wide cutovers, no-query inference, LoTW, replacement and corrections. `SOURCE_BOUNDARY_VERIFIED` remains false: complete inventories and finite positive samples do not establish universal tombstone or purge guarantees.
-3. Prepare the exact QRZ first-write review packet using the successful 09:20 cloud-source/host-QRZ observation as evidence of the read path. Refresh its expiring source proof and vendor checks before any later authorized write. Historical precision, location and routing holds need explicit evidence; cron does not approve them. LoTW unsigned field/certificate compatibility and a fresh scoped absence query passed for one contact; current rechecking, separate authority and upload/readback acceptance remain open.
+3. Prepare the exact QRZ first-write review packet using the successful 09:20 cloud-source/host-QRZ observation as evidence of the read path. Refresh its expiring source proof and vendor checks before any later authorized write. Historical precision, location and routing holds need explicit evidence; cron does not approve them. LoTW unsigned field/certificate compatibility and a fresh scoped absence query passed for one contact; the separate authority and repeated checks are implemented locally; release verification and live upload/readback acceptance remain open.
 4. Prepare the exact first-write packet read-only in the [rollout checklist](docs/rollout-checklist.md), preserving the verified 08:14 UTC current-schema SQL backup, including its first source proof, and refreshing it if needed before external changes. Off-device key storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account.
 5. Keep exports disabled. The latest instruction supersedes the earlier one- or two-contact trial authorization; no actual trial may run until the owner changes that instruction and all current proof/vendor checks pass.
 

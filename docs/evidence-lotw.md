@@ -1,6 +1,6 @@
 # LoTW actual-contact preflight evidence
 
-Updated **2026-10-24 09:21 UTC**. Production exports remain disabled. This page
+Updated **2026-10-24 10:09 UTC**. Production exports remain disabled. This page
 records an unsigned snapshot check and a later fresh query for one actual contact. The
 [signing evidence](evidence-signing.md) separately documents synthetic signatures,
 released TQSL source and local Worker compatibility; the
@@ -82,44 +82,55 @@ An upload acknowledgement would establish **submitted**; exact subsequent
 supported-projection readback is required for **observed** acceptance. QSL
 confirmation is separate.
 
-LoTW requires separate authorization work. The default-off QRZ fresh-first-insert
-capability explicitly excludes LoTW. Current LoTW delivery still uses the
-source-boundary authorization mode, so the QRZ result and a per-contact source
-proof cannot turn on LoTW or assert the global source-boundary contract. Keep
-`SOURCE_BOUNDARY_VERIFIED=false` and the export controls closed until an appropriate
-LoTW policy and scoped acceptance procedure have been reviewed. No signature,
-upload, gate change or ARRL acceptance claim follows from these checks.
+Production LoTW delivery still requires source-boundary authorization. A separate
+first-insert mode is now implemented locally and remains unreleased and disabled.
+The QRZ result and a per-contact source proof cannot themselves turn on LoTW or
+assert the global source-boundary contract. Keep `SOURCE_BOUNDARY_VERIFIED=false`
+and all export controls closed. No live signature, upload, gate change or ARRL
+acceptance claim follows from these checks.
 
-## Separate LoTW first-insert plan
+## Separate LoTW first-insert implementation
 
-The code review identified the following implementation sequence. Response
-validation is implemented locally; authorization remains planned and disabled:
-1. **Implemented, awaiting release:** validate every returned LoTW record against
-   the sent dates and optional station/worked-call filters before evaluating
-   absence. Reject malformed identities without losing valid minute precision,
-   historical modes or unfiltered queries. The sent scope cannot change during
-   transport, and fixed diagnostic categories identify rejected responses.
-2. Implement and test a separate first-insert history check before widening
-   authorization. The proposed pilot rule queries the previous, current and
-   following UTC dates for exact own/worked calls, without band or mode filters.
-   Only a valid, complete zero-record report passes; any record, limit or failed
-   response holds. Test midnight/year/leap-day edges and incomplete, malformed
-   or changed scope. This remains unimplemented, and the observed one-day query
-   does not satisfy it.
-3. Add a default-off `lotw_fresh_insert` authorization mode with exact contact and
-   destination scopes, current query credentials, mandatory source proofs and
-   durable identity ownership. Preserve the existing QRZ and source-boundary
-   modes. Migration `0031` constrains two immutable-mode columns; the next
-   migration must preserve existing pins, guards and foreign keys unchanged.
-4. Require the complete three-day check before signing and again before first dispatch,
-   plus current certificate checks and final request validation after vendor
-   admission. Start with a repeated bounded query; quota exhaustion defers work.
-   The new mode must hold nearby records that differ only in mode or lack exact
-   time precision; the existing mode-filtered matcher does not establish this
-   stronger collision policy.
-5. Integrate service admission, health/admin reporting and deployment checks.
-   Test migration rollback, older Worker overlap, proof expiry, credential/scope
-   changes after admission and every uncertain-delivery case before deployment.
+The following implementation is local and passes the full release check; signed
+push, deployment and live acceptance remain outstanding:
+1. Validate every returned LoTW record against the sent dates and optional
+   station/worked-call filters before evaluating absence. Reject malformed
+   identities while preserving valid minute precision and historical modes.
+2. Check the previous, current and following UTC dates for exact own/worked
+   calls, without band or mode filters. Only a valid complete zero-record report
+   passes; any record or failed response holds. The helper has 58 new tests,
+   with all 111 helper and existing adapter tests passing. The observed one-day
+   production query does not satisfy this stronger policy.
+3. Pin `lotw_fresh_insert` separately from QRZ and source-boundary authority.
+   Migration `0032` widens two mode constraints while retaining existing rows,
+   foreign keys, immutable pins and original guards. LoTW structural eligibility
+   excludes accepted/mapped history and unsafe or missing attempt states.
+4. Repeat the three-day check before signing and before dispatch of a prepared,
+   known-unsent artifact. Check current certificate status and validate the exact
+   single-contact upload after vendor-budget admission. Query failures retain
+   known-unsent state; uncertain/submitted attempts never become fresh inserts.
+5. Add default-off `LOTW_FRESH_INSERTS_ENABLED`, independent service admission,
+   reconciliation-policy refresh, health/admin reporting and deployment checks.
+   Combined first-insert status never claims source completeness. Every configured
+   environment has eight closed controls; production still has its seven original
+   controls until the new configuration is deployed.
+
+The scheduler fixture proves one LoTW upload followed by separate submitted and
+observed receipts, with no QRZ write or source-wide cutover. All 13 source-export
+scheduler tests and 10 metadata-audit tests pass. This is synthetic evidence,
+not production signing or upload acceptance. The metadata audit now uses the
+same structural LoTW eligibility view; a candidate still carries false source-
+proof, fresh-vendor-check and write-authorization flags until those are separately
+established. This does not revise the older snapshot results above.
+
+At **09:52:16 UTC**, migration `0032` also passed an isolated in-memory SQLite
+rehearsal against the hash-verified 08:14 production backup. All 56 tables and
+38,547 rows were unchanged, every existing trigger definition was retained, and
+four new LoTW guard triggers were added. Integrity and foreign-key checks passed.
+No production read/write or vendor request occurred. This is an additional real-
+data compatibility check, not a production D1 migration or a refreshed backup;
+local D1 tests separately cover populated immutable pins and atomic rollback.
+The protected result is `/private/tmp/ferry-lotw-backup-migration-check-result.json`.
 
 The three-day empty-report rule is conservative Ferry policy, not an ARRL
 uniqueness guarantee. ARRL's [correction identity](https://lotw.arrl.org/lotw-help/submitting-qsos/)
@@ -137,8 +148,16 @@ empty subsequent readback cannot authorize resubmission. See ARRL's
 [submission contract](https://lotw.arrl.org/lotw-help/developer-submit-qsos/).
 QRZ release and acceptance remain the first rollout milestone.
 
-The combined unreleased changes, including response validation, diagnostic
-categories and source clock admission, passed all **1,233 tests** and the full
-release check: formatting, lint, types and the Worker bundle. The changes are
-committed locally but not pushed or deployed while 1Password signing remains
-unavailable. No authorization flag or delivery policy changed.
+The final combined runtime through local revision `74a0ef2e` passes all
+**1,338 tests** and `mise run check`: formatting, lint, both TypeScript checks and
+the Worker build. The test phase took 865,489 ms. This includes 23 new delivery
+cases, populated migration/rollback tests and the older QRZ/source-boundary paths.
+Independent delivery and service reviews found no remaining blocker. The run
+caught and fixed a lease-release race in the new known-unsent history hold:
+dispatch now awaits the fenced retry transition before releasing its lease.
+
+The four implementation commits are local. Signed push and read-only deployment
+remain pending 1Password signing. No production authorization flag or delivery
+policy changed, and no live signature/upload occurred. Fresh three-day production
+history, final-release source proof/certificate checks and actual ARRL acceptance
+remain outstanding; the older one-day observation cannot substitute for them.

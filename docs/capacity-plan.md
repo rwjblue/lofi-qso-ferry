@@ -7,7 +7,29 @@ two source and three QRZ reads. That bounded sample does not establish sustained
 capacity or scheduled Worker/write acceptance. The collector refinement remains
 awaiting signing/deployment, and all export controls remain closed.
 
-Release and earlier throughput observations:
+## Cost of the pending LoTW first-insert path
+
+The default-off LoTW capability repeats a complete three-day history query and
+certificate-status query before signing and before upload. One successful contact
+therefore needs at least six LoTW requests: two preparation reads, two dispatch
+reads, one upload and one later acceptance readback. Ordinary inventory/targeted
+reconciliation, certificate maintenance, retries and delayed acceptance add work.
+This is a code-derived lower bound, not measured production throughput.
+
+The current application budget is 40 LoTW requests per five-minute window across
+all tenants, including at most eight background requests. Even with no other work,
+the six-request minimum gives optimistic ceilings of 1,920 contacts/day overall
+and 384/day for background work. Actual throughput will be lower. These limits leave room for a small controlled trial, but they cannot establish the
+100-users × 100-new-contacts/day target or fast 200,000-contact imports.
+
+Before broader rollout, measure requests per completed contact, queue age and
+fairness on the final release. Then evaluate bounded shared history/certificate
+checks and separately reviewed multi-contact signing/upload, retaining per-contact
+source proofs, durable ownership and uncertain-delivery protection. Revisit the
+application budget only with vendor evidence and measured resource headroom;
+raising it alone is not a throughput result. No budget was increased here.
+
+## Release and earlier throughput observations
 
 Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
 at 06:09:06 UTC as Worker `da7b7b70-6b7e-4cab-b9f6-f4b88f38390d`, at 100% traffic.

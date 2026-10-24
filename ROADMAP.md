@@ -4,6 +4,23 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-24 UTC)
 
+**Latest local work (10:09 UTC):** the separate LoTW first-insert path is implemented
+with a three-day empty-history rule, immutable mode pins, repeated pre-sign and
+pre-upload checks, exact upload validation and a default-off vendor gate. All
+**1,338 tests** and the full release check pass. Migration upgrade, rollback and
+older-reader compatibility pass; an isolated rehearsal preserves the verified
+production backup with clean integrity/FK checks. Four implementation commits are
+local; signing, push and read-only deployment remain pending 1Password.
+
+Exports remain disabled. Next: deploy the reviewed fixes with all eight controls
+closed, refresh bounded source/QRZ evidence on that release, and complete scheduled
+Worker validation. Prepare the exact QRZ acceptance packet, then LoTW; no trial
+runs under the current keep-disabled instruction. Global source completeness,
+historical exceptions and sustained capacity remain separate unresolved work.
+The [LoTW evidence](docs/evidence-lotw.md#separate-lotw-first-insert-implementation)
+and [request-cost limits](docs/capacity-plan.md#cost-of-the-pending-lotw-first-insert-path)
+distinguish completed safeguards from live acceptance and scale readiness.
+
 The separate, default-disabled QRZ first-insert capability is deployed. It retains
 mandatory source proofs while excluding source-wide cutovers, no-query inference,
 LoTW, replacement and corrections. It remains disabled. The policy-aware review
@@ -13,7 +30,7 @@ cloud comparison with the committed clock fix minted a source proof; a protected
 host check verified fresh QRZ absence for that same contact and current proof.
 A subsequent LoTW query also returned an empty scoped report. Final fix deployment,
 scheduled Worker validation, vendor write acceptance and sustained capacity
-remain outstanding. The combined unreleased fixes pass all 1,233 tests and the
+remain outstanding. The pre-LoTW-authorization fixes passed all 1,233 tests and the
 full local release check; signing remains blocked on 1Password.
 
 Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
@@ -160,13 +177,14 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    certificate/date compatibility for one retained contact. It remains held at
    first-insert classification. A fresh scoped LoTW query at 09:20:55 returned
    zero records with stable context, but established no signing or upload
-   acceptance. QRZ's mode excludes LoTW; define separate LoTW authority before its
+   acceptance. QRZ's mode excludes LoTW; release and verify the separate LoTW authority before its
    trial while keeping the global source-boundary gate closed. The
-   [LoTW implementation sequence](docs/evidence-lotw.md#separate-lotw-first-insert-plan)
-   starts with strict response-scope validation, then a conservative three-day
-   empty-report check, separate immutable authorization, fresh checks at dispatch
-   and default-off service wiring. The current one-day LoTW observation does not
-   satisfy that planned three-day policy.
+   [LoTW implementation](docs/evidence-lotw.md#separate-lotw-first-insert-implementation)
+   now includes strict response-scope validation, a conservative three-day empty-
+   report check, separate immutable authorization, fresh dispatch checks and
+   default-off service wiring. Finish release validation and deploy with its new
+   gate closed. The current one-day LoTW observation does not satisfy the three-
+   day policy; obtain fresh bounded evidence on the final release before any trial.
 5. **Expand automatic coverage and prove capacity.** Source policy and fresh
    positive evidence must protect main exports, not only the trial. Then review
    historical associations and broaden the scopes deliberately. Measure queue

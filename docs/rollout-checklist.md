@@ -104,7 +104,7 @@ ambiguous identities, lower-precision locations or missing routes.
 
 ## Finish reconciliation and review exceptions
 
-Keep all seven export controls closed while doing this work. Preserve cursors, source
+Keep every export control closed while doing this work, including the new default-off `LOTW_FRESH_INSERTS_ENABLED` control before deploying its implementation. Preserve cursors, source
 birth evidence, current context and destination reservations; clearing counts or
 forcing a contact into an eligible state is not reconciliation.
 
@@ -304,12 +304,15 @@ prove replacement, cleanup, restore or arbitrary station/mode coverage.
 
 ## Gates and later expansion
 
-Enablement requires all of `EXPORTS_ENABLED=true`, `ROLLOUT_CHECKS_PASSED=true`,
-`SOURCE_BOUNDARY_VERIFIED=true`, the exact authorization value documented in
-[operations](operations.md), and nonempty `ROLLOUT_QSO_IDS_JSON` and
-`ROLLOUT_DESTINATION_IDS_JSON` scopes. None of
-these values is evidence by itself. The guarded deployment task deliberately
-refuses open gates; current readiness deployments use it unchanged.
+Every mode requires `EXPORTS_ENABLED=true`, `ROLLOUT_CHECKS_PASSED=true`, the
+exact authorization value documented in [operations](operations.md), and nonempty
+`ROLLOUT_QSO_IDS_JSON` and `ROLLOUT_DESTINATION_IDS_JSON` scopes. A narrow first-
+insert trial additionally requires the chosen vendor's `QRZ_FRESH_INSERTS_ENABLED`
+or `LOTW_FRESH_INSERTS_ENABLED` flag while keeping `SOURCE_BOUNDARY_VERIFIED=false`.
+Broader source-boundary mode separately requires `SOURCE_BOUNDARY_VERIFIED=true`
+and its independent evidence. None of these values is evidence by itself. The
+guarded deployment task deliberately refuses open gates; current readiness
+deployments use it unchanged.
 
 After the bounded trial, review the accepted outcomes and historical associations
 before authorizing broader automatic coverage. Exercise restore quarantine and

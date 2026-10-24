@@ -113,6 +113,72 @@ first-insert absence, a current source proof or write permission.
 
 Two source UUIDs must not silently claim one remote record. Remote records without a source match remain untouched. Never fabricate source UUIDs for remote history or upload a marker merely to establish ownership.
 
+### Remaining LoTW time-window association work
+
+This sequence is planned, not implemented. It extends historical recognition only;
+it does not change exact Ferry receipts, signing, first-insert absence checks or
+export permissions. Keep all export controls closed during implementation.
+
+LoTW's [QSL matching rules](https://lotw.arrl.org/lotw-help/frequently-asked-questions/#datamatch)
+compare reciprocal submissions within 30 minutes, on the same band, with matching
+mode or mode group; satellite contacts also require matching satellite evidence.
+Those confirmation rules do not identify an own-log upload or correction.
+[Own-log corrections](https://lotw.arrl.org/lotw-help/submitting-qsos/?lang=en)
+require the original callsign, date, time to the second, band and mode; changing
+these can create another QSO. The [download contract](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
+allows mapped modes and `APP_LOTW_MODE` without `MODE`, but supplies no documented
+stable per-QSO identifier. Neither download timestamps nor a hash of the observed
+fields should be presented as such an identifier.
+1. **Complete bounded neighboring-date coverage.** Update
+   `src/history-inventory.ts` and its tests before changing adoption. Derive required
+   UTC dates from the precision-aware source interval plus the 30-minute window.
+   Resolve each date through its weekly root and split children independently;
+   deduplicate a shared leaf and retain at most two leaf guards. Both singleton and
+   batch paths must include neighboring-day candidates, with a combined maximum of
+   512 records. A missing, partial, blocked or expired leaf yields no complete
+   evidence. Preserve existing byte/request bounds and `freshCheckComplete:false`.
+   Acceptance: midnight, month/year/leap-day and week boundaries; two children of
+   one split root; shared-leaf reuse; failed second-leaf races; combined overflow;
+   and singleton/batch parity. Minute intervals must remain intervals, including
+   ambiguous overlap at the 30-minute boundary.
+
+2. **Add separate historical ownership and an exact-receipt bridge.** Use an
+   additive migration and bounded helper, preserving the existing QRZ tables and
+   exact LoTW identity claims. Store an internal association reference and encrypted
+   original LoTW identity evidence in a separate namespace; never manufacture
+   seconds or put a coarse/mode-group identity into `ledger.remote_id` or exact
+   outbound claims. Add durable overlap reservations scoped to the verified logical
+   query account, including connection aliases. Compare time intervals and known
+   mode equivalence conservatively; nearest-match or tuple-hash equality is not
+   sufficient ownership. Bridge retained encrypted `lotw_identity` evidence from
+   existing exact receipts/adoptions, including archived source owners. Unrecoverable
+   or incomplete relevant ownership coverage stays held. Legacy/direct receipt
+   writes must update or dirty that coverage, and atomic reservation must fence its
+   clock. Acceptance: competing owners, concurrent claims, precision/mode changes,
+   aliases, archived owners, unreadable evidence, interrupted backfill and old-worker
+   writes. Unrelated indexed cohorts must remain bounded and able to proceed.
+
+3. **Wire guarded association-only recognition.** Extend
+   `classifyHistoricalAssociation`, service classification and adoption only after
+   those guards exist. Reuse the pure LoTW candidate policy and bounded reverse
+   source census; require uniqueness before location/frequency comparison, preserve
+   every original remote value, and recheck both inventory leaves, source/context,
+   comparison clock and historical ownership in the adoption transaction. Extend
+   the association-only write-block view to LoTW so edits and same-account relinks
+   cannot grant upload authority. Do not treat the existing same-day targeted read
+   as complete adjacent-day coverage. Acceptance: exact plus coarse competitors,
+   mode-group/APP-only records, substantive mismatches, late source/event changes,
+   direct stage/dispatch attempts and relinks. Exact receipt recovery and
+   submitted/uncertain outcomes must remain unchanged; empty history never permits
+   their automatic resend.
+
+4. **Verify and measure before rollout.** Run populated-migration rehearsal and
+   complete regression checks, then observe guarded adoption with exports disabled.
+   Change the matching-policy fingerprint once at integration to revisit held work.
+   Measure two-leaf and reverse-ownership cost; do not infer large-log capacity from
+   focused fixtures. These checks establish retained-observation associations, not
+   an immutable LoTW snapshot, universal source completeness or first-insert absence.
+
 ## Minimal adoption ledger
 
 Persist one row per tenant, stable LoFi account, source UUID, and **logical destination identity**: QRZ account/book or LoTW account. Credential versions and connection attempts are not part of this key. Rotation, renewal, and reconnection to the same destination preserve adoption, remote mappings, creation provenance, and narrative/template policy. Verify the remote identity before reattaching credentials; a genuinely different account or book is a different destination.

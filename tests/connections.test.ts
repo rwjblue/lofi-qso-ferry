@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { test } from "node:test";
 import type { SessionIdentity } from "../src/auth.ts";
 import { connectionRoute, saveVerifiedConnection } from "../src/connections.ts";
@@ -7,43 +8,62 @@ import { digestCode, sha256 } from "../src/security.ts";
 import { importPkcs12 } from "../src/signing.ts";
 import type { Store } from "../src/store.ts";
 import { DEFAULT_COMMENT_TEMPLATE } from "../src/templates.ts";
-import { database, keys, seed } from "./helpers.ts";
+import { applyMigration, database, keys, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
-async function setup() {
+async function setup(beforeMandatoryProofMigration = false) {
   const context = await database();
-  await applyAdditionalMigrations(context.db);
-  await seed(context.store, "a");
-  await seed(context.store, "b");
-  const now = Date.now();
-  const identity: SessionIdentity = {
-    tenant: "a",
-    credentialId: "key-a",
-    tokenHash: "session-a",
-    verifiedAt: now,
-  };
-  await context.store
-    .statement(
-      "INSERT INTO passkeys(id,tenant,public_key,counter,metadata,label,created_at) VALUES('key-a','a','fixture',0,'{}','fixture',?)",
-      now,
-    )
-    .run();
-  await context.store
-    .statement(
-      "INSERT INTO sessions(token_hash,tenant,credential_id,created_at,verified_at,expires_at) VALUES('session-a','a','key-a',?,?,?)",
-      now,
-      now,
-      now + 86400000,
-    )
-    .run();
-  const env = {
-    DB: context.db,
-    ORIGIN: "http://localhost:8787",
-    ACTIVE_KEK_VERSION: "1",
-    KEK_V1: keys.keys["1"],
-    AUTH_SECRET: "fixture-connection-secret",
-  } as Env;
-  return { ...context, env, identity };
+  try {
+    if (beforeMandatoryProofMigration) {
+      // Historical attempts are seeded on their original schema, then upgraded
+      // before the behavior under test. No current guard is removed or bypassed.
+      for (const file of (
+        await readdir(new URL("../migrations/", import.meta.url))
+      )
+        .filter(
+          (name) =>
+            name.endsWith(".sql") &&
+            name !== "0001_foundation.sql" &&
+            name < "0030",
+        )
+        .sort())
+        await applyMigration(context.db, file);
+    } else await applyAdditionalMigrations(context.db);
+    await seed(context.store, "a");
+    await seed(context.store, "b");
+    const now = Date.now();
+    const identity: SessionIdentity = {
+      tenant: "a",
+      credentialId: "key-a",
+      tokenHash: "session-a",
+      verifiedAt: now,
+    };
+    await context.store
+      .statement(
+        "INSERT INTO passkeys(id,tenant,public_key,counter,metadata,label,created_at) VALUES('key-a','a','fixture',0,'{}','fixture',?)",
+        now,
+      )
+      .run();
+    await context.store
+      .statement(
+        "INSERT INTO sessions(token_hash,tenant,credential_id,created_at,verified_at,expires_at) VALUES('session-a','a','key-a',?,?,?)",
+        now,
+        now,
+        now + 86400000,
+      )
+      .run();
+    const env = {
+      DB: context.db,
+      ORIGIN: "http://localhost:8787",
+      ACTIVE_KEK_VERSION: "1",
+      KEK_V1: keys.keys["1"],
+      AUTH_SECRET: "fixture-connection-secret",
+    } as Env;
+    return { ...context, env, identity };
+  } catch (error) {
+    await context.mf.dispose();
+    throw error;
+  }
 }
 async function vacate(store: Store, kind: string) {
   await store
@@ -286,7 +306,7 @@ test("verified connection renewals retain logical destination and ledger, creden
   );
 });
 test("credential renewal atomically retires only unsent artifacts using superseded credentials", async (t) => {
-  const { store, mf, identity } = await setup();
+  const { store, mf, identity } = await setup(true);
   t.after(() => mf.dispose());
   const cases = [
     { tenant: "a", id: "old-prepared", state: "prepared", version: "v1" },
@@ -332,6 +352,7 @@ test("credential renewal atomically retires only unsent artifacts using supersed
       })
     ).run();
   }
+  await applyMigration(store.db, "0030_source_export_guards.sql");
   const renewal = {
     kind: "qrz" as const,
     remoteIdentity: "destination",

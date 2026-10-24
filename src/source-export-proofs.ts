@@ -59,6 +59,11 @@ export interface SourceExportProofRequest {
   witnesses: readonly SourcePresenceWitness[];
   collectionFinishedAt: number;
 }
+export interface SourceExportAuthorization {
+  proofId: string;
+  scope: SourcePresenceScope;
+  reconciliationVersion: number;
+}
 export interface SourceExportProofIdentity {
   qso: string;
   generation: string;
@@ -321,69 +326,6 @@ export async function loadSourceExportSnapshots(
   return snapshots;
 }
 
-// One predicate is shared by mint and subsequent use. Every supplied dependency
-// is a keyed lookup; the reverse event check visits only this operation's events.
-function currentPredicate(document: string, at: string): string {
-  const p = (path: string) => `json_extract(${document},'$.${path}')`;
-  const callerTime = at;
-  // Admission/transport can delay a prepared statement. Never let its caller's
-  // earlier timestamp extend authority past the database's execution time.
-  at = `MAX(${at},CAST(unixepoch('subsec')*1000 AS INTEGER))`;
-  const predicate = `${p("scope.readerPolicy")}='all-clients-v1'
-   AND json_array_length(${document},'$.dependencies') BETWEEN 1 AND 64
-   AND json_type(${document},'$.createdAt')='integer' AND json_type(${document},'$.expiresAt')='integer'
-   AND json_type(${document},'$.collectionFinishedAt')='integer' AND ${p("collectionFinishedAt")}>0
-   AND json_type(${document},'$.completeReadStartedAt')='integer'
-   AND json_array_length(${document},'$.dependencies')=(SELECT count(DISTINCT json_array(json_extract(d.value,'$.target.kind'),json_extract(d.value,'$.target.id'))) FROM json_each(${document},'$.dependencies') d)
-   AND ${p("createdAt")}<=${callerTime} AND ${p("expiresAt")}>${at}
-   AND ${p("collectionFinishedAt")}<=${p("completeReadStartedAt")} AND ${p("completeReadStartedAt")}<=${p("createdAt")}
-   AND EXISTS(SELECT 1 FROM source_read_policy_ready ready
-    JOIN source_read_policies policy ON policy.tenant=ready.tenant AND policy.source=ready.source
-    JOIN connections c ON c.tenant=ready.tenant AND c.id=ready.source
-    JOIN private_data credential ON credential.tenant=c.tenant AND credential.connection=c.id AND credential.id=c.credential_version AND credential.kind='credential'
-    JOIN cursors context ON context.tenant=c.tenant AND context.connection=c.id AND context.stream='context'
-    WHERE ((ready.tenant=${p("scope.tenant")} AND ready.source=${p("scope.source")} AND ready.epoch=${p("scope.policyEpoch")})
-     AND (policy.account_id=${p("scope.accountId")} AND policy.reader_policy=${p("scope.readerPolicy")}))
-     AND ((c.credential_version=${p("scope.credentialVersion")} AND credential.revoked_at IS NULL AND (credential.expires_at IS NULL OR credential.expires_at>${at}))
-     AND (ready.sync_generation=${p("syncGeneration")} AND json_type(ready.sync_cursor,'$.completeReadStartedAt')='integer' AND json_extract(ready.sync_cursor,'$.completeReadStartedAt')=${p("completeReadStartedAt")}))
-     AND ((json_extract(ready.sync_cursor,'$.operations.complete')=1 AND json_extract(ready.sync_cursor,'$.qsos.complete')=1)
-     AND (json_extract(ready.sync_cursor,'$.operations.cursor') IS NULL AND json_extract(ready.sync_cursor,'$.qsos.cursor') IS NULL))
-     AND (context.generation=${p("contextGeneration")} AND json_valid(context.cursor) AND json_extract(context.cursor,'$.complete')=1 AND json_extract(context.cursor,'$.syncComplete')=1))
-   AND EXISTS(SELECT 1 FROM reconciliation_work r WHERE r.tenant=${p("scope.tenant")} AND r.source=${p("scope.source")} AND r.qso=${p("qso")} AND r.version=${p("reconciliationVersion")})
-   AND EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=${p("scope.tenant")} AND l.source=${p("scope.source")} AND l.qso=${p("qso")} AND l.generation=${p("generation")} AND l.context_generation=${p("contextGeneration")} AND l.operation_id IS ${p("operationId")})
-   AND EXISTS(SELECT 1 FROM source_work q WHERE q.tenant=${p("scope.tenant")} AND q.source=${p("scope.source")} AND q.id=${p("qso")} AND q.kind='qso' AND q.operation_id IS ${p("operationId")} AND q.deleted=0 AND q.is_event=0 AND q.state IN('pending','waiting'))
-   AND (SELECT count(*) FROM json_each(${document},'$.dependencies') d WHERE json_extract(d.value,'$.target.kind')='qso' AND json_extract(d.value,'$.target.id')=${p("qso")} AND json_extract(d.value,'$.target.isEvent')=0)=1
-   AND (SELECT count(*) FROM json_each(${document},'$.dependencies') d WHERE json_extract(d.value,'$.target.kind')='operation')=CASE WHEN ${p("operationId")} IS NULL THEN 0 ELSE 1 END
-   AND NOT EXISTS(SELECT 1 FROM json_each(${document},'$.dependencies') d WHERE
-     json_extract(d.value,'$.target.deleted') IS NOT 0
-     OR json_extract(d.value,'$.target.kind') NOT IN('qso','operation')
-     OR (json_extract(d.value,'$.target.kind')='operation' AND json_extract(d.value,'$.target.id') IS NOT ${p("operationId")})
-     OR (json_extract(d.value,'$.target.kind')='qso' AND json_extract(d.value,'$.target.id')!=${p("qso")} AND (json_extract(d.value,'$.target.isEvent') IS NOT 1 OR json_extract(d.value,'$.target.operationId') IS NOT ${p("operationId")})))
-   AND NOT EXISTS(SELECT 1 FROM json_each(${document},'$.dependencies') d WHERE
-    json_type(d.value,'$.requestStartedAt') IS NOT 'integer' OR json_extract(d.value,'$.requestStartedAt')>${p("collectionFinishedAt")} OR json_extract(d.value,'$.requestStartedAt')<0
-    OR ${p("expiresAt")}>json_extract(d.value,'$.requestStartedAt')+300000
-    OR NOT EXISTS(SELECT 1 FROM source_work w JOIN private_data b ON b.tenant=w.tenant AND b.connection=w.source AND b.id=w.private_id AND b.kind='source'
-     WHERE ((w.tenant=${p("scope.tenant")} AND w.source=${p("scope.source")} AND w.kind=json_extract(d.value,'$.target.kind') AND w.id=json_extract(d.value,'$.target.id'))
-      AND (w.revision=json_extract(d.value,'$.target.revision') AND w.synced_at=json_extract(d.value,'$.target.syncedAtMillis')))
-      AND ((w.operation_id IS json_extract(d.value,'$.target.operationId') AND w.deleted=0 AND w.is_event=json_extract(d.value,'$.target.isEvent'))
-      AND (w.policy_seen_epoch=${p("scope.policyEpoch")} AND (w.kind!='operation' OR w.state='context')))
-      AND ((w.private_id=json_extract(d.value,'$.privateId') AND w.expires_at=json_extract(d.value,'$.workExpiresAt') AND w.expires_at>${at})
-      AND (b.source_proof_version=json_extract(d.value,'$.bodyVersion') AND b.created_at=json_extract(d.value,'$.bodyCreatedAt')))
-      AND (b.expires_at IS json_extract(d.value,'$.bodyExpiresAt') AND b.revoked_at IS NULL AND (b.expires_at IS NULL OR b.expires_at>${at}))))
-   AND NOT EXISTS(SELECT 1 FROM source_work e INDEXED BY source_context_members
-    WHERE e.tenant=${p("scope.tenant")} AND e.source=${p("scope.source")} AND e.operation_id=${p("operationId")} AND e.kind='qso' AND e.is_event=1 AND e.deleted=0
-     AND NOT EXISTS(SELECT 1 FROM json_each(${document},'$.dependencies') d WHERE json_extract(d.value,'$.target.kind')='qso' AND json_extract(d.value,'$.target.id')=e.id))`;
-  // These fixed top-level clauses are separately indented from subquery ANDs.
-  // Balance the tree so composition with other guards stays below D1's depth100.
-  const clauses = predicate.split("\n   AND ");
-  const balance = (items: string[]): string => {
-    if (items.length === 1) return `(${items[0]})`;
-    const middle = Math.floor(items.length / 2);
-    return `(${balance(items.slice(0, middle))} AND ${balance(items.slice(middle))})`;
-  };
-  return balance(clauses);
-}
-
 /** Mint all or none; observation times are never replaced by local read time. */
 export async function mintSourceExportProofs(
   store: Store,
@@ -500,23 +442,32 @@ export async function mintSourceExportProofs(
   await store.db.batch([
     ...proofs.map((proof) =>
       store.statement(
-        `WITH input(proof,checked_at) AS(VALUES(?,?)) INSERT INTO source_export_proofs(tenant,id,source,qso,created_at,expires_at,proof)
-       SELECT json_extract(proof,'$.scope.tenant'),json_extract(proof,'$.id'),json_extract(proof,'$.scope.source'),json_extract(proof,'$.qso'),json_extract(proof,'$.createdAt'),json_extract(proof,'$.expiresAt'),proof FROM input
-       WHERE ${currentPredicate("input.proof", "input.checked_at")} AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>MAX(input.checked_at,CAST(unixepoch('subsec')*1000 AS INTEGER)))`,
+        "INSERT INTO source_export_proofs(tenant,id,source,qso,created_at,expires_at,proof) VALUES(?,?,?,?,?,?,?)",
+        scope.tenant,
+        proof.id,
+        scope.source,
+        proof.qso,
+        proof.createdAt,
+        proof.expiresAt,
         canonical(proof),
-        now,
-        lease.tenant,
-        lease.scope,
-        lease.token,
-        lease.fence,
       ),
     ),
     store.statement(
-      "INSERT INTO source_export_proof_batch_guards(id,expected_count,actual_count) SELECT ?,?,count(*) FROM source_export_proofs WHERE tenant=? AND id IN(SELECT value FROM json_each(?))",
+      `INSERT INTO source_export_proof_batch_guards(id,expected_count,actual_count)
+       SELECT ?,?,count(*) FROM source_export_proofs_current p
+       WHERE p.tenant=? AND p.id IN(SELECT value FROM json_each(?)) AND p.created_at<=? AND p.expires_at>?
+        AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER)))`,
       id,
       proofs.length,
       scope.tenant,
       JSON.stringify(proofs.map((proof) => proof.id)),
+      now,
+      now,
+      lease.tenant,
+      lease.scope,
+      lease.token,
+      lease.fence,
+      now,
     ),
     store.statement(
       "DELETE FROM source_export_proof_batch_guards WHERE id=?",
@@ -526,7 +477,7 @@ export async function mintSourceExportProofs(
   return proofs;
 }
 
-/** Composable SQL for later stage/dispatch integration; this module grants none. */
+/** Current immutable evidence; normal writes must also bind their attempt pin. */
 export function sourceExportProofGuard(
   scope: SourcePresenceScope,
   proofId: string,
@@ -543,12 +494,10 @@ export function sourceExportProofGuard(
   )
     throw new Error("invalid_source_export_proof_guard");
   return {
-    // `now` is an already-validated integer literal. Keeping it out of another
-    // correlated CTE avoids multiplying expression depth when guards compose.
-    sql: `EXISTS(SELECT 1 FROM source_export_proofs p
+    sql: `EXISTS(SELECT 1 FROM source_export_proofs_current p
      WHERE (p.tenant=? AND p.id=? AND json_extract(p.proof,'$.scope')=?)
       AND (p.qso=? AND json_extract(p.proof,'$.generation')=? AND json_extract(p.proof,'$.reconciliationVersion')=?)
-      AND ${currentPredicate("p.proof", String(now))})`,
+      AND p.created_at<=? AND p.expires_at>?)`,
     bindings: [
       scope.tenant,
       proofId,
@@ -556,6 +505,8 @@ export function sourceExportProofGuard(
       identity.qso,
       identity.generation,
       identity.reconciliationVersion,
+      now,
+      now,
     ],
   };
 }
@@ -588,9 +539,116 @@ export async function purgeExpiredSourceExportProofs(
     throw new Error("invalid_source_export_proof_cleanup");
   await store
     .statement(
-      "DELETE FROM source_export_proofs WHERE (tenant,id) IN(SELECT tenant,id FROM source_export_proofs WHERE expires_at<=? ORDER BY expires_at,tenant,id LIMIT ?)",
+      "DELETE FROM source_export_proofs WHERE (tenant,id) IN(SELECT tenant,id FROM source_export_proof_retention WHERE expires_at<=? ORDER BY expires_at,tenant,id LIMIT ?)",
       now,
       limit,
     )
     .run();
+}
+
+/** The stored logical identity, not a caller-provided policy epoch or credential. */
+export async function loadCurrentSourcePresenceScope(
+  store: Store,
+  source: { tenant: string; id: string },
+  now = Date.now(),
+): Promise<SourcePresenceScope | null> {
+  if (!integer(now)) throw new Error("invalid_source_presence_scope_time");
+  const row = await store
+    .statement(
+      `SELECT p.tenant,p.source,p.account_id,p.reader_policy,p.epoch,c.credential_version
+     FROM source_read_policy_ready ready
+     JOIN source_read_policies p ON p.tenant=ready.tenant AND p.source=ready.source
+     JOIN connections c ON c.tenant=p.tenant AND c.id=p.source
+     JOIN private_data b ON b.tenant=c.tenant AND b.connection=c.id AND b.id=c.credential_version AND b.kind='credential'
+     WHERE p.tenant=? AND p.source=? AND b.revoked_at IS NULL
+      AND (b.expires_at IS NULL OR b.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER)))`,
+      source.tenant,
+      source.id,
+      now,
+    )
+    .first<{
+      tenant: string;
+      source: string;
+      account_id: string;
+      reader_policy: "all-clients-v1";
+      epoch: string;
+      credential_version: string;
+    }>();
+  return row
+    ? {
+        tenant: row.tenant,
+        source: row.source,
+        accountId: row.account_id,
+        readerPolicy: row.reader_policy,
+        policyEpoch: row.epoch,
+        credentialVersion: row.credential_version,
+      }
+    : null;
+}
+
+/** One bounded lookup; a new drain invalidates IDs from an older cohort. */
+export async function loadCurrentSourceExportProofs(
+  store: Store,
+  scope: SourcePresenceScope,
+  identities: readonly SourceExportProofIdentity[],
+  now = Date.now(),
+): Promise<(SourceExportProof | null)[]> {
+  if (
+    !validScope(scope) ||
+    !integer(now) ||
+    identities.length > 20 ||
+    identities.some(
+      (identity) =>
+        !identity.qso ||
+        !identity.generation ||
+        !integer(identity.reconciliationVersion),
+    )
+  )
+    throw new Error("invalid_source_export_proof_lookup");
+  if (!identities.length) return [];
+  const result = await store
+    .statement(
+      `SELECT requested.key AS position,(
+      SELECT p.proof FROM source_export_proofs_current p
+      WHERE p.tenant=?2 AND p.source=?3 AND p.qso=json_extract(requested.value,'$.qso')
+       AND json_extract(p.proof,'$.scope')=?4 AND json_extract(p.proof,'$.generation')=json_extract(requested.value,'$.generation')
+       AND json_extract(p.proof,'$.reconciliationVersion')=json_extract(requested.value,'$.reconciliationVersion')
+       AND p.created_at<=?5 AND p.expires_at>?5 ORDER BY p.created_at DESC,p.id LIMIT 1
+     ) AS proof FROM json_each(?1) requested ORDER BY CAST(requested.key AS INTEGER)`,
+      JSON.stringify(identities),
+      scope.tenant,
+      scope.source,
+      canonical(scope),
+      now,
+    )
+    .all<{ position: number; proof: string | null }>();
+  return result.results.map((row) =>
+    row.proof ? (JSON.parse(row.proof) as SourceExportProof) : null,
+  );
+}
+
+export function attemptSourceExportProofGuard(
+  tenant: string,
+  attempt: string,
+  now = Date.now(),
+): { sql: string; params: (string | number | null)[] } {
+  if (!tenant || !attempt || !integer(now))
+    throw new Error("invalid_attempt_source_export_proof_guard");
+  return {
+    sql: "EXISTS(SELECT 1 FROM attempt_source_export_proofs_current p WHERE p.tenant=? AND p.attempt=? AND p.created_at<=? AND p.expires_at>?)",
+    params: [tenant, attempt, now, now],
+  };
+}
+export async function attemptSourceExportProofCurrent(
+  store: Store,
+  tenant: string,
+  attempt: string,
+  now = Date.now(),
+): Promise<boolean> {
+  const guard = attemptSourceExportProofGuard(tenant, attempt, now);
+  return (
+    (await store
+      .statement(`SELECT ${guard.sql} AS current`, ...guard.params)
+      .first<number>("current")) === 1
+  );
 }

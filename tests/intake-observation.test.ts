@@ -9,7 +9,9 @@ import {
 } from "../src/intake.ts";
 import { sourceFingerprint } from "../src/projection.ts";
 import { Store } from "../src/store.ts";
-import { applyMigration, database, seed } from "./helpers.ts";
+import { database, seed } from "./helpers.ts";
+import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
+import { mintFixtureSourceProofs } from "./source-proof-fixtures.ts";
 
 const at = 1792684800000;
 const syncResponse = (qsos: unknown[], operations: unknown[] = []) =>
@@ -24,95 +26,90 @@ const syncResponse = (qsos: unknown[], operations: unknown[] = []) =>
 
 async function setup(count = 4) {
   const state = await database();
-  for (const file of [
-    "0004_intake.sql",
-    "0005_cutover.sql",
-    "0009_vendor_requests.sql",
-    "0010_source_priority.sql",
-    "0018_reconciliation_work.sql",
-    "0025_source_read_policy.sql",
-    "0026_source_read_guards.sql",
-    "0027_source_presence.sql",
-  ])
-    await applyMigration(state.db, file);
-  const { store } = state;
-  await seed(store);
-  await (
-    await store.putPrivate("a", "source", "v2", "credential", {
-      key: "browser:fixture",
-      secret: "fixture-secret",
-      token: "fixture-token",
-    })
-  ).run();
-  await store
-    .statement(
-      "UPDATE connections SET credential_version='v2',remote_identity='account-1',config=? WHERE tenant='a' AND id='source'",
-      JSON.stringify({ accountId: "account-1" }),
-    )
-    .run();
-  await store
-    .statement(
-      "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at) VALUES('a','lotw','lotw','lotw-1','LoTW','active','v1',0)",
-    )
-    .run();
-  const source = await store.connection("a", "source");
-  assert.ok(source);
-  const destinations = (await store.connections("a")).filter(
-    (c) => c.kind !== "lofi",
-  );
-  const raw = Array.from({ length: count }, (_, index) => ({
-    uuid: `qso-${String(index).padStart(2, "0")}`,
-    operation: index === 1 ? "op-1" : null,
-    startAtMillis: at + index * 60_000,
-    freq: 14074,
-    band: "20m",
-    mode: "FT8",
-    their: { call: "W1AW" },
-    our: { stationCall: "N0CALL", grid: "FN31AA", dxccCode: 291 },
-    notes: "initial notes",
-    syncedAtMillis: 100 + index,
-  }));
-  const now = Date.now();
-  await pollSource(
-    store,
-    source,
-    async () =>
-      syncResponse(
-        raw,
-        count > 1
-          ? [
-              {
-                uuid: "op-1",
-                stationCall: "N0CALL",
-                grid: "FN31AA",
-                syncedAtMillis: 99,
-              },
-            ]
-          : [],
-      ),
-    now,
-  );
-  // Complete the independent forward drain and quarantine before projection.
-  for (let pass = 0; pass < 2; pass++)
-    await pollSource(store, source, async () => syncResponse([]), now);
-  if (count > 1)
-    await rereadOperation(
+  try {
+    await applyAdditionalMigrations(state.db);
+    const { store } = state;
+    await seed(store);
+    await (
+      await store.putPrivate("a", "source", "v2", "credential", {
+        key: "browser:fixture",
+        secret: "fixture-secret",
+        token: "fixture-token",
+      })
+    ).run();
+    await store
+      .statement(
+        "UPDATE connections SET credential_version='v2',remote_identity='account-1',config=? WHERE tenant='a' AND id='source'",
+        JSON.stringify({ accountId: "account-1" }),
+      )
+      .run();
+    await store
+      .statement(
+        "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at) VALUES('a','lotw','lotw','lotw-1','LoTW','active','v1',0)",
+      )
+      .run();
+    const source = await store.connection("a", "source");
+    assert.ok(source);
+    const destinations = (await store.connections("a")).filter(
+      (c) => c.kind !== "lofi",
+    );
+    const raw = Array.from({ length: count }, (_, index) => ({
+      uuid: `qso-${String(index).padStart(2, "0")}`,
+      operation: index === 1 ? "op-1" : null,
+      startAtMillis: at + index * 60_000,
+      freq: 14074,
+      band: "20m",
+      mode: "FT8",
+      their: { call: "W1AW" },
+      our: { stationCall: "N0CALL", grid: "FN31AA", dxccCode: 291 },
+      notes: "initial notes",
+      syncedAtMillis: 100 + index,
+    }));
+    const now = Date.now();
+    await pollSource(
       store,
       source,
       async () =>
-        new Response(
-          JSON.stringify({
-            qsos: [raw[1]],
-            meta: { qsos: { records_left: 0 } },
-          }),
+        syncResponse(
+          raw,
+          count > 1
+            ? [
+                {
+                  uuid: "op-1",
+                  stationCall: "N0CALL",
+                  grid: "FN31AA",
+                  syncedAtMillis: 99,
+                },
+              ]
+            : [],
         ),
-      now + 1,
+      now,
     );
-  const contacts = (await pendingContacts(store, source, 40, now + 2)).sort(
-    (a, b) => a.id.localeCompare(b.id),
-  );
-  assert.equal(contacts.length, count);
-  return { ...state, source, destinations, contacts, raw, now: now + 2 };
+    // Complete the independent forward drain and quarantine before projection.
+    for (let pass = 0; pass < 2; pass++)
+      await pollSource(store, source, async () => syncResponse([]), now);
+    if (count > 1)
+      await rereadOperation(
+        store,
+        source,
+        async () =>
+          new Response(
+            JSON.stringify({
+              qsos: [raw[1]],
+              meta: { qsos: { records_left: 0 } },
+            }),
+          ),
+        now + 1,
+      );
+    const contacts = (await pendingContacts(store, source, 40, now + 2)).sort(
+      (a, b) => a.id.localeCompare(b.id),
+    );
+    assert.equal(contacts.length, count);
+    return { ...state, source, destinations, contacts, raw, now: now + 2 };
+  } catch (error) {
+    await state.mf.dispose();
+    throw error;
+  }
 }
 
 function measuredStore(
@@ -246,16 +243,37 @@ test("a failed chunk rolls back edits and cancellation before isolated guarded r
       now,
     )
     .run();
+  const proofs = await mintFixtureSourceProofs(store, {
+    source,
+    destinations,
+    qsos: h.raw,
+    operations: [
+      {
+        uuid: "op-1",
+        stationCall: "N0CALL",
+        grid: "FN31AA",
+        syncedAtMillis: 99,
+      },
+    ],
+  });
+  await store
+    .statement("UPDATE ledger SET state='live_new',due_at=0 WHERE tenant='a'")
+    .run();
   const attempts: string[] = [];
-  for (const contact of contacts)
+  for (const [index, snapshot] of proofs.snapshots.entries())
     attempts.push(
       await store.stage(
-        key(contact.id),
-        contact.generation,
-        { immutable: contact.id },
+        key(snapshot.contact.id),
+        snapshot.contact.generation,
+        { immutable: snapshot.contact.id },
         "v1",
         null,
-        now,
+        Date.now(),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        proofs.authorizations[index],
       ),
     );
   const oldHash = (await store.ledger(key(contacts[0].id)))?.source_hash;
@@ -264,8 +282,14 @@ test("a failed chunk rolls back edits and cancellation before isolated guarded r
       ? { ...raw, our: { ...raw.our, grid: "FN42CC" }, syncedAtMillis: 200 }
       : raw,
   );
-  await pollSource(store, source, async () => syncResponse(editedRaw), now + 1);
-  const current = (await pendingContacts(store, source, 40, now + 2)).sort(
+  const editedAt = Date.now();
+  await pollSource(
+    store,
+    source,
+    async () => syncResponse(editedRaw),
+    editedAt,
+  );
+  const current = (await pendingContacts(store, source, 40, editedAt + 1)).sort(
     (a, b) => a.id.localeCompare(b.id),
   );
   assert.equal(current.length, 4);
@@ -297,14 +321,17 @@ test("a failed chunk rolls back edits and cancellation before isolated guarded r
     current.map((contact, index) => ({
       contact:
         index === 1
-          ? { ...contact, contextGeneration: contacts[1].contextGeneration }
+          ? {
+              ...contact,
+              contextGeneration: proofs.snapshots[1].contact.contextGeneration,
+            }
           : contact,
       routedDestinations:
         index === 2
           ? destinations.filter((d) => d.kind === "qrz")
           : destinations,
     })),
-    now + 2,
+    editedAt + 2,
   );
   assert.equal(inspectedRollback, true);
   assert.deepEqual(
@@ -328,7 +355,7 @@ test("a failed chunk rolls back edits and cancellation before isolated guarded r
   assert.equal(await store.private("a", "lotw", attempts[0], "outbox"), null);
   assert.equal(
     (await store.ledger(key(contacts[1].id)))?.context_generation,
-    contacts[1].contextGeneration,
+    proofs.snapshots[1].contact.contextGeneration,
   );
   assert.equal(
     (await store.ledger(key(contacts[2].id)))?.state,

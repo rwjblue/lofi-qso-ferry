@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
 import test from "node:test";
 import { getAdminWorkload } from "../src/admin-workload.ts";
-import { database, seed } from "./helpers.ts";
+import { applyMigration, database, seed } from "./helpers.ts";
 import {
   applyAdditionalMigrations,
   fixtureEnvironment,
@@ -11,74 +12,93 @@ const now = Date.parse("2027-01-01T00:00:00Z");
 const hour = 3_600_000;
 const day = 24 * hour;
 
-async function setup() {
+async function setup(beforeMandatoryProofMigration = false) {
   const h = await database();
-  await applyAdditionalMigrations(h.db);
-  await seed(h.store);
-  await h.db
-    .prepare(
-      "INSERT INTO cursors(tenant,connection,stream,cursor,updated_at) VALUES('a','source','context','{\"complete\":true}',?)",
-    )
-    .bind(now)
-    .run();
-  const env = fixtureEnvironment(h.db);
-  const addSource = async (
-    id: string,
-    state = "pending",
-    reason: string | null = null,
-    priority = "background",
-  ) => {
-    await h.db.batch([
-      h.db
-        .prepare(
-          "INSERT INTO source_work(tenant,source,id,kind,private_id,revision,state,reason,expires_at,priority) VALUES('a','source',?,'qso',?,'g1',?,?,?,?)",
+  try {
+    if (beforeMandatoryProofMigration) {
+      // Retained artifacts originate on the old schema; assertions run only after
+      // the current mandatory-proof migration is applied, without disabling it.
+      for (const file of (
+        await readdir(new URL("../migrations/", import.meta.url))
+      )
+        .filter(
+          (name) =>
+            name.endsWith(".sql") &&
+            name !== "0001_foundation.sql" &&
+            name < "0030",
         )
-        .bind(id, id, state, reason, now + day, priority),
-      h.db
-        .prepare(
-          "INSERT INTO private_data(tenant,connection,id,kind,envelope,created_at,expires_at) VALUES('a','source',?,'source','never-decrypt-this-secret',?,?)",
-        )
-        .bind(id, now - hour, now + day),
-    ]);
-  };
-  const ledger = async (
-    id: string,
-    state: string,
-    dueAt = now - 1,
-    reason: string | null = null,
-    destination = "destination",
-  ) => {
+        .sort())
+        await applyMigration(h.db, file);
+    } else await applyAdditionalMigrations(h.db);
+    await seed(h.store);
     await h.db
       .prepare(
-        "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,due_at,updated_at,state,reason) VALUES('a','source',?,?,'g1','h1',?,?,?,?)",
+        "INSERT INTO cursors(tenant,connection,stream,cursor,updated_at) VALUES('a','source','context','{\"complete\":true}',?)",
       )
-      .bind(id, destination, dueAt, now, state, reason)
+      .bind(now)
       .run();
-  };
-  const attempt = async (
-    id: string,
-    qso: string,
-    state = "submitted",
-    destination = "destination",
-  ) => {
-    await h.db.batch([
-      h.db
+    const env = fixtureEnvironment(h.db);
+    const addSource = async (
+      id: string,
+      state = "pending",
+      reason: string | null = null,
+      priority = "background",
+    ) => {
+      await h.db.batch([
+        h.db
+          .prepare(
+            "INSERT INTO source_work(tenant,source,id,kind,private_id,revision,state,reason,expires_at,priority) VALUES('a','source',?,'qso',?,'g1',?,?,?,?)",
+          )
+          .bind(id, id, state, reason, now + day, priority),
+        h.db
+          .prepare(
+            "INSERT INTO private_data(tenant,connection,id,kind,envelope,created_at,expires_at) VALUES('a','source',?,'source','never-decrypt-this-secret',?,?)",
+          )
+          .bind(id, now - hour, now + day),
+      ]);
+    };
+    const ledger = async (
+      id: string,
+      state: string,
+      dueAt = now - 1,
+      reason: string | null = null,
+      destination = "destination",
+    ) => {
+      await h.db
         .prepare(
-          "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a',?,'source',?,?,'g1','outbox','h1','v1',?,'h1')",
+          "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,due_at,updated_at,state,reason) VALUES('a','source',?,?,'g1','h1',?,?,?,?)",
         )
-        .bind(id, qso, destination, now - day),
-      h.db
-        .prepare(
-          "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a',?,?,?,?)",
-        )
-        .bind(id, state, now, now),
-    ]);
-  };
-  return { ...h, env, addSource, ledger, attempt };
+        .bind(id, destination, dueAt, now, state, reason)
+        .run();
+    };
+    const attempt = async (
+      id: string,
+      qso: string,
+      state = "submitted",
+      destination = "destination",
+    ) => {
+      await h.db.batch([
+        h.db
+          .prepare(
+            "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a',?,'source',?,?,'g1','outbox','h1','v1',?,'h1')",
+          )
+          .bind(id, qso, destination, now - day),
+        h.db
+          .prepare(
+            "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a',?,?,?,?)",
+          )
+          .bind(id, state, now, now),
+      ]);
+    };
+    return { ...h, env, addSource, ledger, attempt };
+  } catch (error) {
+    await h.mf.dispose();
+    throw error;
+  }
 }
 
 test("workload distinguishes actionable inventory, gate/quiet/in-flight holds and recoverable context from invalid source", async () => {
-  const h = await setup();
+  const h = await setup(true);
   try {
     await h.addSource("new");
     await h.addSource("inventory", "waiting");
@@ -123,6 +143,7 @@ test("workload distinguishes actionable inventory, gate/quiet/in-flight holds an
       .prepare("UPDATE source_work SET expires_at=? WHERE id='expired'")
       .bind(now)
       .run();
+    await applyMigration(h.db, "0030_source_export_guards.sql");
     const closed = await getAdminWorkload(h.env, now);
     assert.deepEqual(
       closed.source.map(({ oldestRetainedAt: _age, ...row }) => row),
@@ -327,7 +348,7 @@ test("new source revisions and additional destinations stay actionable without i
 });
 
 test("successful destination-contact versions deduplicate terminal events, exclude submissions/adoptions and keep exact window boundaries", async () => {
-  const h = await setup();
+  const h = await setup(true);
   try {
     await h.db
       .prepare(
@@ -378,6 +399,7 @@ test("successful destination-contact versions deduplicate terminal events, exclu
         )
         .bind(id, state, at)
         .run();
+    await applyMigration(h.db, "0030_source_export_guards.sql");
     const view = await getAdminWorkload(h.env, now);
     assert.equal(view.deliveries.total, 3);
     assert.equal(view.deliveries.qrz, 2);

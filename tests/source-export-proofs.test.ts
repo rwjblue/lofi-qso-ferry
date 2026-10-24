@@ -71,14 +71,13 @@ async function setup(t: TestContext, ids = ["q1"]) {
   ).run();
   const source = (await h.store.connection("a", "source"))!;
   const destination = (await h.store.connection("a", "destination"))!;
-  let time = Date.now() + 10_000;
+  let time = Date.now();
   let window = 0;
   const poll = async (
     qsos: SourceRecord[] = [],
     operations: SourceRecord[] = [],
   ) => {
-    time = Math.max(time + 1000, Date.now() + 1000);
-    const began = Date.now();
+    time = Date.now();
     try {
       return await pollSource(
         h.store,
@@ -89,7 +88,7 @@ async function setup(t: TestContext, ids = ["q1"]) {
         ++window * 300_000,
       );
     } finally {
-      time += Math.max(0, Date.now() - began);
+      time = Math.max(time, Date.now());
     }
   };
   await poll([...ids.map(qso), event], [operation]);
@@ -99,7 +98,7 @@ async function setup(t: TestContext, ids = ["q1"]) {
     (await sourceReadPolicy(h.store, "a", "source"))!.phase,
     "ready",
   );
-  time += 1000;
+  time = Date.now();
   await rereadOperation(
     h.store,
     source,
@@ -120,7 +119,7 @@ async function setup(t: TestContext, ids = ["q1"]) {
     h.store,
     scope,
     ids,
-    time + 100,
+    Date.now(),
   );
   assert.equal(before.length, ids.length, "pre-drain projection is available");
   const witnesses = (
@@ -137,26 +136,26 @@ async function setup(t: TestContext, ids = ["q1"]) {
           ),
         ).values(),
       ],
-      time + 100,
+      Date.now(),
     )
   ).map((w) => {
     assert.ok(w);
     return w;
   });
-  const collectionFinishedAt = time + 200;
+  const collectionFinishedAt = Date.now();
   await poll();
   const snapshots = await loadSourceExportSnapshots(
     h.store,
     scope,
     ids,
-    time + 100,
+    Date.now(),
   );
   assert.equal(snapshots.length, ids.length);
   for (const snapshot of snapshots)
-    await observeContact(h.store, source, snapshot.contact, time + 200, [
+    await observeContact(h.store, source, snapshot.contact, Date.now(), [
       destination,
     ]);
-  time += 300;
+  time = Date.now();
   const lease = (await h.store.claim("a", "cycle:source", time, 90_000))!;
   assert.ok(lease);
   const requests: SourceExportProofRequest[] = snapshots.map((snapshot) => ({
@@ -164,8 +163,8 @@ async function setup(t: TestContext, ids = ["q1"]) {
     witnesses,
     collectionFinishedAt,
   }));
-  const mint = () => mintSourceExportProofs(h.store, requests, lease, time);
-  const current = (proof: SourceExportProof, at = time) =>
+  const mint = () => mintSourceExportProofs(h.store, requests, lease);
+  const current = (proof: SourceExportProof, at = Date.now()) =>
     loadCurrentSourceExportProof(
       h.store,
       scope,
@@ -186,7 +185,7 @@ async function setup(t: TestContext, ids = ["q1"]) {
     mint,
     current,
     poll,
-    now: () => time,
+    now: () => Date.now(),
   };
 }
 

@@ -1,6 +1,7 @@
 import type { DestinationIdentityClaim } from "./identity-claims.ts";
 import type { Envelope, Keyring } from "./security.ts";
 import { canonical, open, randomToken, seal, sha256 } from "./security.ts";
+import type { SourceExportAuthorization } from "./source-export-proofs.ts";
 export interface Connection {
   tenant: string;
   id: string;
@@ -417,6 +418,7 @@ export class Store {
       claim: DestinationIdentityClaim;
       sourceVersion?: number;
     },
+    sourceProof?: SourceExportAuthorization,
   ) {
     const id = randomToken();
     const payloadHash = transmittedHash ?? (await sha256(canonical(payload)));
@@ -430,9 +432,7 @@ export class Store {
     );
     await this.db.batch([
       this.statement(
-        identity
-          ? "INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version,identity_vendor,identity_hash,identity_source_version,identity_lotw_owner_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
-          : "INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version) VALUES(?,?,?,?,?,?,?,?,?)",
+        `INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version${identity ? ",identity_vendor,identity_hash,identity_source_version,identity_lotw_owner_id" : ""}${sourceProof ? ",source_export_proof_id,source_export_scope,source_export_reconciliation_version" : ""}) VALUES(${Array.from({ length: 9 + (identity ? 4 : 0) + (sourceProof ? 3 : 0) }, () => "?").join(",")})`,
         id,
         key.tenant,
         key.source,
@@ -450,6 +450,13 @@ export class Store {
               identity.claim.vendor === "lotw"
                 ? (await this.lotwIdentityPrefix(key)) + identity.claim.hash
                 : null,
+            ]
+          : []),
+        ...(sourceProof
+          ? [
+              sourceProof.proofId,
+              canonical(sourceProof.scope),
+              sourceProof.reconciliationVersion,
             ]
           : []),
       ),

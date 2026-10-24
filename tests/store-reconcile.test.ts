@@ -1,10 +1,14 @@
-import test from "node:test";
 import assert from "node:assert/strict";
-import { database, seed } from "./helpers.ts";
-import { canonicalLotwIdentity, lotwRemoteIdentity } from "../src/reconcile.ts";
-import { LOTW_PRIOR_IDENTITY_NOTICE } from "../src/store.ts";
+import test from "node:test";
+import type { AdifRecord } from "../src/adif.ts";
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
+import { adifInstant } from "../src/qrz.ts";
+import { canonicalLotwIdentity, lotwRemoteIdentity } from "../src/reconcile.ts";
+import type { LedgerKey, Store } from "../src/store.ts";
+import { LOTW_PRIOR_IDENTITY_NOTICE } from "../src/store.ts";
+import { database, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
+import { mintFixtureSourceProofs } from "./source-proof-fixtures.ts";
 
 async function currentDatabase() {
   const state = await database();
@@ -15,6 +19,64 @@ async function currentDatabase() {
     await state.mf.dispose();
     throw error;
   }
+}
+async function freshEvidence(
+  store: Store,
+  key: LedgerKey,
+  record: AdifRecord,
+  revision = 1,
+) {
+  if (!(await store.private("a", "source", "fixture-source", "credential"))) {
+    await (
+      await store.putPrivate("a", "source", "fixture-source", "credential", {
+        key: "browser:fixture",
+        secret: "fixture",
+        token: "fixture",
+      })
+    ).run();
+    await store
+      .statement(
+        "UPDATE connections SET config=?,credential_version='fixture-source' WHERE tenant='a' AND id='source'",
+        JSON.stringify({ accountId: "source" }),
+      )
+      .run();
+  }
+  const source = (await store.connection("a", "source"))!;
+  const destination = (await store.connection("a", "destination"))!;
+  const evidence = await mintFixtureSourceProofs(store, {
+    source,
+    destinations: [destination],
+    operations: [
+      { uuid: "op", stationCall: record.STATION_CALLSIGN, syncedAtMillis: 100 },
+    ],
+    qsos: [
+      {
+        uuid: key.qso,
+        operation: "op",
+        syncedAtMillis: 100 + revision,
+        startAtMillis: adifInstant(record),
+        band: record.BAND,
+        mode: record.MODE,
+        their: { call: record.CALL },
+        notes: `revision ${revision}`,
+      },
+    ],
+  });
+  await store
+    .statement(
+      "UPDATE ledger SET state='missing_current_identity',due_at=0 WHERE tenant=? AND source=? AND qso=? AND destination=?",
+      key.tenant,
+      key.source,
+      key.qso,
+      key.destination,
+    )
+    .run();
+  return {
+    authorization: evidence.authorizations[0],
+    contact: evidence.snapshots[0].contact,
+    sourceHash: (await store.ledger(key))!.source_hash,
+    now: Date.now(),
+  };
 }
 test("observed uncertain artifact preserves exact baseline across new source and fences replay", async () => {
   const { mf, store } = await currentDatabase();
@@ -35,47 +97,53 @@ test("observed uncertain artifact preserves exact baseline across new source and
       BAND: "20M",
       MODE: "CW",
     };
+    const proof = await freshEvidence(store, key, record);
+    const now = proof.now;
     const id = await store.stage(
       key,
-      "g1",
+      proof.contact.generation,
       { record },
       "v1",
       version,
-      1800001,
+      now + 0,
       undefined,
       undefined,
       undefined,
-      { claim: await destinationIdentityClaim("qrz", record) },
+      {
+        claim: await destinationIdentityClaim("qrz", record),
+        sourceVersion: proof.authorization.reconciliationVersion,
+      },
+      proof.authorization,
     );
     const send = (await store.claim(
       "a",
       "delivery:destination",
-      1800001,
+      now + 0,
       100,
     ))!;
-    assert(await store.claimAttempt("a", id, send, 1800002));
-    await store.resolve("a", id, send, "uncertain", null, 1800003);
-    await store.observe(key, "g2", "h2", 30, false, 1800004);
-    const lease = (await store.claim("a", "reconcile", 1800005, 100))!;
+    assert(await store.claimAttempt("a", id, send, now + 1));
+    await store.resolve("a", id, send, "uncertain", null, now + 2);
+    await store.observe(key, "g2", "h2", 30, false, now + 3);
+    const lease = (await store.claim("a", "reconcile", now + 4, 100))!;
     assert.equal(
-      await store.resolveReconciled("other", id, lease, "123", 1800006),
+      await store.resolveReconciled("other", id, lease, "123", now + 5),
       false,
     );
     assert.equal(
-      await store.resolveReconciled("a", id, lease, "123", 1800106),
+      await store.resolveReconciled("a", id, lease, "123", now + 105),
       false,
     );
     assert.equal(
-      await store.resolveReconciled("a", id, lease, "123", 1800006),
+      await store.resolveReconciled("a", id, lease, "123", now + 5),
       true,
     );
     assert.equal(
-      await store.resolveReconciled("a", id, lease, "123", 1800007),
+      await store.resolveReconciled("a", id, lease, "123", now + 6),
       false,
     );
     const row = (await store.ledger(key))!;
     assert.equal(row.state, "changed");
-    assert.equal(row.baseline_hash, "h1");
+    assert.equal(row.baseline_hash, proof.sourceHash);
     assert.equal(row.source_hash, "h2");
     assert.equal(row.remote_id, "123");
     assert.equal(
@@ -127,10 +195,11 @@ test("fenced LoTW dispatch retains possible identity across a crash and outbox e
       identity: corrected,
     };
     await store.observe(key, "g2", "h2", 30, false, 10);
-    const preparedAt = 1800011;
+    const proof = await freshEvidence(store, key, corrected, 2);
+    const preparedAt = proof.now;
     const id = await store.stage(
       key,
-      "g2",
+      proof.contact.generation,
       { kind: "lotw", signed: "private artifact" },
       "v1",
       null,
@@ -138,7 +207,11 @@ test("fenced LoTW dispatch retains possible identity across a crash and outbox e
       "new-projection",
       correction.remoteId,
       undefined,
-      { claim: await destinationIdentityClaim("lotw", corrected) },
+      {
+        claim: await destinationIdentityClaim("lotw", corrected),
+        sourceVersion: proof.authorization.reconciliationVersion,
+      },
+      proof.authorization,
     );
     const expiredLease = (await store.claim(
       "a",
@@ -222,22 +295,17 @@ test("later revisions retain one confirmation projection and deduplicate canonic
     };
     identity.remoteId = await lotwRemoteIdentity(identity.identity);
     for (let index = 1; index <= 2; index++) {
-      const observedAt = index * 2000000;
-      await store.observe(
-        key,
-        `g${index}`,
-        `h${index}`,
-        30,
-        false,
-        observedAt - 1900000,
-      );
+      const priorAt = Date.now() - 1900000;
+      await store.observe(key, `g${index}`, `h${index}`, 30, false, priorAt);
       if (index === 1)
         await store
           .statement("UPDATE ledger SET state='missing_current_identity'")
           .run();
+      const proof = await freshEvidence(store, key, identity.identity, index);
+      const observedAt = proof.now;
       const id = await store.stage(
         key,
-        `g${index}`,
+        proof.contact.generation,
         { revision: index },
         "v1",
         null,
@@ -245,7 +313,11 @@ test("later revisions retain one confirmation projection and deduplicate canonic
         undefined,
         identity.remoteId,
         undefined,
-        { claim: await destinationIdentityClaim("lotw", identity.identity) },
+        {
+          claim: await destinationIdentityClaim("lotw", identity.identity),
+          sourceVersion: proof.authorization.reconciliationVersion,
+        },
+        proof.authorization,
       );
       const lease = (await store.claim(
         "a",
@@ -301,42 +373,48 @@ test("later revisions retain one confirmation projection and deduplicate canonic
     assert.equal(await store.lotwPriorIdentityCount(key), 0);
     await store.observe(key, "g3", "h3", 30, false, 4100000);
     assert.equal((await store.ledger(key))!.confirmed, 0);
+    const proof = await freshEvidence(store, key, identity.identity, 3);
+    const now = proof.now;
     const pending = await store.stage(
       key,
-      "g3",
+      proof.contact.generation,
       { revision: 3 },
       "v1",
       null,
-      6000001,
+      now + 0,
       undefined,
       identity.remoteId,
       undefined,
-      { claim: await destinationIdentityClaim("lotw", identity.identity) },
+      {
+        claim: await destinationIdentityClaim("lotw", identity.identity),
+        sourceVersion: proof.authorization.reconciliationVersion,
+      },
+      proof.authorization,
     );
     const lease = (await store.claim(
       "a",
       "delivery:destination",
-      6000001,
+      now + 0,
       1000,
     ))!;
-    assert(await store.claimAttempt("a", pending, lease, 6000002));
+    assert(await store.claimAttempt("a", pending, lease, now + 1));
     await store.resolve(
       "a",
       pending,
       lease,
       "uncertain",
       null,
-      6000003,
+      now + 2,
       identity,
     );
-    await store.observe(key, "g4", "h4", 30, false, 6000004);
+    await store.observe(key, "g4", "h4", 30, false, now + 3);
     assert(
       await store.resolveReconciled(
         "a",
         pending,
         lease,
         identity.remoteId,
-        6000005,
+        now + 4,
         { confirmed: true, data: { revision: 3 }, identity },
       ),
     );

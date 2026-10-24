@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
 import test from "node:test";
 import { getAdminOverview, sampleAdminBacklog } from "../src/admin-metrics.ts";
 import { runScheduledTick } from "../src/scheduler-history.ts";
-import { database, seed } from "./helpers.ts";
+import { applyMigration, database, seed } from "./helpers.ts";
 import {
   applyAdditionalMigrations,
   fixtureEnvironment,
@@ -11,10 +12,24 @@ import {
 const now = Date.parse("2027-01-01T00:00:00Z");
 const day = 86_400_000;
 
-async function setup() {
+async function setup(beforeMandatoryProofMigration = false) {
   const h = await database();
   try {
-    await applyAdditionalMigrations(h.db);
+    if (beforeMandatoryProofMigration) {
+      // Historical attempts are seeded on their original schema, then upgraded
+      // before the behavior under test. No current guard is removed or bypassed.
+      for (const file of (
+        await readdir(new URL("../migrations/", import.meta.url))
+      )
+        .filter(
+          (name) =>
+            name.endsWith(".sql") &&
+            name !== "0001_foundation.sql" &&
+            name < "0030",
+        )
+        .sort())
+        await applyMigration(h.db, file);
+    } else await applyAdditionalMigrations(h.db);
     return { ...h, env: fixtureEnvironment(h.db) };
   } catch (error) {
     await h.mf.dispose();
@@ -118,7 +133,7 @@ test("admin connection labels use confirmed LoFi metadata independently of the F
 });
 
 test("backlog separates retained contacts, quiet candidates, unresolved attempts and attention", async () => {
-  const h = await setup();
+  const h = await setup(true);
   try {
     await seed(h.store);
     await seed(h.store, "paused");
@@ -209,6 +224,7 @@ test("backlog separates retained contacts, quiet candidates, unresolved attempts
       )
       .run();
 
+    await applyMigration(h.db, "0030_source_export_guards.sql");
     const view = await getAdminOverview(h.env, now);
     assert.deepEqual(view.backlog.source, [
       {

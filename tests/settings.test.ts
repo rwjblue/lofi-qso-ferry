@@ -14,6 +14,7 @@ import {
   applyAdditionalMigrations,
   fixtureEnvironment,
 } from "./runtime-fixtures.ts";
+import { mintFixtureSourceProofs } from "./source-proof-fixtures.ts";
 
 async function setup() {
   const state = await database();
@@ -225,16 +226,52 @@ test("new QRZ books inherit account defaults while saved versions and staged bin
     qso: "qso-1",
     destination: first.id,
   };
-  await store.observe(key, "generation", "hash", 30);
+  await (
+    await store.putPrivate("a", "source", "fixture-source", "credential", {
+      key: "browser:fixture",
+      secret: "fixture",
+      token: "fixture",
+    })
+  ).run();
+  await store
+    .statement(
+      "UPDATE connections SET credential_version='fixture-source',config=? WHERE tenant='a' AND id='source'",
+      JSON.stringify({ accountId: "source" }),
+    )
+    .run();
+  const source = (await store.connection("a", "source"))!;
+  const destination = (await store.connection("a", first.id))!;
+  const proof = await mintFixtureSourceProofs(store, {
+    source,
+    destinations: [destination],
+    operations: [],
+    qsos: [
+      {
+        uuid: "qso-1",
+        syncedAtMillis: 100,
+        startAtMillis: 1792670401000,
+        band: "20m",
+        mode: "FT8",
+        their: { call: "K1ABC" },
+        our: { stationCall: "W1AW" },
+      },
+    ],
+  });
   await store
     .statement("UPDATE ledger SET state='live_new',due_at=0 WHERE tenant='a'")
     .run();
   const attempt = await store.stage(
     key,
-    "generation",
+    proof.snapshots[0].contact.generation,
     { immutable: "First default" },
     first.version,
     initial.id,
+    Date.now(),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    proof.authorizations[0],
   );
   const cursorsBefore = await store
     .statement("SELECT count(*) n FROM cursors")

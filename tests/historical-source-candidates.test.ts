@@ -587,7 +587,7 @@ test("ciphertext and dependency overflow hold before any partial projection", as
   assert.equal(result.inspected, 0);
   assert.equal(
     measured.metrics.calls,
-    4,
+    3,
     "index metadata and bounded row metadata only; no envelope query",
   );
 });

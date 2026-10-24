@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readdir } from "node:fs/promises";
 import test, { type TestContext } from "node:test";
+import { measuredDatabase } from "../src/database-metrics.ts";
 import { pollSource } from "../src/intake.ts";
 import type { SourceRecord } from "../src/lofi.ts";
 import { purgeResolvedSource } from "../src/maintenance.ts";
@@ -645,7 +646,8 @@ test("lookup seeks bounded opaque buckets despite 4000 unrelated retained index 
     )
     .run();
   const queries: { sql: string; params: (string | number | null)[] }[] = [];
-  const measured = new Proxy(store, {
+  const measurements = measuredDatabase(store.db);
+  const measured = new Proxy(new Store(measurements.database, store.keys), {
     get(target, property, receiver) {
       if (property === "statement")
         return (sql: string, ...params: (string | number | null)[]) => {
@@ -659,6 +661,10 @@ test("lookup seeks bounded opaque buckets despite 4000 unrelated retained index 
   assert.equal(result.status, "ready");
   assert.equal(result.rows.length, 1);
   assert.equal(queries.length, 3); // State/key envelope, indexed candidates, exact snapshot recheck.
+  assert.equal(measurements.metrics.calls, 2);
+  assert.equal(measurements.metrics.statements, 3);
+  assert.equal(measurements.metrics.metadataStatements, 2);
+  assert.equal(measurements.metrics.rowsWritten, 0);
   const query = queries.find((q) => q.sql.includes("json_each(?1) requested"))!;
   const plan = await store
     .statement(`EXPLAIN QUERY PLAN ${query.sql}`, ...query.params)
@@ -931,4 +937,163 @@ test("historical index schema errors remain fatal to intake and cannot publish a
       .first<number>("n"),
     0,
   );
+});
+
+test("twenty distinct reverse windows use forty RPCs while preserving sixty SQL checks", async (t) => {
+  const h = await fixture(t);
+  for (let index = 0; index < 20; index++)
+    await retain(
+      h.store,
+      qso(`week-${index}`, { startAtMillis: AT - index * 7 * 86400000 }),
+    );
+  await backfillSourceHistoricalIndex(h.store, "a");
+  const measured = measuredDatabase(h.db);
+  const store = new Store(measured.database, h.store.keys);
+  for (let index = 0; index < 20; index++) {
+    const at = AT - index * 7 * 86400000;
+    const result = await lookup(store, "W1AW", at - 1800000, at + 1800000);
+    assert.equal(result.status, "ready");
+    assert.deepEqual(
+      result.rows.map((row) => row.qso),
+      [`week-${index}`],
+    );
+  }
+  assert.equal(measured.metrics.calls, 40);
+  assert.equal(measured.metrics.statements, 60);
+  assert.equal(measured.metrics.rowsWritten, 0);
+  t.diagnostic(
+    "20 lookups: 40 RPCs / 60 SQL statements; prior separate reads required 60 RPCs",
+  );
+});
+
+// Insert races at the boundary before/after the actual two-statement D1 batch.
+// The wrapped statements are passed to native batch unchanged, never emulated.
+function interceptLookupBatch(
+  store: Store,
+  hook: (submit: () => Promise<D1Result[]>) => Promise<D1Result[]>,
+) {
+  let calls = 0;
+  const db = new Proxy(store.db, {
+    get(target, property) {
+      if (property === "batch")
+        return (statements: D1PreparedStatement[]) => {
+          calls++;
+          assert.equal(statements.length, 2);
+          return hook(() => target.batch(statements));
+        };
+      const value = Reflect.get(target, property);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  return { store: new Store(db, store.keys), calls: () => calls };
+}
+
+for (const race of [
+  "late-row",
+  "clock",
+  "key-rewrap",
+  "source-activation",
+] as const)
+  test(`lookup discards candidates when ${race} changes the captured snapshot before its atomic batch`, async (t) => {
+    const h = await fixture(t);
+    await retain(h.store, qso("wanted"));
+    await backfillSourceHistoricalIndex(h.store, "a");
+    if (race === "source-activation")
+      await h.store
+        .statement(
+          "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,created_at) VALUES('a','inactive','lofi','inactive','inactive','paused',0)",
+        )
+        .run();
+    const before = await lookup(h.store);
+    assert.equal(before.status, "ready");
+    const wrapped = interceptLookupBatch(h.store, async (submit) => {
+      if (race === "late-row") await retain(h.store, qso("late"));
+      else if (race === "clock")
+        await h.store
+          .statement(
+            "UPDATE source_historical_state SET clock=clock+1 WHERE tenant='a'",
+          )
+          .run();
+      else if (race === "key-rewrap")
+        await sourceHistoricalIndexKey(
+          new Store(h.db, { ...keys, active: "2" }),
+          "a",
+        );
+      else
+        await h.store
+          .statement(
+            "UPDATE connections SET status='active' WHERE tenant='a' AND id='inactive'",
+          )
+          .run();
+      const results = await submit();
+      assert.equal(results[0].results.length, 1); // A plausible result is not enough.
+      assert.equal(results[1].results.length, 0);
+      return results;
+    });
+    const result = await lookup(wrapped.store);
+    assert.equal(wrapped.calls(), 1);
+    assert.equal(result.status, "held");
+    assert.equal(result.reason, "index_changed");
+    assert.deepEqual(result.rows, []);
+    assert.deepEqual(result.snapshot, before.snapshot);
+    assert.equal(await guardCurrent(h.store, result.snapshot!), false);
+  });
+
+test("a change after the successful lookup batch is still rejected by the unchanged commit guard", async (t) => {
+  const h = await fixture(t);
+  await retain(h.store, qso("wanted"));
+  await backfillSourceHistoricalIndex(h.store, "a");
+  const wrapped = interceptLookupBatch(h.store, async (submit) => {
+    const results = await submit();
+    assert.equal(results[1].results.length, 1);
+    await retain(h.store, qso("late"));
+    return results;
+  });
+  const result = await lookup(wrapped.store);
+  assert.equal(result.status, "ready");
+  assert.deepEqual(
+    result.rows.map((row) => row.qso),
+    ["wanted"],
+  );
+  assert.equal(await guardCurrent(h.store, result.snapshot!), false);
+});
+
+test("batch guard failures, query errors and overflow never release partial lookup candidates", async (t) => {
+  const h = await fixture(t);
+  await retain(h.store, qso("first"));
+  await retain(h.store, qso("second"));
+  await backfillSourceHistoricalIndex(h.store, "a");
+  const measured = measuredDatabase(h.db);
+  const store = new Store(measured.database, h.store.keys);
+  const overflow = await lookup(store, "W1AW", AT - 1800000, AT + 1800000, 1);
+  assert.equal(overflow.reason, "candidate_bound");
+  assert.deepEqual(overflow.rows, []);
+  assert.equal(measured.metrics.calls, 2);
+  const error = new Error("synthetic database failure");
+  const failed = interceptLookupBatch(h.store, async () => {
+    throw error;
+  });
+  await assert.rejects(lookup(failed.store), (caught) => caught === error);
+  assert.equal(failed.calls(), 1); // No retry or single-query fallback.
+});
+
+test("missing keys and incomplete coverage stop before candidate-batch admission", async (t) => {
+  const h = await fixture(t);
+  const measured = measuredDatabase(h.db);
+  const store = new Store(measured.database, h.store.keys);
+  assert.equal((await lookup(store)).reason, "index_uninitialized");
+  assert.equal(measured.metrics.calls, 1);
+  await retain(h.store, qso("wanted"));
+  await sourceHistoricalIndexKey(h.store, "a");
+  assert.equal((await lookup(store)).reason, "index_incomplete");
+  assert.equal(measured.metrics.calls, 2);
+  await backfillSourceHistoricalIndex(h.store, "a");
+  const unreadable = new Store(measured.database, {
+    active: "2",
+    keys: { "2": keys.keys["2"] },
+  });
+  assert.equal((await lookup(unreadable)).reason, "index_key_unavailable");
+  assert.equal(measured.metrics.calls, 3);
+  assert.equal(measured.metrics.statements, 3);
+  assert.equal(measured.metrics.metadataStatements, 0); // first() calls only.
 });

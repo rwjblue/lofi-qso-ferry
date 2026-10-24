@@ -383,31 +383,29 @@ export async function lookupSourceHistoricalIndex(
       await sign(key.key, ["bucket", tenant, "exact", worked, minute]),
       await sign(key.key, ["bucket", tenant, "minute", null, minute]),
     );
-  const rows = (
-    await store
-      .statement(
-        `SELECT i.source,i.qso,i.revision,i.synced_at AS syncedAt,i.private_id AS privateId,i.body_version AS bodyVersion,i.scope
+  const guard = sourceHistoricalIndexGuard(captured);
+  // Keep candidate retrieval and the exact captured-index recheck together.
+  // This saves one RPC; callers still retain this same guard for their commit.
+  const [candidates, current] = await store.db.batch([
+    store.statement(
+      `SELECT i.source,i.qso,i.revision,i.synced_at AS syncedAt,i.private_id AS privateId,i.body_version AS bodyVersion,i.scope
     FROM json_each(?1) requested CROSS JOIN source_historical_index i INDEXED BY source_historical_bucket ON i.tenant=?2 AND i.key_id=?3 AND i.bucket_hash=requested.value
     JOIN connections c ON c.tenant=i.tenant AND c.id=i.source WHERE c.kind='lofi' AND c.status='active' AND i.dirty=0 LIMIT ?4`,
-        JSON.stringify(hashes),
-        tenant,
-        key.keyId,
-        limit + 1,
-      )
-      .all<SourceHistoricalIndexRow & { scope: string }>()
-  ).results;
-  const guard = sourceHistoricalIndexGuard(captured);
-  if (
-    !(await store
-      .statement(`SELECT 1 AS ok WHERE ${guard.sql}`, ...guard.params)
-      .first())
-  )
+      JSON.stringify(hashes),
+      tenant,
+      key.keyId,
+      limit + 1,
+    ),
+    store.statement(`SELECT 1 AS ok WHERE ${guard.sql}`, ...guard.params),
+  ]);
+  if (!current.results.length)
     return {
       status: "held",
       reason: "index_changed",
       snapshot: captured,
       rows: [],
     };
+  const rows = candidates.results as unknown as SourceHistoricalIndexRow[];
   if (rows.length > limit)
     return {
       status: "held",

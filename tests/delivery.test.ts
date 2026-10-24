@@ -336,26 +336,34 @@ test("saved test payloads never reach either vendor and only unsent attempts are
 
 async function retainedDeliveryFixture() {
   const h = await schedulerFixture();
-  h.qrzRecords.splice(0);
-  h.lotwRecords.splice(0);
-  const source = await h.store.connection("a", "source");
-  assert(source);
-  await pollSource(h.store, source, h.fetcher, FIXTURE_NOW);
-  await rereadOperation(h.store, source, h.fetcher, FIXTURE_NOW);
-  const [item] = await pendingContacts(h.store, source, 1, FIXTURE_NOW);
-  assert(item);
-  await observeContact(h.store, source, item, FIXTURE_NOW);
-  await h.store
-    .statement("UPDATE ledger SET state='missing_current_identity'")
-    .run();
-  const changedToTest = async (changedAt: number) => {
-    h.operation.stationCall = "W1AW/TEST";
-    h.operation.syncedAtMillis = 200;
-    h.changes.operations.push({ ...h.operation });
-    await pollSource(h.store, source, h.fetcher, changedAt);
-    await rereadOperation(h.store, source, h.fetcher, changedAt);
-  };
-  return { ...h, source, item, changedToTest };
+  try {
+    h.qrzRecords.splice(0);
+    h.lotwRecords.splice(0);
+    const source = await h.store.connection("a", "source");
+    assert(source);
+    await pollSource(h.store, source, h.fetcher, FIXTURE_NOW);
+    // Complete the all-client forward drain and quarantine before projecting.
+    await pollSource(h.store, source, h.fetcher, FIXTURE_NOW);
+    await pollSource(h.store, source, h.fetcher, FIXTURE_NOW);
+    await rereadOperation(h.store, source, h.fetcher, FIXTURE_NOW);
+    const [item] = await pendingContacts(h.store, source, 1, FIXTURE_NOW);
+    assert(item);
+    await observeContact(h.store, source, item, FIXTURE_NOW);
+    await h.store
+      .statement("UPDATE ledger SET state='missing_current_identity'")
+      .run();
+    const changedToTest = async (changedAt: number) => {
+      h.operation.stationCall = "W1AW/TEST";
+      h.operation.syncedAtMillis = 200;
+      h.changes.operations.push({ ...h.operation });
+      await pollSource(h.store, source, h.fetcher, changedAt);
+      await rereadOperation(h.store, source, h.fetcher, changedAt);
+    };
+    return { ...h, source, item, changedToTest };
+  } catch (error) {
+    await h.mf.dispose();
+    throw error;
+  }
 }
 
 test("stale projections cannot prepare after retained operation changes to a test", async (t) => {

@@ -360,6 +360,9 @@ async function retainedFixture(withSecond = false, withEvent = false) {
     const source = await h.store.connection("a", "source");
     assert(source);
     await pollSource(h.store, source, fetcher, FIXTURE_NOW);
+    // Complete the real all-client forward drain and quarantine before projection.
+    await pollSource(h.store, source, fetcher, FIXTURE_NOW);
+    await pollSource(h.store, source, fetcher, FIXTURE_NOW);
     await rereadOperation(h.store, source, fetcher, FIXTURE_NOW);
     const items = await pendingContacts(h.store, source, 10, FIXTURE_NOW);
     for (const item of items)
@@ -632,7 +635,7 @@ test("a source revision arriving during preparation rolls back the complete iden
           },
         },
       ),
-      /source changed before identity claim/,
+      /source read policy unavailable before stage/,
     );
     assert(changed);
     assert.equal(

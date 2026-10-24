@@ -66,7 +66,8 @@ export interface SourceExportProofAdmission {
 }
 export type SourceExportAuthorizationMode =
   | "source_boundary"
-  | "qrz_fresh_insert";
+  | "qrz_fresh_insert"
+  | "lotw_fresh_insert";
 export interface SourceExportAuthorization {
   proofId: string;
   scope: SourcePresenceScope;
@@ -753,7 +754,9 @@ export async function attemptSourceExportAuthorizationMode(
       attempt,
     )
     .first<string>("authorization_mode");
-  return mode === "source_boundary" || mode === "qrz_fresh_insert"
+  return mode === "source_boundary" ||
+    mode === "qrz_fresh_insert" ||
+    mode === "lotw_fresh_insert"
     ? mode
     : null;
 }
@@ -791,6 +794,46 @@ export async function qrzFreshInsertCurrent(
   excludeAttempt?: string,
 ): Promise<boolean> {
   const guard = qrzFreshInsertEligibleGuard(key, excludeAttempt);
+  return (
+    (await store
+      .statement(`SELECT ${guard.sql} AS current`, ...guard.params)
+      .first<number>("current")) === 1
+  );
+}
+
+/** Structural first-insert eligibility; consent and a current source proof remain mandatory. */
+export function lotwFreshInsertEligibleGuard(
+  key: LedgerKey,
+  excludeAttempt?: string,
+): { sql: string; params: (string | number | null)[] } {
+  if (
+    ![key.tenant, key.source, key.qso, key.destination].every(Boolean) ||
+    excludeAttempt === ""
+  )
+    throw new Error("invalid_lotw_fresh_insert_guard");
+  return excludeAttempt === undefined
+    ? {
+        sql: "EXISTS(SELECT 1 FROM lotw_fresh_insert_eligible l WHERE l.tenant=? AND l.source=? AND l.qso=? AND l.destination=?)",
+        params: [key.tenant, key.source, key.qso, key.destination],
+      }
+    : {
+        sql: "EXISTS(SELECT 1 FROM lotw_fresh_insert_ledgers l WHERE l.tenant=? AND l.source=? AND l.qso=? AND l.destination=? AND NOT EXISTS(SELECT 1 FROM lotw_fresh_insert_attempt_conflicts a WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND a.id!=?))",
+        params: [
+          key.tenant,
+          key.source,
+          key.qso,
+          key.destination,
+          excludeAttempt,
+        ],
+      };
+}
+
+export async function lotwFreshInsertCurrent(
+  store: Store,
+  key: LedgerKey,
+  excludeAttempt?: string,
+): Promise<boolean> {
+  const guard = lotwFreshInsertEligibleGuard(key, excludeAttempt);
   return (
     (await store
       .statement(`SELECT ${guard.sql} AS current`, ...guard.params)

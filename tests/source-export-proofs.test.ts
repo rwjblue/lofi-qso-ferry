@@ -594,14 +594,14 @@ test("cycle lease loss blocks mint, and malformed proof dependency/header rows f
   const [proof] = await h.mint();
   await assert.rejects(
     mintSourceExportProofs(h.store, h.requests, h.lease, h.lease.expires_at),
-    /CHECK constraint/,
+    /source_export_proof_admission_deadline/,
   );
   await h.store
     .statement(
       "UPDATE leases SET fence=fence+1 WHERE tenant='a' AND scope='cycle:source'",
     )
     .run();
-  await assert.rejects(h.mint(), /CHECK constraint/);
+  await assert.rejects(h.mint(), /source_export_proof_admission_unavailable/);
   for (const dependencies of [
     [],
     proof.dependencies.filter((d) => d.target.kind !== "operation"),
@@ -701,4 +701,278 @@ test("bounded snapshot and proof plans use identity and operation probes", async
     ),
     /invalid_source_export_snapshot_request/,
   );
+});
+
+// Preserve every production predicate while controlling only D1's independent
+// clock. All inserts, guards and rollback behavior still execute in real D1.
+async function mintClockFixture(
+  h: Awaited<ReturnType<typeof setup>>,
+  initial: number,
+) {
+  const clockExpression = "CAST(unixepoch('subsec')*1000 AS INTEGER)";
+  const clockValue = "(SELECT value FROM proof_clock_fixture)";
+  const view = await h.store
+    .statement(
+      "SELECT sql FROM sqlite_master WHERE type='view' AND name='source_export_proofs_current'",
+    )
+    .first<string>("sql");
+  assert.ok(view);
+  assert.ok(view.includes(clockExpression));
+  await h.store
+    .statement("CREATE TABLE proof_clock_fixture(value INTEGER NOT NULL)")
+    .run();
+  await h.store
+    .statement("INSERT INTO proof_clock_fixture VALUES(?)", initial)
+    .run();
+  await h.store.statement("DROP VIEW source_export_proofs_current").run();
+  await h.store.statement(view.replaceAll(clockExpression, clockValue)).run();
+  let reads = 0,
+    batches = 0;
+  let beforeRead: (count: number) => Promise<void> = async () => {};
+  let beforeBatch: () => Promise<void> = async () => {};
+  let afterBatch: () => Promise<void> = async () => {};
+  const store = new Proxy(h.store, {
+    get(target, property, receiver) {
+      if (property === "statement")
+        return (sql: string, ...params: (string | number | null)[]) => {
+          const statement = target.statement(
+            sql.replaceAll(clockExpression, clockValue),
+            ...params,
+          );
+          if (!sql.includes(" AS database_now")) return statement;
+          return {
+            first: async () => {
+              await beforeRead(++reads);
+              return statement.first();
+            },
+          };
+        };
+      if (property === "db")
+        return new Proxy(target.db, {
+          get(db, key, dbReceiver) {
+            if (key === "batch")
+              return async (statements: D1PreparedStatement[]) => {
+                batches++;
+                await beforeBatch();
+                const result = await db.batch(statements);
+                await afterBatch();
+                return result;
+              };
+            return Reflect.get(db, key, dbReceiver);
+          },
+        });
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  return {
+    store,
+    counts: () => ({ reads, batches }),
+    set: (value: number) =>
+      h.store.statement("UPDATE proof_clock_fixture SET value=?", value).run(),
+    onRead: (callback: typeof beforeRead) => {
+      beforeRead = callback;
+    },
+    onBatch: (callback: typeof beforeBatch) => {
+      beforeBatch = callback;
+    },
+    afterBatch: (callback: typeof afterBatch) => {
+      afterBatch = callback;
+    },
+  };
+}
+
+test("a lagging D1 clock reproduces the old mint rollback; admission preserves exact proof times", async (t) => {
+  const h = await setup(t);
+  const [original] = await h.mint();
+  await h.store
+    .statement(
+      "DELETE FROM source_export_proofs WHERE tenant='a' AND id=?",
+      original.id,
+    )
+    .run();
+  const clock = await mintClockFixture(h, original.createdAt - 40);
+  const immediate = [
+    h.store.statement(
+      "INSERT INTO source_export_proofs(tenant,id,source,qso,created_at,expires_at,proof) VALUES(?,?,?,?,?,?,?)",
+      original.scope.tenant,
+      original.id,
+      original.scope.source,
+      original.qso,
+      original.createdAt,
+      original.expiresAt,
+      canonical(original),
+    ),
+    h.store.statement(
+      "INSERT INTO source_export_proof_batch_guards(id,expected_count,actual_count) SELECT 'immediate',1,count(*) FROM source_export_proofs_current WHERE tenant='a' AND id=?",
+      original.id,
+    ),
+    h.store.statement(
+      "DELETE FROM source_export_proof_batch_guards WHERE id='immediate'",
+    ),
+  ];
+  await assert.rejects(h.db.batch(immediate), /CHECK constraint/);
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) AS count FROM source_export_proofs")
+      .first("count"),
+    0,
+  );
+  clock.onRead(async (count) => {
+    if (count === 2) await clock.set(original.createdAt);
+  });
+  const [proof] = await mintSourceExportProofs(
+    clock.store,
+    h.requests,
+    h.lease,
+    original.createdAt,
+  );
+  assert.deepEqual(clock.counts(), { reads: 2, batches: 1 });
+  assert.equal(proof.createdAt, original.createdAt);
+  assert.equal(proof.expiresAt, original.expiresAt);
+  assert.equal(proof.collectionFinishedAt, original.collectionFinishedAt);
+  assert.equal(proof.completeReadStartedAt, original.completeReadStartedAt);
+  assert.deepEqual(proof.dependencies, original.dependencies);
+  assert.deepEqual(await h.current(proof), proof);
+});
+
+test("admission copies caller-owned proof and lease values before awaiting D1", async (t) => {
+  const h = await setup(t);
+  const now = Date.now();
+  const clock = await mintClockFixture(h, now);
+  const original = structuredClone(h.requests);
+  clock.onRead(async () => {
+    h.requests[0].snapshot.dependencies[0].target.revision =
+      "changed-by-caller";
+    h.requests[0].snapshot.scope.accountId = "changed-by-caller";
+    h.requests[0].witnesses[0].requestStartedAt = 1;
+    h.lease.token = "changed-by-caller";
+    h.lease.expires_at = 0;
+  });
+  const [proof] = await mintSourceExportProofs(
+    clock.store,
+    h.requests,
+    h.lease,
+    now,
+  );
+  assert.deepEqual(clock.counts(), { reads: 1, batches: 1 });
+  assert.equal(proof.scope.accountId, original[0].snapshot.scope.accountId);
+  assert.equal(
+    proof.dependencies[0].target.revision,
+    original[0].snapshot.dependencies[0].target.revision,
+  );
+  assert.equal(
+    proof.dependencies[0].requestStartedAt,
+    original[0].witnesses.find(
+      (w) => w.target.id === proof.dependencies[0].target.id,
+    )!.requestStartedAt,
+  );
+  const saved = await h.store
+    .statement(
+      "SELECT proof FROM source_export_proofs WHERE tenant='a' AND id=?",
+      proof.id,
+    )
+    .first<string>("proof");
+  assert.deepEqual(JSON.parse(saved!), proof);
+});
+
+test("clock admission is bounded to two reads and never submits on persistent or excessive lag", async (t) => {
+  for (const lag of [20, 1000])
+    await t.test(`${lag}ms lag`, async (child) => {
+      const h = await setup(child);
+      const now = Date.now();
+      const clock = await mintClockFixture(h, now - lag);
+      await assert.rejects(
+        mintSourceExportProofs(clock.store, h.requests, h.lease, now),
+        /source_export_proof_clock_unavailable/,
+      );
+      assert.deepEqual(clock.counts(), {
+        reads: lag === 20 ? 2 : 1,
+        batches: 0,
+      });
+    });
+});
+
+test("source phase, proof expiry and lease loss during admission cannot submit a batch", async (t) => {
+  for (const change of ["deadline", "proof-expiry", "lease"])
+    await t.test(change, async (child) => {
+      const h = await setup(child);
+      const now = Date.now();
+      let caller = now;
+      if (change === "proof-expiry")
+        for (const request of h.requests)
+          for (const witness of request.witnesses)
+            witness.requestStartedAt = now - 299_900;
+      const clock = await mintClockFixture(h, now - 10);
+      clock.onRead(async (count) => {
+        if (count !== 2) return;
+        await clock.set(now);
+        if (change === "lease")
+          await h.store
+            .statement(
+              "UPDATE leases SET fence=fence+1 WHERE tenant='a' AND scope='cycle:source'",
+            )
+            .run();
+        else caller = now + 100;
+      });
+      await assert.rejects(
+        mintSourceExportProofs(clock.store, h.requests, h.lease, now, {
+          now: () => caller,
+          ...(change === "deadline" ? { deadline: now + 100 } : {}),
+        }),
+        /source_export_proof_admission_(deadline|unavailable)/,
+      );
+      assert.deepEqual(clock.counts(), { reads: 2, batches: 0 });
+    });
+});
+
+test("slow or failed clock reads do not submit late or retry", async (t) => {
+  for (const slow of [true, false])
+    await t.test(slow ? "slow" : "failed", async (child) => {
+      const h = await setup(child);
+      const now = Date.now();
+      const clock = await mintClockFixture(h, now);
+      clock.onRead(async () => {
+        if (slow) await new Promise((resolve) => setTimeout(resolve, 510));
+        else throw new Error("D1 read failed");
+      });
+      await assert.rejects(
+        mintSourceExportProofs(clock.store, h.requests, h.lease, now),
+        slow ? /source_export_proof_admission_deadline/ : /D1 read failed/,
+      );
+      assert.deepEqual(clock.counts(), { reads: 1, batches: 0 });
+    });
+});
+
+test("the original atomic batch still rejects races and is never retried after an uncertain commit", async (t) => {
+  for (const change of ["source", "lease", "uncertain"])
+    await t.test(change, async (child) => {
+      const h = await setup(child);
+      const now = Date.now();
+      const clock = await mintClockFixture(h, now);
+      if (change === "uncertain")
+        clock.afterBatch(async () => {
+          throw new Error("acknowledgement lost");
+        });
+      else
+        clock.onBatch(async () => {
+          await h.store
+            .statement(
+              change === "source"
+                ? "UPDATE reconciliation_work SET version=version+1 WHERE tenant='a' AND source='source' AND qso='q1'"
+                : "UPDATE leases SET fence=fence+1 WHERE tenant='a' AND scope='cycle:source'",
+            )
+            .run();
+        });
+      await assert.rejects(
+        mintSourceExportProofs(clock.store, h.requests, h.lease, now),
+        change === "uncertain" ? /acknowledgement lost/ : /CHECK constraint/,
+      );
+      assert.deepEqual(clock.counts(), { reads: 1, batches: 1 });
+      assert.equal(
+        await h.store
+          .statement("SELECT count(*) AS count FROM source_export_proofs")
+          .first("count"),
+        change === "uncertain" ? 1 : 0,
+      );
+    });
 });

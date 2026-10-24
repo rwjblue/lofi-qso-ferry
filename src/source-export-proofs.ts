@@ -59,6 +59,11 @@ export interface SourceExportProofRequest {
   witnesses: readonly SourcePresenceWitness[];
   collectionFinishedAt: number;
 }
+export interface SourceExportProofAdmission {
+  /** The enclosing source phase deadline, never a renewed collection window. */
+  deadline?: number;
+  now?: () => number;
+}
 export type SourceExportAuthorizationMode =
   | "source_boundary"
   | "qrz_fresh_insert";
@@ -337,11 +342,13 @@ export async function mintSourceExportProofs(
   requests: readonly SourceExportProofRequest[],
   lease: Lease,
   now = Date.now(),
+  admission: SourceExportProofAdmission = {},
 ): Promise<SourceExportProof[]> {
   if (!integer(now) || requests.length > 20)
     throw new Error("invalid_source_export_proof_request");
   if (!requests.length) return [];
-  const scope = requests[0].snapshot.scope;
+  const scope = { ...requests[0].snapshot.scope };
+  lease = { ...lease };
   if (
     !validScope(scope) ||
     lease.tenant !== scope.tenant ||
@@ -387,6 +394,7 @@ export async function mintSourceExportProofs(
       // The most recent genuine exact observation may be used; never a local refresh.
       return {
         ...dependency,
+        target: { ...dependency.target },
         requestStartedAt: Math.max(
           ...matching.map((witness) => witness.requestStartedAt),
         ),
@@ -444,7 +452,7 @@ export async function mintSourceExportProofs(
   }
   if (unique.size > 64) throw new Error("source_export_dependency_limit");
   const id = randomToken();
-  await store.db.batch([
+  const statements = [
     ...proofs.map((proof) =>
       store.statement(
         "INSERT INTO source_export_proofs(tenant,id,source,qso,created_at,expires_at,proof) VALUES(?,?,?,?,?,?,?)",
@@ -478,8 +486,69 @@ export async function mintSourceExportProofs(
       "DELETE FROM source_export_proof_batch_guards WHERE id=?",
       id,
     ),
-  ]);
-  return proofs;
+  ];
+  // Worker and D1 clocks are independent. Keep the complete proof and batch
+  // immutable while D1 catches up to its creation time; never backdate evidence
+  // or retry a batch whose outcome might already have committed.
+  const clock = admission.now ?? Date.now;
+  const startedAt = clock();
+  const wallStartedAt = Date.now();
+  let lastTime = startedAt;
+  const deadline = Math.min(
+    startedAt + 500,
+    admission.deadline ?? Number.MAX_SAFE_INTEGER,
+    lease.expires_at,
+    ...proofs.map((proof) => proof.expiresAt),
+  );
+  const time = () => {
+    const at = clock();
+    const wallAt = Date.now();
+    if (
+      !integer(at) ||
+      !integer(deadline) ||
+      at < lastTime ||
+      at < now ||
+      at >= deadline ||
+      wallAt < wallStartedAt ||
+      wallAt - wallStartedAt >= 500
+    )
+      throw new Error("source_export_proof_admission_deadline");
+    lastTime = at;
+    return at;
+  };
+  for (let check = 0; check < 2; check++) {
+    const at = time();
+    const current = await store
+      .statement(
+        `SELECT CAST(unixepoch('subsec')*1000 AS INTEGER) AS database_now
+         FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=?
+          AND expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER))`,
+        lease.tenant,
+        lease.scope,
+        lease.token,
+        lease.fence,
+        at,
+      )
+      .first<{ database_now: number }>();
+    const after = time();
+    if (!current || !integer(current.database_now))
+      throw new Error("source_export_proof_admission_unavailable");
+    if (current.database_now >= Math.min(...proofs.map((p) => p.expiresAt)))
+      throw new Error("source_export_proof_admission_expired");
+    if (current.database_now >= now) {
+      await store.db.batch(statements);
+      return proofs;
+    }
+    const wait = now - current.database_now;
+    if (
+      check !== 0 ||
+      wait >= deadline - after ||
+      wait >= 500 - (Date.now() - wallStartedAt)
+    )
+      throw new Error("source_export_proof_clock_unavailable");
+    await new Promise<void>((resolve) => setTimeout(resolve, wait));
+  }
+  throw new Error("source_export_proof_clock_unavailable");
 }
 
 /** Current immutable evidence; normal writes must also bind their attempt pin. */

@@ -298,6 +298,7 @@ export async function ensureSourceExportProofs(
       })),
       cycleLease,
       time(),
+      { deadline, now: time },
     );
     time();
     const ready: SourceExportCohortResult["ready"] = [];

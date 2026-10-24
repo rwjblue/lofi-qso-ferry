@@ -473,7 +473,7 @@ test("actual database time rejects future and expired evidence regardless of cal
       lease,
       Date.now() + 30000,
     ),
-    /CHECK constraint/,
+    /source_export_proof_admission_deadline/,
   );
 });
 

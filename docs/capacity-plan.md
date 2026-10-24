@@ -2,14 +2,72 @@
 
 The broader LoTW historical association consumer, mandatory ownership write bridge,
 bounded ownership maintenance and shared source-comparison reads are deployed in
-signed `5a427a3009d817066a744a005f46bb30c1c14095`. All **1,610 tests** and required
-checks passed; all eight export controls remain closed. The local cached 40-route
+signed `f2c41cb3a929ae3d3545e235894027b84fbf09fb`, including the ownership
+initialization follow-up. All **1,617 tests** and required checks passed; all
+eight export controls remain closed. The local cached 40-route
 fixture measures **118 cohort / 222 whole-tick D1 RPCs / 1,123 SQL statements**;
 the minute-precision fixture measures **124 / 312 / 1,379**. These are local
 same-work measurements, not production speedup or capacity claims. See the
 [initial-recognition and idle measurements](#integrated-lotw-historical-recognition--local-measurements).
 
-## Current read-only release — 5a427a30
+## Current read-only release — f2c41cb3
+
+[Release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40132320522)
+passed **1,617 tests** and required checks at **2026-10-24 21:26:36 UTC**.
+Deployment at **21:29:41.127501 UTC** installed Worker
+`fc1f2a5b-13e0-4509-ba03-9c93856c6464`, deployment
+`5cd52bea-75ce-40ed-be6c-f847c904e36d`, at sole 100% traffic. Independent
+**21:30:27.888 UTC** attestation confirmed all eight controls closed. The schema
+is unchanged at **36 migrations through 0037**.
+
+The **21:28:43.196 UTC** PRE and **21:30:41.035 UTC** POST backups have identical
+**41,811,658-byte** SQL, SHA256
+`5a41e911c628ccdd3a2f60b0bf90a5f7fd6d9ee35ad3bb1e9ce277f784169b36`.
+Recovery validates all **3,294 populated exact ownership ciphertext records**,
+three credentials and the tenant key, plus integrity/FKs and two isolated
+quarantines. The snapshot retains 3,327 claims and 2,689 QRZ owners/markers.
+These are exact-evidence recovery checks; populated raw-history recovery remains
+open. No production restore or vendor mutation occurred.
+
+At **21:32:51.368 UTC**, all **19 aggregate checks** pass, with **9,981 covered
+ownership inputs / zero pending / zero held / zero unhashed owners** and
+**3,327 exact copies**. The source index is clean at **4,146 entries** and QRZ
+has **2,689 owners/markers**. Raw references, attempts, cutovers, pins and proofs
+are zero. Ownership bootstrap is complete at this checkpoint. This is a coverage
+observation, not fresh absence, export authority or a sustained throughput result.
+
+| Completed f2c run (UTC)   | Contact turns / classifications / adoptions | Errors / attempt turns |  Elapsed | D1 RPCs / SQL statements |
+| ------------------------- | ------------------------------------------: | ---------------------: | -------: | -----------------------: |
+| 21:30:48.324–21:31:50.809 |                               220 / 380 / 0 |                  4 / 0 | 62.485 s |              857 / 6,865 |
+
+An overlapping idle run, **21:31:18.620–21:31:28.582 UTC**, took **9.962 seconds**
+and used **62 D1 RPCs / 535 SQL statements**, with zero errors.
+
+Fixed-category readback at **21:37:23.816 UTC** identifies one
+`history_read:qrz:unknown` event affecting four routes. A separate exact-key
+audit at **21:40:20.901 UTC** confirms that stored category; the precise cause
+remains unknown. The completed coverage snapshot and these
+runs do not identify their exact live cause or establish that the scheduling
+change caused a production speedup. Measure initialization, useful recognition
+and resolved idle work separately; overlapping runs must not be summed as a
+single throughput sample. No active 200,000-contact capacity is established.
+
+The **21:36:47.379 UTC** protected backup verifies all **3,327 populated exact
+evidence envelopes**, complete bootstrap coverage and 2,702 QRZ owners/markers.
+Its 42,144,346-byte snapshot passes credential/key decryption, exact AAD/HMAC and
+ownership checks, integrity/FKs and two isolated quarantines. The separate
+**21:37:57.619 UTC** immutable comparison preserves every prior claim, owner,
+marker and evidence field; additions are 33 exact copies and 13 QRZ
+owners/markers, with zero prior rows changed or lost. Raw references remain
+empty, so populated raw-reference recovery is still open. Neither check restores
+production or grants export authority.
+
+The earlier **21:10 UTC** same-contact cloud proof/QRZ absence packet ran exact
+`5a427a30` code; its proof has expired. Fresh current-release source/vendor proof,
+scheduled proof-path verification, first-write acceptance, exception review and
+populated raw recovery remain open. Exports remain disabled.
+
+## Previous read-only release — 5a427a30
 
 [Release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40127593520)
 passed at **2026-10-24 20:24:10 UTC**. Deployment at **20:27:06.855761 UTC**
@@ -56,7 +114,7 @@ not a steady-state comparison or production speedup.
 Measure ownership initialization, first recognition and resolved idle work
 separately; the 20:27 backup predates this progress.
 
-The latest completed sample, **20:45:43.988–20:47:18.571 UTC**, makes 123 contact
+The later 5a sample, **20:45:43.988–20:47:18.571 UTC**, makes 123 contact
 turns, 89 classifications and 29 adoptions, with zero errors, deferrals or attempt
 turns. It stops at the deadline after 94.583 seconds: 740 D1 RPCs / 6,496 SQL,
 81.010 seconds D1 wall time and 4.664 seconds reported SQL time. Ten ownership
@@ -75,8 +133,10 @@ selection query reads 19 rows with either zero or 200,000 unrelated covered
 inputs, using existing keyed indexes. This is a local bounded-query result,
 not a 200,000-contact bootstrap or Worker capacity result. Independent review and
 the full isolated check pass: **1,613 tests**, formatting, lint, both TypeScript
-projects and the Worker build. Signed `59c320af` is pushed; integrated release CI
-and deployment remain pending.
+projects and the Worker build. Signed `59c320af` is included in the deployed
+`f2c41cb3` release above. The complete live coverage checkpoint is separate from
+these identical-snapshot local measurements; it does not prove their exact live
+ordering or a causal speedup.
 
 ## Previous diagnostic release and bounded run — c4f51de8
 
@@ -145,10 +205,10 @@ falls from **188 to 11 RPCs** and 248 to 188 statements. All 25 owned/Store case
 types and scoped formatting pass. This preserves 100-owner/100-input and 4 MiB
 bounds, version/ciphertext/key checks, missing-evidence holds and atomic two-query
 publication; native batches contain at most 100 statements. Failed or unknown
-acknowledgements propagate without an in-call retry. The first scheduled bootstrap
-sample is recorded above; completion and sustained production cost remain
-unverified. Do not use a synchronous full-tenant scan or raise vendor budgets to
-hide this cost.
+acknowledgements propagate without an in-call retry. The first 5a scheduled
+bootstrap sample is recorded above; complete coverage is verified in the later
+f2c checkpoint. Sustained production cost remains unverified. Do not use a
+synchronous full-tenant scan or raise vendor budgets to hide this cost.
 
 ### Integrated LoTW historical recognition — local measurements
 

@@ -8,11 +8,11 @@ replaced, deleted or uploaded during this implementation work.
 
 ## Current evidence (2026-10-24)
 
-Signed `5a427a3009d817066a744a005f46bb30c1c14095` deployed at
-**20:27:06.855761 UTC**, Worker `1e3a63b8-eceb-47dc-86d5-b4c64dd79a48`, as the
-sole deployment at 100% traffic. [Release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40127593520)
-passed all **1,610 tests** and required checks at **20:24:10 UTC**, and all 11
-release signatures validated. Independent **20:27:28.292 UTC** verification
+Signed `f2c41cb3a929ae3d3545e235894027b84fbf09fb` deployed at
+**21:29:41.127501 UTC**, Worker `fc1f2a5b-13e0-4509-ba03-9c93856c6464`, as the
+sole deployment at 100% traffic. [Release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40132320522)
+passed all **1,617 tests** and required checks at **21:26:36 UTC**, and the new
+release signatures validated. Independent **21:30:27.888 UTC** verification
 confirmed eight closed controls, active KEK version 1, healthy HTTPS and matching
 assets. All **36 migrations through `0037`** are installed.
 
@@ -22,7 +22,37 @@ retained in encrypted raw evidence with a separate ledger reference, never a
 fabricated exact receipt hash in `remote_id`. Historical owners remain blocked
 from upload across every LoTW route, including after source or configuration
 changes. Exact receipt recovery and current ownership checks at staging,
-dispatch and mapping remain separate safeguards.
+dispatch and mapping remain separate safeguards. The latest follow-ups prioritize
+ready identities during bounded bootstrap and honor authoritative LoFi deletion
+status.
+
+All 19 aggregate checks pass at **21:32:51.368 UTC**, with **9,981 covered inputs,
+zero pending/held inputs, zero unhashed owners and 3,327 exact copies**. The
+4,146-row comparison index is clean, and all 2,689 then-current QRZ associations
+have owners and markers. Raw references, attempts, cutovers, proofs and pins
+remain zero. Complete bootstrap counts grant no export authority.
+
+The **21:28:43.196 UTC** PRE and **21:30:41.035 UTC** POST snapshots contain
+identical 41,811,658-byte SQL. The POST verifies all 3,294 then-populated exact
+envelopes and their crypto/ownership bindings, all three credentials and the
+tenant key, integrity/FKs and two quarantines. The **21:35:43.166 UTC** immutable
+comparison preserves every field of 3,327 claims, 2,689 QRZ owners, 2,689 markers
+and 3,294 exact evidence rows, with no changes or losses.
+
+The later **21:36:47.379 UTC** backup verifies all **3,327 populated exact
+envelopes**, complete bootstrap coverage and 2,702 QRZ owners/markers through
+isolated restore, crypto checks and repeated quarantine. It contains 42,144,346
+bytes, 36 migrations and zero attempts, cutovers, proofs, pins or raw references.
+No production restore or vendor write occurs. Populated raw-reference recovery
+remains unverified while that table is empty.
+
+Keep exports disabled. Actual exception review, fresh exact source/vendor
+evidence on the current release and scoped first-write acceptance remain open.
+The earlier successful **21:10:12.733 UTC** cloud QRZ read-path check used `5a427a30`;
+its proof expired normally and grants no current authority. Sustained capacity
+remains a separate expansion requirement.
+
+### Earlier ownership release evidence (5a427a30)
 
 The final **20:25:52.291 UTC** PRE backup retained 33,029,891 bytes, 33 migrations,
 2,549 QRZ owners/markers, 3,327 exact claims, 4,141 index rows and all 4,500 source
@@ -52,10 +82,10 @@ pending and 1,000 claim inputs held. None of the 3,327 identity or 3,327 mapping
 inputs had been copied yet; new evidence, raw references and attempts were zero.
 Bootstrap is unfinished; this is not coverage, a speedup or export authority.
 See the
-[current release receipt](deployment.md#lotw-ownership-and-historical-association-release-5a427a30).
+[dated release receipt](deployment.md#lotw-ownership-and-historical-association-release-5a427a30).
 
-Keep exports disabled. Live ownership bootstrap, unresolved reconciliation and
-exception review remain open; pending/held coverage is not authority. A scoped
+At that checkpoint, live ownership bootstrap, unresolved reconciliation and
+exception review remained open; pending/held coverage was not authority. A scoped
 trial still requires fresh exact source/vendor evidence, explicit future owner
 authorization and first-write acceptance. Sustained capacity is a separate
 expansion requirement.
@@ -374,14 +404,14 @@ Source review separately includes eight test contacts and one blocked contact.
 Waiting for cron advances available inventory, retry work and newly compatible
 LoTW associations; unresolved identity, location and route conflicts remain held.
 
-| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                                   |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed.          |
-| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                                       |
-| Source boundary           | Production baseline/handoff is ready with all 4,500 retained rows witnessed. At 08:12:53, a protected diagnostic minted a current proof and verified fresh QRZ absence for the same contact. Scheduled Worker validation remains open; expiring evidence must be refreshed. Global purge/replay guarantees remain unproved.   |
-| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                                      |
-| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Guarded broader LoTW history preserves raw time and valid nested grid precision in a separate reference; live bootstrap and ARRL upload acceptance remain unproved.                            |
-| First vendor writes       | The latest instruction to keep exports disabled supersedes the earlier one- or two-contact trial authorization. No write or actual trial may occur until the owner changes that instruction. The authority split is deployed. Exact scope, successful current source proof, fresh vendor evidence and backup remain required. |
+| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                                                           |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed.                                  |
+| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                                                               |
+| Source boundary           | Production baseline/handoff is ready with all 4,500 retained rows witnessed. At 08:12:53, a protected diagnostic minted a current proof and verified fresh QRZ absence for the same contact. Scheduled Worker validation remains open; expiring evidence must be refreshed. Global purge/replay guarantees remain unproved.                           |
+| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                                                              |
+| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Guarded broader LoTW history preserves raw time and valid nested grid precision in a separate reference. Ownership bootstrap and exact-evidence recovery pass; populated raw recovery and ARRL acceptance remain open. |
+| First vendor writes       | The latest instruction to keep exports disabled supersedes the earlier one- or two-contact trial authorization. No write or actual trial may occur until the owner changes that instruction. The authority split is deployed. Exact scope, successful current source proof, fresh vendor evidence and backup remain required.                         |
 
 ## Verify the deployed LoTW ownership release (5a427a30)
 
@@ -404,9 +434,10 @@ LoTW associations; unresolved identity, location and route conflicts remain held
   aggregate checks and matching policy v5 passed during the run. One LoTW report
   remained unavailable, with its exact HTTP cause unresolved; this does not
   establish a speedup or finished coverage.
-- [ ] Complete ownership bootstrap. At 20:50:15.919 UTC there are 640 covered
-  inputs, 5,981 pending, 3,360 held and two unhashed owners. All 19 aggregate
-  checks pass; pending/held coverage still grants no authority.
+- [x] Complete ownership bootstrap. The later `f2c41cb3` checkpoint at
+  21:32:51.368 UTC covers all 9,981 inputs with zero pending/held inputs or
+  unhashed owners. The 21:36:47.379 UTC backup verifies all 3,327 exact copies.
+  These checks grant no export authority.
 - [ ] Finish reconciliation and review actual exceptions; do not label every
   stale or unprocessed hold a manual exception.
 - [x] Exercise exact deployed-source proof creation and same-contact fresh QRZ
@@ -434,7 +465,7 @@ LoTW associations; unresolved identity, location and route conflicts remain held
   1,176 SQL statements; the first production run's 552 RPCs/94.348 seconds is not
   a controlled speedup or 200,000-contact claim.
 - [x] Broader LoTW ownership/classification subsequently deployed in `5a427a30`.
-  Its live bootstrap remains under verification; fresh three-day first-insert
+  Live bootstrap completed in the later `f2c41cb3` checkpoint above; fresh first-insert
   evidence and write acceptance are separate requirements.
 
 ### Verified initial QRZ association release (6ff685a7)

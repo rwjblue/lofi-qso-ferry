@@ -98,8 +98,13 @@ use `true`, `1`, `"true"` or `"1"`, and that the REST operation-delete path can
 leave the application revision timestamp unchanged. It identifies the server's
 `status: "deleted"` as authoritative. Ferry already accepts those flag dialects
 and uses server sync timestamps for intake; equal-server-timestamp conflicts
-remain holds. A conservative status-only deletion decoder fix is separate work,
-not a deployed behavior claim for `5a427a30`.
+remain holds. The conservative status-only deletion decoder subsequently deployed
+in signed `f2c41cb3` at **21:29:41.127501 UTC**, after all 1,617 release tests
+passed. Exact `status: "deleted"` supplies positive deletion evidence even when
+the flag is absent, false or malformed; other status values cannot revive an
+existing positive tombstone. Retained raw payloads remain unchanged. This fixes
+the documented decoding gap without claiming a diagnosed production incident or
+universal source completeness.
 
 [HALO-683](https://cabo.ham2k.com/halo/c/683) documents server hard deletion of
 owner-purged test operations and contacts, including their change history, with

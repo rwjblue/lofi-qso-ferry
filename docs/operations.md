@@ -6,16 +6,42 @@ All checked-in environments disable exports. Local tests and synthetic signature
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
-Current signed release `5a427a3009d817066a744a005f46bb30c1c14095` passed
-[CI 40127593520](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40127593520)
-with all **1,610 tests** and required checks at **2026-10-24 20:24:10 UTC**. It
-deployed at **20:27:06.855761 UTC** as Worker
-`1e3a63b8-eceb-47dc-86d5-b4c64dd79a48`, deployment
-`9abe3b85-f5c4-4250-9d26-45d9b53bd332`, at sole 100% traffic. Independent
-**20:27:28.292 UTC** verification confirmed all eight controls closed, active KEK
+Current signed release `f2c41cb3a929ae3d3545e235894027b84fbf09fb` passed
+[CI 40132320522](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40132320522)
+with all **1,617 tests** and required checks at **2026-10-24 21:26:36 UTC**. It
+deployed at **21:29:41.127501 UTC** as Worker
+`fc1f2a5b-13e0-4509-ba03-9c93856c6464`, deployment
+`5cd52bea-75ce-40ed-be6c-f847c904e36d`, at sole 100% traffic. Independent
+**21:30:27.888 UTC** verification confirmed all eight controls closed, active KEK
 version 1, healthy HTTPS and matching assets; **36 migrations through 0037** are
 installed. The ownership foundation, mandatory write bridge, raw historical
-association consumer and shared source reads are now deployed. The initial
+association consumer and shared source reads remain deployed. The new follow-ups
+prioritize identities for newly hashed owners within the bounded maintenance
+pass and honor authoritative LoFi deletion status.
+
+At **21:32:51.368 UTC**, all 19 aggregate checks pass: **9,981 covered inputs,
+zero pending/held inputs, zero unhashed owners and 3,327 exact copies**. The
+4,146-row comparison index is clean; 2,689 QRZ associations have permanent owners
+and matching markers. Raw references, attempts, cutovers, proofs and pins remain
+zero. Complete bootstrap counts grant no write authority. The immediate
+**21:30:41.035 UTC** POST backup verifies 3,294 then-populated exact envelopes,
+three credentials, the comparison key, integrity/FKs and two quarantine passes.
+Its 41,811,658-byte SQL is identical to the **21:28:43.196 UTC** PRE snapshot;
+the **21:35:43.166 UTC** separate comparison preserves all immutable claim,
+owner, marker and exact-evidence fields. No production restore or vendor write
+occurred.
+
+The **21:36:47.379 UTC** protected backup verifies all **3,327 populated exact
+evidence envelopes**, complete bootstrap coverage and 2,702 QRZ owners/markers.
+Its 42,144,346-byte snapshot passes credential/key decryption, exact AAD/HMAC and
+ownership checks, integrity/FKs and two isolated quarantines. The separate
+**21:37:57.619 UTC** immutable comparison preserves every prior claim, owner,
+marker and evidence field; additions are 33 exact copies and 13 QRZ
+owners/markers, with zero prior rows changed or lost. Raw references remain
+empty, so populated raw-reference recovery is still open. Neither check restores
+production or grants export authority.
+
+The following dated observations describe the earlier `5a427a30` release. Its initial
 **20:27:46.782 UTC** backup shows 3,833 unhashed ownership rows and 9,981 pending
 inputs, with zero held inputs or copied evidence. The first bounded bootstrap
 run is recorded below; deployment does not establish completed coverage or export

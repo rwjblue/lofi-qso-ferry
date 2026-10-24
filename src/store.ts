@@ -432,7 +432,7 @@ export class Store {
     );
     await this.db.batch([
       this.statement(
-        `INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version${identity ? ",identity_vendor,identity_hash,identity_source_version,identity_lotw_owner_id" : ""}${sourceProof ? ",source_export_proof_id,source_export_scope,source_export_reconciliation_version" : ""}) VALUES(${Array.from({ length: 9 + (identity ? 4 : 0) + (sourceProof ? 3 : 0) }, () => "?").join(",")})`,
+        `INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version${identity ? ",identity_vendor,identity_hash,identity_source_version,identity_lotw_owner_id" : ""}${sourceProof ? ",source_export_proof_id,source_export_scope,source_export_reconciliation_version" : ""}${sourceProof?.authorizationMode !== undefined ? ",authorization_mode" : ""}) VALUES(${Array.from({ length: 9 + (identity ? 4 : 0) + (sourceProof ? 3 : 0) + (sourceProof?.authorizationMode !== undefined ? 1 : 0) }, () => "?").join(",")})`,
         id,
         key.tenant,
         key.source,
@@ -458,6 +458,9 @@ export class Store {
               canonical(sourceProof.scope),
               sourceProof.reconciliationVersion,
             ]
+          : []),
+        ...(sourceProof?.authorizationMode !== undefined
+          ? [sourceProof.authorizationMode]
           : []),
       ),
       encrypted,

@@ -143,7 +143,12 @@ test("current source proofs are pinned atomically and shared current views fit D
         id,
       )
       .first(),
-    { tenant: "a", attempt: id, proof_id: proof.id },
+    {
+      tenant: "a",
+      attempt: id,
+      proof_id: proof.id,
+      authorization_mode: "source_boundary",
+    },
   );
   for (const sql of [
     "UPDATE attempt_source_export_proofs SET proof_id=proof_id",

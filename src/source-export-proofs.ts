@@ -18,7 +18,7 @@ import {
   type SourcePresenceTarget,
   type SourcePresenceWitness,
 } from "./source-presence-store.ts";
-import type { Connection, Lease, Store } from "./store.ts";
+import type { Connection, Lease, LedgerKey, Store } from "./store.ts";
 
 export interface SourceExportDependency {
   target: SourcePresenceTarget;
@@ -59,10 +59,15 @@ export interface SourceExportProofRequest {
   witnesses: readonly SourcePresenceWitness[];
   collectionFinishedAt: number;
 }
+export type SourceExportAuthorizationMode =
+  | "source_boundary"
+  | "qrz_fresh_insert";
 export interface SourceExportAuthorization {
   proofId: string;
   scope: SourcePresenceScope;
   reconciliationVersion: number;
+  /** Omission preserves the legacy source-boundary path, never fresh authority. */
+  authorizationMode?: SourceExportAuthorizationMode;
 }
 export interface SourceExportProofIdentity {
   qso: string;
@@ -631,12 +636,19 @@ export function attemptSourceExportProofGuard(
   tenant: string,
   attempt: string,
   now = Date.now(),
+  authorizationMode?: SourceExportAuthorizationMode,
 ): { sql: string; params: (string | number | null)[] } {
   if (!tenant || !attempt || !integer(now))
     throw new Error("invalid_attempt_source_export_proof_guard");
   return {
-    sql: "EXISTS(SELECT 1 FROM attempt_source_export_proofs_current p WHERE p.tenant=? AND p.attempt=? AND p.created_at<=? AND p.expires_at>?)",
-    params: [tenant, attempt, now, now],
+    sql: `EXISTS(SELECT 1 FROM attempt_source_export_proofs_current p WHERE p.tenant=? AND p.attempt=? AND p.created_at<=? AND p.expires_at>?${authorizationMode ? " AND p.authorization_mode=?" : ""})`,
+    params: [
+      tenant,
+      attempt,
+      now,
+      now,
+      ...(authorizationMode ? [authorizationMode] : []),
+    ],
   };
 }
 export async function attemptSourceExportProofCurrent(
@@ -644,8 +656,72 @@ export async function attemptSourceExportProofCurrent(
   tenant: string,
   attempt: string,
   now = Date.now(),
+  authorizationMode?: SourceExportAuthorizationMode,
 ): Promise<boolean> {
-  const guard = attemptSourceExportProofGuard(tenant, attempt, now);
+  const guard = attemptSourceExportProofGuard(
+    tenant,
+    attempt,
+    now,
+    authorizationMode,
+  );
+  return (
+    (await store
+      .statement(`SELECT ${guard.sql} AS current`, ...guard.params)
+      .first<number>("current")) === 1
+  );
+}
+
+/** Reads immutable intent even when its proof has expired; this is not authority. */
+export async function attemptSourceExportAuthorizationMode(
+  store: Store,
+  tenant: string,
+  attempt: string,
+): Promise<SourceExportAuthorizationMode | null> {
+  const mode = await store
+    .statement(
+      "SELECT authorization_mode FROM attempt_source_export_proofs WHERE tenant=? AND attempt=?",
+      tenant,
+      attempt,
+    )
+    .first<string>("authorization_mode");
+  return mode === "source_boundary" || mode === "qrz_fresh_insert"
+    ? mode
+    : null;
+}
+
+/** Structural first-insert eligibility; consent and a current source proof remain mandatory. */
+export function qrzFreshInsertEligibleGuard(
+  key: LedgerKey,
+  excludeAttempt?: string,
+): { sql: string; params: (string | number | null)[] } {
+  if (
+    ![key.tenant, key.source, key.qso, key.destination].every(Boolean) ||
+    excludeAttempt === ""
+  )
+    throw new Error("invalid_qrz_fresh_insert_guard");
+  return excludeAttempt === undefined
+    ? {
+        sql: "EXISTS(SELECT 1 FROM qrz_fresh_insert_eligible l WHERE l.tenant=? AND l.source=? AND l.qso=? AND l.destination=?)",
+        params: [key.tenant, key.source, key.qso, key.destination],
+      }
+    : {
+        sql: "EXISTS(SELECT 1 FROM qrz_fresh_insert_ledgers l WHERE l.tenant=? AND l.source=? AND l.qso=? AND l.destination=? AND NOT EXISTS(SELECT 1 FROM qrz_fresh_insert_attempt_conflicts a WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND a.id!=?))",
+        params: [
+          key.tenant,
+          key.source,
+          key.qso,
+          key.destination,
+          excludeAttempt,
+        ],
+      };
+}
+
+export async function qrzFreshInsertCurrent(
+  store: Store,
+  key: LedgerKey,
+  excludeAttempt?: string,
+): Promise<boolean> {
+  const guard = qrzFreshInsertEligibleGuard(key, excludeAttempt);
   return (
     (await store
       .statement(`SELECT ${guard.sql} AS current`, ...guard.params)

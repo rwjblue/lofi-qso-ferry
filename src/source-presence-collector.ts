@@ -12,7 +12,9 @@ import { VendorDeferredError } from "./vendor-requests.ts";
 
 export const SOURCE_PRESENCE_MAX_AGE_MS = 5 * 60_000;
 export const SOURCE_PRESENCE_COLLECTION_MS = 120_000;
-export const SOURCE_PRESENCE_PAGE_SIZE = 100;
+// Leave headroom for cursorless responses expanded over a tied edge timestamp.
+export const SOURCE_PRESENCE_REQUEST_PAGE_SIZE = 25;
+export const SOURCE_PRESENCE_MAX_PAGE_RECORDS = 100;
 const MAX_PAGE_RECORD_BYTES = 1024 * 1024;
 
 /** Logical credential identity excludes in-place bearer-token renewal. */
@@ -404,7 +406,7 @@ export async function collectSourcePresence(
       const windowBody = (progress: SideProgress) => ({
         syncedUntilMillis: progress.watermark,
         ...(progress.cursor ? { cursor: progress.cursor } : {}),
-        limit: SOURCE_PRESENCE_PAGE_SIZE,
+        limit: SOURCE_PRESENCE_REQUEST_PAGE_SIZE,
         anyClient: true,
       });
       expectedSyncBody = JSON.stringify({
@@ -421,7 +423,7 @@ export async function collectSourcePresence(
       const page = await client.syncPage(
         state,
         checkTime(),
-        SOURCE_PRESENCE_PAGE_SIZE,
+        SOURCE_PRESENCE_REQUEST_PAGE_SIZE,
       );
       await checkScope();
       if (syncRequestStartedAt === undefined) throw new Held("invalid_page");
@@ -431,8 +433,8 @@ export async function collectSourcePresence(
       // Check BOTH streams and their combined plaintext size before hashing or
       // retaining any witness; LoFiClient separately caps transport at 2 MiB.
       if (
-        page.operations.length > SOURCE_PRESENCE_PAGE_SIZE ||
-        page.qsos.length > SOURCE_PRESENCE_PAGE_SIZE
+        page.operations.length > SOURCE_PRESENCE_MAX_PAGE_RECORDS ||
+        page.qsos.length > SOURCE_PRESENCE_MAX_PAGE_RECORDS
       )
         throw new Held("page_bound");
       const encoder = new TextEncoder();

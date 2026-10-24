@@ -162,8 +162,8 @@ test("independent observed greater anchors bound both streams without inventing 
           inboundSync: true,
           lastSyncAccountUUID: "account",
           sync: {
-            operations: { syncedUntilMillis: 120, limit: 100, anyClient: true },
-            qsos: { syncedUntilMillis: 90, limit: 100, anyClient: true },
+            operations: { syncedUntilMillis: 120, limit: 25, anyClient: true },
+            qsos: { syncedUntilMillis: 90, limit: 25, anyClient: true },
           },
         },
       });
@@ -225,7 +225,7 @@ test("opaque tie continuation finds a missing equal-stamp member without arithme
       assert.deepEqual(JSON.parse(String(init?.body)).meta.sync.qsos, {
         syncedUntilMillis: 80,
         cursor: "opaque-next",
-        limit: 100,
+        limit: 25,
         anyClient: true,
       });
       return page([], [contact]);
@@ -260,7 +260,7 @@ test("26 through100 tied records per stream yield exact positives without invent
         calls++;
         const streams = JSON.parse(String(init?.body)).meta.sync;
         for (const side of [streams.operations, streams.qsos]) {
-          assert.equal(side.limit, 100);
+          assert.equal(side.limit, 25);
           assert.equal(side.anyClient, true);
           assert.equal(side.cursor, undefined);
           assert.equal(side.syncedUntilMillis, clock);
@@ -286,6 +286,53 @@ test("26 through100 tied records per stream yield exact positives without invent
   }
 });
 
+test("a 25-record request collects a 30-record target tie without pulling the next 80-record tie", async () => {
+  const rows = [
+    contact,
+    ...Array.from({ length: 29 }, (_, index) => ({
+      ...contact,
+      uuid: `target-stamp-neighbor-${index}`,
+    })),
+    ...Array.from({ length: 80 }, (_, index) => ({
+      ...contact,
+      uuid: `older-stamp-neighbor-${index}`,
+      syncedAtMillis: 70,
+    })),
+  ];
+  let calls = 0;
+  let received = 0;
+  const result = await collectSourcePresence(await input(), {
+    now: () => clock,
+    currentScope: async () => scope,
+    fetcher: async (_url, init) => {
+      calls++;
+      const window = JSON.parse(String(init?.body)).meta.sync.qsos;
+      assert.equal(window.cursor, undefined);
+      // Model the documented server behavior: include the whole edge timestamp.
+      // A nominal100 request would reach the older tie and return110, not100.
+      const edge = rows[Math.min(window.limit, rows.length) - 1].syncedAtMillis;
+      const selected = rows.filter((row) => row.syncedAtMillis >= edge);
+      received = selected.length;
+      return page(
+        [operation],
+        selected,
+        { records_left: 0 },
+        {
+          records_left: rows.length - selected.length,
+          next_cursor: "server-edge",
+        },
+      );
+    },
+  });
+  assert.equal(result.status, "observed");
+  assert.equal(calls, 1);
+  assert.equal(received, 30);
+  assert.equal(result.actualAttempts, 1);
+  assert.equal(result.remainingRequests, 3);
+  assert.equal(result.witnesses.length, 2);
+  noAuthority(result);
+});
+
 test("100-row tied pages continue only with the original opaque cursor and retain drain reserve", async () => {
   let calls = 0;
   const result = await collectSourcePresence(await input(), {
@@ -294,7 +341,7 @@ test("100-row tied pages continue only with the original opaque cursor and retai
     fetcher: async (_url, init) => {
       calls++;
       const windows = JSON.parse(String(init?.body)).meta.sync;
-      assert.equal(windows.qsos.limit, 100);
+      assert.equal(windows.qsos.limit, 25);
       if (calls === 1) {
         assert.equal(windows.qsos.cursor, undefined);
         return page(

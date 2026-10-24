@@ -912,6 +912,8 @@ export async function tick(
       routes: { contact: IntakeContact; destination: Connection }[],
       destinations: Connection[],
       finished: Map<string, IntakeContact>,
+      priorBudgetHolds: Set<string>,
+      budgetBackoffs: Map<string, number>,
     ) => {
       if (!exportsEffective(gates) || expired() || attemptSlots[priority] <= 0)
         return;
@@ -925,7 +927,7 @@ export async function tick(
          JOIN ledger l ON l.tenant=?2 AND l.source=?3 AND l.qso=json_extract(candidate.value,'$.qso') AND l.destination=json_extract(candidate.value,'$.destination') AND l.generation=json_extract(candidate.value,'$.generation')
          JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination AND d.status='active'
          WHERE l.due_at<=?4 AND l.state IN('missing_current_identity','changed','live_new') AND l.provenance!='adoption_conflict'
-          AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND s.state NOT IN('delivered','observed','rejected','cancelled') AND (s.state!='prepared' OR EXISTS(SELECT 1 FROM attempt_source_export_proofs_current pin WHERE pin.tenant=s.tenant AND pin.attempt=s.attempt)))`,
+          AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND s.state NOT IN('delivered','observed','rejected','cancelled') AND (s.state!='prepared' OR EXISTS(SELECT 1 FROM attempt_source_export_proofs_current pin WHERE pin.tenant=s.tenant AND pin.attempt=s.attempt))) ORDER BY CAST(candidate.key AS INTEGER)`,
             JSON.stringify(
               routes.map(({ contact, destination }) => ({
                 qso: contact.id,
@@ -965,10 +967,18 @@ export async function tick(
         await hold("source_export_proof_unavailable");
         return;
       }
+      // History can clear a route's diagnostic reason. Use only the exact
+      // generation captured before that work to shrink a repeated budget hold
+      // to one contact; an individually bounded closure can then make progress.
+      const retry = due.find((row) =>
+        priorBudgetHolds.has(
+          JSON.stringify([row.qso, row.destination, row.generation]),
+        ),
+      );
       const snapshots = await fittingSourceExportSnapshots(
         store,
         scope,
-        [...new Set(due.map((row) => row.qso))],
+        retry ? [retry.qso] : [...new Set(due.map((row) => row.qso))],
         Math.min(20, attemptSlots[priority]),
         currentTime,
         expired,
@@ -979,7 +989,9 @@ export async function tick(
       }
       const selectedIds = new Set(snapshots.map(({ contact }) => contact.id));
       await hold(
-        "source_export_proof_unavailable",
+        retry
+          ? "source_export_proof_request_budget"
+          : "source_export_proof_unavailable",
         due.filter((row) => !selectedIds.has(row.qso)),
       );
       const cached = await loadCurrentSourceExportProofs(
@@ -1042,9 +1054,28 @@ export async function tick(
           (sourceProofAttempts.get(sourceKey) ?? 0) + cohort.actualAttempts,
         );
         if (cohort.held) {
-          await hold(`source_export_proof_${cohort.held}`);
           result.deferred++;
-          return;
+          if (cohort.held !== "request_budget" || !cohort.ready.length) {
+            if (
+              retry &&
+              cohort.held === "request_budget" &&
+              cohort.actualAttempts > 0
+            )
+              budgetBackoffs.set(
+                retry.qso,
+                snapshots[0].contact.reconciliationVersion,
+              );
+            await hold(`source_export_proof_${cohort.held}`);
+            return;
+          }
+          // The coordinator completed the reserved final drain and minted
+          // exact proofs for this subset. A budget hold is not evidence for
+          // any other contact, nor may another failure yield partial authority.
+          const proven = new Set(cohort.ready.map(({ contact }) => contact.id));
+          await hold(
+            "source_export_proof_request_budget",
+            due.filter((row) => !proven.has(row.qso)),
+          );
         }
         // A new drain invalidated all old IDs. Only its refreshed contacts and
         // newly minted proof IDs may reach preparation.
@@ -1186,11 +1217,34 @@ export async function tick(
         result.deferred += processed.deferred;
         return batch.selected;
       }
+      const priorBudgetHolds = new Set<string>();
+      if (exportsEffective(gates) && batch.contacts.length) {
+        const markers = await store
+          .statement(
+            `SELECT l.qso,l.destination,l.generation FROM json_each(?1) contact
+             JOIN ledger l ON l.tenant=?2 AND l.source=?3 AND l.qso=json_extract(contact.value,'$.qso') AND l.generation=json_extract(contact.value,'$.generation')
+             WHERE l.reason='source_export_proof_request_budget'`,
+            JSON.stringify(
+              batch.contacts.map((contact) => ({
+                qso: contact.id,
+                generation: contact.generation,
+              })),
+            ),
+            source.tenant,
+            source.id,
+          )
+          .all<{ qso: string; destination: string; generation: string }>();
+        for (const row of markers.results)
+          priorBudgetHolds.add(
+            JSON.stringify([row.qso, row.destination, row.generation]),
+          );
+      }
       const exportRoutes: {
         contact: IntakeContact;
         destination: Connection;
       }[] = [];
       const finished = new Map<string, IntakeContact>();
+      const budgetBackoffs = new Map<string, number>();
       const historyTurns = new Map<string, Promise<void>>();
       const historyTurn = async (
         destination: Connection,
@@ -1366,7 +1420,13 @@ export async function tick(
           !expired() &&
           attemptSlots[priority] > 0
         )
-          await prepareExportCohort(exportRoutes, destinations, finished);
+          await prepareExportCohort(
+            exportRoutes,
+            destinations,
+            finished,
+            priorBudgetHolds,
+            budgetBackoffs,
+          );
       } finally {
         // An edit during the shared drain has a newer version; the ordinary CAS
         // leaves that work awake instead of parking it with this older turn.
@@ -1378,6 +1438,24 @@ export async function tick(
             contact.reconciliationVersion,
             currentTime(),
           );
+        if (budgetBackoffs.size) {
+          // An individually oversized closure yields one extra retry interval
+          // to its neighbors. Only the exact selected queue version may move;
+          // new source work stays awake, and existing later deadlines survive.
+          const retryAt = currentTime() + 10 * 60_000;
+          await store.db.batch(
+            [...budgetBackoffs].map(([qso, version]) =>
+              store.statement(
+                "UPDATE reconciliation_work SET next_due_at=MAX(next_due_at,?) WHERE tenant=? AND source=? AND qso=? AND version=?",
+                retryAt,
+                source.tenant,
+                source.id,
+                qso,
+                version,
+              ),
+            ),
+          );
+        }
       }
       return batch.selected;
     };

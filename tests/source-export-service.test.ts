@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { rereadOperation } from "../src/intake.ts";
 import type { SourceRecord } from "../src/lofi.ts";
 import { tick } from "../src/service.ts";
 import { schedulerFixture } from "./runtime-fixtures.ts";
@@ -9,7 +10,9 @@ async function fixture(
   setup?: (
     h: Awaited<ReturnType<typeof schedulerFixture>>,
     qsos: SourceRecord[],
+    operations: SourceRecord[],
   ) => void,
+  baselineAgeMinutes = 40,
 ) {
   const h = await schedulerFixture();
   t.after(() => h.mf.dispose());
@@ -21,7 +24,7 @@ async function fixture(
     .run();
   const operations = [h.operation];
   const qsos = [h.qso];
-  setup?.(h, qsos);
+  setup?.(h, qsos, operations);
   const sourceReads: { forward: boolean; until?: number }[] = [];
   const fetcher: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
@@ -71,11 +74,14 @@ async function fixture(
         },
       });
     }
-    if (url.pathname === "/v1/operations/op-fixture/qsos") {
+    const operation = /^\/v1\/operations\/([^/]+)\/qsos$/.exec(
+      url.pathname,
+    )?.[1];
+    if (operation) {
       h.calls.reread++;
       if (h.errors.reread) throw new Error("synthetic reread failure");
       return Response.json({
-        qsos: qsos.filter((row) => row.operation === "op-fixture"),
+        qsos: qsos.filter((row) => row.operation === operation),
         meta: { qsos: { records_left: 0 } },
       });
     }
@@ -88,7 +94,11 @@ async function fixture(
       .statement(`SELECT count(*) AS n FROM ${table}`)
       .first<{ n: number }>())!.n;
   for (let turn = 0; turn < 3; turn++) {
-    await tick(h.env, fetcher, Date.now() - (40 - turn * 5) * 60_000);
+    await tick(
+      h.env,
+      fetcher,
+      Date.now() - (baselineAgeMinutes - turn * 5) * 60_000,
+    );
     if (
       await h.store.ledger({
         tenant: "a",
@@ -373,5 +383,332 @@ test("a delayed known-unsent attempt is cancelled and re-prepared after a new ca
         .first<{ n: number }>()
     )?.n,
     1,
+  );
+});
+
+async function scatteredFixture(t: TestContext, disjointOperations = false) {
+  const h = await fixture(
+    t,
+    (state, rows, operations) => {
+      state.qso.syncedAtMillis = 1000;
+      for (let index = 1; index < 12; index++) {
+        const call = `K1A${String.fromCharCode(65 + index)}`;
+        rows.push({
+          ...state.qso,
+          uuid: `q${index + 1}`,
+          their: { call },
+          syncedAtMillis: 1000 + index * 50,
+        });
+        state.qrzRecords.push({
+          ...state.qrzRecords[0],
+          CALL: call,
+          APP_QRZLOG_LOGID: String(500 + index),
+        });
+      }
+      if (disjointOperations) {
+        state.operation.syncedAtMillis = 1550;
+        for (let index = 1; index < rows.length; index++) {
+          const operation = {
+            ...state.operation,
+            uuid: `op-neighbor-${index}`,
+            syncedAtMillis: 1550 - index * 50,
+          };
+          operations.push(operation);
+          rows[index].operation = operation.uuid;
+        }
+      }
+    },
+    disjointOperations ? 120 : 40,
+  );
+  const source = await h.store.connection("a", "source");
+  assert(source);
+  if (disjointOperations) {
+    // Establish each real operation context through the normal read path.
+    for (let index = 0; index < h.operations.length; index++)
+      await rereadOperation(
+        h.store,
+        source,
+        h.fetcher,
+        Date.now() - (100 - index * 5) * 60_000,
+        "background",
+      );
+    await tick(h.env, h.fetcher, Date.now() - 25 * 60_000);
+  }
+  const selected = h.qsos.filter((_, index) => index % 2 === 0);
+  h.qsos.forEach((row, index) => {
+    row.syncedAtMillis = 3000 + index * 50;
+    if (index % 2 === 0) row.freq = 14075;
+  });
+  await tick(h.env, h.fetcher, Date.now() - 21 * 60_000);
+  for (const row of selected)
+    assert.equal(
+      (
+        await h.store.ledger({
+          tenant: "a",
+          source: "source",
+          qso: String(row.uuid),
+          destination: "destination",
+        })
+      )?.state,
+      "changed",
+    );
+  const spread = (rows: SourceRecord[], targets: SourceRecord[]) => [
+    ...rows,
+    ...targets.flatMap((row) =>
+      Array.from({ length: 24 }, (_, index) => ({
+        ...row,
+        uuid: `${row.uuid}-neighbor-${index}`,
+        syncedAtMillis: Number(row.syncedAtMillis) - index - 1,
+      })),
+    ),
+  ];
+  const qsos = spread(h.qsos, selected);
+  const operations = disjointOperations
+    ? spread(
+        h.operations,
+        h.operations.filter((_, index) => index % 2 === 0),
+      )
+    : h.operations;
+  let collectionReads = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    if (new URL(String(input)).pathname !== "/v1/sync")
+      return h.fetcher(input, init);
+    const sync = JSON.parse(String(init?.body)).meta.sync;
+    if (sync.qsos.syncedSinceMillis !== undefined)
+      return h.fetcher(input, init);
+    collectionReads++;
+    h.calls.sourceSync++;
+    const page = (rows: SourceRecord[], upper: number) =>
+      rows
+        .filter((row) => Number(row.syncedAtMillis) < upper)
+        .sort((a, b) => Number(b.syncedAtMillis) - Number(a.syncedAtMillis))
+        .slice(0, 25);
+    return Response.json({
+      account: { uuid: "account-fixture" },
+      operations: page(operations, sync.operations.syncedUntilMillis),
+      qsos: page(qsos, sync.qsos.syncedUntilMillis),
+      meta: {
+        operations: disjointOperations
+          ? { records_left: 1, next_cursor: `ops-${collectionReads}` }
+          : { records_left: 0 },
+        qsos: { records_left: 1, next_cursor: `qsos-${collectionReads}` },
+      },
+    });
+  };
+  h.enable();
+  h.env.ROLLOUT_QSO_IDS_JSON = JSON.stringify(selected.map((row) => row.uuid));
+  h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination"]';
+  return { ...h, fetcher, selected, collections: () => collectionReads };
+}
+
+test("a request-limited source cohort dispatches only its fully proved non-prefix subset", async (t) => {
+  const h = await scatteredFixture(t);
+  const before = h.calls.sourceSync;
+  const started = Date.now();
+  const result = await tick(h.env, h.fetcher);
+  assert.equal(result.errors, 0);
+  assert(result.deferred > 0);
+  assert.equal(h.collections(), 3);
+  assert.equal(
+    h.calls.sourceSync - before,
+    5,
+    "one canonical poll plus the four-request proof allowance",
+  );
+  assert.equal(h.calls.qrzWrites, 3);
+  const attempts = (
+    await h.store
+      .statement(
+        "SELECT a.qso,s.state,p.proof_id FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id JOIN attempt_source_export_proofs p ON p.tenant=a.tenant AND p.attempt=a.id ORDER BY a.qso",
+      )
+      .all<{ qso: string; state: string; proof_id: string }>()
+  ).results;
+  assert.deepEqual(
+    attempts.map((row) => row.qso),
+    ["q11", "q7", "q9"],
+  );
+  assert(attempts.every((row) => row.state === "delivered"));
+  assert.equal(await h.count("source_export_proofs"), 3);
+  const held = (
+    await h.store
+      .statement(
+        "SELECT l.qso,l.reason,w.next_due_at,w.selected_at FROM ledger l JOIN reconciliation_work w ON w.tenant=l.tenant AND w.source=l.source AND w.qso=l.qso WHERE l.state='changed' ORDER BY l.qso",
+      )
+      .all<{
+        qso: string;
+        reason: string;
+        next_due_at: number;
+        selected_at: number;
+      }>()
+  ).results;
+  assert.deepEqual(
+    held.map((row) => row.qso),
+    ["q1", "q3", "q5"],
+  );
+  assert(
+    held.every((row) => row.reason === "source_export_proof_request_budget"),
+  );
+  assert(
+    held.every(
+      (row) =>
+        row.next_due_at >= started + 300_000 && row.selected_at >= started,
+    ),
+  );
+});
+
+test("a zero-complete budget cohort retries one exact prior-held contact after history refresh", async (t) => {
+  const h = await scatteredFixture(t, true);
+  const first = await tick(h.env, h.fetcher);
+  assert.equal(first.errors, 0);
+  assert(first.deferred > 0);
+  assert.equal(h.collections(), 3);
+  assert.equal(await h.count("source_export_proofs"), 0);
+  assert.equal(await h.count("attempts"), 0);
+  assert.equal(h.calls.qrzWrites, 0);
+  const held = await h.store
+    .statement(
+      "SELECT count(*) AS n FROM ledger WHERE reason='source_export_proof_request_budget'",
+    )
+    .first<number>("n");
+  assert.equal(held, 6);
+  // Simulate the next due scheduler window without aging or modifying source
+  // evidence, proofs, identities, or the collector's request allowance.
+  await h.store
+    .statement(
+      "UPDATE reconciliation_work SET next_due_at=0,selected_at=0 WHERE tenant='a' AND source='source'",
+    )
+    .run();
+  await h.store
+    .statement(
+      "UPDATE source_work SET processed_at=0 WHERE tenant='a' AND source='source' AND kind='qso'",
+    )
+    .run();
+  await h.store.statement("DELETE FROM vendor_requests").run();
+  const before = h.calls.sourceSync;
+  const second = await tick(h.env, h.fetcher);
+  assert.equal(second.errors, 0);
+  assert.equal(
+    h.calls.sourceSync - before,
+    3,
+    "canonical poll, singleton collection, final drain",
+  );
+  assert.equal(h.calls.qrzWrites, 1);
+  assert.equal(await h.count("source_export_proofs"), 1);
+  assert.equal(await h.count("attempts"), 1);
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT count(*) AS n FROM ledger WHERE state='changed' AND reason='source_export_proof_request_budget'",
+      )
+      .first<number>("n"),
+    5,
+  );
+});
+
+test("an individually request-limited singleton yields its next queue turn to a fitting neighbor", async (t) => {
+  const h = await scatteredFixture(t, true);
+  const first = await tick(h.env, h.fetcher);
+  assert.equal(first.errors, 0);
+  assert.equal(await h.count("attempts"), 0);
+  await h.store
+    .statement(
+      "UPDATE reconciliation_work SET next_due_at=CASE WHEN qso='q1' THEN 0 ELSE 1 END,selected_at=0 WHERE tenant='a' AND source='source'",
+    )
+    .run();
+  await h.store
+    .statement(
+      "UPDATE source_work SET processed_at=0 WHERE tenant='a' AND source='source' AND kind='qso'",
+    )
+    .run();
+  await h.store.statement("DELETE FROM vendor_requests").run();
+  let oversizedPages = 0;
+  const fetcher: typeof fetch = async (input, init) => {
+    if (new URL(String(input)).pathname !== "/v1/sync")
+      return h.fetcher(input, init);
+    const sync = JSON.parse(String(init?.body)).meta.sync;
+    if (
+      sync.qsos.syncedUntilMillis !== 3050 &&
+      !String(sync.qsos.cursor ?? "").startsWith("oversized-")
+    )
+      return h.fetcher(input, init);
+    oversizedPages++;
+    h.calls.sourceSync++;
+    // An opaque continuation traverses a legal, dense tied group above q1.
+    // Even one contact cannot reach its positive row in three bounded pages.
+    return Response.json({
+      account: { uuid: "account-fixture" },
+      operations: [...h.operations].sort(
+        (a, b) => Number(b.syncedAtMillis) - Number(a.syncedAtMillis),
+      ),
+      qsos: Array.from({ length: 25 }, (_, index) => ({
+        ...h.qso,
+        uuid: `dense-${oversizedPages}-${index}`,
+        syncedAtMillis: 3001,
+      })),
+      meta: {
+        operations: { records_left: 0 },
+        qsos: { records_left: 1, next_cursor: `oversized-${oversizedPages}` },
+      },
+    });
+  };
+  const started = Date.now();
+  const second = await tick(h.env, fetcher);
+  assert.equal(second.errors, 0);
+  assert.equal(oversizedPages, 3);
+  assert.equal(await h.count("source_export_proofs"), 0);
+  assert.equal(await h.count("attempts"), 0);
+  const delayed = await h.store
+    .statement(
+      "SELECT next_due_at FROM reconciliation_work WHERE tenant='a' AND source='source' AND qso='q1'",
+    )
+    .first<number>("next_due_at");
+  assert(delayed && delayed >= started + 10 * 60_000);
+  const neighbors = (
+    await h.store
+      .statement(
+        "SELECT w.next_due_at FROM reconciliation_work w JOIN ledger l ON l.tenant=w.tenant AND l.source=w.source AND l.qso=w.qso WHERE w.tenant='a' AND w.source='source' AND w.qso!='q1' AND l.state='changed'",
+      )
+      .all<{ next_due_at: number }>()
+  ).results;
+  assert.equal(neighbors.length, 5);
+  assert(neighbors.every((row) => row.next_due_at < delayed));
+  // Advance only the ordinarily due neighbors; the longer singleton backoff
+  // is preserved. No source version, proof, claim or authority is changed.
+  await h.store
+    .statement(
+      "UPDATE reconciliation_work SET next_due_at=0,selected_at=0 WHERE tenant='a' AND source='source' AND next_due_at<?",
+      delayed,
+    )
+    .run();
+  await h.store
+    .statement(
+      "UPDATE source_work SET processed_at=0 WHERE tenant='a' AND source='source' AND kind='qso'",
+    )
+    .run();
+  await h.store.statement("DELETE FROM vendor_requests").run();
+  const before = h.calls.sourceSync;
+  const third = await tick(h.env, fetcher);
+  assert.equal(third.errors, 0);
+  assert.equal(h.calls.sourceSync - before, 3);
+  assert.equal(
+    oversizedPages,
+    3,
+    "the oversized singleton is not collected again",
+  );
+  assert.equal(h.calls.qrzWrites, 1);
+  assert.equal(await h.count("attempts"), 1);
+  assert.equal(await h.count("source_export_proofs"), 1);
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) AS n FROM attempts WHERE qso='q1'")
+      .first<number>("n"),
+    0,
+  );
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT count(*) AS n FROM source_export_proofs WHERE qso='q1'",
+      )
+      .first<number>("n"),
+    0,
   );
 });

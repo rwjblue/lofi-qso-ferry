@@ -56,6 +56,26 @@ not a steady-state comparison or production speedup.
 Measure ownership initialization, first recognition and resolved idle work
 separately; the 20:27 backup predates this progress.
 
+The latest completed sample, **20:45:43.988–20:47:18.571 UTC**, makes 123 contact
+turns, 89 classifications and 29 adoptions, with zero errors, deferrals or attempt
+turns. It stops at the deadline after 94.583 seconds: 740 D1 RPCs / 6,496 SQL,
+81.010 seconds D1 wall time and 4.664 seconds reported SQL time. Ten ownership
+passes hash 834 owners, examine 1,000 inputs and cover 640 in 17.432 seconds.
+The **20:50:15.919 UTC** aggregate passes all 19 checks with 640 covered,
+5,981 pending and 3,360 held inputs. A later backup independently validates all
+640 encrypted exact ownership records; bootstrap is still unfinished.
+
+An isolated scheduling follow-up prioritizes identity metadata for owners just
+hashed in the same bounded pass. On the identical verified 20:27 snapshot, it
+reduces complete bootstrap from **135 to 103 passes**, **925 to 773 adapter RPCs**,
+**24,602 to 21,230 SQL statements**, and **13,407 to 10,228 examined inputs**.
+Both runs finish with 9,981 covered inputs, 3,327 cryptographically validated
+exact copies, zero held inputs and unchanged protected tables. The actual
+selection query reads 19 rows with either zero or 200,000 unrelated covered
+inputs, using existing keyed indexes. This is a local bounded-query result,
+not a 200,000-contact bootstrap or Worker capacity result. Focused tests and
+independent review pass; the full release check and deployment remain pending.
+
 ## Previous diagnostic release and bounded run — c4f51de8
 
 Signed `c4f51de8` deployed at **2026-10-24 17:28:57.761108 UTC**, after

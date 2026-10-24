@@ -394,17 +394,19 @@ LoTW associations; unresolved identity, location and route conflicts remain held
 - [x] The 20:27:46.782 UTC POST backup and 20:28:34.534 UTC exact comparison
   preserve all 3,327 claims and 2,549 QRZ owners/markers, with zero changes or
   losses. Integrity/FK, credentials, the tenant key and repeated quarantine pass.
-- [ ] Verify populated new exact/raw evidence and references after bootstrap.
-  The immediate POST snapshot had zero new evidence rows or raw references;
-  empty-table preservation is not populated-ciphertext recovery evidence.
+- [x] Verify populated exact ownership recovery: the 20:50:59.570 UTC backup
+  decrypts all 640 copied records and verifies their original AAD, keys, owner
+  bindings and HMAC buckets through isolated restore and repeated quarantine.
+- [ ] Verify populated raw historical evidence and permanent references after
+  association begins. Raw tables remain empty in the latest verified backup.
 - [x] Observe the first completed new-runtime scheduler run: ten bounded ownership
   passes, 1,000 inputs examined, zero covered and 1,000 owners hashed. All 19
   aggregate checks and matching policy v5 passed during the run. One LoTW report
   remained unavailable, with its exact HTTP cause unresolved; this does not
   establish a speedup or finished coverage.
-- [ ] Complete ownership bootstrap. The 20:31:23.628 UTC snapshot still had
-  2,833 unhashed owners, 8,981 pending inputs and 1,000 held claim inputs, with no
-  copied identity/mapping evidence. Pending/held inputs do not establish authority.
+- [ ] Complete ownership bootstrap. At 20:50:15.919 UTC there are 640 covered
+  inputs, 5,981 pending, 3,360 held and two unhashed owners. All 19 aggregate
+  checks pass; pending/held coverage still grants no authority.
 - [ ] Finish reconciliation and review actual exceptions; do not label every
   stale or unprocessed hold a manual exception.
 - [ ] Refresh exact source/vendor evidence for the separate scoped trial packet;
@@ -580,20 +582,20 @@ enforced separation from the global cutover/no-query effects described above,
 then current evidence for the exact scope. The proposed order remains QRZ first,
 followed by LoTW. Keep private contact details out of repository documentation.
 
-The latest completed recovery receipt is the **20:27:46.782 UTC** POST backup of
-`5a427a30`: 39,123,981 bytes, all 36 migrations, 4,141 index rows, 3,327 exact
-claims and 2,549 QRZ owners/markers. It accounts for all 4,500 source rows,
-including 2,465 legitimate archives. Isolated restore, integrity/FK, three
-credential decryptions, initialized comparison-key verification and repeated
-quarantine passed, preserving bridge/raw/source/inventory/receipt state. Attempts,
-cutovers, proofs, pins and temporary guards were zero. The new registry contained
-3,833 unhashed owners and 9,981 pending inputs, with no held inputs, copied exact
-evidence or raw references; populated new ciphertext recovery remains unverified.
+The latest completed recovery receipt is the **20:50:59.570 UTC** backup of
+`5a427a30`: 38,728,270 bytes, all 36 migrations, 4,145 index rows, 4,507 source
+rows, 3,327 exact claims and 2,635 QRZ owners/markers. Isolated restore,
+integrity/FKs, three credential decryptions, comparison-key verification and
+repeated quarantine pass, preserving bridge/raw/source/inventory/receipt state.
+All **640 populated exact ownership envelopes** decrypt and pass their original
+AAD, key, ownership and HMAC-bucket checks. Attempts, cutovers, proofs, pins and
+temporary guards are zero. Coverage remains unfinished; raw historical references
+are empty, so populated raw-reference recovery remains open.
 
-At **20:28:34.534 UTC**, exact comparison with the final **20:25:52.291 UTC** PRE
-snapshot retained every field and creation timestamp of all 3,327 claims and
-2,549 prior owners/markers, with zero missing, changed or added rows. No production
-restore occurred. Retain both snapshots and every KEK required by permanent exact
+At **20:51:08.635 UTC**, exact comparison with the final **20:25:52.291 UTC** PRE
+snapshot retains every field and creation timestamp of all 3,327 claims and
+2,549 prior owners/markers, with zero changed or missing rows and 86 legitimate
+additional associations. No production restore occurs. Retain both snapshots and every KEK required by permanent exact
 and raw historical evidence, and refresh recovery evidence after meaningful state
 changes. The dated snapshots below remain historical recovery evidence.
 

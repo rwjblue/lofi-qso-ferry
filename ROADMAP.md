@@ -56,9 +56,27 @@ Identity/mapping copies, new raw references and attempts remained zero.
 The single error was `history_read:lotw:lotw_unavailable`, affecting one route.
 Its exact HTTP cause is unknown; the reader keeps coverage incomplete and applies
 bounded partition retry. This is not proof of absence or completed reconciliation.
-Bootstrap coverage, populated-evidence recovery verification, review of actual
-remaining exceptions, fresh source/vendor proofs, scoped first-write acceptance
-and sustained capacity remain open. Exports remain disabled.
+At **20:50:15.919 UTC**, all 19 aggregate checks still pass: 640 copied exact
+ownership records, 640 covered inputs, 5,981 pending and 3,360 held inputs, with
+two unhashed owners. The clean comparison index has 4,144 rows and QRZ has 2,635
+guarded associations. The latest completed run made 123 contact turns, 89
+classifications and 29 adoptions, with zero errors, deferrals or attempt turns.
+These observations describe progress, not complete ownership coverage.
+
+The fresh **20:50:59.570 UTC** backup verifies recovery of all **640 populated
+encrypted exact records**, including original AAD, retained key, HMAC bucket and
+ownership bindings. Isolated integrity/FK checks, three credential decryptions,
+tenant-key verification and two quarantine passes succeed. The **20:51:08.635
+UTC** comparison preserves every original claim, owner and marker exactly; 86
+additional QRZ owners/markers are legitimate guarded associations. Raw LoTW
+history is still empty, so populated raw-reference recovery remains open.
+
+The **20:51:53.826 UTC** SELECT-only QRZ trial planner found no eligible candidate
+under its complete current-context selection rule. It made no vendor request or
+database mutation. Diagnose that selection result before refreshing proofs; do
+not force a contact into eligibility. Bootstrap coverage, actual exception
+review, fresh source/vendor proofs, scoped first-write acceptance and sustained
+capacity remain open. Exports remain disabled.
 
 ### Previous production — inventory diagnostics (c4f51de8)
 

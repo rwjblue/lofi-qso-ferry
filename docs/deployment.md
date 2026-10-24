@@ -23,9 +23,10 @@ and association-only write blocks.
 
 Shared source comparisons and bounded ownership maintenance are deployed, along
 with partition-local history retry delays. The new-schema postdeployment backup
-and exact prior-ownership preservation are verified. The first scheduler run
-completed, but ownership bootstrap remains unfinished and one error is under
-investigation.
+and exact prior-ownership preservation are verified. A later backup also verifies
+640 populated encrypted exact ownership records. Ownership bootstrap remains
+unfinished; the latest three sampled completed runs have zero errors. The first
+run's unavailable LoTW report has no retained exact HTTP cause.
 Remaining work includes actual exception review, fresh exact source/vendor
 proofs for a scoped trial, first-write acceptance and sustained capacity.
 Exports remain disabled; this release authorizes no first-write trial.
@@ -105,6 +106,39 @@ starting, not completed coverage, a speedup, sustained capacity or export
 authority. Retain every KEK referenced by permanent exact/raw ownership evidence
 until a separate rewrap path is implemented. Fresh same-contact source/vendor
 proof, exception review and first-write acceptance remain open.
+
+### Populated ownership recovery and later progress
+
+Independent **20:50:37.114 UTC** attestation confirms the same sole signed Worker,
+all eight closed controls, active KEK version 1, healthy HTTPS and matching
+assets. The **20:50:15.919 UTC** aggregate passes all 19 checks, with 640 copied
+exact records, 640 covered inputs, 5,981 pending inputs, 3,360 held inputs and
+two unhashed owners. It retains 2,635 QRZ owners/markers and a clean 4,144-row
+source index. Attempts, cutovers, proofs, pins and raw LoTW references are zero.
+
+The fresh backup completed at **20:50:59.570 UTC**: **38,728,270 bytes**, all 36
+migrations, 4,507 source rows, 4,145 index rows, 3,327 exact claims and 2,635 QRZ
+owners/markers. Counts can advance between the aggregate and backup through
+normal intake. All **640 populated exact ownership envelopes** decrypt and pass
+original-AAD, retained-KEK, owner, record and HMAC-bucket checks. Isolated
+integrity/FKs, three credential decryptions, tenant-key verification and repeated
+quarantine preserve all bridge/raw/source/inventory/receipt tables. No production
+restore occurs. Raw historical references remain empty; their populated recovery
+still needs verification after historical association begins.
+
+The **20:51:08.635 UTC** immutable comparison against the exact final 20:25 PRE
+snapshot retains every field and creation time of all 3,327 claims and 2,549 prior
+QRZ owners/markers. There are zero changed or missing prior rows and 86 additional
+guarded QRZ associations. Private manifest SHA256:
+`158cd49ad7f528fd1eec2f75bf006351d31297c1bcf6e1d59b15e998760facd1`;
+SQL SHA256: `081dcfdf203bfcd004eea0be5974c0a2782cb44e2fd01312b9bc9577ade16a69`.
+
+The latest completed cron, **20:45:43.988–20:47:18.571 UTC**, takes 123 contact
+turns, classifies 89 destinations and adopts 29, with zero errors, deferrals or
+attempt turns. Ten ownership passes hash 834 owners, examine 1,000 inputs and
+cover 640. It stops at the deadline after 94.583 seconds, using 740 D1 RPCs /
+6,496 SQL statements. This is continued bootstrap and reconciliation, not
+steady-state capacity or export readiness.
 
 ## Fixed history-scope diagnostics release (c4f51de8)
 

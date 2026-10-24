@@ -45,6 +45,23 @@ proves neither steady-state capacity nor resolution of the unavailable report;
 the precise HTTP cause is unknown and the partition remains held for bounded
 retry. The 20:27 backup predates this progress.
 
+The **20:50:59.570 UTC** backup subsequently verifies recovery of 640 populated
+exact ownership envelopes, with original AAD, retained keys, owner and HMAC-bucket
+bindings intact through two isolated quarantine passes. All 3,327 prior claims
+and 2,549 prior QRZ owners/markers remain exact in the **20:51:08.635 UTC**
+comparison; 86 guarded associations have been added. No production restore or
+vendor write occurs. Raw historical references remain empty, and pending/held
+ownership coverage remains unfinished. Independent **20:50:37.114 UTC** release
+verification reconfirms the same sole Worker and all eight controls closed.
+
+The **20:51:53.826 UTC** SELECT-only trial planner selects no candidate and makes
+no vendor request or database mutation. A fixed aggregate at **20:54:37.511 UTC**
+finds 448 structural routes with retained, unexpired source bodies; all have stale
+ledger context and 445 are due. This identifies diagnostic admission work, not
+permission to force a ledger update or skip strict post-refresh proof checks.
+The upstream [deletion and pagination evidence](evidence-lofi.md#upstream-deletion-and-pagination-evidence-reviewed-2026-10-24)
+also leaves universal source completeness unverified.
+
 Production uses the native Cloudflare `EMAIL` binding restricted to `signup@ferry.n1rwj.com`, with that address in `MAIL_FROM`. Sending domain `ferry.n1rwj.com` (`e69af8ef82a140b38eeaef98d417ef30`) is enabled and its `preview_enabled=false` setting was read back. Cloudflare and Google DNS-over-HTTPS both resolved its bounce MX/SPF, DKIM and DMARC records; the parent domain's Fastmail MX records remain unchanged. One verification message was delivered to the owner’s Fastmail inbox through the live signup form. The initial smoke test created no account. Hosted enrollment is now invite only; existing users retain their passkeys and sessions.
 
 Independent `KEK_V1`, `AUTH_SECRET` and `EMAIL_CODE_SECRET` secrets have been provisioned. Their protected local backup is `~/.config/lofi-qso-ferry/production.secrets.json` (file mode `0600`, directory `0700`); 1Password CLI was signed out, so that backup remains necessary until secure secret-manager storage is completed. Never print its contents or commit it. Preserve these keys when resuming deployment rather than generating replacements.

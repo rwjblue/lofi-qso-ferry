@@ -75,6 +75,39 @@ unreleased changes. Signing and production release remain outstanding.
 
 The protocol references are [Sidecar's browser registration and operation reads](https://github.com/rwjblue/qso-sidecar/blob/c502cecd068a6a4330afd94458e5636fa17f3a51/src/lofi.rs), [HaLo's transport](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/extensions/sync/ham2k-lofi/src/index.ts), and [its sync engine](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/packages/halo_core/lib/src/sync/sync_engine.dart). These are client implementation evidence; public server retention and replay guarantees were not found.
 
+### Upstream deletion and pagination evidence reviewed 2026-10-24
+
+[HALO-557](https://cabo.ham2k.com/halo/c/557) records that ordinary delete payloads
+use `true`, `1`, `"true"` or `"1"`, and that the REST operation-delete path can
+leave the application revision timestamp unchanged. It identifies the server's
+`status: "deleted"` as authoritative. Ferry already accepts those flag dialects
+and uses server sync timestamps for intake; equal-server-timestamp conflicts
+remain holds. A conservative status-only deletion decoder fix is separate work,
+not a deployed behavior claim for `5a427a30`.
+
+[HALO-683](https://cabo.ham2k.com/halo/c/683) documents server hard deletion of
+owner-purged test operations and contacts, including their change history, with
+**no tombstone retained**. Stored and incoming test classification plus timestamp
+checks constrain that operation. The card records merged server changes and
+deployment/cleanup follow-ups; it does not independently establish the exact
+production server revision or universal tombstone retention. A previously real
+record can also have been changed to test before a later purge, so current test
+exclusion alone cannot prove every historical deletion is delivered.
+
+Exact-contact proofs establish bounded recent positive observations of the
+retained dependency closure. They cannot detect a silent purge occurring after
+those observations if the server removes both the record and its change history.
+The mandatory final sync and the oldest positive's remaining five-minute proof
+lifetime limit staleness; they do not establish universal deletion delivery or
+source-wide completeness. Known missing targets before collection remain held.
+`SOURCE_BOUNDARY_VERIFIED` stays false.
+
+[HALO-770](https://cabo.ham2k.com/halo/c/770) records a deployed server repair for
+force-refresh timestamp ties and distinguishes row-cursor continuation from
+millisecond fallback expansion. This supports testing both pagination paths,
+not assuming a requested page size is an exhaustive response or a stable snapshot.
+It supplies no cursor-age or purge-retention guarantee.
+
 ## Implemented contract
 
 `LoFiClient` registers a stable `browser:` identity at `POST /v1/client`, sends the existing permission approval flow at `POST /v1/client/permissions`, and verifies `current_account.uuid` through `GET /v1/accounts`. A protected request renews a rejected bearer once using the same identity. It does not replace a refused client identity or silently connect a different account. Callers must encrypt and durably save `credentialsSnapshot()` when its token changes. Registration/approval are separate from Ferry account signup.

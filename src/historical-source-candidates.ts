@@ -545,13 +545,13 @@ export async function historicalSourceCandidates(
          AND c.remote_identity=json_extract(h.value,'$.remote') AND c.credential_version IS json_extract(h.value,'$.credential')
          AND ready.epoch=json_extract(h.value,'$.epoch') AND ready.sync_generation=json_extract(h.value,'$.sync') AND context.generation=json_extract(h.value,'$.context')
          AND json_extract(context.cursor,'$.complete')=1 AND json_extract(context.cursor,'$.syncComplete')=1
-         AND credential.revoked_at IS NULL AND (credential.expires_at IS NULL OR credential.expires_at>?)))
+         AND credential.revoked_at IS NULL AND (credential.expires_at IS NULL OR credential.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER)))))
        AND NOT EXISTS(SELECT 1 FROM json_each(?) dependency WHERE NOT EXISTS(
         SELECT 1 FROM source_work w JOIN private_data p ON p.tenant=w.tenant AND p.connection=w.source AND p.id=w.private_id AND p.kind='source'
         WHERE w.tenant=? AND w.source=json_extract(dependency.value,'$.source') AND w.kind=json_extract(dependency.value,'$.kind') AND w.id=json_extract(dependency.value,'$.id')
          AND json_array(w.revision,w.synced_at,w.private_id,w.operation_id,w.deleted,w.is_event,w.policy_seen_epoch)=json_extract(dependency.value,'$.work')
          AND json_array(p.source_proof_version,p.created_at)=json_extract(dependency.value,'$.body')
-         AND w.expires_at>? AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) AND (w.kind!='operation' OR w.state='context')))
+         AND w.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER)) AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER))) AND (w.kind!='operation' OR w.state='context')))
        AND NOT EXISTS(SELECT 1 FROM json_each(?) operation CROSS JOIN source_work e INDEXED BY source_context_members
         ON e.tenant=? AND e.source=json_extract(operation.value,'$.source') AND e.operation_id=json_extract(operation.value,'$.id') AND e.kind='qso' AND e.is_event=1
         WHERE e.deleted=0 AND NOT EXISTS(SELECT 1 FROM json_each(?) dependency WHERE json_extract(dependency.value,'$.source')=e.source AND json_extract(dependency.value,'$.kind')=e.kind AND json_extract(dependency.value,'$.id')=e.id))`,

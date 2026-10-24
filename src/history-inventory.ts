@@ -140,7 +140,7 @@ export function historyInventoryGuard(
   )
     return { sql: "0", params: [] };
   const sql = [
-    `EXISTS(SELECT 1 FROM accounts a JOIN connections s ON s.tenant=a.id JOIN connections d ON d.tenant=a.id JOIN private_data sp ON sp.tenant=s.tenant AND sp.connection=s.id AND sp.id=s.credential_version AND sp.kind='credential' JOIN private_data dp ON dp.tenant=d.tenant AND dp.connection=d.id AND dp.id=d.credential_version AND dp.kind='credential' WHERE a.id=? AND a.status='active' AND s.id=? AND s.kind='lofi' AND s.status='active' AND s.remote_identity=? AND sp.revoked_at IS NULL AND (sp.expires_at IS NULL OR sp.expires_at>?) AND d.id=? AND d.kind=? AND d.status='active' AND d.remote_identity=? AND d.credential_version=? AND ${CONFIG_SCOPE_SQL}=? AND dp.revoked_at IS NULL AND (dp.expires_at IS NULL OR dp.expires_at>?))`,
+    `EXISTS(SELECT 1 FROM accounts a JOIN connections s ON s.tenant=a.id JOIN connections d ON d.tenant=a.id JOIN private_data sp ON sp.tenant=s.tenant AND sp.connection=s.id AND sp.id=s.credential_version AND sp.kind='credential' JOIN private_data dp ON dp.tenant=d.tenant AND dp.connection=d.id AND dp.id=d.credential_version AND dp.kind='credential' WHERE a.id=? AND a.status='active' AND s.id=? AND s.kind='lofi' AND s.status='active' AND s.remote_identity=? AND sp.revoked_at IS NULL AND (sp.expires_at IS NULL OR sp.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER))) AND d.id=? AND d.kind=? AND d.status='active' AND d.remote_identity=? AND d.credential_version=? AND ${CONFIG_SCOPE_SQL}=? AND dp.revoked_at IS NULL AND (dp.expires_at IS NULL OR dp.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER))))`,
   ];
   const params: (string | number | null)[] = [
     key.tenant,
@@ -156,7 +156,7 @@ export function historyInventoryGuard(
   ];
   for (const partition of fence.partitions) {
     sql.push(
-      `EXISTS(SELECT 1 FROM partitions h WHERE h.tenant=? AND h.source=? AND h.destination=? AND h.id=? AND h.evidence=? AND h.state='complete' AND h.history_scope IS NOT NULL AND h.expires_at>? AND (SELECT COUNT(*) FROM history_inventory_pages pg JOIN private_data p ON p.tenant=pg.tenant AND p.connection=pg.destination AND p.id=pg.payload_id AND p.kind='history_inventory' WHERE pg.tenant=h.tenant AND pg.source=h.source AND pg.destination=h.destination AND pg.partition=h.id AND p.revoked_at IS NULL AND p.expires_at>?)=?)`,
+      `EXISTS(SELECT 1 FROM partitions h WHERE h.tenant=? AND h.source=? AND h.destination=? AND h.id=? AND h.evidence=? AND h.state='complete' AND h.history_scope IS NOT NULL AND h.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER)) AND (SELECT COUNT(*) FROM history_inventory_pages pg JOIN private_data p ON p.tenant=pg.tenant AND p.connection=pg.destination AND p.id=pg.payload_id AND p.kind='history_inventory' WHERE pg.tenant=h.tenant AND pg.source=h.source AND pg.destination=h.destination AND pg.partition=h.id AND p.revoked_at IS NULL AND p.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER)))=?)`,
     );
     params.push(
       key.tenant,

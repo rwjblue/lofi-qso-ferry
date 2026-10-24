@@ -9,6 +9,7 @@ import {
   type Work,
 } from "../src/intake.ts";
 import type { SourceRecord } from "../src/lofi.ts";
+import { canonical, sha256 } from "../src/security.ts";
 import { sourceReadPolicy } from "../src/source-read-policy.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
 
@@ -495,7 +496,27 @@ test("expiry and cursor gaps start fresh tagged epochs without restarting active
 
 test("a current positive witness in the quarantine page wins over the earlier absence selection", async (t) => {
   const h = await setup(t, true);
-  await h.poll([contact("returns")], [], 0, "repair");
+  // Seed this historical record before installing the modern stage guards.
+  // Current intake requires the later index schema and must only run after
+  // the historical attempt and all migrations have been installed.
+  const retained = contact("returns");
+  const { syncedAtMillis: _stamp, ...inputs } = retained;
+  await h.db.batch([
+    await h.store.putPrivate(
+      "a",
+      "source",
+      "returns-body",
+      "source",
+      retained,
+      h.now + 86_400_000,
+    ),
+    h.store.statement(
+      "INSERT INTO source_work(tenant,source,id,kind,private_id,revision,expires_at,synced_at) VALUES('a','source','returns','qso','returns-body',?,?,?)",
+      await sha256(canonical(inputs)),
+      h.now + 86_400_000,
+      Number(retained.syncedAtMillis),
+    ),
+  ]);
   await h.store.observe(
     {
       tenant: "a",

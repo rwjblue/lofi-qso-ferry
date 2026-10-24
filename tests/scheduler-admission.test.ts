@@ -293,7 +293,22 @@ test("migration and lifecycle triggers preserve order while excluding paused, re
       .run();
     assert.equal((await backgroundSources(h.store, now))[0]?.tenant, "b");
     await h.store.statement("DELETE FROM connections WHERE tenant='b'").run();
-    await h.store.statement("DELETE FROM accounts WHERE id='b'").run();
+    // Retained comparison-key state now protects account history even after
+    // source connections are removed. Deletion cannot silently discard it.
+    await assert.rejects(
+      () => h.store.statement("DELETE FROM accounts WHERE id='b'").run(),
+      /FOREIGN KEY/,
+    );
+    assert.equal(
+      (
+        await h.store
+          .statement(
+            "SELECT count(*) n FROM source_historical_state WHERE tenant='b'",
+          )
+          .first<{ n: number }>()
+      )?.n,
+      1,
+    );
     assert.deepEqual(await backgroundSources(h.store, now), []);
   } finally {
     await h.mf.dispose();

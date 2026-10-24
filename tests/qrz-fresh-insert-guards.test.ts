@@ -46,7 +46,14 @@ async function fixture(
   }
   for (const name of names.filter((name) => name >= "0030_" && name < "0031_"))
     await applyMigration(h.db, name);
-  if (!beforeMigration) await applyMigration(h.db, migration);
+  if (beforeMigration) {
+    // Current canonical intake publishes the comparison index, but this fixture
+    // must still exercise the authorization schema before 0031 is applied.
+    await applyMigration(h.db, "0033_source_historical_index.sql");
+  } else {
+    for (const name of names.filter((name) => name >= migration))
+      await applyMigration(h.db, name);
+  }
   await h.store
     .statement(
       "UPDATE connections SET config=?,credential_version='source-v2' WHERE tenant='a' AND id='source'",

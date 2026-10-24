@@ -40,6 +40,15 @@ SELECT required no explicit wait and observed D1 49 ms past proof creation; its
 extra I/O delays minting, so the earlier clock-failure hypothesis remains unproved.
 The evidence expires and must be refreshed before any future authorized write.
 
+At **09:05:45 UTC**, a temporary Cloudflare Worker preview reproduced the atomic
+proof rejection after successful collection and final drain. The same deployed
+code and original proof guards ran without a clock barrier. Later predicate
+checks passed, with D1 observed 47 ms behind the Worker; clock ordering remains
+an inference, not a confirmed transaction-time cause. QRZ and LoTW follow-ups
+were skipped. The preview was disposed and the production version, assets and
+seven closed controls were independently rechecked. See the
+[cloud diagnostic evidence](docs/evidence-lofi.md) for bounds and limitations.
+
 The prepared collector fix requests 25 records but accepts bounded timestamp
 groups up to 100 per stream, with whole-page validation and unchanged proof/request
 limits. Its initial commit is signed and pushed; the final refinement is committed
@@ -59,6 +68,14 @@ retained contact's canonical fields, full eight-character grid and stored
 certificate/date compatibility. The LoTW route remains `inventory_pending` with
 no first-insert eligibility. No signing or fresh vendor request occurred;
 separate LoTW authority and actual upload/readback acceptance remain open.
+
+The subsequent LoTW review found that contradictory or malformed query records
+could be discarded before an absence decision. The committed local fix validates
+every record against the sent scope, preserves supported historical precision,
+and gives rejected responses fixed diagnostic categories. The full 1,216-test
+release check passed; the diagnostic follow-up passed six focused tests and
+typecheck. Push and deployment remain blocked on 1Password signing. Production
+remains on `02e3dc89`; this change grants no export authority.
 
 The earlier 07:38:44 QRZ-only check observed absence without a source proof;
 the 08:12:53 combined observation above closes that evidence gap for one sample.

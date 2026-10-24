@@ -4,7 +4,7 @@ Initial adapter review: 2026-10-22, before live requests. The dated observations
 below record subsequent read-only vendor evidence; fixture results alone do not
 establish server compatibility or production coverage.
 
-Current checkpoint, 2026-10-24 08:15 UTC: the production all-client baseline,
+Current checkpoint, 2026-10-24 09:05 UTC: the production all-client baseline,
 forward drain and quarantine handoff completed at **06:35:44.881 UTC**. The policy
 is `ready`, with all 218 operations and 4,282 QSO-stream rows (4,500 retained rows)
 witnessed in the current epoch and zero unseen retained rows. There are 4,130
@@ -16,10 +16,32 @@ eligibility and the proof current afterward. This was a protected Node harness
 against production D1, not scheduled Worker or upload acceptance; see
 [the QRZ observation](evidence-qrz.md#current-read-only-readiness-observations-2026-10-24-utc).
 
-The earlier atomic mint failures remain relevant diagnostic history; their clock
-hypothesis is not confirmed by this successful sample. A separate timestamp-group
-response-bound fix is awaiting final signing/deployment. All seven export
-controls remain closed, and current evidence must be refreshed before any write.
+At **09:05:45 UTC**, a one-shot remote Cloudflare preview reproduced the atomic
+`proof_cohort_count` rejection with the exact deployed coordinator and no clock
+barrier. One positive collection and one final canonical drain completed for the
+same two-dependency contact, but no proof was accepted. QRZ and LoTW follow-up
+reads were therefore skipped. The diagnostic recorded 52 database calls and 77
+statements; its eight mutating calls cover ordinary source observations, leases,
+budget accounting and the rolled-back mint attempt. The separate one-shot
+admission lease is outside those helper counters. No vendor export, attempt,
+stage guard or cutover was created.
+
+After rollback, all 21 proof predicates and the outer lease/count checks passed.
+The failed batch lasted 42 ms; the later SELECT observed D1 14 ms past proof
+creation and 47 ms behind the Worker at that SELECT's start. This supports a
+clock-ordering hypothesis without identifying the failed predicate inside the
+transaction. The failure is reproducible in a cloud Worker, not only Node. A
+bounded pre-mint database-clock check is under investigation; proof timestamps,
+expiry and the atomic guards must remain unchanged.
+
+The temporary preview was disposed. Independent before/after checks confirmed
+the original production Worker, all three asset hashes and seven closed export
+controls. This was diagnostic cloud execution, not scheduled production traffic
+or capacity evidence. A preceding local preflight stopped before remote execution
+because bundle comments depended on the working directory; pinning the build
+directory fixed that check without changing the Worker bundle. A separate
+timestamp-group response-bound fix is also awaiting final signing/deployment.
+Current evidence must be refreshed before any write.
 
 The protocol references are [Sidecar's browser registration and operation reads](https://github.com/rwjblue/qso-sidecar/blob/c502cecd068a6a4330afd94458e5636fa17f3a51/src/lofi.rs), [HaLo's transport](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/extensions/sync/ham2k-lofi/src/index.ts), and [its sync engine](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/packages/halo_core/lib/src/sync/sync_engine.dart). These are client implementation evidence; public server retention and replay guarantees were not found.
 

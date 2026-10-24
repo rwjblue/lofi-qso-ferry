@@ -66,3 +66,42 @@ proof cannot turn on LoTW or assert the global source-boundary contract. Keep
 `SOURCE_BOUNDARY_VERIFIED=false` and the export controls closed until an appropriate
 LoTW policy and scoped acceptance procedure have been reviewed. No signature,
 upload, gate change or ARRL acceptance claim follows from this offline check.
+
+## Separate LoTW first-insert plan
+
+The code review identified the following implementation sequence. Response
+validation is implemented locally; authorization remains planned and disabled:
+1. **Implemented, awaiting release:** validate every returned LoTW record against
+   the sent dates and optional station/worked-call filters before evaluating
+   absence. Reject malformed identities without losing valid minute precision,
+   historical modes or unfiltered queries. The sent scope cannot change during
+   transport, and fixed diagnostic categories identify rejected responses.
+2. Add a default-off `lotw_fresh_insert` authorization mode with exact contact and
+   destination scopes, current query credentials, mandatory source proofs and
+   durable identity ownership. Preserve the existing QRZ and source-boundary
+   modes. Migration `0031` constrains two immutable-mode columns; the next
+   migration must preserve existing pins, guards and foreign keys unchanged.
+3. Require fresh complete readback before signing and again before first dispatch,
+   plus current certificate checks and final request validation after vendor
+   admission. Start with a repeated bounded query; quota exhaustion defers work.
+   The new mode must hold nearby records that differ only in mode or lack exact
+   time precision; the existing mode-filtered matcher does not establish this
+   stronger collision policy.
+4. Integrate service admission, health/admin reporting and deployment checks.
+   Test migration rollback, older Worker overlap, proof expiry, credential/scope
+   changes after admission and every uncertain-delivery case before deployment.
+
+Only a currently prepared, known-unsent first insertion could use this mode.
+Submitted, uncertain, missing-state or previously accepted attempts remain
+ineligible regardless of an empty query. An acknowledgement means submitted;
+empty subsequent readback cannot authorize resubmission. See ARRL's
+[query contract](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/) and
+[submission contract](https://lotw.arrl.org/lotw-help/developer-submit-qsos/).
+QRZ release and acceptance remain the first rollout milestone.
+
+The response-validation change passed the full 1,216-test release check, including
+formatting, lint, types and the Worker bundle. A later diagnostic-category addition
+passed six focused tests and typecheck; the final files also passed scoped lint
+and formatting. The change is committed locally but not pushed or deployed while
+1Password signing remains unavailable. No authorization flag or delivery policy
+changed.

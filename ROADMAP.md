@@ -105,12 +105,18 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    proof mint succeeded for one contact at 08:12:53 under its original atomic
    guard. Deploy the reviewed timestamp-expansion collector fix after final
    signing and checks, then repeat collection/drain and complete scheduled Worker
-   validation. The local/D1 clock-admission hypothesis remains unproved. The
-   diagnostic now follows the normal coordinator's context
+   validation. A 09:05 cloud Worker diagnostic reproduced the atomic proof
+   rejection after successful collection/drain; later predicates all passed.
+   Clock ordering remains the leading hypothesis, with a bounded admission fix
+   under investigation. The diagnostic follows the normal coordinator's context
    refresh order, while retaining strict current eligibility and proof checks
    before QRZ. Its earlier zero-candidate precheck was too restrictive; that
    result did not establish a new runtime defect. See the
    [dated source evidence](docs/evidence-lofi.md).
+   The existing scheduled path skips proof creation while exports are disabled;
+   simply waiting for another cron run cannot validate it. Use a separately
+   bounded cloud-runtime diagnostic without opening export gates, and distinguish
+   that result from normal production scheduling and capacity evidence.
    Full-account purge, retention and replay guarantees remain unproved; keep
    `SOURCE_BOUNDARY_VERIFIED=false`.
 2. **Authority separation implemented and deployed.** The independent
@@ -149,7 +155,10 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    certificate/date compatibility for one retained contact. It remains held at
    first-insert classification, with no fresh LoTW absence or upload acceptance.
    QRZ's mode excludes LoTW; define and review separate LoTW authority before its
-   trial while keeping the global source-boundary gate closed.
+   trial while keeping the global source-boundary gate closed. The
+   [LoTW implementation sequence](docs/evidence-lotw.md#separate-lotw-first-insert-plan)
+   starts with strict response-scope validation, then separate immutable
+   authorization, fresh checks at dispatch and default-off service wiring.
 5. **Expand automatic coverage and prove capacity.** Source policy and fresh
    positive evidence must protect main exports, not only the trial. Then review
    historical associations and broaden the scopes deliberately. Measure queue

@@ -48,6 +48,7 @@ async function setup() {
     ROLLOUT_CHECKS_PASSED: "false",
     SOURCE_BOUNDARY_VERIFIED: "false",
     QRZ_FRESH_INSERTS_ENABLED: "false",
+    LOTW_FRESH_INSERTS_ENABLED: "false",
     ROLLOUT_QSO_IDS_JSON: "[]",
     ROLLOUT_DESTINATION_IDS_JSON: "[]",
     LIVE_WRITE_AUTHORIZATION: "",

@@ -1,3 +1,5 @@
+import type { BrowserExportMode } from "./browser-export-mode.ts";
+
 export type AdminPriority = "live" | "background";
 
 export interface AdminWorkCounts {
@@ -149,7 +151,8 @@ export interface AdminOverview {
     liveWriteAuthorized: boolean;
     sourceBoundaryVerified: boolean;
     qrzFreshInsertsEnabled: boolean;
-    exportMode: "source_boundary" | "qrz_fresh_insert" | null;
+    lotwFreshInsertsEnabled: boolean;
+    exportMode: BrowserExportMode;
     rolloutScopeConfigured: boolean;
     rolloutScope: "none" | "limited" | "all";
     destinationScopeConfigured: boolean;

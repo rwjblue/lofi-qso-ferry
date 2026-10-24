@@ -18,6 +18,7 @@ import {
   createApiClient,
 } from "./browser-api.ts";
 import { connectionStatus, vendorName } from "./browser-dashboard.ts";
+import { exportPresentation } from "./browser-export-mode.ts";
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const value = document.getElementById(id);
@@ -518,16 +519,13 @@ function renderOverview(data: AdminOverview) {
       ]),
     "No destination or delivery-attempt attention states in this snapshot.",
   );
+  const exportState = exportPresentation(
+    data.gates.effective,
+    data.gates.exportMode,
+  );
   element("export-state").replaceChildren(
-    pill(
-      data.gates.exportMode === "qrz_fresh_insert"
-        ? "QRZ first inserts"
-        : data.gates.effective
-          ? "Enabled"
-          : "Disabled",
-      false,
-      !data.gates.effective,
-    ),
+    pill(exportState.label, false, !data.gates.effective),
+    node("p", exportState.message, "small"),
   );
   element("export-state").className = "";
   const gates = element("export-gates");
@@ -538,6 +536,7 @@ function renderOverview(data: AdminOverview) {
     ["Live writes authorized", data.gates.liveWriteAuthorized],
     ["Source boundary verified", data.gates.sourceBoundaryVerified],
     ["QRZ first inserts enabled", data.gates.qrzFreshInsertsEnabled],
+    ["LoTW first inserts enabled", data.gates.lotwFreshInsertsEnabled],
     [
       `Contact scope: ${data.gates.rolloutScope}`,
       data.gates.rolloutScopeConfigured,

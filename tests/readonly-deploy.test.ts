@@ -8,12 +8,13 @@ const controls = {
   ROLLOUT_CHECKS_PASSED: "false",
   SOURCE_BOUNDARY_VERIFIED: "false",
   QRZ_FRESH_INSERTS_ENABLED: "false",
+  LOTW_FRESH_INSERTS_ENABLED: "false",
   LIVE_WRITE_AUTHORIZATION: "",
   ROLLOUT_QSO_IDS_JSON: "[]",
   ROLLOUT_DESTINATION_IDS_JSON: "[]",
 };
 
-test("all configured environments default to seven closed export controls", async () => {
+test("all configured environments default to eight closed export controls", async () => {
   const config = JSON.parse(
     await readFile(new URL("../wrangler.jsonc", import.meta.url), "utf8"),
   );

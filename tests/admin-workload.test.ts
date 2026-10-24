@@ -563,7 +563,7 @@ test("trend keeps missing and legacy samples unknown and reports stale partial c
   }
 });
 
-test("first-insert workload mode does not advertise LoTW or QRZ corrections as ready", async (t) => {
+test("independent first-insert modes require their own vendor flag and exclude prior acceptance and corrections", async (t) => {
   const h = await setup();
   t.after(() => h.mf.dispose());
   await h.store
@@ -576,50 +576,132 @@ test("first-insert workload mode does not advertise LoTW or QRZ corrections as r
       secret: "synthetic",
     })
   ).run();
-  for (const id of ["fresh", "correction", "lotw-only"])
-    await h.addSource(id, "waiting");
-  await h.ledger("fresh", "missing_current_identity");
-  await h.ledger("correction", "changed");
-  await h.ledger(
-    "lotw-only",
-    "missing_current_identity",
-    now - 1,
-    null,
-    "lotw",
-  );
-  await h.ledger("fresh", "retained_old_route", now - 1, null, "lotw");
-  await h.ledger("correction", "retained_old_route", now - 1, null, "lotw");
-  await h.ledger("lotw-only", "retained_old_route");
+  for (const destination of ["destination", "lotw"])
+    for (const kind of ["fresh", "correction", "accepted"]) {
+      const id = `${destination}-${kind}`;
+      await h.addSource(id, "waiting");
+      await h.ledger(
+        id,
+        kind === "correction" ? "changed" : "missing_current_identity",
+        now - 1,
+        null,
+        destination,
+      );
+      await h.ledger(
+        id,
+        "retained_old_route",
+        now - 1,
+        null,
+        destination === "lotw" ? "destination" : "lotw",
+      );
+      await h.db
+        .prepare(
+          "UPDATE ledger SET baseline_hash=source_hash,provenance=? WHERE tenant='a' AND qso=? AND destination=?",
+        )
+        .bind(kind === "accepted" ? "adopted" : "unknown", id, destination)
+        .run();
+    }
   Object.assign(h.env, {
     EXPORTS_ENABLED: "true",
     ROLLOUT_CHECKS_PASSED: "true",
     LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
     SOURCE_BOUNDARY_VERIFIED: "false",
-    QRZ_FRESH_INSERTS_ENABLED: "true",
     ROLLOUT_QSO_IDS_JSON: '["*"]',
     ROLLOUT_DESTINATION_IDS_JSON: '["*"]',
   });
-  const view = await getAdminWorkload(h.env, now);
+  for (const [qrz, lotw] of [
+    [true, false],
+    [false, true],
+    [true, true],
+    [false, false],
+  ]) {
+    h.env.QRZ_FRESH_INSERTS_ENABLED = String(qrz);
+    h.env.LOTW_FRESH_INSERTS_ENABLED = String(lotw);
+    const view = await getAdminWorkload(h.env, now);
+    const ready = Number(qrz) + Number(lotw);
+    assert.equal(
+      view.source.reduce((sum, row) => sum + row.ready, 0),
+      ready,
+      `QRZ=${qrz} LoTW=${lotw}`,
+    );
+    assert.equal(
+      view.heldReasons
+        .filter(
+          (row) =>
+            row.reason === (ready ? "source_boundary" : "exports_disabled"),
+        )
+        .reduce((sum, row) => sum + row.count, 0),
+      6 - ready,
+    );
+  }
+});
+
+test("LoTW first-insert history holds preserve scope, quiet and source-proof precedence", async (t) => {
+  const h = await setup();
+  t.after(() => h.mf.dispose());
+  await h.store
+    .statement(
+      "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at) VALUES('a','lotw','lotw','lotw','lotw','active','v1',0)",
+    )
+    .run();
+  await (
+    await h.store.putPrivate("a", "lotw", "v1", "credential", {
+      secret: "synthetic",
+    })
+  ).run();
+  const reasons = [
+    "lotw_fresh_insert_unavailable",
+    "lotw_fresh_insert_history_present",
+    "lotw_fresh_insert_history_unavailable",
+    "lotw_query_required_for_fresh_insert",
+  ];
+  for (const [id, reason, due, state] of [
+    ...reasons.map((reason) => [reason, reason, now - 1, "live_new"] as const),
+    ["eligible", null, now - 1, "live_new"],
+    ["quiet", reasons[0], now + hour, "live_new"],
+    ["proof", "source_export_proof_request_budget", now - 1, "live_new"],
+    ["history", reasons[1], now - 1, "history_ambiguous"],
+  ] as const) {
+    await h.addSource(id, "waiting");
+    await h.ledger(id, state, due, reason, "lotw");
+    await h.ledger(id, "retained_old_route");
+  }
+  Object.assign(h.env, {
+    EXPORTS_ENABLED: "true",
+    ROLLOUT_CHECKS_PASSED: "true",
+    LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
+    SOURCE_BOUNDARY_VERIFIED: "false",
+    QRZ_FRESH_INSERTS_ENABLED: "false",
+    LOTW_FRESH_INSERTS_ENABLED: "true",
+    ROLLOUT_QSO_IDS_JSON: '["*"]',
+    ROLLOUT_DESTINATION_IDS_JSON: '["*"]',
+  });
+  const held = (
+    view: Awaited<ReturnType<typeof getAdminWorkload>>,
+    reason: string,
+  ) =>
+    view.heldReasons
+      .filter((row) => row.reason === reason)
+      .reduce((sum, row) => sum + row.count, 0);
+  const open = await getAdminWorkload(h.env, now);
   assert.equal(
-    view.source.find((row) => row.priority === "background")?.ready,
+    open.source.reduce((sum, row) => sum + row.ready, 0),
     1,
   );
-  assert.equal(
-    view.heldReasons
-      .filter((row) => row.reason === "source_boundary")
-      .reduce((sum, row) => sum + row.count, 0),
-    2,
+  assert.equal(held(open, "delivery_review"), 4);
+  assert.equal(held(open, "quiet"), 1);
+  assert.equal(held(open, "source_validation"), 1);
+  assert.equal(held(open, "history_review"), 1);
+  assert.doesNotMatch(
+    JSON.stringify(open),
+    /synthetic|lotw_fresh_insert_|lotw_query_required/,
   );
-  h.env.QRZ_FRESH_INSERTS_ENABLED = "false";
+  h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination"]';
+  const outOfScope = await getAdminWorkload(h.env, now);
+  assert.equal(held(outOfScope, "rollout_scope"), 7);
+  assert.equal(held(outOfScope, "history_review"), 1);
+  h.env.EXPORTS_ENABLED = "false";
   const closed = await getAdminWorkload(h.env, now);
-  assert.equal(
-    closed.source.find((row) => row.priority === "background")?.ready,
-    0,
-  );
-  assert.equal(
-    closed.heldReasons
-      .filter((row) => row.reason === "exports_disabled")
-      .reduce((sum, row) => sum + row.count, 0),
-    3,
-  );
+  assert.equal(held(closed, "exports_disabled"), 7);
+  assert.equal(held(closed, "history_review"), 1);
 });

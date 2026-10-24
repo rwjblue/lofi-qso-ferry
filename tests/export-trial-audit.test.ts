@@ -439,8 +439,8 @@ test("QRZ trial candidate follows the narrow first-insert view without implying 
     const pending = await h.audit();
     assert.equal(pending.routes[0].counts.first_insert_candidate, 1);
     assert.equal(pending.routes[0].metadataChecksPass, true);
-    assert.equal(pending.routes[1].counts.first_insert_candidate, 0);
-    assert.equal(pending.routes[1].metadataChecksPass, false);
+    assert.equal(pending.routes[1].counts.first_insert_candidate, 1);
+    assert.equal(pending.routes[1].metadataChecksPass, true);
     assert.equal(pending.freshVendorChecksComplete, false);
     assert.equal(pending.sourceExportProofVerified, false);
     assert.equal(pending.writesAuthorized, false);
@@ -450,6 +450,42 @@ test("QRZ trial candidate follows the narrow first-insert view without implying 
         .first<number>("n"),
       0,
     );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("LoTW trial metadata rejects prior acceptance and still requires fresh reads and a source proof", async () => {
+  const h = await setup();
+  try {
+    for (const update of [
+      "baseline_hash='different'",
+      "remote_hash='accepted'",
+      "sent_hash='sent'",
+      "confirmed=1",
+      "provenance='adopted'",
+      "provenance='ferry_created'",
+      "narrative='remote_preserved'",
+    ]) {
+      await h.store
+        .statement(`UPDATE ledger SET ${update} WHERE destination='lotw'`)
+        .run();
+      const report = await h.audit();
+      assert.equal(report.routes[1].counts.first_insert_candidate, 0);
+      assert.equal(report.routes[1].metadataChecksPass, false);
+      assert.equal(report.routes[0].counts.first_insert_candidate, 1);
+      await h.store
+        .statement(
+          "UPDATE ledger SET baseline_hash=source_hash,remote_hash=NULL,sent_hash=NULL,confirmed=0,provenance='unknown',narrative='unbound' WHERE destination='lotw'",
+        )
+        .run();
+    }
+    const report = await h.audit();
+    assert.equal(report.routes[1].counts.first_insert_candidate, 1);
+    assert.equal(report.routes[1].metadataChecksPass, true);
+    assert.equal(report.freshVendorChecksComplete, false);
+    assert.equal(report.sourceExportProofVerified, false);
+    assert.equal(report.writesAuthorized, false);
   } finally {
     await h.mf.dispose();
   }
@@ -532,6 +568,7 @@ test("identity ownership and unresolved attempts stay scoped to the exact tenant
       .run();
     await applyMigration(h.db, "0030_source_export_guards.sql");
     await applyMigration(h.db, "0031_qrz_fresh_insert_authorization.sql");
+    await applyMigration(h.db, "0032_lotw_fresh_insert_authorization.sql");
     await seed(h.store, "foreign");
     await h.store.observe(
       {

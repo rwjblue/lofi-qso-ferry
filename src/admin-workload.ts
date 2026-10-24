@@ -54,7 +54,9 @@ const contextReasons = [
 const quoted = (values: string[]) =>
   values.map((value) => `'${value}'`).join(",");
 
-function gateParameters(env: Env): [number, string, string, number] {
+function gateParameters(
+  env: Env,
+): [number, string, string, number, number, number] {
   try {
     const gates = deliveryGates(env);
     return [
@@ -62,9 +64,11 @@ function gateParameters(env: Env): [number, string, string, number] {
       JSON.stringify(gates.allowedQsoIds),
       JSON.stringify(gates.allowedDestinationIds),
       gates.sourceBoundaryVerified ? 1 : 0,
+      gates.qrzFreshInsertsEnabled ? 1 : 0,
+      gates.lotwFreshInsertsEnabled ? 1 : 0,
     ];
   } catch {
-    return [0, "[]", "[]", 0];
+    return [0, "[]", "[]", 0, 0, 0];
   }
 }
 
@@ -78,7 +82,8 @@ interface SourceGroup {
 
 /** No payload decryption: known metadata holds are conservative, not send permission. */
 export function workloadSourceStatement(env: Env, now: number) {
-  const [enabled, scope, destinations, boundary] = gateParameters(env);
+  const [enabled, scope, destinations, boundary, qrzFresh, lotwFresh] =
+    gateParameters(env);
   return env.DB.prepare(`
     WITH destination_work AS (
       SELECT l.tenant,l.source,l.qso,
@@ -101,14 +106,20 @@ export function workloadSourceStatement(env: Env, now: number) {
             WHEN ?2=0 THEN 'exports_disabled'
             WHEN ?3!='null' AND NOT EXISTS(SELECT 1 FROM json_each(?3) WHERE value=l.qso) THEN 'rollout_scope'
             WHEN ?4!='null' AND NOT EXISTS(SELECT 1 FROM json_each(?4) WHERE value=l.destination) THEN 'rollout_scope'
-            WHEN ?5=0 AND (d.kind!='qrz' OR NOT EXISTS(SELECT 1 FROM qrz_fresh_insert_eligible f
-              WHERE f.tenant=l.tenant AND f.source=l.source AND f.qso=l.qso AND f.destination=l.destination)) THEN 'source_boundary'
+            WHEN ?5=0 AND NOT (
+              d.kind='qrz' AND ?6=1 AND EXISTS(SELECT 1 FROM qrz_fresh_insert_eligible f
+                WHERE f.tenant=l.tenant AND f.source=l.source AND f.qso=l.qso AND f.destination=l.destination)
+              OR d.kind='lotw' AND ?7=1 AND EXISTS(SELECT 1 FROM lotw_fresh_insert_eligible f
+                WHERE f.tenant=l.tenant AND f.source=l.source AND f.qso=l.qso AND f.destination=l.destination)
+            ) THEN 'source_boundary'
             WHEN l.due_at>?1 THEN 'quiet'
             WHEN l.reason GLOB 'source_export_proof_*' THEN 'source_validation'
             WHEN l.reason IN('mapped_qrz_record_missing','qrz_replacement_contract_unverified','qrz_collision_ambiguous',
               'qrz_changed_identity_collision','qrz_fresh_absence_check_found_candidate','lotw_subsecond_precision_unverified',
               'subsecond_export_requires_identity_claim','remote_identity_claim_conflict',
               'lotw_fresh_absence_check_found_candidate','lotw_correction_readback_ambiguous','lotw_historical_readback_unavailable',
+              'lotw_fresh_insert_unavailable','lotw_fresh_insert_history_present',
+              'lotw_fresh_insert_history_unavailable','lotw_query_required_for_fresh_insert',
               'lotw_certificate_selection_ambiguous_or_missing','lotw_certificate_not_currently_valid',
               'lotw_certificate_revoked','lotw_certificate_unknown','source_replay_boundary_unverified') THEN 'delivery_review'
             ELSE 'ready' END
@@ -169,7 +180,7 @@ export function workloadSourceStatement(env: Env, now: number) {
         WHEN state='blocked' AND work_reason NOT IN(${quoted(contextReasons)}) THEN 'blocked' ELSE 'held' END AS classification,
       work_reason AS reason,COUNT(*) AS count,MIN(retained_at) AS oldestRetainedAt
     FROM source_rows GROUP BY effective_priority,classification,work_reason
-  `).bind(now, enabled, scope, destinations, boundary);
+  `).bind(now, enabled, scope, destinations, boundary, qrzFresh, lotwFresh);
 }
 
 export function sourceWorkSummary(groups: SourceGroup[]) {

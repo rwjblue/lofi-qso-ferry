@@ -56,6 +56,7 @@ test("empty overview reports unknown scheduler health and all gates independentl
       liveWriteAuthorized: false,
       sourceBoundaryVerified: false,
       qrzFreshInsertsEnabled: false,
+      lotwFreshInsertsEnabled: false,
       exportMode: null,
       rolloutScopeConfigured: false,
       rolloutScope: "none",
@@ -86,6 +87,29 @@ test("empty overview reports unknown scheduler health and all gates independentl
     assert.equal(firstInserts.gates.effective, true);
     assert.equal(firstInserts.gates.exportMode, "qrz_fresh_insert");
     assert.equal(firstInserts.gates.sourceBoundaryVerified, false);
+    assert.equal(firstInserts.gates.lotwFreshInsertsEnabled, false);
+    h.env.QRZ_FRESH_INSERTS_ENABLED = "false";
+    h.env.LOTW_FRESH_INSERTS_ENABLED = "true";
+    const lotwFirst = await getAdminOverview(h.env, now);
+    assert.equal(lotwFirst.gates.effective, true);
+    assert.equal(lotwFirst.gates.exportMode, "lotw_fresh_insert");
+    assert.equal(lotwFirst.gates.qrzFreshInsertsEnabled, false);
+    assert.equal(lotwFirst.gates.lotwFreshInsertsEnabled, true);
+    assert.equal(lotwFirst.gates.sourceBoundaryVerified, false);
+    h.env.QRZ_FRESH_INSERTS_ENABLED = "true";
+    const both = await getAdminOverview(h.env, now);
+    assert.equal(both.gates.exportMode, "fresh_inserts");
+    assert.equal(both.gates.sourceBoundaryVerified, false);
+    h.env.LIVE_WRITE_AUTHORIZATION = "";
+    const consentClosed = await getAdminOverview(h.env, now);
+    assert.equal(consentClosed.gates.effective, false);
+    assert.equal(consentClosed.gates.exportMode, null);
+    assert.equal(consentClosed.gates.qrzFreshInsertsEnabled, true);
+    assert.equal(consentClosed.gates.lotwFreshInsertsEnabled, true);
+    assert.doesNotMatch(
+      JSON.stringify(both),
+      /private-qso-id|private-destination-id|I_AUTHORIZE_LIVE_VENDOR_WRITES/,
+    );
     h.env.ROLLOUT_QSO_IDS_JSON = "broken-json-secret";
     const invalid = await getAdminOverview(h.env, now);
     assert.equal(invalid.gates.configurationValid, false);

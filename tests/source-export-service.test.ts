@@ -14,11 +14,15 @@ async function fixture(
   ) => void,
   baselineAgeMinutes = 40,
   initialState = "adopted_existing",
+  vendor: "qrz" | "lotw" = "qrz",
 ) {
   const h = await schedulerFixture();
   t.after(() => h.mf.dispose());
   await h.store
-    .statement("UPDATE connections SET status='disabled' WHERE id='lotw'")
+    .statement(
+      "UPDATE connections SET status='disabled' WHERE id=?",
+      vendor === "qrz" ? "lotw" : "destination",
+    )
     .run();
   await h.store
     .statement("UPDATE accounts SET quiet_minutes=20 WHERE id='a'")
@@ -105,7 +109,7 @@ async function fixture(
         tenant: "a",
         source: "source",
         qso: "q1",
-        destination: "destination",
+        destination: vendor === "qrz" ? "destination" : "lotw",
       })
     )
       break;
@@ -116,7 +120,7 @@ async function fixture(
         tenant: "a",
         source: "source",
         qso: "q1",
-        destination: "destination",
+        destination: vendor === "qrz" ? "destination" : "lotw",
       })
     )?.state,
     initialState,
@@ -785,4 +789,100 @@ test("fresh QRZ mode stays closed by default and never collects correction proof
       .first<number>("n"),
     0,
   );
+});
+
+test("fresh LoTW first-insert mode proves and submits only its scoped route with the boundary closed", async (t) => {
+  const h = await fixture(
+    t,
+    (state) => {
+      state.lotwRecords.length = 0;
+    },
+    40,
+    "inventory_pending",
+    "lotw",
+  );
+  h.enable();
+  h.env.SOURCE_BOUNDARY_VERIFIED = "false";
+  h.env.LOTW_FRESH_INSERTS_ENABLED = "true";
+  h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination","lotw"]';
+  await h.store
+    .statement("UPDATE connections SET status='active' WHERE id='destination'")
+    .run();
+  h.qrzRecords.length = 0;
+  const result = await tick(h.env, h.fetcher);
+  assert.equal(result.errors, 0);
+  assert.equal(h.calls.qrzWrites, 0);
+  assert.equal(
+    h.calls.lotwUploads,
+    1,
+    JSON.stringify({
+      result,
+      calls: h.calls,
+      ledger: await h.store.ledger({
+        tenant: "a",
+        source: "source",
+        qso: "q1",
+        destination: "lotw",
+      }),
+    }),
+  );
+  assert.equal(await h.count("attempts"), 1);
+  assert.equal(await h.count("source_export_proofs"), 1);
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) AS n FROM source_cutovers")
+      .first<number>("n"),
+    0,
+  );
+  assert.deepEqual(
+    await h.store
+      .statement(
+        "SELECT a.destination,p.authorization_mode,s.state FROM attempts a JOIN attempt_source_export_proofs p ON p.tenant=a.tenant AND p.attempt=a.id JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id",
+      )
+      .first(),
+    {
+      destination: "lotw",
+      authorization_mode: "lotw_fresh_insert",
+      state: "observed",
+    },
+  );
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT count(*) n FROM attempt_events WHERE state='submitted'",
+      )
+      .first<number>("n"),
+    1,
+  );
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) n FROM attempt_events WHERE state='observed'")
+      .first<number>("n"),
+    1,
+  );
+  assert.equal(h.env.SOURCE_BOUNDARY_VERIFIED, "false");
+});
+
+test("fresh LoTW mode stays closed by default and cannot collect correction proofs", async (t) => {
+  const h = await fixture(t, undefined, 40, "adopted_existing", "lotw");
+  await h.observeDueEdit();
+  h.enable();
+  h.env.SOURCE_BOUNDARY_VERIFIED = "false";
+  for (const flag of ["false", "true"]) {
+    h.env.LOTW_FRESH_INSERTS_ENABLED = flag;
+    await h.store
+      .statement("UPDATE reconciliation_work SET next_due_at=0,selected_at=0")
+      .run();
+    await h.store
+      .statement("UPDATE source_work SET processed_at=0 WHERE kind='qso'")
+      .run();
+    const before = h.calls.sourceSync;
+    const result = await tick(h.env, h.fetcher);
+    assert.equal(result.errors, 0);
+    assert.equal(h.calls.sourceSync - before, 1);
+    assert.equal(await h.count("source_export_proofs"), 0);
+    assert.equal(await h.count("attempts"), 0);
+    assert.equal(h.calls.lotwUploads, 0);
+    assert.equal(h.calls.qrzWrites, 0);
+  }
 });

@@ -100,7 +100,7 @@ SELECT r.route_slot,r.vendor,
  (SELECT COUNT(*) FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=r.destination AND l.due_at<=?8) quiet_period_complete,
  (SELECT COUNT(*) FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=r.destination
    AND ((r.vendor='qrz' AND EXISTS(SELECT 1 FROM qrz_fresh_insert_eligible f WHERE f.tenant=l.tenant AND f.source=l.source AND f.qso=l.qso AND f.destination=l.destination))
-    OR (r.vendor='lotw' AND l.state IN('missing_current_identity','live_new') AND l.remote_id IS NULL AND l.sent_hash IS NULL AND l.provenance!='adoption_conflict'))) first_insert_candidate,
+    OR (r.vendor='lotw' AND EXISTS(SELECT 1 FROM lotw_fresh_insert_eligible f WHERE f.tenant=l.tenant AND f.source=l.source AND f.qso=l.qso AND f.destination=l.destination)))) first_insert_candidate,
  (SELECT COUNT(*) FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=?1 AND a.source=?2 AND a.qso=?3 AND a.destination=r.destination AND s.state NOT IN('delivered','observed','rejected','cancelled')) unresolved_attempts,
  (SELECT COUNT(*) FROM attempts a LEFT JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=?1 AND a.source=?2 AND a.qso=?3 AND a.destination=r.destination AND s.attempt IS NULL) attempt_states_missing,
  (SELECT COUNT(*) FROM destination_identity_claims c WHERE c.tenant=?1 AND c.destination=r.destination AND c.vendor=r.vendor AND c.identity_hash=r.identity_hash AND (c.source!=?2 OR c.qso!=?3)) competing_claims,

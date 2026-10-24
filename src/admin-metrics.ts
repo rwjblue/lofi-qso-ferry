@@ -143,6 +143,7 @@ function gatesSummary(env: Env): AdminOverview["gates"] {
       String(env.LIVE_WRITE_AUTHORIZATION) === "I_AUTHORIZE_LIVE_VENDOR_WRITES",
     sourceBoundaryVerified: String(env.SOURCE_BOUNDARY_VERIFIED) === "true",
     qrzFreshInsertsEnabled: String(env.QRZ_FRESH_INSERTS_ENABLED) === "true",
+    lotwFreshInsertsEnabled: String(env.LOTW_FRESH_INSERTS_ENABLED) === "true",
   };
   try {
     const gates = deliveryGates(env);

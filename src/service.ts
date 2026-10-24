@@ -72,6 +72,7 @@ import {
   loadCurrentSourceExportProofs,
   loadCurrentSourcePresenceScope,
   loadSourceExportSnapshots,
+  lotwFreshInsertCurrent,
   purgeExpiredSourceExportProofs,
   qrzFreshInsertCurrent,
   type SourceExportSnapshot,
@@ -151,11 +152,13 @@ export function deliveryGates(env: Env): DeliveryGates {
       String(env.LIVE_WRITE_AUTHORIZATION) === "I_AUTHORIZE_LIVE_VENDOR_WRITES",
     sourceBoundaryVerified: String(env.SOURCE_BOUNDARY_VERIFIED) === "true",
     qrzFreshInsertsEnabled: String(env.QRZ_FRESH_INSERTS_ENABLED) === "true",
+    lotwFreshInsertsEnabled: String(env.LOTW_FRESH_INSERTS_ENABLED) === "true",
   };
 }
 export function exportsEffective(gates: DeliveryGates): boolean {
   return (
-    deliveryMode(gates, "qrz") !== null &&
+    (deliveryMode(gates, "qrz") !== null ||
+      deliveryMode(gates, "lotw") !== null) &&
     (gates.allowedQsoIds === null || (gates.allowedQsoIds?.length ?? 0) > 0) &&
     (gates.allowedDestinationIds === null ||
       (gates.allowedDestinationIds?.length ?? 0) > 0)
@@ -163,7 +166,12 @@ export function exportsEffective(gates: DeliveryGates): boolean {
 }
 /** Public status reports the enabled mode without claiming source completeness. */
 export function exportAuthorizationMode(gates: DeliveryGates) {
-  return exportsEffective(gates) ? deliveryMode(gates, "qrz") : null;
+  if (!exportsEffective(gates)) return null;
+  const qrz = deliveryMode(gates, "qrz");
+  const lotw = deliveryMode(gates, "lotw");
+  if (qrz === "source_boundary") return qrz;
+  if (qrz && lotw) return "fresh_inserts";
+  return qrz ?? lotw;
 }
 export function routeDeliveryMode(
   gates: DeliveryGates,
@@ -179,6 +187,19 @@ export function routeDeliveryMode(
   )
     return null;
   return deliveryMode(gates, destination.kind);
+}
+
+/** Structural eligibility only; preparation still requires fresh vendor reads. */
+async function freshInsertRouteCurrent(
+  store: Store,
+  gates: DeliveryGates,
+  key: LedgerKey,
+  destination: Pick<Connection, "id" | "kind">,
+) {
+  const mode = routeDeliveryMode(gates, key.qso, destination);
+  if (mode === "qrz_fresh_insert") return qrzFreshInsertCurrent(store, key);
+  if (mode === "lotw_fresh_insert") return lotwFreshInsertCurrent(store, key);
+  return false;
 }
 
 export function routeMatches(
@@ -304,7 +325,8 @@ async function reconcileContact(
     inventory.state === "ready" &&
     remote.length === 0 &&
     routeDeliveryMode(gates, key.qso, destination) !== null &&
-    (gates.sourceBoundaryVerified || (await qrzFreshInsertCurrent(store, key)))
+    (gates.sourceBoundaryVerified ||
+      (await freshInsertRouteCurrent(store, gates, key, destination)))
   ) {
     let raw: {
       apiKey?: string;
@@ -381,10 +403,7 @@ async function reconcileContact(
   if (
     outcome.state === "missing_current_identity" &&
     !gates.sourceBoundaryVerified &&
-    !(
-      routeDeliveryMode(gates, key.qso, destination) === "qrz_fresh_insert" &&
-      (await qrzFreshInsertCurrent(store, key))
-    )
+    !(await freshInsertRouteCurrent(store, gates, key, destination))
   )
     outcome = {
       ...outcome,
@@ -688,11 +707,12 @@ async function reconcileReadOnlyBatch(
               if (
                 outcome.state === "missing_current_identity" &&
                 !gates.sourceBoundaryVerified &&
-                !(
-                  routeDeliveryMode(gates, key.qso, route.destination) ===
-                    "qrz_fresh_insert" &&
-                  (await qrzFreshInsertCurrent(store, key))
-                )
+                !(await freshInsertRouteCurrent(
+                  store,
+                  gates,
+                  key,
+                  route.destination,
+                ))
               )
                 outcome = {
                   ...outcome,
@@ -856,6 +876,7 @@ export async function tick(
     JSON.stringify({
       sourceBoundaryVerified: gates.sourceBoundaryVerified,
       qrzFreshInsertsEnabled: gates.qrzFreshInsertsEnabled === true,
+      lotwFreshInsertsEnabled: gates.lotwFreshInsertsEnabled === true,
       exportsEffective: exportsEffective(gates),
       allowedQsoIds: gates.allowedQsoIds,
       allowedDestinationIds: gates.allowedDestinationIds,
@@ -956,7 +977,9 @@ export async function tick(
          JOIN ledger l ON l.tenant=?2 AND l.source=?3 AND l.qso=json_extract(candidate.value,'$.qso') AND l.destination=json_extract(candidate.value,'$.destination') AND l.generation=json_extract(candidate.value,'$.generation')
          JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination AND d.status='active'
          WHERE l.due_at<=?4 AND l.state IN('missing_current_identity','changed','live_new') AND l.provenance!='adoption_conflict'
-          AND (?5=1 OR EXISTS(SELECT 1 FROM qrz_fresh_insert_eligible f WHERE f.tenant=l.tenant AND f.source=l.source AND f.qso=l.qso AND f.destination=l.destination))
+          AND (?5=1
+            OR (?6=1 AND d.kind='qrz' AND EXISTS(SELECT 1 FROM qrz_fresh_insert_eligible f WHERE f.tenant=l.tenant AND f.source=l.source AND f.qso=l.qso AND f.destination=l.destination))
+            OR (?7=1 AND d.kind='lotw' AND EXISTS(SELECT 1 FROM lotw_fresh_insert_eligible f WHERE f.tenant=l.tenant AND f.source=l.source AND f.qso=l.qso AND f.destination=l.destination)))
           AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND s.state NOT IN('delivered','observed','rejected','cancelled') AND (s.state!='prepared' OR EXISTS(SELECT 1 FROM attempt_source_export_proofs_current pin WHERE pin.tenant=s.tenant AND pin.attempt=s.attempt))) ORDER BY CAST(candidate.key AS INTEGER)`,
             JSON.stringify(
               routes.map(({ contact, destination }) => ({
@@ -969,6 +992,8 @@ export async function tick(
             source.id,
             at,
             gates.sourceBoundaryVerified ? 1 : 0,
+            gates.qrzFreshInsertsEnabled ? 1 : 0,
+            gates.lotwFreshInsertsEnabled ? 1 : 0,
           )
           .all<{ qso: string; destination: string; generation: string }>()
       ).results;

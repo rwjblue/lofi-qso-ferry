@@ -1,6 +1,6 @@
 # LoTW actual-contact preflight evidence
 
-Updated **2026-10-24 18:37 EDT**. Production exports remain disabled. This page
+Updated **2026-10-24 18:43 EDT**. Production exports remain disabled. This page
 records an unsigned snapshot check and a later fresh query for one actual contact. The
 [signing evidence](evidence-signing.md) separately documents synthetic signatures,
 released TQSL source and local Worker compatibility; the
@@ -25,6 +25,43 @@ counter stayed **zero**: the local transport path stopped before a GET reached
 the vendor. The reported category is `unexpected_failure`; a separate diagnostic
 is tracing the local guard without changing its policy or bounds. The held run's
 final proof/readiness flags are false, and it establishes no three-day absence.
+
+The separate, independently reviewed diagnostic repeated the same-contact
+current planning and normal proof collection. At **22:42:33.579 UTC**, it passed:
+one positive collection plus the mandatory final drain minted a new proof at
+**22:42:23.747 UTC**, and **one actual LoTW GET** returned a valid complete empty
+report for the preceding/current/following UTC dates and exact own/worked calls.
+The same proof remained current at the final check, with **288,387 ms** left;
+strict metadata and complete ownership checks passed before and after admission
+and response. The inner run took **15.485 seconds / 137 D1 RPCs / 171 SQL
+statements**, excluding proxy startup and independent attestation. All eight
+controls were closed at the final **22:42:32.425 UTC** attestation and again at
+**22:43:01.478 UTC**.
+
+Its fixed local trace recorded no failure. The earlier pre-GET failure did not
+recur; its cause remains unknown. The diagnostic added bounded observation only,
+without changing guards, deadlines, SQL batches, source/vendor request caps or
+retry behavior. No prior source proof was reused. This is finite host diagnostic
+evidence, not scheduled Worker execution or standing absence authority. Its
+`sourceExportProofVerified` and `completeEmptyThreeDayReport` are true;
+`freshVendorChecksComplete`, certificate-status, signing, ARRL-upload acceptance,
+global source-boundary and write-authority flags remain false.
+
+The **22:43:13.471 UTC** post-diagnostic backup verifies a 42,862,933-byte snapshot,
+36 migrations, all 3,327 exact ownership ciphertext records, three credentials
+and the tenant key. One proof and its matching retention row are preserved;
+attempts, pins, cutovers and raw historical references remain zero. Integrity/FK
+checks and two isolated quarantines pass. The snapshot has 2,803 QRZ
+owners/markers, a clean 4,146-contact index and complete 9,981-input ownership
+coverage.
+
+The separate **22:43:58.546 UTC** immutable comparison against the **21:28 UTC
+baseline** preserves every original field, including ciphertext and creation
+time, of 3,327 claims, 2,689 QRZ owners and markers, and 3,294 exact ownership
+records. No prior row changed or disappeared; additions are 114 QRZ
+owners/markers and 33 exact records. This comparison uses that earlier baseline,
+not the 22:29 pre-run snapshot. Neither operation restores production or permits
+a vendor write.
 
 All eight controls remained closed. No signing, preparation, attempt, upload or
 vendor mutation occurred. The verified **22:29:48.108 UTC** pre-run backup has

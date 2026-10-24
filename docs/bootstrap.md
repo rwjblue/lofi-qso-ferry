@@ -41,6 +41,17 @@ QRZ's [file-import duplicate rules](https://www.qrz.com/docs/logbook30/adif-impo
 
 Compare operating location after identifying candidates. Wrong grid, state, county, or DXCC means an existing-record mismatch, not a missing QSO. Missing evidence is not equality. Only compare fields the destination supports and exposes, using explicit precision rules; unsupported fields cannot be verified there. Extra remote fields and narrative differences are not, by themselves, historical errors.
 
+For LoTW historical association, two valid four-, six- or eight-character grids
+are compatible when either is a prefix of the other. Require one exact normalized
+contact identity with a valid six-digit time and agreement on every other current
+frequency/location comparison. Preserve both original grid values and the normal
+durable ownership guards. This identifies an existing contact; it does not claim
+that the full station projection was transmitted or accepted. Upload receipt
+verification still compares the exact supported projection. A different grid
+prefix, invalid/missing grid, competing identity or other field conflict remains
+held. CQ/ITU zone values use their valid numeric values, including ADIF-permitted
+leading zeroes, rather than textual formatting alone.
+
 Two source UUIDs must not silently claim one remote record. Remote records without a source match remain untouched. Never fabricate source UUIDs for remote history or upload a marker merely to establish ownership.
 
 ## Minimal adoption ledger

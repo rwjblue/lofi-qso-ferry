@@ -1,5 +1,70 @@
 # Reconciliation exceptions and capacity
 
+## Precision matching investigation (2026-10-24)
+
+The 08:16 EDT production reason histogram identifies a systematic matching-policy
+problem. `history_ambiguous` combines competing identities with ordinary differences
+in recorded precision. It must not be interpreted as a count of duplicate contacts
+or contacts that each require manual review.
+
+| Destination | Held reason                                | Destination rows |
+| ----------- | ------------------------------------------ | ---------------: |
+| LoTW        | Compatible lower grid precision            |            2,858 |
+| LoTW        | Frequency finer than the query's precision |               93 |
+| LoTW        | Other ambiguity or unavailable location    |                6 |
+| LoTW        | Grid differs or is absent                  |              161 |
+| QRZ         | Minute-only destination time               |            1,578 |
+| QRZ         | Generic nonunique/exact-identity failure   |            1,853 |
+| QRZ         | Other ambiguity or unavailable location    |               26 |
+
+These are per-destination rows at one snapshot, not disjoint source-contact counts.
+The query classifies persisted reasons; it does not independently revalidate every
+source/remote pair. Earlier protected observations already reproduced an exact
+LoTW identity with a matching shorter grid prefix and QRZ records with minute-only
+times. The generic QRZ category still needs a comparison-field breakdown.
+
+The implementation used the same full-detail expectations for historical
+association and proof of a submitted payload. A valid shorter Maidenhead grid
+describes a region containing its longer extension; it does not establish an
+identical full station projection. Those distinctions matter for upload receipts,
+but compatible grid precision alone should not prevent recognizing a uniquely
+identified existing LoTW contact. See the [ADIF grid type](https://adif.org/316/ADIF_316.htm#GridSquare)
+and [LoTW query fields](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/).
+
+The narrow correction requires one exact normalized LoTW identity, a valid
+six-digit time, valid four-, six- or eight-character grids with either value a
+prefix of the other, and agreement on every other currently compared field.
+It retains the original source and remote values, source baseline and remote hash,
+and the existing atomic ownership/collision protections. It establishes a
+read-only historical association. Exact signing, submission observation and
+first-insert checks retain their existing requirements. A matcher-policy version
+wakes held work once so the normal worker can reconsider it.
+
+A protected offline audit of all 93 frequency-held contacts in the hash-verified
+11:48 UTC backup found 87 binary-conversion artifacts and six genuine finer-
+precision values. The numeric kHz-to-MHz division can stringify a one-decimal
+kHz input with 15 or 16 MHz decimal places. Decimal unit shifting restores the
+source's meaningful precision without rounding: 79 cases have four MHz decimals,
+eight have five, and six retain six. All 93 source projections matched their
+saved ledger generations. No remote request or production write occurred.
+The correction must retain those six genuine precision holds.
+
+A separate offline QRZ audit projected 20 evenly spaced generic-identity holds
+successfully against their saved source generations. Every source time had six
+digits; 18 grids had eight characters and two had six. The snapshot contained no
+retained history pages or scoped partitions, so it could not reconstruct remote
+candidate comparisons. A generic reason can hide compound differences: the
+minute-only diagnostic currently applies only if every operating field also
+matches. It does not establish that multiple candidates were actually found.
+
+QRZ minute precision needs a separate historical-association design. Appending
+seconds would fabricate precision, and the outbound identity-claim helper correctly
+rejects four-digit times. The future path must preserve the actual LOGID and
+timestamp precision, exclude competing source and remote candidates, and reserve
+the historical association durably without granting insert/correction authority.
+The generic identity category and incomplete field evidence remain investigation
+work. No production flag or held row was changed by the histogram query.
+
 Investigation date: 2026-10-23. Production revision at investigation start:
 `634517d0`. Exports remain disabled. This report separates observed evidence,
 implementation work and remaining acceptance checks; it does not authorize

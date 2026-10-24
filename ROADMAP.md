@@ -4,6 +4,18 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-24 UTC)
 
+**Priority update, 08:16 EDT:** investigate and correct systematic historical
+matching holds before preparing the first-export packet. The current histogram
+attributes 2,858 of 2,957 LoTW ambiguities to compatible lower grid precision;
+QRZ has 1,578 minute-only-time holds and 1,853 generic identity failures.
+These are not established duplicate-contact counts. A narrow LoTW grid-compatible
+association correction is validated locally. An offline audit attributes 87 of
+93 frequency holds to a kHz conversion artifact; its correction preserves six
+genuine finer-precision holds. QRZ needs a distinct historical
+association path and source/remote uniqueness checks. See the
+[matching investigation](docs/reconciliation-investigation.md#precision-matching-investigation-2026-10-24).
+Exports remain disabled.
+
 Signed revision `12f636b312c9192b755188faf06d66171d485da5` deployed read-only at **2026-10-24 07:59 EDT**
 (`2026-10-24T11:59:10.901859Z`), as Worker `bd6ff427-351d-463c-9b7d-4395e256117d` at 100% traffic.
 All **1,338 tests** and required release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40090915890).

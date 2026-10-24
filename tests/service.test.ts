@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { serializeAdifRecord } from "../src/adif.ts";
+import { HISTORY_READ_RETRY_DELAY } from "../src/history-inventory.ts";
 import type { SourceRecord } from "../src/lofi.ts";
 import { tick } from "../src/service.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
@@ -180,10 +181,19 @@ test("read-only reconciliation retries fractional source timestamps and adopts w
     assert.equal(first.errors, 2);
     h.errors.qrz = false;
     h.errors.lotw = false;
-    const retry = await tick(h.env, h.fetcher, FIXTURE_NOW + 5 * 60_000);
+    const reads = { qrz: h.calls.qrzReads, lotw: h.calls.lotwQueries };
+    const held = await tick(h.env, h.fetcher, FIXTURE_NOW + 5 * 60_000);
+    assert.equal(held.errors, 0);
+    assert.equal(h.calls.qrzReads, reads.qrz);
+    assert.equal(h.calls.lotwQueries, reads.lotw);
+    const retry = await tick(
+      h.env,
+      h.fetcher,
+      FIXTURE_NOW + HISTORY_READ_RETRY_DELAY,
+    );
     assert.equal(retry.errors, 0);
-    assert(h.calls.qrzReads > 0);
-    assert(h.calls.lotwQueries > 0);
+    assert(h.calls.qrzReads > reads.qrz);
+    assert(h.calls.lotwQueries > reads.lotw);
     for (const destination of ["destination", "lotw"]) {
       const row = (await h.store.ledger(key(destination)))!;
       assert.equal(row.state, "adopted_existing");
@@ -480,7 +490,8 @@ test("retained background history reconciles after source polling and before a s
         FIXTURE_NOW,
       )
       .run();
-    wall += 5 * 60_000;
+    // Retry the retained lane only after its real failed-read hold is due.
+    wall += HISTORY_READ_RETRY_DELAY;
     const phases: string[] = [];
     let syncs = 0;
     const fetcher: typeof fetch = async (input, init) => {
@@ -1881,7 +1892,7 @@ test("background lanes rotate across deadlines and failures while source polling
       "rescan",
       "reread",
     ].entries()) {
-      wall = FIXTURE_NOW + (index + 1) * 5 * 60_000;
+      wall = FIXTURE_NOW + HISTORY_READ_RETRY_DELAY + index * 5 * 60_000;
       const phases: string[] = [];
       let syncs = 0;
       const fetcher: typeof fetch = async (input, init) => {
@@ -2102,7 +2113,7 @@ test("a slow forward-source background batch cannot strand a paired account's in
       }
       return h.fetcher(input, init);
     };
-    wall = FIXTURE_NOW + 300_000;
+    wall = FIXTURE_NOW + HISTORY_READ_RETRY_DELAY;
     const first = await tick(h.env, transport, wall);
     assert.deepEqual(phases, ["forward-poll", "slow-history"]);
     assert.equal(first.stopReason, "deadline");
@@ -2117,7 +2128,7 @@ test("a slow forward-source background batch cannot strand a paired account's in
       )?.last_turn,
       0,
     );
-    wall = FIXTURE_NOW + 600_000;
+    wall = FIXTURE_NOW + HISTORY_READ_RETRY_DELAY + 300_000;
     phases.length = 0;
     // A new invocation reconstructs all in-memory state. Its live pair still
     // starts with the forward account, but durable background order starts b.

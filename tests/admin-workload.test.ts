@@ -225,6 +225,92 @@ test("workload distinguishes actionable inventory, gate/quiet/in-flight holds an
   }
 });
 
+test("current source verification holds remain distinct from ready work and preserve earlier hold precedence", async () => {
+  const h = await setup(true);
+  try {
+    const proofReasons = [
+      "source_export_proof_unavailable",
+      "source_export_proof_request_budget",
+      "source_export_proof_dependencies_changed",
+    ];
+    const actionableStates = [
+      "missing_current_identity",
+      "changed",
+      "live_new",
+    ];
+    for (const [index, reason] of proofReasons.entries()) {
+      await h.addSource(reason, "waiting");
+      await h.ledger(reason, actionableStates[index]!, now - 1, reason);
+    }
+    for (const [id, state, reason, dueAt] of [
+      ["eligible", "live_new", null, now - 1],
+      ["lookalike", "live_new", "sourceXexportXproof_unavailable", now - 1],
+      ["inventory", "inventory_pending", proofReasons[0], now - 1],
+      ["quiet", "live_new", proofReasons[0], now + hour],
+      ["history", "history_mismatch", proofReasons[0], now - 1],
+      ["flight", "live_new", proofReasons[0], now - 1],
+    ] as const) {
+      await h.addSource(id, "waiting");
+      await h.ledger(id, state, dueAt, reason);
+    }
+    await h.attempt("flight-proof", "flight");
+    await applyMigration(h.db, "0030_source_export_guards.sql");
+    const count = (
+      view: Awaited<ReturnType<typeof getAdminWorkload>>,
+      reason: string,
+    ) =>
+      view.heldReasons
+        .filter((row) => row.reason === reason)
+        .reduce((total, row) => total + row.count, 0);
+    const closed = await getAdminWorkload(h.env, now);
+    assert.equal(count(closed, "exports_disabled"), 6);
+    assert.equal(count(closed, "source_validation"), 0);
+
+    Object.assign(h.env, {
+      EXPORTS_ENABLED: "true",
+      ROLLOUT_CHECKS_PASSED: "true",
+      LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
+      SOURCE_BOUNDARY_VERIFIED: "true",
+      ROLLOUT_QSO_IDS_JSON: '["*"]',
+      ROLLOUT_DESTINATION_IDS_JSON: '["*"]',
+    });
+    const open = await getAdminWorkload(h.env, now);
+    assert.equal(count(open, "source_validation"), proofReasons.length);
+    assert.equal(count(open, "delivery_review"), 0);
+    assert.equal(count(open, "quiet"), 1);
+    assert.equal(count(open, "history_review"), 1);
+    assert.equal(count(open, "in_flight"), 1);
+    assert.equal(
+      open.source.reduce((total, row) => total + row.ready, 0),
+      3,
+    );
+    assert.equal(
+      open.source.reduce((total, row) => total + row.blocked, 0),
+      0,
+    );
+    assert.ok(
+      open.heldReasons
+        .filter((row) => row.reason === "source_validation")
+        .every(
+          (row) => row.label === "Waiting for current source verification",
+        ),
+    );
+    assert.ok(!JSON.stringify(open).includes("source_export_proof_"));
+
+    h.env.ROLLOUT_QSO_IDS_JSON = '["another-contact"]';
+    const qsoScoped = await getAdminWorkload(h.env, now);
+    assert.equal(count(qsoScoped, "rollout_scope"), 6);
+    assert.equal(count(qsoScoped, "source_validation"), 0);
+    h.env.ROLLOUT_QSO_IDS_JSON = '["*"]';
+    h.env.ROLLOUT_DESTINATION_IDS_JSON = '["another-destination"]';
+    const destinationScoped = await getAdminWorkload(h.env, now);
+    assert.equal(count(destinationScoped, "rollout_scope"), 6);
+    assert.equal(count(destinationScoped, "source_validation"), 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
 test("identity review holds remain visible with open gates and after route or retention state changes", async () => {
   const h = await setup();
   try {

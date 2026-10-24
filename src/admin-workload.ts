@@ -14,6 +14,7 @@ const labels: Record<string, string> = {
   operation_context_incomplete: "Operation context incomplete — reread needed",
   source_payload_expired: "Source input unavailable — reread needed",
   source_context: "Waiting for complete source context",
+  source_validation: "Waiting for current source verification",
   source_boundary: "Waiting for verified source replay boundary",
   reread_required: "Missing from operation reread — review needed",
   no_destination: "No active destination connected",
@@ -100,6 +101,7 @@ export function workloadSourceStatement(env: Env, now: number) {
             WHEN ?3!='null' AND NOT EXISTS(SELECT 1 FROM json_each(?3) WHERE value=l.qso) THEN 'rollout_scope'
             WHEN ?4!='null' AND NOT EXISTS(SELECT 1 FROM json_each(?4) WHERE value=l.destination) THEN 'rollout_scope'
             WHEN l.due_at>?1 THEN 'quiet'
+            WHEN l.reason GLOB 'source_export_proof_*' THEN 'source_validation'
             WHEN l.reason IN('mapped_qrz_record_missing','qrz_replacement_contract_unverified','qrz_collision_ambiguous',
               'qrz_changed_identity_collision','qrz_fresh_absence_check_found_candidate','lotw_subsecond_precision_unverified',
               'subsecond_export_requires_identity_claim','remote_identity_claim_conflict',

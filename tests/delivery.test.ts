@@ -437,6 +437,7 @@ test("saved test payloads never reach either vendor and only unsent attempts are
     }
   }
   await applyMigration(h.db, "0030_source_export_guards.sql");
+  await applyMigration(h.db, "0031_qrz_fresh_insert_authorization.sql");
   for (const { id, state, payload } of saved) {
     assert.deepEqual(
       await dispatchAttempt(h.store, "a", id, gates, {

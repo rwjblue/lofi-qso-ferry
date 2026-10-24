@@ -33,10 +33,13 @@ import {
   type SigningCredential,
 } from "./signing.ts";
 import {
+  attemptSourceExportAuthorizationMode,
   attemptSourceExportProofCurrent,
   attemptSourceExportProofGuard,
   loadCurrentSourceExportProof,
+  qrzFreshInsertCurrent,
   type SourceExportAuthorization,
+  type SourceExportAuthorizationMode,
 } from "./source-export-proofs.ts";
 import {
   type Connection,
@@ -60,6 +63,7 @@ export interface DeliveryGates {
   exportsEnabled: boolean;
   liveWriteAuthorized: boolean;
   sourceBoundaryVerified: boolean;
+  qrzFreshInsertsEnabled?: boolean;
   allowedQsoIds?: string[] | null;
   allowedDestinationIds?: string[] | null;
 }
@@ -170,6 +174,51 @@ const enabled = (gates: DeliveryGates) =>
   gates.exportsEnabled &&
   gates.liveWriteAuthorized &&
   gates.sourceBoundaryVerified;
+/** A fresh QRZ capability never asserts source-wide replay or LoTW authority. */
+export function deliveryMode(
+  gates: DeliveryGates,
+  kind: "qrz" | "lotw",
+): SourceExportAuthorizationMode | null {
+  if (!gates.exportsEnabled || !gates.liveWriteAuthorized) return null;
+  if (gates.sourceBoundaryVerified) return "source_boundary";
+  return kind === "qrz" && gates.qrzFreshInsertsEnabled === true
+    ? "qrz_fresh_insert"
+    : null;
+}
+function modeEnabled(
+  gates: DeliveryGates,
+  mode: SourceExportAuthorizationMode,
+): boolean {
+  return (
+    gates.exportsEnabled &&
+    gates.liveWriteAuthorized &&
+    (mode === "source_boundary"
+      ? gates.sourceBoundaryVerified
+      : mode === "qrz_fresh_insert" && gates.qrzFreshInsertsEnabled === true)
+  );
+}
+function scoped(
+  gates: DeliveryGates,
+  key: LedgerKey,
+  requireDefined = false,
+): boolean {
+  return (
+    (!requireDefined ||
+      (gates.allowedQsoIds !== undefined &&
+        gates.allowedDestinationIds !== undefined)) &&
+    (!gates.allowedQsoIds || gates.allowedQsoIds.includes(key.qso)) &&
+    (!gates.allowedDestinationIds ||
+      gates.allowedDestinationIds.includes(key.destination))
+  );
+}
+function freshInsertPayload(payload: PreparedPayload): boolean {
+  return (
+    payload.kind === "qrz" &&
+    payload.operation === "insert" &&
+    payload.mappedLogId === null &&
+    payload.priorIdentityEvidenceId === undefined
+  );
+}
 async function lotwAttemptIdentity(
   station: LotwStation,
   contact: LotwContact,
@@ -483,7 +532,11 @@ function qrzClient(
   deps: DeliveryDependencies,
   scope: { source: Connection | null; destination: Connection },
   beforeWrite?: () => Promise<boolean>,
-  beforeMutationTransport?: () => Promise<void>,
+  beforeMutationTransport?: (
+    input: RequestInfo | URL,
+    init: RequestInit | undefined,
+  ) => Promise<void>,
+  authorizationMode: SourceExportAuthorizationMode = "source_boundary",
 ): QrzClient {
   if (!credential.apiKey) throw new Error("QRZ credential is unavailable");
   const currentTime = deliveryClock(deps.now);
@@ -494,9 +547,19 @@ function qrzClient(
     currentTime,
   );
   const transport: typeof fetch = async (input, init) => {
-    const action = new URLSearchParams(String(init?.body)).get("ACTION");
-    if (action === "INSERT" || action === "DELETE")
-      await beforeMutationTransport?.();
+    const form = new URLSearchParams(String(init?.body));
+    const action = form.get("ACTION");
+    if (
+      action === "INSERT" ||
+      action === "DELETE" ||
+      (authorizationMode === "qrz_fresh_insert" &&
+        (form.getAll("ACTION").length !== 1 ||
+          !["FETCH", "STATUS", "COUNT"].includes(action ?? "")))
+    ) {
+      if (authorizationMode === "qrz_fresh_insert" && !beforeMutationTransport)
+        throw new UnsentAuthorizationError();
+      await beforeMutationTransport?.(input, init);
+    }
     return (deps.fetcher ?? fetch)(input, init);
   };
   return new QrzClient(credential.apiKey, {
@@ -505,7 +568,7 @@ function qrzClient(
         priority: deps.priority,
         now: currentTime(),
       })(input, init),
-    writesEnabled: enabled(gates),
+    writesEnabled: modeEnabled(gates, authorizationMode),
     replacementContractVerified: config.replacementContractVerified === true,
     beforeWrite: async () =>
       (await neighborhoodFallback.isCurrent()) &&
@@ -657,6 +720,20 @@ export async function prepareDue(
     return { state: "blocked", reason: "connection_inactive" };
   if (connection.kind !== "qrz" && connection.kind !== "lotw")
     return { state: "blocked", reason: "invalid_destination" };
+  // Preserve the legacy boundary path; the independent fresh capability is
+  // selected only with current consent and can never authorize another vendor.
+  const authorizationMode = gates.sourceBoundaryVerified
+    ? "source_boundary"
+    : deliveryMode(gates, connection.kind);
+  if (!authorizationMode)
+    return { state: "blocked", reason: "source_replay_boundary_unverified" };
+  const freshInsertCurrent = async () =>
+    authorizationMode !== "qrz_fresh_insert" ||
+    (modeEnabled(gates, authorizationMode) &&
+      scoped(gates, key, true) &&
+      (await qrzFreshInsertCurrent(store, key)));
+  if (!(await freshInsertCurrent()))
+    return { state: "blocked", reason: "qrz_fresh_insert_unavailable" };
   const sourceProof = deps.sourceProof;
   if (!sourceProof)
     return { state: "blocked", reason: "source_export_proof_unavailable" };
@@ -721,8 +798,6 @@ export async function prepareDue(
     if ((backlog?.n ?? 0) >= 2)
       return { state: "skipped", reason: "background_outbox_full" };
   }
-  if (!gates.sourceBoundaryVerified && !row.remote_id)
-    return { state: "blocked", reason: "source_replay_boundary_unverified" };
   const member = { id: contact.id, generation: contact.generation };
   let payload: PreparedPayload;
   let expectedTemplate: string | null = null;
@@ -749,6 +824,9 @@ export async function prepareDue(
         source,
         destination: connection,
       },
+      undefined,
+      undefined,
+      authorizationMode,
     );
     let record = structured;
     if (row.narrative !== "remote_preserved") {
@@ -1073,6 +1151,11 @@ export async function prepareDue(
   try {
     if (!(await sourceProofCurrent()))
       return { state: "blocked", reason: "source_export_proof_unavailable" };
+    if (
+      !(await freshInsertCurrent()) ||
+      (authorizationMode === "qrz_fresh_insert" && !freshInsertPayload(payload))
+    )
+      return { state: "blocked", reason: "qrz_fresh_insert_unavailable" };
     attemptId = await store.stage(
       key,
       contact.generation,
@@ -1087,9 +1170,14 @@ export async function prepareDue(
         claim: await preparedIdentityClaim(payload),
         sourceVersion: sourceProof.reconciliationVersion,
       },
-      sourceProof,
+      { ...sourceProof, authorizationMode },
     );
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("QRZ fresh insert unavailable")
+    )
+      return { state: "blocked", reason: "qrz_fresh_insert_unavailable" };
     if (
       error instanceof Error &&
       error.message.includes("source export proof unavailable")
@@ -1184,7 +1272,8 @@ export async function dispatchAttempt(
   gates: DeliveryGates,
   deps: DeliveryDependencies = {},
 ): Promise<DeliveryResult> {
-  if (!enabled(gates)) return { state: "blocked", reason: "exports_disabled" };
+  if (!deliveryMode(gates, "qrz") && !deliveryMode(gates, "lotw"))
+    return { state: "blocked", reason: "exports_disabled" };
   const currentTime = deliveryClock(deps.now);
   const now = currentTime();
   const data = await attemptData(store, tenant, id);
@@ -1227,6 +1316,23 @@ export async function dispatchAttempt(
   }
   if (data.attempt.attempt_state !== "prepared")
     return { state: "skipped", reason: "attempt_not_claimable" };
+  const authorizationMode = await attemptSourceExportAuthorizationMode(
+    store,
+    tenant,
+    id,
+  );
+  if (!authorizationMode || !modeEnabled(gates, authorizationMode))
+    return {
+      state: "blocked",
+      reason: "source_export_authorization_unavailable",
+    };
+  const operationAuthorized = () =>
+    modeEnabled(gates, authorizationMode) &&
+    scoped(gates, key, authorizationMode === "qrz_fresh_insert") &&
+    (authorizationMode !== "qrz_fresh_insert" ||
+      (data.connection.kind === "qrz" && freshInsertPayload(data.payload)));
+  if (!operationAuthorized())
+    return { state: "blocked", reason: "qrz_fresh_insert_unavailable" };
   const proofCheckedAt = currentTime();
   const proofExpiresAt = await store
     .statement(
@@ -1363,7 +1469,7 @@ export async function dispatchAttempt(
           )
           .first();
         const active =
-          enabled(gates) &&
+          operationAuthorized() &&
           current?.status === "active" &&
           current.credential_version === data.attempt.credential_version &&
           current.remote_identity === data.connection.remote_identity &&
@@ -1391,7 +1497,9 @@ export async function dispatchAttempt(
               data.attempt.credential_version,
               "credential",
             ),
-          );
+          ) &&
+          (authorizationMode !== "qrz_fresh_insert" ||
+            (await qrzFreshInsertCurrent(store, key, id)));
         return active;
       };
       const client = qrzClient(
@@ -1405,10 +1513,30 @@ export async function dispatchAttempt(
           destination: data.connection,
         },
         authorized,
-        async () => {
+        async (input, init) => {
           mutationBlocked = true;
+          const validRequest = () => {
+            if (authorizationMode !== "qrz_fresh_insert") return true;
+            if (data.payload.kind !== "qrz") return false;
+            const form = new URLSearchParams(String(init?.body));
+            return (
+              String(input) === "https://logbook.qrz.com/api" &&
+              init?.method === "POST" &&
+              init.redirect === "manual" &&
+              [...form.keys()].length === 3 &&
+              ["KEY", "ACTION", "ADIF"].every(
+                (field) => form.getAll(field).length === 1,
+              ) &&
+              form.get("KEY") === credential.apiKey &&
+              form.get("ACTION") === "INSERT" &&
+              form.get("ADIF") === serializeAdifRecord(data.payload.record)
+            );
+          };
           if (
+            !validRequest() ||
             !(await authorized()) ||
+            !operationAuthorized() ||
+            !validRequest() ||
             currentTime() >= Math.min(proofExpiresAt, lease.expires_at)
           ) {
             throw new UnsentAuthorizationError();
@@ -1416,6 +1544,7 @@ export async function dispatchAttempt(
           mutationBlocked = false;
           mutationStarted = true;
         },
+        authorizationMode,
       );
       try {
         if (

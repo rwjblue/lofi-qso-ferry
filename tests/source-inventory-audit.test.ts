@@ -618,3 +618,44 @@ test("repository base64url identity tokens may begin with underscores or hyphens
     }
   }
 });
+
+test("fractional independent server stamps are preserved exactly and never rounded into agreement", async () => {
+  const h = await fixture();
+  h.initial.halo[1].syncedAtMillis = NOW - 100.25;
+  const result = await advanceSourceInventoryAudit(h.options);
+  assert.equal(result.completedPasses, 2);
+  assert.equal(result.status, "discrepancy");
+  assert.equal(result.halo.serverVersions, 1);
+  assert.equal(result.ferry.serverVersions, 0);
+  assert.equal(h.saved?.initial.halo[1].syncedAtMillis, NOW - 100.25);
+});
+
+test("missing independent server stamps remain unknown despite complete repeated inventory", async () => {
+  const h = await fixture();
+  h.initial.halo[1].syncedAtMillis = null;
+  const result = await advanceSourceInventoryAudit(h.options);
+  assert.equal(result.completedPasses, 2);
+  assert.equal(result.status, "incomplete");
+  assert.equal(result.halo.unknownVersions, 1);
+  assert.equal(result.ferry.unknownVersions, 0);
+});
+
+test("saved remote page metadata must retain integer application and server stamps", async (t) => {
+  for (const field of ["updatedAtMillis", "syncedAtMillis"] as const) {
+    await t.test(field, async () => {
+      const h = await fixture();
+      await advanceSourceInventoryAudit(h.options);
+      const checkpoint = structuredClone(h.saved);
+      assert(checkpoint);
+      checkpoint.first[0][field] = NOW - 0.25;
+      const before = h.calls.length;
+      const result = await advanceSourceInventoryAudit({
+        ...h.options,
+        checkpoint,
+      });
+      assert.equal(result.stopReason, "checkpoint_invalid");
+      assert.equal(result.checkpointSaved, false);
+      assert.equal(h.calls.length, before);
+    });
+  }
+});

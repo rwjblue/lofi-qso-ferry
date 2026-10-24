@@ -21,6 +21,13 @@ const validId = (v: unknown): v is string =>
   typeof v === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(v);
 const stamp = (v: unknown): v is number =>
   typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+// Older HaLo server acknowledgements retain sub-millisecond precision. Keep
+// that independent version evidence exactly; clocks/counters/cursors stay integer.
+const versionStamp = (v: unknown): v is number =>
+  typeof v === "number" &&
+  Number.isFinite(v) &&
+  v >= 0 &&
+  v <= Number.MAX_SAFE_INTEGER;
 const hash = (v: unknown): v is string =>
   typeof v === "string" && /^[A-Za-z0-9_-]{43}$/.test(v);
 type Kind = "operation" | "qso";
@@ -180,8 +187,10 @@ function validateRows(rows: InventoryRecord[], server = false) {
       typeof r.deleted !== "boolean" ||
       typeof r.isEvent !== "boolean" ||
       (r.purged !== null && typeof r.purged !== "boolean") ||
-      (r.updatedAtMillis !== null && !stamp(r.updatedAtMillis)) ||
-      (r.syncedAtMillis !== null && !stamp(r.syncedAtMillis)) ||
+      (r.updatedAtMillis !== null &&
+        !(server ? stamp : versionStamp)(r.updatedAtMillis)) ||
+      (r.syncedAtMillis !== null &&
+        !(server ? stamp : versionStamp)(r.syncedAtMillis)) ||
       (r.revision !== null && !hash(r.revision)) ||
       (server &&
         (r.syncedAtMillis === null ||

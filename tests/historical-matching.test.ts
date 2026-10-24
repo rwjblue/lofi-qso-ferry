@@ -400,3 +400,43 @@ test("ADIF date begins at 1930 and candidate inputs are bounded without truncati
     ]);
   }
 });
+
+test("unknown propagation evidence cannot establish terrestrial identity or satellite exclusion", () => {
+  const satellite = qso({ PROP_MODE: "SAT", SAT_NAME: "ISS" });
+  for (const vendor of ["qrz", "lotw"] as const) {
+    for (const PROP_MODE of ["UNKNOWN", "SATELLITE", "SAT\n"]) {
+      const remote = qso({ PROP_MODE });
+      for (const source of [qso(), satellite]) {
+        const result = historicalCandidates(vendor, source, [remote]);
+        assert.equal(result.state, "ambiguous");
+        assert.equal(result.issues[0].reason, "invalid_satellite");
+        assert.equal(result.issues[0].record, remote);
+      }
+      assert.equal(
+        historicalCandidates(vendor, remote, [qso()]).state,
+        "invalid",
+      );
+    }
+    for (const PROP_MODE of "AS AUE AUR BS ECH EME ES F2 FAI GWAVE INTERNET ION IRL LOS MS RPT RS TEP TR".split(
+      " ",
+    )) {
+      const remote = qso({ PROP_MODE: PROP_MODE.toLowerCase() });
+      assert.equal(
+        historicalCandidates(vendor, qso(), [remote]).state,
+        "unique",
+      );
+      assert.equal(
+        historicalCandidates(vendor, satellite, [remote]).state,
+        "none",
+      );
+    }
+    // Proven unrelated records still do not poison the source's candidate set.
+    assert.equal(
+      historicalCandidates(vendor, qso(), [
+        qso(),
+        qso({ CALL: "W2AW", PROP_MODE: "UNKNOWN" }),
+      ]).state,
+      "unique",
+    );
+  }
+});

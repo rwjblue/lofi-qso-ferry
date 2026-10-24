@@ -218,12 +218,20 @@ function mode(record: AdifRecord, vendor: HistoricalVendor): Mode | undefined {
   }
   return { primary, individual, group };
 }
+// ADIF 3.1.5 III.B.12: only enumerated propagation values can establish
+// non-satellite evidence. A new/unknown token remains unavailable.
+const propagationModes = new Set(
+  "AS AUE AUR BS ECH EME ES F2 FAI GWAVE INTERNET ION IRL LOS MS RPT RS SAT TEP TR".split(
+    " ",
+  ),
+);
 function satellite(
   record: AdifRecord,
 ): { satellite: boolean; name?: string } | undefined {
   const prop =
     record.PROP_MODE === undefined ? undefined : token(record.PROP_MODE);
-  if (record.PROP_MODE !== undefined && !prop) return;
+  if (record.PROP_MODE !== undefined && (!prop || !propagationModes.has(prop)))
+    return;
   if (prop !== "SAT")
     return record.SAT_NAME === undefined ? { satellite: false } : undefined;
   const name = record.SAT_NAME;

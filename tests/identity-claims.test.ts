@@ -4,29 +4,25 @@ import {
   type DeliveryGates,
   dispatchAttempt,
   type PreparedPayload,
-  prepareDue,
+  prepareDue as prepareDueRuntime,
   reconcileAttempt,
 } from "../src/delivery.ts";
 import {
   claimedAttemptCurrent,
   destinationIdentityClaim,
 } from "../src/identity-claims.ts";
-import {
-  observeContact,
-  pendingContacts,
-  pollSource,
-  rereadOperation,
-} from "../src/intake.ts";
+import type { SourceRecord } from "../src/lofi.ts";
 import { sameQrzIdentity } from "../src/qrz.ts";
 import { canonicalLotwIdentity, lotwRemoteIdentity } from "../src/reconcile.ts";
 import { canonical, sha256 } from "../src/security.ts";
-import type { LedgerKey } from "../src/store.ts";
+import type { SourceExportAuthorization } from "../src/source-export-proofs.ts";
+import type { LedgerKey, Store } from "../src/store.ts";
 import { database, seed } from "./helpers.ts";
 import {
   applyAdditionalMigrations,
-  FIXTURE_NOW,
   schedulerFixture,
 } from "./runtime-fixtures.ts";
+import { mintFixtureSourceProofs } from "./source-proof-fixtures.ts";
 
 const gates: DeliveryGates = {
   exportsEnabled: true,
@@ -43,63 +39,149 @@ const record = {
   SUBMODE: "USB",
   MY_GRIDSQUARE: "FN31AA12",
 };
-const due = 31 * 60_000;
 
-async function claimFixture(vendor: "qrz" | "lotw" = "qrz", stageAt = due) {
+const sourceAuthorizations = new WeakMap<
+  Store,
+  Map<string, SourceExportAuthorization>
+>();
+const proofKey = (key: Pick<LedgerKey, "tenant" | "source" | "qso">) =>
+  JSON.stringify([key.tenant, key.source, key.qso]);
+async function prepareDue(...args: Parameters<typeof prepareDueRuntime>) {
+  const [store, key, contact, gates, deps] = args;
+  return prepareDueRuntime(store, key, contact, gates, {
+    sourceProof: sourceAuthorizations.get(store)?.get(proofKey(key)),
+    ...deps,
+  });
+}
+
+async function claimFixture(vendor: "qrz" | "lotw" = "qrz") {
   const h = await database();
-  await applyAdditionalMigrations(h.db);
-  const key = await seed(h.store);
-  await h.store
-    .statement("UPDATE connections SET kind=? WHERE id='destination'", vendor)
-    .run();
-  const version =
-    vendor === "qrz"
-      ? await h.store.saveTemplate("a", "destination", {})
-      : null;
-  const claim = await destinationIdentityClaim(vendor, record);
-  const add = async (target: LedgerKey, generation = "g1") => {
-    await h.store.observe(
-      target,
-      generation,
-      `hash:${generation}`,
-      30,
-      false,
-      0,
-    );
+  try {
+    await applyAdditionalMigrations(h.db);
+    const key = await seed(h.store);
     await h.store
-      .statement(
-        "UPDATE ledger SET state='missing_current_identity' WHERE tenant=? AND source=? AND qso=? AND destination=?",
-        target.tenant,
-        target.source,
-        target.qso,
-        target.destination,
-      )
+      .statement("UPDATE connections SET kind=? WHERE id='destination'", vendor)
       .run();
-  };
-  const stage = async (target: LedgerKey, generation = "g1", chosen = claim) =>
-    h.store.stage(
-      target,
-      generation,
+    const version =
+      vendor === "qrz"
+        ? await h.store.saveTemplate("a", "destination", {})
+        : null;
+    const claim = await destinationIdentityClaim(vendor, record);
+    const groups = new Map<string, Map<string, SourceRecord>>();
+    const current = new Map<
+      string,
       {
-        kind: "qrz",
-        record,
-        operation: "insert",
-        mappedLogId: null,
-        narrative: "template_bound",
-        projectionHash: "hash",
-        members: [{ id: target.qso, generation }],
-        preparedAt: new Date(stageAt).toISOString(),
-      } satisfies PreparedPayload,
-      "v1",
-      version,
-      stageAt,
-      undefined,
-      undefined,
-      "live",
-      { claim: chosen },
-    );
-  await add(key);
-  return { ...h, key, claim, version, add, stage };
+        generation: string;
+        authorization: SourceExportAuthorization;
+      }
+    >();
+    let stamp = 100;
+    const add = async (target: LedgerKey, generation = "g1") => {
+      const groupKey = JSON.stringify([target.tenant, target.source]);
+      const records = groups.get(groupKey) ?? new Map<string, SourceRecord>();
+      groups.set(groupKey, records);
+      let source = (await h.store.connection(target.tenant, target.source))!;
+      if (!JSON.parse(source.config).accountId) {
+        await h.store
+          .statement(
+            "UPDATE connections SET config=? WHERE tenant=? AND id=?",
+            JSON.stringify({ accountId: source.remote_identity }),
+            target.tenant,
+            target.source,
+          )
+          .run();
+        await h.store
+          .statement(
+            "DELETE FROM private_data WHERE tenant=? AND connection=? AND id=? AND kind='credential'",
+            target.tenant,
+            target.source,
+            source.credential_version,
+          )
+          .run();
+        await (
+          await h.store.putPrivate(
+            target.tenant,
+            target.source,
+            source.credential_version!,
+            "credential",
+            {
+              key: "browser:identity-fixture",
+              secret: "fixture",
+              token: "fixture",
+            },
+          )
+        ).run();
+        source = (await h.store.connection(target.tenant, target.source))!;
+      }
+      records.set(target.qso, {
+        uuid: target.qso,
+        operation: null,
+        syncedAtMillis: ++stamp,
+        startAtMillis: Date.parse("2026-10-22T12:00:01Z"),
+        band: "20m",
+        freq: 14200,
+        mode: "SSB",
+        submode: "USB",
+        their: { call: "K1ABC" },
+        our: { stationCall: "W1AW", grid: "FN31AA12", dxccCode: 291 },
+        notes: generation,
+      });
+      const evidence = await mintFixtureSourceProofs(h.store, {
+        source,
+        qsos: [...records.values()],
+        operations: [],
+      });
+      for (const [index, snapshot] of evidence.snapshots.entries()) {
+        current.set(proofKey({ ...target, qso: snapshot.contact.id }), {
+          generation: snapshot.contact.generation,
+          authorization: evidence.authorizations[index],
+        });
+      }
+      await h.store
+        .statement(
+          "UPDATE ledger SET state='missing_current_identity',due_at=0 WHERE tenant=? AND source=? AND qso=? AND destination=?",
+          target.tenant,
+          target.source,
+          target.qso,
+          target.destination,
+        )
+        .run();
+    };
+    const stage = async (
+      target: LedgerKey,
+      _generation = "g1",
+      chosen = claim,
+    ) => {
+      const { generation, authorization } = current.get(proofKey(target))!;
+      return h.store.stage(
+        target,
+        generation,
+        {
+          kind: "qrz",
+          record,
+          operation: "insert",
+          mappedLogId: null,
+          narrative: "template_bound",
+          projectionHash: "hash",
+          members: [{ id: target.qso, generation }],
+          preparedAt: new Date().toISOString(),
+        } satisfies PreparedPayload,
+        "v1",
+        version,
+        Date.now(),
+        undefined,
+        undefined,
+        "live",
+        { claim: chosen, sourceVersion: authorization.reconciliationVersion },
+        authorization,
+      );
+    };
+    await add(key);
+    return { ...h, key, claim, version, add, stage, current };
+  } catch (error) {
+    await h.mf.dispose();
+    throw error;
+  }
 }
 
 test("claim normalization matches existing vendor identity semantics without location or narrative collapse", async () => {
@@ -246,10 +328,15 @@ test("claims survive cancellation, uncertainty, expiry and identity edits withou
     });
     await h.add(h.key, "g2");
     const next = await h.stage(h.key, "g2", edited);
-    const lease = await h.store.claim("a", "delivery:destination", due, 60000);
+    const lease = await h.store.claim(
+      "a",
+      "delivery:destination",
+      Date.now(),
+      60000,
+    );
     assert(lease);
-    assert(await h.store.claimAttempt("a", next, lease, due));
-    await h.store.resolve("a", next, lease, "uncertain", null, due + 1);
+    assert(await h.store.claimAttempt("a", next, lease, Date.now()));
+    await h.store.resolve("a", next, lease, "uncertain", null, Date.now());
     await h.store
       .statement("DELETE FROM private_data WHERE kind='outbox'")
       .run();
@@ -270,15 +357,20 @@ test("claims survive cancellation, uncertainty, expiry and identity edits withou
     assert(
       await h.store.stage(
         tenantKey,
-        "g1",
+        h.current.get(proofKey(tenantKey))!.generation,
         {},
         "v1",
         tenantVersion,
-        due,
+        Date.now(),
         undefined,
         undefined,
         "live",
-        { claim: h.claim },
+        {
+          claim: h.claim,
+          sourceVersion: h.current.get(proofKey(tenantKey))!.authorization
+            .reconciliationVersion,
+        },
+        h.current.get(proofKey(tenantKey))!.authorization,
       ),
     );
     await h.store
@@ -295,15 +387,20 @@ test("claims survive cancellation, uncertainty, expiry and identity edits withou
     assert(
       await h.store.stage(
         destKey,
-        "g1",
+        h.current.get(proofKey(destKey))!.generation,
         {},
         "v1",
         destVersion,
-        due,
+        Date.now(),
         undefined,
         undefined,
         "live",
-        { claim: h.claim },
+        {
+          claim: h.claim,
+          sourceVersion: h.current.get(proofKey(destKey))!.authorization
+            .reconciliationVersion,
+        },
+        h.current.get(proofKey(destKey))!.authorization,
       ),
     );
     await h.store
@@ -359,20 +456,47 @@ async function retainedFixture(withSecond = false, withEvent = false) {
     };
     const source = await h.store.connection("a", "source");
     assert(source);
-    await pollSource(h.store, source, fetcher, FIXTURE_NOW);
-    // Complete the real all-client forward drain and quarantine before projection.
-    await pollSource(h.store, source, fetcher, FIXTURE_NOW);
-    await pollSource(h.store, source, fetcher, FIXTURE_NOW);
-    await rereadOperation(h.store, source, fetcher, FIXTURE_NOW);
-    const items = await pendingContacts(h.store, source, 10, FIXTURE_NOW);
-    for (const item of items)
-      await observeContact(h.store, source, item, FIXTURE_NOW);
+    const refreshProofs = async () => {
+      const evidence = await mintFixtureSourceProofs(h.store, {
+        source,
+        qsos: sourceQsos.filter((qso) => qso.band !== "event"),
+        operations: [h.operation],
+        events: sourceQsos.filter((qso) => qso.band === "event"),
+      });
+      sourceAuthorizations.set(
+        h.store,
+        new Map(
+          evidence.snapshots.map((snapshot, index) => [
+            proofKey({
+              tenant: "a",
+              source: "source",
+              qso: snapshot.contact.id,
+            }),
+            evidence.authorizations[index],
+          ]),
+        ),
+      );
+      return evidence.snapshots.map((snapshot) => snapshot.contact);
+    };
+    const items = await refreshProofs();
+    h.changes.operations.splice(0);
+    h.changes.qsos.splice(0);
     await h.store
-      .statement("UPDATE ledger SET state='missing_current_identity'")
+      .statement("UPDATE ledger SET state='missing_current_identity',due_at=0")
       .run();
     const item = items.find((item) => item.id === "q1");
     assert(item);
-    return { ...h, fetcher, source, items, item, now: FIXTURE_NOW + due };
+    return {
+      ...h,
+      fetcher,
+      source,
+      items,
+      item,
+      refreshProofs,
+      get now() {
+        return Date.now();
+      },
+    };
   } catch (error) {
     await h.mf.dispose();
     throw error;
@@ -520,7 +644,16 @@ test("source dependency loss during final vendor reads prevents QRZ writes and L
           },
         );
         assert(changed);
-        assert.equal(result.state, "rejected");
+        assert.equal(result.state, "blocked");
+        assert.equal(
+          await h.store
+            .statement(
+              "SELECT state FROM attempt_state WHERE tenant='a' AND attempt=?",
+              prepared.attemptId,
+            )
+            .first("state"),
+          "cancelled",
+        );
         assert.equal(h.calls.qrzWrites, 0);
         assert.equal(h.calls.lotwUploads, 0);
         assert.equal(
@@ -576,14 +709,7 @@ test("changed proof cancels only a known-unsent attempt and permits same-owner r
       )?.state,
       "cancelled",
     );
-    const [fresh] = await pendingContacts(
-      h.store,
-      h.source,
-      1,
-      h.now + 2,
-      undefined,
-      "q1",
-    );
+    const [fresh] = await h.refreshProofs();
     assert(fresh);
     assert.equal(fresh.generation, h.item.generation);
     const next = await prepareDue(h.store, key, fresh, gates, {
@@ -605,12 +731,12 @@ test("changed proof cancels only a known-unsent attempt and permits same-owner r
   }
 });
 
-test("a source revision arriving during preparation rolls back the complete identity stage", async () => {
+test("a source revision arriving during preparation prevents the complete identity stage", async () => {
   const h = await retainedFixture();
   try {
     let changed = false;
-    await assert.rejects(
-      prepareDue(
+    assert.deepEqual(
+      await prepareDue(
         h.store,
         {
           tenant: "a",
@@ -635,7 +761,7 @@ test("a source revision arriving during preparation rolls back the complete iden
           },
         },
       ),
-      /source read policy unavailable before stage/,
+      { state: "blocked", reason: "source_export_proof_unavailable" },
     );
     assert(changed);
     assert.equal(
@@ -678,8 +804,8 @@ test("a source revision arriving during preparation rolls back the complete iden
 });
 
 test("legacy unlinked and payload-mismatched attempts cannot dispatch, and final checks require the live lease", async () => {
-  const now = FIXTURE_NOW + due;
-  const h = await claimFixture("qrz", now);
+  const h = await claimFixture("qrz");
+  let now = Date.now();
   try {
     const payload: PreparedPayload = {
       kind: "qrz",
@@ -688,16 +814,23 @@ test("legacy unlinked and payload-mismatched attempts cannot dispatch, and final
       mappedLogId: null,
       narrative: "template_bound",
       projectionHash: "hash",
-      members: [{ id: "q1", generation: "g1" }],
+      members: [
+        { id: "q1", generation: h.current.get(proofKey(h.key))!.generation },
+      ],
       preparedAt: new Date(now).toISOString(),
     };
     const legacy = await h.store.stage(
       h.key,
-      "g1",
+      h.current.get(proofKey(h.key))!.generation,
       payload,
       "v1",
       h.version,
       now,
+      undefined,
+      undefined,
+      "live",
+      undefined,
+      h.current.get(proofKey(h.key))!.authorization,
     );
     assert.deepEqual(
       await dispatchAttempt(h.store, "a", legacy, gates, {
@@ -718,7 +851,7 @@ test("legacy unlinked and payload-mismatched attempts cannot dispatch, and final
     });
     const mismatch = await h.store.stage(
       h.key,
-      "g1",
+      h.current.get(proofKey(h.key))!.generation,
       payload,
       "v1",
       h.version,
@@ -726,7 +859,12 @@ test("legacy unlinked and payload-mismatched attempts cannot dispatch, and final
       undefined,
       undefined,
       "live",
-      { claim: wrong },
+      {
+        claim: wrong,
+        sourceVersion: h.current.get(proofKey(h.key))!.authorization
+          .reconciliationVersion,
+      },
+      h.current.get(proofKey(h.key))!.authorization,
     );
     assert.equal(
       (
@@ -738,7 +876,8 @@ test("legacy unlinked and payload-mismatched attempts cannot dispatch, and final
       "blocked",
     );
     const good = await h.stage(h.key);
-    const lease = await h.store.claim("a", "delivery:destination", now, 100);
+    now = Date.now();
+    const lease = await h.store.claim("a", "delivery:destination", now, 60_000);
     assert(lease);
     assert(await h.store.claimAttempt("a", good, lease, now));
     assert(
@@ -750,7 +889,7 @@ test("legacy unlinked and payload-mismatched attempts cannot dispatch, and final
         "a",
         good,
         h.claim,
-        now + 100,
+        now + 60_000,
         lease,
       ),
       false,

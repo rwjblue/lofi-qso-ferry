@@ -33,6 +33,12 @@ import {
   type SigningCredential,
 } from "./signing.ts";
 import {
+  attemptSourceExportProofCurrent,
+  attemptSourceExportProofGuard,
+  loadCurrentSourceExportProof,
+  type SourceExportAuthorization,
+} from "./source-export-proofs.ts";
+import {
   type Connection,
   type LedgerKey,
   LOTW_PRIOR_IDENTITY_NOTICE,
@@ -67,6 +73,23 @@ export interface DeliveryDependencies {
     IntakeContact,
     "id" | "generation" | "contextGeneration"
   >;
+  /** Immutable, current evidence from the post-collection canonical drain. */
+  sourceProof?: SourceExportAuthorization;
+}
+/** An injected test origin cannot freeze expiry while asynchronous work runs. */
+function deliveryClock(origin?: number): () => number {
+  const started = Date.now();
+  const base = origin ?? started;
+  let latest = base;
+  return () => {
+    latest = Math.max(latest, base + Math.max(0, Date.now() - started));
+    return latest;
+  };
+}
+class UnsentAuthorizationError extends Error {
+  constructor() {
+    super("Authorization changed before mutation transport");
+  }
 }
 function certificateCurrentlyValid(
   credential: SigningCredential,
@@ -408,10 +431,11 @@ export function qrzNeighborhoodFallback(
   store: Store,
   source: Connection | null | undefined,
   destination: Connection,
-  fixedNow?: number,
+  fixedNow?: number | (() => number),
 ): NonNullable<QrzOptions["neighborhoodFallback"]> {
   const config = JSON.parse(destination.config) as QrzConfig;
-  const currentTime = () => fixedNow ?? Date.now();
+  const currentTime =
+    typeof fixedNow === "function" ? fixedNow : deliveryClock(fixedNow);
   return {
     book: {
       bookId: config.bookId ?? "",
@@ -459,19 +483,28 @@ function qrzClient(
   deps: DeliveryDependencies,
   scope: { source: Connection | null; destination: Connection },
   beforeWrite?: () => Promise<boolean>,
+  beforeMutationTransport?: () => Promise<void>,
 ): QrzClient {
   if (!credential.apiKey) throw new Error("QRZ credential is unavailable");
+  const currentTime = deliveryClock(deps.now);
   const neighborhoodFallback = qrzNeighborhoodFallback(
     store,
     scope.source,
     scope.destination,
-    deps.now,
+    currentTime,
   );
+  const transport: typeof fetch = async (input, init) => {
+    const action = new URLSearchParams(String(init?.body)).get("ACTION");
+    if (action === "INSERT" || action === "DELETE")
+      await beforeMutationTransport?.();
+    return (deps.fetcher ?? fetch)(input, init);
+  };
   return new QrzClient(credential.apiKey, {
-    fetch: vendorFetch(store, "qrz", deps.fetcher, {
-      priority: deps.priority,
-      now: deps.now,
-    }),
+    fetch: (input, init) =>
+      vendorFetch(store, "qrz", transport, {
+        priority: deps.priority,
+        now: currentTime(),
+      })(input, init),
     writesEnabled: enabled(gates),
     replacementContractVerified: config.replacementContractVerified === true,
     beforeWrite: async () =>
@@ -532,6 +565,32 @@ async function unchangedProjection(
     .run();
   return result.results.length === 1;
 }
+/** Retire only a known-unsent artifact whose immutable source proof is stale. */
+export async function cancelStalePreparedSourceProof(
+  store: Store,
+  tenant: string,
+  attempt: string,
+  now = Date.now(),
+): Promise<boolean> {
+  const proof = attemptSourceExportProofGuard(tenant, attempt, now);
+  const rows = await store.db.batch([
+    store.statement(
+      `INSERT INTO attempt_events(tenant,attempt,state,at,reason) SELECT tenant,attempt,'cancelled',?,'source_export_proof_unavailable' FROM attempt_state WHERE tenant=? AND attempt=? AND state='prepared' AND NOT (${proof.sql})`,
+      now,
+      tenant,
+      attempt,
+      ...proof.params,
+    ),
+    store.statement(
+      `UPDATE attempt_state SET state='cancelled',reason='source_export_proof_unavailable',updated_at=? WHERE tenant=? AND attempt=? AND state='prepared' AND NOT (${proof.sql}) RETURNING attempt`,
+      now,
+      tenant,
+      attempt,
+      ...proof.params,
+    ),
+  ]);
+  return rows[1].results.length === 1;
+}
 /** Prepare one immutable attempt; no template change can call this without source work. */
 export async function prepareDue(
   store: Store,
@@ -540,7 +599,8 @@ export async function prepareDue(
   gates: DeliveryGates,
   deps: DeliveryDependencies = {},
 ): Promise<DeliveryResult> {
-  const now = deps.now ?? Date.now();
+  const currentTime = deliveryClock(deps.now);
+  const now = currentTime();
   if (testContact(contact))
     return { state: "blocked", reason: "test_operation_not_exported" };
   if (gates.allowedQsoIds && !gates.allowedQsoIds.includes(key.qso))
@@ -569,14 +629,24 @@ export async function prepareDue(
     return { state: "blocked", reason: "source_not_exportable" };
   const unresolved = await store
     .statement(
-      "SELECT 1 n FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled') LIMIT 1",
+      "SELECT a.id,s.state FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled') LIMIT 1",
       key.tenant,
       key.source,
       key.qso,
       key.destination,
     )
-    .first();
-  if (unresolved) return { state: "skipped", reason: "unresolved_attempt" };
+    .first<{ id: string; state: string }>();
+  if (
+    unresolved &&
+    (unresolved.state !== "prepared" ||
+      !(await cancelStalePreparedSourceProof(
+        store,
+        key.tenant,
+        unresolved.id,
+        currentTime(),
+      )))
+  )
+    return { state: "skipped", reason: "unresolved_attempt" };
   const connection = await store.connection(key.tenant, key.destination);
   const source = await store.connection(key.tenant, key.source);
   if (
@@ -587,6 +657,27 @@ export async function prepareDue(
     return { state: "blocked", reason: "connection_inactive" };
   if (connection.kind !== "qrz" && connection.kind !== "lotw")
     return { state: "blocked", reason: "invalid_destination" };
+  const sourceProof = deps.sourceProof;
+  if (!sourceProof)
+    return { state: "blocked", reason: "source_export_proof_unavailable" };
+  const sourceProofCurrent = async () =>
+    Boolean(
+      sourceProof.scope.tenant === key.tenant &&
+        sourceProof.scope.source === key.source &&
+        (await loadCurrentSourceExportProof(
+          store,
+          sourceProof.scope,
+          sourceProof.proofId,
+          {
+            qso: key.qso,
+            generation: contact.generation,
+            reconciliationVersion: sourceProof.reconciliationVersion,
+          },
+          currentTime(),
+        )),
+    );
+  if (!(await sourceProofCurrent()))
+    return { state: "blocked", reason: "source_export_proof_unavailable" };
   // This projection is only used by the guarded attempt path. The public ADIF
   // helper remains strict; every attempt must acquire its exact seconds claim.
   const structured = structuredContactAdif(contact);
@@ -648,10 +739,17 @@ export async function prepareDue(
     );
     if (!credential)
       return { state: "blocked", reason: "credential_unavailable" };
-    const client = qrzClient(store, credential, config, gates, deps, {
-      source,
-      destination: connection,
-    });
+    const client = qrzClient(
+      store,
+      credential,
+      config,
+      gates,
+      { ...deps, now: currentTime() },
+      {
+        source,
+        destination: connection,
+      },
+    );
     let record = structured;
     if (row.narrative !== "remote_preserved") {
       const version = await activeTemplate(store, key, row.template_version);
@@ -854,10 +952,11 @@ export async function prepareDue(
     )
       return { state: "skipped", reason: "transmitted_projection_unchanged" };
     const client = new LotwClient(credential.query ?? null, {
-      fetcher: vendorFetch(store, "lotw", deps.fetcher, {
-        priority: deps.priority,
-        now: deps.now,
-      }),
+      fetcher: (input, init) =>
+        vendorFetch(store, "lotw", deps.fetcher, {
+          priority: deps.priority,
+          now: currentTime(),
+        })(input, init),
       exportsEnabled: enabled(gates),
     });
     if (credential.query) {
@@ -915,7 +1014,7 @@ export async function prepareDue(
         reason: "lotw_certificate_selection_ambiguous_or_missing",
       };
     const selected = eligibleCertificates[0];
-    if (!certificateCurrentlyValid(selected, now))
+    if (!certificateCurrentlyValid(selected, currentTime()))
       return {
         state: "blocked",
         reason: "lotw_certificate_not_currently_valid",
@@ -939,16 +1038,24 @@ export async function prepareDue(
         state: "blocked",
         reason: "credential_or_source_revoked_before_signing",
       };
+    if (!(await sourceProofCurrent()))
+      return { state: "blocked", reason: "source_export_proof_unavailable" };
+    const signingAt = currentTime();
+    if (!certificateCurrentlyValid(selected, signingAt))
+      return {
+        state: "blocked",
+        reason: "lotw_certificate_not_currently_valid",
+      };
     const signing = {
       ...selected,
       status,
-      statusCheckedAt: new Date(now).toISOString(),
+      statusCheckedAt: new Date(signingAt).toISOString(),
     };
     const artifact = await (deps.sign ?? buildSignedTq8)(
       signing,
       station,
       [lotwContact],
-      new Date(now),
+      new Date(signingAt),
     );
     payload = {
       kind: "lotw",
@@ -959,28 +1066,35 @@ export async function prepareDue(
       certificateVersion: artifact.credentialVersion,
       configurationVersion: artifact.configurationVersion,
       projectionHash,
-      preparedAt: new Date(now).toISOString(),
+      preparedAt: new Date(signingAt).toISOString(),
     };
   } else return { state: "blocked", reason: "invalid_destination" };
   let attemptId: string;
   try {
+    if (!(await sourceProofCurrent()))
+      return { state: "blocked", reason: "source_export_proof_unavailable" };
     attemptId = await store.stage(
       key,
       contact.generation,
       payload,
       connection.credential_version,
       expectedTemplate,
-      now,
+      currentTime(),
       payload.projectionHash,
       lotwIdentityId,
       deps.priority ?? "live",
       {
         claim: await preparedIdentityClaim(payload),
-        sourceVersion: (contact as Partial<IntakeContact>)
-          .reconciliationVersion,
+        sourceVersion: sourceProof.reconciliationVersion,
       },
+      sourceProof,
     );
   } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes("source export proof unavailable")
+    )
+      return { state: "blocked", reason: "source_export_proof_unavailable" };
     if (
       error instanceof Error &&
       error.message.includes("outbound identity claim conflict")
@@ -1071,7 +1185,8 @@ export async function dispatchAttempt(
   deps: DeliveryDependencies = {},
 ): Promise<DeliveryResult> {
   if (!enabled(gates)) return { state: "blocked", reason: "exports_disabled" };
-  const now = deps.now ?? Date.now();
+  const currentTime = deliveryClock(deps.now);
+  const now = currentTime();
   const data = await attemptData(store, tenant, id);
   if (
     data &&
@@ -1112,8 +1227,26 @@ export async function dispatchAttempt(
   }
   if (data.attempt.attempt_state !== "prepared")
     return { state: "skipped", reason: "attempt_not_claimable" };
+  const proofCheckedAt = currentTime();
+  const proofExpiresAt = await store
+    .statement(
+      "SELECT expires_at FROM attempt_source_export_proofs_current WHERE tenant=? AND attempt=? AND created_at<=? AND expires_at>?",
+      tenant,
+      id,
+      proofCheckedAt,
+      proofCheckedAt,
+    )
+    .first<number>("expires_at");
+  if (proofExpiresAt === null || currentTime() >= proofExpiresAt) {
+    await cancelStalePreparedSourceProof(store, tenant, id, currentTime());
+    return { state: "blocked", reason: "source_export_proof_unavailable" };
+  }
   const identity = await preparedIdentityClaim(data.payload);
-  if (!(await claimedAttemptCurrent(store, tenant, id, identity, now))) {
+  if (
+    !(await claimedAttemptCurrent(store, tenant, id, identity, currentTime()))
+  ) {
+    if (await cancelStalePreparedSourceProof(store, tenant, id, currentTime()))
+      return { state: "blocked", reason: "source_export_proof_unavailable" };
     // A source/context refresh can invalidate the pinned proof without changing
     // the payload. Retire only known-unsent linked attempts so a fresh prepare
     // can recapture evidence; destination ownership is deliberately retained.
@@ -1144,18 +1277,49 @@ export async function dispatchAttempt(
   const lease = await store.claim(
     tenant,
     `delivery:${data.attempt.destination}`,
-    now,
+    currentTime(),
     120000,
   );
   if (!lease) return { state: "skipped", reason: "delivery_lease_busy" };
   let mutationStarted = false;
+  let mutationBlocked = false;
+  const retireUnsentProof = async (): Promise<DeliveryResult> => {
+    // This is used only before transport begins. Return through the existing
+    // fenced unsent transition before cancelling; never rewrite uncertainty.
+    await store.retryUnsent(
+      tenant,
+      id,
+      lease,
+      "source_export_proof_unavailable",
+      currentTime(),
+    );
+    await cancelStalePreparedSourceProof(store, tenant, id, currentTime());
+    return { state: "blocked", reason: "source_export_proof_unavailable" };
+  };
+  const retryBlockedTransport = async (): Promise<DeliveryResult> => {
+    if (
+      !(await attemptSourceExportProofCurrent(store, tenant, id, currentTime()))
+    )
+      return retireUnsentProof();
+    await store.retryUnsent(
+      tenant,
+      id,
+      lease,
+      "authorization_changed_before_transport",
+      currentTime(),
+    );
+    return {
+      state: "blocked",
+      reason: "authorization_changed_before_transport",
+    };
+  };
   try {
     if (
       !(await store.claimAttempt(
         tenant,
         id,
         lease,
-        now,
+        currentTime(),
         data.payload.kind === "lotw"
           ? await lotwAttemptIdentity(
               data.payload.station,
@@ -1176,77 +1340,81 @@ export async function dispatchAttempt(
         "credential",
       );
       if (!credential) {
-        await store.resolve(
-          tenant,
-          id,
-          lease,
-          "rejected",
-          null,
-          deps.now ?? Date.now(),
-        );
+        await store.resolve(tenant, id, lease, "rejected", null, currentTime());
         return { state: "rejected", reason: "credential_revoked" };
       }
+      const authorized = async () => {
+        const current = await store.connection(
+          tenant,
+          data.attempt.destination,
+        );
+        const activeSource = await store.connection(
+          tenant,
+          data.attempt.source,
+        );
+        const liveLease = await store
+          .statement(
+            "SELECT 1 n FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?",
+            tenant,
+            lease.scope,
+            lease.token,
+            lease.fence,
+            currentTime(),
+          )
+          .first();
+        const active =
+          enabled(gates) &&
+          current?.status === "active" &&
+          current.credential_version === data.attempt.credential_version &&
+          current.remote_identity === data.connection.remote_identity &&
+          current.config === data.connection.config &&
+          activeSource?.status === "active" &&
+          Boolean(liveLease) &&
+          (await claimedAttemptCurrent(
+            store,
+            tenant,
+            id,
+            identity,
+            currentTime(),
+            lease,
+          )) &&
+          (await sourceContextUnchanged(
+            store,
+            key,
+            sourceContext,
+            currentTime(),
+          )) &&
+          Boolean(
+            await store.private(
+              tenant,
+              data.attempt.destination,
+              data.attempt.credential_version,
+              "credential",
+            ),
+          );
+        return active;
+      };
       const client = qrzClient(
         store,
         credential,
         JSON.parse(data.connection.config) as QrzConfig,
         gates,
-        deps,
+        { ...deps, now: currentTime() },
         {
           source: await store.connection(tenant, data.attempt.source),
           destination: data.connection,
         },
+        authorized,
         async () => {
-          const current = await store.connection(
-            tenant,
-            data.attempt.destination,
-          );
-          const activeSource = await store.connection(
-            tenant,
-            data.attempt.source,
-          );
-          const liveLease = await store
-            .statement(
-              "SELECT 1 n FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?",
-              tenant,
-              lease.scope,
-              lease.token,
-              lease.fence,
-              deps.now ?? Date.now(),
-            )
-            .first();
-          const active =
-            enabled(gates) &&
-            current?.status === "active" &&
-            current.credential_version === data.attempt.credential_version &&
-            current.remote_identity === data.connection.remote_identity &&
-            current.config === data.connection.config &&
-            activeSource?.status === "active" &&
-            Boolean(liveLease) &&
-            (await claimedAttemptCurrent(
-              store,
-              tenant,
-              id,
-              identity,
-              deps.now ?? Date.now(),
-              lease,
-            )) &&
-            (await sourceContextUnchanged(
-              store,
-              key,
-              sourceContext,
-              deps.now ?? Date.now(),
-            )) &&
-            Boolean(
-              await store.private(
-                tenant,
-                data.attempt.destination,
-                data.attempt.credential_version,
-                "credential",
-              ),
-            );
-          if (active) mutationStarted = true;
-          return active;
+          mutationBlocked = true;
+          if (
+            !(await authorized()) ||
+            currentTime() >= Math.min(proofExpiresAt, lease.expires_at)
+          ) {
+            throw new UnsentAuthorizationError();
+          }
+          mutationBlocked = false;
+          mutationStarted = true;
         },
       );
       try {
@@ -1270,6 +1438,18 @@ export async function dispatchAttempt(
         state = "delivered";
       } catch (error) {
         if (error instanceof VendorDeferredError) throw error;
+        if (mutationBlocked && !mutationStarted)
+          return await retryBlockedTransport();
+        if (
+          !mutationStarted &&
+          !(await attemptSourceExportProofCurrent(
+            store,
+            tenant,
+            id,
+            currentTime(),
+          ))
+        )
+          return await retireUnsentProof();
         if (
           !mutationStarted &&
           error instanceof QrzError &&
@@ -1280,7 +1460,7 @@ export async function dispatchAttempt(
             id,
             lease,
             "qrz_readback_before_dispatch_failed",
-            deps.now ?? Date.now(),
+            currentTime(),
           );
           return {
             state: "retry_scheduled",
@@ -1290,7 +1470,8 @@ export async function dispatchAttempt(
         }
         state =
           error instanceof QrzError &&
-          ["rejected", "blocked", "auth"].includes(error.kind)
+          (["rejected", "auth"].includes(error.kind) ||
+            (error.kind === "blocked" && !mutationStarted))
             ? "rejected"
             : "uncertain";
       }
@@ -1302,21 +1483,33 @@ export async function dispatchAttempt(
         "credential",
       );
       if (!credential) {
-        await store.resolve(
-          tenant,
-          id,
-          lease,
-          "rejected",
-          null,
-          deps.now ?? Date.now(),
-        );
+        await store.resolve(tenant, id, lease, "rejected", null, currentTime());
         return { state: "rejected", reason: "credential_revoked" };
       }
+      let authorizeTransport: (() => Promise<boolean>) | undefined;
+      const transport: typeof fetch = async (input, init) => {
+        if (new URL(String(input)).pathname === "/lotw/upload") {
+          mutationBlocked = true;
+          if (
+            !authorizeTransport ||
+            !(await authorizeTransport()) ||
+            !certificate ||
+            !certificateCurrentlyValid(certificate, currentTime()) ||
+            currentTime() >= Math.min(proofExpiresAt, lease.expires_at)
+          ) {
+            throw new UnsentAuthorizationError();
+          }
+          mutationBlocked = false;
+          mutationStarted = true;
+        }
+        return (deps.fetcher ?? fetch)(input, init);
+      };
       const client = new LotwClient(credential.query ?? null, {
-        fetcher: vendorFetch(store, "lotw", deps.fetcher, {
-          priority: deps.priority,
-          now: deps.now,
-        }),
+        fetcher: (input, init) =>
+          vendorFetch(store, "lotw", transport, {
+            priority: deps.priority,
+            now: currentTime(),
+          })(input, init),
         exportsEnabled: true,
       });
       const certificateVersion = data.payload.certificateVersion;
@@ -1325,28 +1518,14 @@ export async function dispatchAttempt(
         (credential.signing ? [credential.signing] : [])
       ).find((cert) => cert.version === certificateVersion);
       if (!certificate) {
-        await store.resolve(
-          tenant,
-          id,
-          lease,
-          "rejected",
-          null,
-          deps.now ?? Date.now(),
-        );
+        await store.resolve(tenant, id, lease, "rejected", null, currentTime());
         return {
           state: "rejected",
           reason: "lotw_certificate_version_unavailable",
         };
       }
-      if (!certificateCurrentlyValid(certificate, deps.now ?? Date.now())) {
-        await store.resolve(
-          tenant,
-          id,
-          lease,
-          "rejected",
-          null,
-          deps.now ?? Date.now(),
-        );
+      if (!certificateCurrentlyValid(certificate, currentTime())) {
+        await store.resolve(tenant, id, lease, "rejected", null, currentTime());
         return {
           state: "rejected",
           reason: "lotw_certificate_not_currently_valid",
@@ -1361,7 +1540,7 @@ export async function dispatchAttempt(
           id,
           lease,
           "lotw_certificate_status_unavailable",
-          deps.now ?? Date.now(),
+          currentTime(),
         );
         return {
           state: "retry_scheduled",
@@ -1370,14 +1549,7 @@ export async function dispatchAttempt(
         };
       }
       if (certificateStatus !== "unrevoked") {
-        await store.resolve(
-          tenant,
-          id,
-          lease,
-          "rejected",
-          null,
-          deps.now ?? Date.now(),
-        );
+        await store.resolve(tenant, id, lease, "rejected", null, currentTime());
         return {
           state: "rejected",
           reason: "lotw_certificate_no_longer_usable",
@@ -1387,6 +1559,15 @@ export async function dispatchAttempt(
         tenant,
         data.attempt.destination,
       );
+      if (
+        !(await attemptSourceExportProofCurrent(
+          store,
+          tenant,
+          id,
+          currentTime(),
+        ))
+      )
+        return await retireUnsentProof();
       if (
         !enabled(gates) ||
         beforeSubmit?.status !== "active" ||
@@ -1398,14 +1579,14 @@ export async function dispatchAttempt(
           tenant,
           id,
           identity,
-          deps.now ?? Date.now(),
+          currentTime(),
           lease,
         )) ||
         !(await sourceContextUnchanged(
           store,
           key,
           sourceContext,
-          deps.now ?? Date.now(),
+          currentTime(),
         )) ||
         !(await store.private(
           tenant,
@@ -1414,23 +1595,45 @@ export async function dispatchAttempt(
           "credential",
         ))
       ) {
-        await store.resolve(
-          tenant,
-          id,
-          lease,
-          "rejected",
-          null,
-          deps.now ?? Date.now(),
-        );
+        await store.resolve(tenant, id, lease, "rejected", null, currentTime());
         return {
           state: "rejected",
           reason: "connection_revoked_before_submit",
         };
       }
-      mutationStarted = true;
+      authorizeTransport = async () => {
+        const current = await store.connection(
+          tenant,
+          data.attempt.destination,
+        );
+        return (
+          enabled(gates) &&
+          certificateCurrentlyValid(certificate, currentTime()) &&
+          current?.status === "active" &&
+          current.credential_version === data.attempt.credential_version &&
+          current.remote_identity === data.connection.remote_identity &&
+          current.config === data.connection.config &&
+          (await claimedAttemptCurrent(
+            store,
+            tenant,
+            id,
+            identity,
+            currentTime(),
+            lease,
+          )) &&
+          (await sourceContextUnchanged(
+            store,
+            key,
+            sourceContext,
+            currentTime(),
+          ))
+        );
+      };
       const result = await client.submit(unb64(data.payload.tq8), {
         liveWriteAuthorized: true,
       });
+      if (mutationBlocked && !mutationStarted)
+        return await retryBlockedTransport();
       state = result.state;
     }
     await store.resolve(
@@ -1439,7 +1642,7 @@ export async function dispatchAttempt(
       lease,
       state,
       remoteId,
-      deps.now ?? Date.now(),
+      currentTime(),
       data.payload.kind === "lotw"
         ? await lotwAttemptIdentity(data.payload.station, data.payload.contact)
         : undefined,
@@ -1461,16 +1664,33 @@ export async function dispatchAttempt(
         .run();
     return { state, attemptId: id };
   } catch (error) {
+    if (
+      !mutationStarted &&
+      error instanceof Error &&
+      error.message.includes("source export proof unavailable")
+    ) {
+      await cancelStalePreparedSourceProof(store, tenant, id, currentTime());
+      return { state: "blocked", reason: "source_export_proof_unavailable" };
+    }
     if (!(error instanceof VendorDeferredError)) throw error;
-    // Authorization runs before transport admission. A denied budget has sent
-    // no mutation even if the authorization callback has already succeeded.
-    if (!mutationStarted || !error.requestSent) {
+    // Only the absence of any mutation transport proves this attempt unsent.
+    // A later read or admission deferral cannot undo an earlier write.
+    if (!mutationStarted) {
+      if (
+        !(await attemptSourceExportProofCurrent(
+          store,
+          tenant,
+          id,
+          currentTime(),
+        ))
+      )
+        return await retireUnsentProof();
       await store.retryUnsent(
         tenant,
         id,
         lease,
         "vendor_request_deferred",
-        deps.now ?? Date.now(),
+        currentTime(),
         error.retryAt,
       );
       return {
@@ -1485,7 +1705,7 @@ export async function dispatchAttempt(
       lease,
       "uncertain",
       null,
-      deps.now ?? Date.now(),
+      currentTime(),
       data.payload.kind === "lotw"
         ? await lotwAttemptIdentity(data.payload.station, data.payload.contact)
         : undefined,

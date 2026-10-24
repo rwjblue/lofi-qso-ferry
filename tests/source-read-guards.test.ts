@@ -1,17 +1,28 @@
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
 import test, { type TestContext } from "node:test";
 import {
   establishCutovers,
   proveNewAfterCutover,
   recordBirth,
 } from "../src/cutover.ts";
-import {
-  claimedAttemptCurrent,
-  destinationIdentityClaim,
-} from "../src/identity-claims.ts";
+import { destinationIdentityClaim } from "../src/identity-claims.ts";
 import { ensureSourceReadPolicy } from "../src/source-read-policy.ts";
-import { database, seed } from "./helpers.ts";
-import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
+import { applyMigration, database, seed } from "./helpers.ts";
+import { legacyClaimedAttemptCurrent as claimedAttemptCurrent } from "./legacy-source-membership.ts";
+
+// Historical 0026 transition: intentionally retain its no-policy behavior and
+// old-Worker final check. Migration0030 removes that exception unconditionally;
+// source-export-guards.test.ts verifies the latest schema with genuine proofs.
+async function applyAdditionalMigrations(db: D1Database) {
+  for (const name of (await readdir(new URL("../migrations/", import.meta.url)))
+    .filter(
+      (name) =>
+        name.endsWith(".sql") && name > "0001_foundation.sql" && name < "0030_",
+    )
+    .sort())
+    await applyMigration(db, name);
+}
 
 const NOW = 1_800_000_000_000;
 const record = {
@@ -693,7 +704,7 @@ test("old-worker cutover insertion is rejected atomically while a policy is not 
   );
 });
 
-test("no-policy behavior remains dormant during the phased migration", async (t) => {
+test("historical 0026 no-policy behavior remains dormant before mandatory 0030 proofs", async (t) => {
   const h = await fixture(t, "qrz", false);
   assert(
     await h.stage(),

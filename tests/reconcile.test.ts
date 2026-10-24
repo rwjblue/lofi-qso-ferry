@@ -1,28 +1,30 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { measuredDatabase } from "../src/database-metrics.ts";
 import { contactReconciliationAdif, prepareDue } from "../src/delivery.ts";
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
 import { projectContact, sourceFingerprint } from "../src/projection.ts";
 import {
+  ADOPTION_CONFLICT_REASON,
   adoptHistory,
   adoptHistoryBatch,
-  ADOPTION_CONFLICT_REASON,
   canonicalLotwIdentity,
   classifyHistory,
-  lotwRemoteIdentity,
-  reconcileQrzAttempt,
-  type ReconciliationEvidence,
   type HistoryAdoptionInput,
+  lotwRemoteIdentity,
+  type ReconciliationEvidence,
+  reconcileQrzAttempt,
 } from "../src/reconcile.ts";
+import {
+  finishReconciliationWorkStatement,
+  reconciliationCheckStatement,
+  reconciliationPreflightBatch,
+} from "../src/reconciliation-work.ts";
+import { type LedgerKey, Store } from "../src/store.ts";
 import { database, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
-import { measuredDatabase } from "../src/database-metrics.ts";
-import { Store } from "../src/store.ts";
-import {
-  reconciliationPreflightBatch,
-  reconciliationCheckStatement,
-  finishReconciliationWorkStatement,
-} from "../src/reconciliation-work.ts";
+import { mintFixtureSourceProofs } from "./source-proof-fixtures.ts";
+
 async function reconciliationDatabase() {
   const h = await database();
   try {
@@ -32,6 +34,80 @@ async function reconciliationDatabase() {
     await h.mf.dispose();
     throw error;
   }
+}
+async function reconciliationStageProof(
+  store: Store,
+  key: LedgerKey,
+  call: string,
+) {
+  const connection = (await store.connection(key.tenant, key.source))!;
+  await store
+    .statement(
+      "UPDATE connections SET config=? WHERE tenant=? AND id=?",
+      JSON.stringify({ accountId: connection.remote_identity }),
+      key.tenant,
+      key.source,
+    )
+    .run();
+  await store
+    .statement(
+      "DELETE FROM private_data WHERE tenant=? AND connection=? AND id=? AND kind='credential'",
+      key.tenant,
+      key.source,
+      connection.credential_version!,
+    )
+    .run();
+  await (
+    await store.putPrivate(
+      key.tenant,
+      key.source,
+      connection.credential_version!,
+      "credential",
+      {
+        key: "browser:reconciliation-fixture",
+        token: "fixture",
+        secret: "fixture",
+      },
+    )
+  ).run();
+  const stamp = Date.now();
+  const proof = await mintFixtureSourceProofs(store, {
+    source: (await store.connection(key.tenant, key.source))!,
+    qsos: [
+      {
+        uuid: key.qso,
+        operation: "op1",
+        startAtMillis: Date.parse("2026-10-22T12:00:01Z"),
+        band: "20m",
+        mode: "CW",
+        their: { call },
+        syncedAtMillis: stamp,
+      },
+    ],
+    operations: [
+      {
+        uuid: "op1",
+        stationCall: "N0TEST/P",
+        grid: "FN31",
+        syncedAtMillis: stamp,
+      },
+    ],
+    destinations: [(await store.connection(key.tenant, key.destination))!],
+  });
+  await store
+    .statement(
+      "UPDATE ledger SET due_at=0 WHERE tenant=? AND source=? AND qso=? AND destination=?",
+      key.tenant,
+      key.source,
+      key.qso,
+      key.destination,
+    )
+    .run();
+  return {
+    generation: proof.snapshots[0]!.contact.generation,
+    authorization: proof.authorizations[0]!,
+    now: Date.now(),
+  };
 }
 const source = {
   STATION_CALLSIGN: "N0TEST/P",
@@ -704,33 +780,38 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
       identity: next,
     };
     await store.observe(key, "g2", "corrected-input", 30, false, 10);
+    const proof = await reconciliationStageProof(store, key, "W2NEW");
     const attempt = await store.stage(
       key,
-      "g2",
+      proof.generation,
       { signed: "synthetic artifact" },
       "v1",
       null,
-      1800011,
+      proof.now,
       "next-projection",
       nextIdentity.remoteId,
       undefined,
-      { claim: await destinationIdentityClaim("lotw", next) },
+      {
+        claim: await destinationIdentityClaim("lotw", next),
+        sourceVersion: proof.authorization.reconciliationVersion,
+      },
+      proof.authorization,
     );
     assert.equal((await store.ledger(key))!.confirmed, 0);
     const lease = (await store.claim(
       "a",
       "delivery:destination",
-      1800012,
-      1000,
+      proof.now + 1,
+      120000,
     ))!;
-    assert(await store.claimAttempt("a", attempt, lease, 1800013));
+    assert(await store.claimAttempt("a", attempt, lease, proof.now + 2));
     await store.resolve(
       "a",
       attempt,
       lease,
       "submitted",
       null,
-      1800014,
+      proof.now + 3,
       nextIdentity,
     );
     assert(
@@ -739,7 +820,7 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
         attempt,
         lease,
         nextIdentity.remoteId,
-        1800015,
+        proof.now + 4,
         {
           confirmed: false,
           data: { compact: "new projection" },
@@ -765,7 +846,8 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
     await store.observe(conflicting, "g1", "other-input", 30, false, 0);
     const trustedOwner = await store.ledger(key);
     assert.equal(
-      (await adoptHistory(store, conflicting, "g1", outcome, 1800016)).applied,
+      (await adoptHistory(store, conflicting, "g1", outcome, proof.now + 5))
+        .applied,
       false,
       "retained old identity stays associated with the original UUID after current mapping moves",
     );
@@ -776,7 +858,8 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
     const otherTenant = { ...key, tenant: "b" };
     await store.observe(otherTenant, "g1", "other-tenant-input", 30, false, 0);
     assert(
-      (await adoptHistory(store, otherTenant, "g1", outcome, 1800017)).applied,
+      (await adoptHistory(store, otherTenant, "g1", outcome, proof.now + 6))
+        .applied,
       "retained identity claims remain tenant isolated",
     );
   } finally {
@@ -921,26 +1004,31 @@ test("competing adoption cancels only an unsent adopted correction and preserves
       await store.observe(owner, "g1", "original-source", 30, false, 0);
       assert((await adoptHistory(store, owner, "g1", outcome, 1)).applied);
       await store.observe(owner, "g2", "corrected-source", 30, false, 10);
+      const proof = await reconciliationStageProof(store, owner, source.CALL);
       const attempt = await store.stage(
         owner,
-        "g2",
+        proof.generation,
         { fixture: "correction" },
         "v1",
         null,
-        1800011,
+        proof.now,
         "sent-projection",
         undefined,
         undefined,
-        { claim: await destinationIdentityClaim("qrz", source) },
+        {
+          claim: await destinationIdentityClaim("qrz", source),
+          sourceVersion: proof.authorization.reconciliationVersion,
+        },
+        proof.authorization,
       );
       if (state !== "prepared") {
         const lease = (await store.claim(
           "a",
           "delivery:destination",
-          1800012,
-          1000,
+          proof.now + 1,
+          120000,
         ))!;
-        assert(await store.claimAttempt("a", attempt, lease, 1800013));
+        assert(await store.claimAttempt("a", attempt, lease, proof.now + 2));
         if (state !== "dispatching")
           await store.resolve(
             "a",
@@ -948,7 +1036,7 @@ test("competing adoption cancels only an unsent adopted correction and preserves
             lease,
             state,
             state === "delivered" ? "100" : null,
-            1800014,
+            proof.now + 3,
           );
       }
       const ownerBefore = (await store.ledger(owner))!;
@@ -957,7 +1045,8 @@ test("competing adoption cancels only an unsent adopted correction and preserves
         .first();
       await store.observe(contender, "g1", "contender-source", 30, false, 10);
       assert.equal(
-        (await adoptHistory(store, contender, "g1", outcome, 1800015)).reason,
+        (await adoptHistory(store, contender, "g1", outcome, proof.now + 4))
+          .reason,
         "remote_identity_claim_conflict",
       );
       const heldContender = (await store.ledger(contender))!;
@@ -975,13 +1064,13 @@ test("competing adoption cancels only an unsent adopted correction and preserves
           state: "history_ambiguous",
           provenance: "adoption_conflict",
           reason: ADOPTION_CONFLICT_REASON,
-          updated_at: 1800015,
+          updated_at: proof.now + 4,
         });
         assert.deepEqual(attemptAfter, {
           ...attemptBefore,
           state: "cancelled",
           reason: ADOPTION_CONFLICT_REASON,
-          updated_at: 1800015,
+          updated_at: proof.now + 4,
         });
         assert.equal(
           (await store
@@ -996,11 +1085,11 @@ test("competing adoption cancels only an unsent adopted correction and preserves
         const lease = (await store.claim(
           "a",
           "after-conflict",
-          1800016,
-          1000,
+          proof.now + 5,
+          120000,
         ))!;
         assert.equal(
-          await store.claimAttempt("a", attempt, lease, 1800017),
+          await store.claimAttempt("a", attempt, lease, proof.now + 6),
           false,
         );
       } else {
@@ -1026,18 +1115,50 @@ test("an unresolved contender attempt is not misclassified as an adoption identi
         "UPDATE ledger SET state='missing_current_identity',narrative='remote_preserved' WHERE qso='contender'",
       )
       .run();
+    const proof = await reconciliationStageProof(store, contender, "W2AW");
+    await store
+      .statement(
+        "UPDATE ledger SET state='missing_current_identity',narrative='remote_preserved' WHERE qso='contender'",
+      )
+      .run();
     const attempt = await store.stage(
       contender,
-      "g1",
+      proof.generation,
       { fixture: "unsent" },
       "v1",
       null,
-      1800001,
+      proof.now,
+      undefined,
+      undefined,
+      undefined,
+      {
+        claim: await destinationIdentityClaim("qrz", {
+          ...source,
+          CALL: "W2AW",
+        }),
+        sourceVersion: proof.authorization.reconciliationVersion,
+      },
+      proof.authorization,
     );
     const ownerBefore = await store.ledger(owner);
     const contenderBefore = await store.ledger(contender);
     assert.equal(
-      (await adoptHistory(store, contender, "g1", outcome, 1800002)).reason,
+      (
+        await adoptHistory(
+          store,
+          contender,
+          proof.generation,
+          {
+            ...outcome,
+            evidence: {
+              ...outcome.evidence,
+              capturedGeneration: proof.generation,
+              currentGeneration: proof.generation,
+            },
+          },
+          proof.now + 1,
+        )
+      ).reason,
       "generation_mapping_or_attempt_conflict",
     );
     assert.deepEqual(await store.ledger(owner), ownerBefore);
@@ -1096,28 +1217,38 @@ test("adopted and observed LoTW identity keys prevent a second source UUID from 
     await store
       .statement("UPDATE ledger SET state='missing_current_identity'")
       .run();
+    const proof = await reconciliationStageProof(store, first, source.CALL);
+    await store
+      .statement("UPDATE ledger SET state='missing_current_identity'")
+      .run();
     const id = await store.stage(
       first,
-      "g1",
+      proof.generation,
       { fixture: "signed" },
       "v1",
       null,
-      1800001,
+      proof.now,
       undefined,
       undefined,
       undefined,
-      { claim: await destinationIdentityClaim("lotw", lotwRemote) },
+      {
+        claim: await destinationIdentityClaim("lotw", lotwRemote),
+        sourceVersion: proof.authorization.reconciliationVersion,
+      },
+      proof.authorization,
     );
     const lease = (await store.claim(
       "a",
       "delivery:destination",
-      1800001,
-      1000,
+      proof.now,
+      120000,
     ))!;
-    assert(await store.claimAttempt("a", id, lease, 1800002));
-    await store.resolve("a", id, lease, "uncertain", null, 1800003);
+    assert(await store.claimAttempt("a", id, lease, proof.now + 1));
+    await store.resolve("a", id, lease, "uncertain", null, proof.now + 2);
     const identity = await lotwRemoteIdentity(lotwRemote);
-    assert(await store.resolveReconciled("a", id, lease, identity, 1800004));
+    assert(
+      await store.resolveReconciled("a", id, lease, identity, proof.now + 3),
+    );
     const second = { ...first, qso: "q2" };
     await store.observe(second, "g1", "h2", 30, false, 0);
     const outcome = classifyHistory(source, [lotwRemote], {
@@ -1126,7 +1257,7 @@ test("adopted and observed LoTW identity keys prevent a second source UUID from 
     });
     assert.equal(outcome.state, "adopted_existing");
     assert.equal(
-      (await adoptHistory(store, second, "g1", outcome, 1800005)).applied,
+      (await adoptHistory(store, second, "g1", outcome, proof.now + 4)).applied,
       false,
     );
     assert.equal((await store.ledger(first))!.remote_id, identity);

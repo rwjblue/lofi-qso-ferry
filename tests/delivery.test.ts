@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   type AdifRecord,
@@ -10,9 +10,9 @@ import {
   contactAdif,
   contactReconciliationAdif,
   type DeliveryGates,
-  dispatchAttempt,
+  dispatchAttempt as dispatchAttemptActual,
   type PreparedPayload,
-  prepareDue,
+  prepareDue as prepareDueActual,
   reconcileAttempt,
   refreshConfirmations,
 } from "../src/delivery.ts";
@@ -20,29 +20,26 @@ import {
   destinationIdentityClaim,
   reserveIdentityClaim,
 } from "../src/identity-claims.ts";
-import {
-  observeContact,
-  pendingContacts,
-  pollSource,
-  rereadOperation,
-} from "../src/intake.ts";
+import { pendingContacts, pollSource, rereadOperation } from "../src/intake.ts";
 import {
   type Contact,
+  isTestCallsign,
+  isTestContact,
   projectContact,
   sourceFingerprint,
 } from "../src/projection.ts";
-import { LOTW_PRIOR_IDENTITY_NOTICE } from "../src/store.ts";
+import { LOTW_PRIOR_IDENTITY_NOTICE, type Store } from "../src/store.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import {
   VENDOR_POLICIES,
   VendorDeferredError,
 } from "../src/vendor-requests.ts";
-import { database, seed } from "./helpers.ts";
+import { applyMigration, database, seed } from "./helpers.ts";
 import {
   applyAdditionalMigrations,
-  FIXTURE_NOW,
   schedulerFixture,
 } from "./runtime-fixtures.ts";
+import { mintFixtureSourceProofs } from "./source-proof-fixtures.ts";
 
 const gates: DeliveryGates = {
   exportsEnabled: true,
@@ -50,11 +47,146 @@ const gates: DeliveryGates = {
   sourceBoundaryVerified: true,
 };
 const at = Date.parse("2026-10-22T12:00:01Z");
-const now = at + 31 * 60000;
-async function deliveryDatabase() {
+const now = Date.now();
+type ProofFixture = Awaited<ReturnType<typeof mintFixtureSourceProofs>>;
+const proofFixtures = new WeakMap<Store, Map<string, ProofFixture>>();
+const sourceFixtureStamps = new WeakMap<Store, number>();
+/** These older delivery cases now use the same canonical proof path as runtime. */
+async function prepareDue(...args: Parameters<typeof prepareDueActual>) {
+  const [store, key, item, gates, deps = {}] = args;
+  if (
+    isTestCallsign(item.stationCall) ||
+    isTestContact(item.context.qso, item.context.op) ||
+    item.deleted ||
+    (gates.allowedQsoIds && !gates.allowedQsoIds.includes(key.qso)) ||
+    (gates.allowedDestinationIds &&
+      !gates.allowedDestinationIds.includes(key.destination))
+  )
+    return prepareDueActual(...args);
+  let fixtures = proofFixtures.get(store);
+  if (!fixtures) {
+    fixtures = new Map();
+    proofFixtures.set(store, fixtures);
+  }
+  const fixtureKey = `${key.source}:${key.qso}:${item.generation}`;
+  let evidence = fixtures.get(fixtureKey);
+  if (!evidence) {
+    const source = await store.connection(key.tenant, key.source);
+    const destination = await store.connection(key.tenant, key.destination);
+    if (source?.status !== "active" || destination?.status !== "active")
+      return prepareDueActual(...args);
+    if (JSON.parse(source.config).accountId !== source.remote_identity) {
+      await store
+        .statement(
+          "UPDATE connections SET config=? WHERE tenant=? AND id=?",
+          JSON.stringify({ accountId: source.remote_identity }),
+          key.tenant,
+          key.source,
+        )
+        .run();
+      await store
+        .statement(
+          "DELETE FROM private_data WHERE tenant=? AND connection=? AND id=? AND kind='credential'",
+          key.tenant,
+          key.source,
+          source.credential_version!,
+        )
+        .run();
+      await (
+        await store.putPrivate(
+          key.tenant,
+          key.source,
+          source.credential_version!,
+          "credential",
+          {
+            key: "browser:delivery-fixture",
+            secret: "fixture",
+            token: "fixture",
+          },
+        )
+      ).run();
+    }
+    const current = (await store.connection(key.tenant, key.source))!;
+    const prior = await store.ledger(key);
+    if (!prior || prior.generation !== item.generation)
+      return prepareDueActual(...args);
+    const stamp = Math.max(
+      Date.now(),
+      (sourceFixtureStamps.get(store) ?? 0) + 1,
+    );
+    sourceFixtureStamps.set(store, stamp);
+    const qso = { ...item.context.qso, syncedAtMillis: stamp };
+    const operation = { ...item.context.op, syncedAtMillis: stamp };
+    evidence = await mintFixtureSourceProofs(store, {
+      source: current,
+      qsos: [qso],
+      operations:
+        typeof item.context.qso.operation === "string" ? [operation] : [],
+      destinations: [destination],
+    });
+    assert.equal(
+      evidence.snapshots[0]!.contact.generation,
+      item.generation,
+      "fixture projection must match the supplied contact",
+    );
+    if (prior)
+      await store
+        .statement(
+          "UPDATE ledger SET state=?,reason=?,due_at=? WHERE tenant=? AND source=? AND qso=? AND destination=?",
+          prior.state,
+          prior.reason,
+          deps.now !== undefined && deps.now >= prior.due_at
+            ? Math.min(prior.due_at, Date.now() - 1)
+            : prior.due_at,
+          key.tenant,
+          key.source,
+          key.qso,
+          key.destination,
+        )
+        .run();
+    fixtures.set(fixtureKey, evidence);
+  }
+  return prepareDueActual(store, key, evidence.snapshots[0]!.contact, gates, {
+    ...deps,
+    now: deps.now !== undefined && deps.now < now ? deps.now : Date.now(),
+    sourceProof: evidence.authorizations[0],
+  });
+}
+function dispatchAttempt(...args: Parameters<typeof dispatchAttemptActual>) {
+  const [store, tenant, id, gates, deps = {}] = args;
+  return dispatchAttemptActual(store, tenant, id, gates, {
+    ...deps,
+    now: Math.max(deps.now ?? 0, Date.now()),
+  });
+}
+async function deliveryDatabase(legacy = false) {
   const harness = await database();
-  await applyAdditionalMigrations(harness.db);
+  if (legacy) {
+    for (const name of (
+      await readdir(new URL("../migrations/", import.meta.url))
+    )
+      .filter(
+        (name) =>
+          name.endsWith(".sql") &&
+          name > "0001_foundation.sql" &&
+          name < "0030_",
+      )
+      .sort())
+      await applyMigration(harness.db, name);
+  } else await applyAdditionalMigrations(harness.db);
   return harness;
+}
+async function changedContact(item: Contact, id: string, call: string) {
+  return projectContact(
+    {
+      ...item.context.qso,
+      uuid: id,
+      their: { ...(item.context.qso.their as object), call },
+    },
+    item.context.op,
+    [],
+    { operationComplete: true },
+  );
 }
 async function contact(
   notes = "source note",
@@ -112,6 +244,7 @@ test("fractional contacts with an existing competing claim block before any vend
   try {
     const fractional = await contact("source note", at + 999);
     for (const destination of ["qrz", "lotw"] as const) {
+      proofFixtures.delete(h.store);
       await h.store
         .statement(
           "UPDATE connections SET kind=? WHERE id='destination'",
@@ -219,9 +352,14 @@ test("preprojected test contacts cannot prepare either destination or generate A
 });
 
 test("saved test payloads never reach either vendor and only unsent attempts are cancelled", async (t) => {
-  const h = await setup();
+  const h = await setup(true);
   t.after(() => h.mf.dispose());
   let requests = 0;
+  const saved: {
+    id: string;
+    state: "prepared" | "uncertain" | "submitted";
+    payload: PreparedPayload;
+  }[] = [];
   for (const kind of ["qrz", "lotw"] as const) {
     await h.store
       .statement("UPDATE connections SET kind=? WHERE id='destination'", kind)
@@ -295,41 +433,45 @@ test("saved test payloads never reach either vendor and only unsent attempts are
             id,
           )
           .run();
-      assert.deepEqual(
-        await dispatchAttempt(h.store, "a", id, gates, {
-          now,
-          fetcher: async () => {
-            requests++;
-            throw new Error("Saved test payload reached a vendor");
-          },
-        }),
-        { state: "blocked", reason: "test_operation_not_exported" },
-      );
-      assert.equal(
-        (
-          await h.store
-            .statement("SELECT state FROM attempt_state WHERE attempt=?", id)
-            .first<{ state: string }>()
-        )?.state,
-        state === "prepared" ? "cancelled" : state,
-      );
-      assert.equal(
-        (
-          await h.store
-            .statement(
-              "SELECT COUNT(*) n FROM attempt_events WHERE attempt=? AND state='cancelled'",
-              id,
-            )
-            .first<{ n: number }>()
-        )?.n,
-        state === "prepared" ? 1 : 0,
-      );
-      if (state !== "prepared")
-        assert.deepEqual(
-          await h.store.private("a", "destination", id, "outbox"),
-          payload,
-        );
+      saved.push({ id, state, payload });
     }
+  }
+  await applyMigration(h.db, "0030_source_export_guards.sql");
+  for (const { id, state, payload } of saved) {
+    assert.deepEqual(
+      await dispatchAttempt(h.store, "a", id, gates, {
+        now,
+        fetcher: async () => {
+          requests++;
+          throw new Error("Saved test payload reached a vendor");
+        },
+      }),
+      { state: "blocked", reason: "test_operation_not_exported" },
+    );
+    assert.equal(
+      (
+        await h.store
+          .statement("SELECT state FROM attempt_state WHERE attempt=?", id)
+          .first<{ state: string }>()
+      )?.state,
+      state === "prepared" ? "cancelled" : state,
+    );
+    assert.equal(
+      (
+        await h.store
+          .statement(
+            "SELECT COUNT(*) n FROM attempt_events WHERE attempt=? AND state='cancelled'",
+            id,
+          )
+          .first<{ n: number }>()
+      )?.n,
+      state === "prepared" ? 1 : 0,
+    );
+    if (state !== "prepared")
+      assert.deepEqual(
+        await h.store.private("a", "destination", id, "outbox"),
+        payload,
+      );
   }
   assert.equal(requests, 0);
 });
@@ -341,16 +483,20 @@ async function retainedDeliveryFixture() {
     h.lotwRecords.splice(0);
     const source = await h.store.connection("a", "source");
     assert(source);
-    await pollSource(h.store, source, h.fetcher, FIXTURE_NOW);
-    // Complete the all-client forward drain and quarantine before projecting.
-    await pollSource(h.store, source, h.fetcher, FIXTURE_NOW);
-    await pollSource(h.store, source, h.fetcher, FIXTURE_NOW);
-    await rereadOperation(h.store, source, h.fetcher, FIXTURE_NOW);
-    const [item] = await pendingContacts(h.store, source, 1, FIXTURE_NOW);
-    assert(item);
-    await observeContact(h.store, source, item, FIXTURE_NOW);
+    const evidence = await mintFixtureSourceProofs(h.store, {
+      source,
+      qsos: [h.qso],
+      operations: [h.operation],
+    });
+    const item = evidence.snapshots[0]!.contact;
+    proofFixtures.set(
+      h.store,
+      new Map([[`source:q1:${item.generation}`, evidence]]),
+    );
+    h.changes.operations.length = 0;
+    h.changes.qsos.length = 0;
     await h.store
-      .statement("UPDATE ledger SET state='missing_current_identity'")
+      .statement("UPDATE ledger SET state='missing_current_identity',due_at=0")
       .run();
     const changedToTest = async (changedAt: number) => {
       h.operation.stationCall = "W1AW/TEST";
@@ -371,7 +517,7 @@ test("stale projections cannot prepare after retained operation changes to a tes
     await t.test(destination, async (t) => {
       const h = await retainedDeliveryFixture();
       t.after(() => h.mf.dispose());
-      const deliveryAt = FIXTURE_NOW + 31 * 60_000;
+      const deliveryAt = Date.now();
       await h.changedToTest(deliveryAt);
       let requests = 0;
       let signatures = 0;
@@ -427,7 +573,7 @@ test("stale projections cannot prepare after retained operation changes to a tes
 test("a test-operation change during QRZ preflight prevents the final insert", async (t) => {
   const h = await retainedDeliveryFixture();
   t.after(() => h.mf.dispose());
-  const deliveryAt = FIXTURE_NOW + 31 * 60_000;
+  const deliveryAt = Date.now();
   const key = {
     tenant: "a",
     source: "source",
@@ -463,7 +609,8 @@ test("a test-operation change during QRZ preflight prevents the final insert", a
     },
   );
   assert.equal(changed, true, "the attempt reached its final QRZ preflight");
-  assert.equal(result.state, "rejected");
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reason, "source_export_proof_unavailable");
   assert.equal(h.calls.qrzWrites, 0);
   assert.deepEqual(h.qrzMutations, []);
   assert.deepEqual(
@@ -484,8 +631,8 @@ test("a test-operation change during QRZ preflight prevents the final insert", a
   );
 });
 
-async function setup() {
-  const harness = await deliveryDatabase();
+async function setup(legacy = false) {
+  const harness = await deliveryDatabase(legacy);
   const key = await seed(harness.store);
   const item = await contact();
   await harness.store
@@ -780,7 +927,7 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
     const { importPkcs12 } = await import("../src/signing.ts");
     const fixture = async (name: string) =>
       readFile(new URL(`../fixtures/signing/${name}`, import.meta.url));
-    const signingNow = Date.parse("2027-01-01T00:00:00Z");
+    const signingNow = Date.now();
     const signing = await importPkcs12(
       await fixture("current.p12"),
       "ferry-fixture",
@@ -959,35 +1106,42 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
     );
     assert(observation);
     record.QSL_RCVD = "Y";
+    await h.store
+      .statement(
+        "UPDATE private_data SET created_at=? WHERE kind='lotw_observation'",
+        Date.now() - 2 * 86400000,
+      )
+      .run();
     const refreshed = await refreshConfirmations(h.store, "a", {
       fetcher,
-      now: signingNow + 2 * 86400000,
+      now: Date.now(),
     });
     assert.equal(refreshed.checked, 1);
     assert.equal(refreshed.confirmed, 1);
     assert.equal((await h.store.ledger(key))!.confirmed, 1);
     record.MY_GRIDSQUARE = "FN32";
     record.QSL_RCVD = "N";
+    await h.store
+      .statement(
+        "UPDATE private_data SET created_at=? WHERE kind='lotw_observation'",
+        Date.now() - 2 * 86400000,
+      )
+      .run();
     const mismatched = await refreshConfirmations(h.store, "a", {
       fetcher,
-      now: signingNow + 4 * 86400000,
+      now: Date.now(),
     });
     assert.equal(mismatched.unresolved, 1);
     assert.equal((await h.store.ledger(key))!.confirmed, 1);
     assert.equal(submissions, 1);
     const originalIdentity = (await h.store.ledger(key))!.remote_id;
-    const changed: Contact = {
-      ...item,
-      call: "K2XYZ",
-      generation: "new-identity",
-    };
-    changed.generation = await sourceFingerprint(changed, "lotw");
-    const changedAt = signingNow + 5 * 86400000;
-    const correctedNow = changedAt + 31 * 60000;
+    const changed = await changedContact(item, item.id, "K2XYZ");
+    const changedAt = Date.now();
+    const correctedNow = Date.now();
     await h.store.observe(
       key,
       changed.generation,
-      changed.generation,
+      await sourceFingerprint(changed, "lotw"),
       30,
       false,
       changedAt,
@@ -997,6 +1151,7 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       0,
       "new source revision cannot inherit the previous confirmation during its quiet period",
     );
+    await h.store.statement("UPDATE ledger SET due_at=0").run();
     record.MY_GRIDSQUARE = "FN31PR";
     record.QSL_RCVD = "Y";
     const corrected = await prepareDue(h.store, key, changed, gates, {
@@ -1195,7 +1350,7 @@ test("a full background outbox stops new vendor reads while live preparation rem
   try {
     for (const id of ["q1", "q2"]) {
       const key = { ...h.key, qso: id };
-      const item = { ...h.item, id, call: `W${id.slice(1)}AW` };
+      const item = await changedContact(h.item, id, `W${id.slice(1)}AW`);
       if (id !== "q1") {
         await h.store.observe(
           key,
@@ -1224,7 +1379,7 @@ test("a full background outbox stops new vendor reads while live preparation rem
       );
     }
     const key = { ...h.key, qso: "q3" };
-    const item = { ...h.item, id: "q3", call: "W3AW" };
+    const item = await changedContact(h.item, "q3", "W3AW");
     await h.store.observe(
       key,
       item.generation,
@@ -1277,7 +1432,7 @@ test("inactive routes and superseded credentials do not hold other background ou
       destination = "destination",
     ) => {
       const key = { tenant: "a", source, qso, destination };
-      const item = { ...h.item, id: qso, call: `W${qso.slice(1)}AW` };
+      const item = await changedContact(h.item, qso, `W${qso.slice(1)}AW`);
       await h.store.observe(
         key,
         item.generation,
@@ -1489,11 +1644,17 @@ test("an explicit upload throttle remains uncertain and the shared cooldown prev
       VendorDeferredError,
     );
     assert.equal(network, 2);
+    const cooldown = await h.store
+      .statement(
+        "SELECT cooldown_until FROM vendor_requests WHERE vendor='qrz'",
+      )
+      .first<{ cooldown_until: number }>();
+    assert(cooldown);
     assert.equal(
       (
         await dispatchAttempt(h.store, "a", prepared.attemptId, gates, {
           fetcher,
-          now: now + 600001,
+          now: cooldown.cooldown_until + 1,
         })
       ).state,
       "skipped",
@@ -1502,7 +1663,7 @@ test("an explicit upload throttle remains uncertain and the shared cooldown prev
       (
         await reconcileAttempt(h.store, "a", prepared.attemptId, {
           fetcher,
-          now: now + 600001,
+          now: cooldown.cooldown_until + 1,
         })
       ).state,
       "unresolved",
@@ -1771,7 +1932,9 @@ test("prepared narrative context exposes HaLo contact aliases and frozen operati
     };
     h.item.context.qso.refs = [{ ourSerial: 7, theirSerial: "12" }];
     h.item.context.op.startAtMillisMin = at;
-    h.item.generation = await sourceFingerprint(h.item, "qrz");
+    h.item = await projectContact(h.item.context.qso, h.item.context.op, [], {
+      operationComplete: true,
+    });
     await h.store.observe(
       h.key,
       h.item.generation,
@@ -1812,7 +1975,7 @@ test("LoTW certificate expiry after preparation rejects a signed artifact before
     const { importPkcs12 } = await import("../src/signing.ts");
     const fixture = (name: string) =>
       readFile(new URL(`../fixtures/signing/${name}`, import.meta.url));
-    const signingNow = Date.parse("2027-01-01T00:00:00Z");
+    const signingNow = Date.now();
     const signing = await importPkcs12(
       await fixture("current.p12"),
       "ferry-fixture",
@@ -1822,7 +1985,7 @@ test("LoTW certificate expiry after preparation rejects a signed artifact before
         version: "fixture-expiry",
       },
     );
-    signing.validTo = new Date(signingNow + 1_000).toISOString();
+    signing.validTo = new Date(signingNow + 180_000).toISOString();
     await h.store
       .statement(
         "UPDATE connections SET kind='lotw',config=? WHERE id='destination'",
@@ -1912,7 +2075,7 @@ test("LoTW certificate expiry after preparation rejects a signed artifact before
       "a",
       prepared.attemptId,
       gates,
-      { fetcher, now: signingNow + 1_001 },
+      { fetcher, now: signingNow + 180_001 },
     );
     assert.equal(rejected.state, "rejected");
     assert.equal(rejected.reason, "lotw_certificate_not_currently_valid");

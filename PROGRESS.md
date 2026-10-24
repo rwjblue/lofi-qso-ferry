@@ -1,13 +1,21 @@
 # Implementation progress
 
-Current checkpoint, 2026-10-24 UTC; source-proof foundation deployed read-only:
+Current checkpoint, 2026-10-24 UTC; mandatory source-proof enforcement deployed
+read-only:
 
-Signed revision `3d7b0cac782af45bcd6684129f77da4cd8f159e2` deployed at 04:13:24 UTC
-as Worker `4a8c5a8b-8eb1-4569-b0b5-33a7acd2a043`, at 100% traffic. All **1,098 tests**
-and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40060259245).
-Independent 04:18:07–04:18:08 checks confirm healthy service, all three asset
-hashes matching, all six export gates closed, 28 migrations, 380 LoTW identity
-claims and zero uncovered mappings, attempts, cutovers or stage/history guards.
+Signed revision `5a416de5898657a6b12b60fd900d787f60341d51` deployed read-only
+at 05:11:14 UTC as Worker `a16f8d42-d039-437e-8fee-44116ddb5195`, at 100% traffic.
+All **1,131 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40064363238).
+Independent 05:11:28 checks confirm healthy service, all three asset hashes
+matching, all six export gates closed, 29 migrations through `0030`, 380 LoTW
+identity claims and zero uncovered mappings, attempts, cutovers or temporary
+guards. Mandatory preparation/dispatch proof binding and bounded scheduler
+integration are deployed. No proof, attempt pin or retention candidate exists
+while exports are closed. All 4,500 retained source bodies have incarnations;
+1,055 positive observations have no future or partially populated metadata.
+The all-client policy remains in backfill with 218 operations and 1,750 QSO-stream
+records in the current epoch, zero ready sources and zero eligible exports.
+
 The first scheduled run activated one all-client policy at 03:30:43.295 UTC.
 At 03:31:37.477 it remained in backfill, with 25 operations and 25 QSOs marked
 in the current epoch and no ready policy or eligible export. The run completed
@@ -59,9 +67,22 @@ immutable per-contact proofs, indexed observation anchors and shared cohort
 coordination are signed and pushed through `e16f987441fc84a65b517aac07ba67a235fe09e1`.
 The corrected foundation passed [full CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40060259245)
 and is deployed with migrations `0027`–`0029`. These building blocks grant no
-stage or dispatch authority. Mandatory proof binding at both boundaries and scheduler integration
-are in progress in the isolated worktree. Missing policies and null context must
-fail closed; prepared attempts must retain their original proof ID.
+stage or dispatch authority. Mandatory proof binding and scheduler integration
+are deployed in `5a416de5`, verified at 05:11:28 UTC. Migration `0030` requires a current immutable proof at staging and
+dispatch, including when policy or context is missing. Each attempt retains its
+original proof ID. Final transport checks run after vendor admission; stale
+known-unsent work can be cancelled and prepared again, while uncertain attempts
+and permanent identity ownership remain intact.
+
+The bounded coordinator shares up to four actual source requests, including
+authentication and the final canonical drain. On collection-budget exhaustion,
+only contacts with every required QSO/base/event observation may use the reserved
+drain and receive proofs. Other contacts stay held. A prior request-budget hold
+selects one contact on a later turn. If that singleton again exhausts collection
+reads with no ready contact, an exact-version ten-minute retry delay yields to
+neighbors on the ordinary five-minute schedule. A single contact needing more
+than three collection reads still stays held; this is not general import capacity
+acceptance. The workload UI labels these holds “Waiting for current source verification.”
 The combined focused run passed 367 of 368 cases and exposed an anchor-index
 query-plan regression. Fix `3d7b0cac782a` pins witness lookup to the exact source
 identity key; its focused D1 regression, types, scoped checks and full release
@@ -82,7 +103,27 @@ records in 15.674 seconds, with no errors, one budget deferral, 138 D1 calls and
 time; this single run does not establish sustained throughput. No attempts or
 cutovers were created.
 
-A fresh protected SQL backup completed at 03:50:46 UTC: 25 production migrations,
+The latest pre-release observation at 04:51:11 UTC has all 218 operations and
+1,425 QSO-stream records in the current epoch, still in backfill with no ready
+source or eligible exports. Attempts, cutovers and temporary guards remain zero.
+QRZ has 36 complete and one pending partition, but no retained covering plan:
+the earlier 98-record cover expired at 04:00:56 UTC. Its ledger remains at 3,435
+ambiguous and 398 pending rows. Fewer partitions can reflect expiry cleanup;
+they do not prove that a history gap was resolved. Fresh QRZ coverage is needed
+for the exact trial contacts.
+At approximately 04:58 UTC, the one pending partition was an expired, empty base
+manifest awaiting cleanup or rebuilding, not evidence of an actively progressing
+gap. The complete-partition count was not independently checked for freshness.
+
+A fresh protected SQL backup was verified at 04:25 UTC before the mandatory-proof
+release. Its isolated restore passed all 28 existing migrations plus pending
+`0030`, integrity and foreign-key checks, three current credential decryptions
+and repeated quarantine. It preserved 380 identity claims and zero attempts or
+cutovers. No production restore or vendor mutation occurred. Retain the backup
+and verification evidence before external changes; refresh it if intervening
+state changes warrant it.
+
+The earlier protected SQL backup completed at 03:50:46 UTC: 25 production migrations,
 380 identity claims, zero attempts/cutovers, successful isolated application of
 `0027`–`0029`, integrity and foreign-key checks, and decryption of three current
 credentials. The migrations preserve existing counts and policy membership,
@@ -95,14 +136,20 @@ migrations, 380 identity claims and zero attempts or cutovers. Its isolated rest
 passed integrity and foreign-key checks, applied pending migrations `0025`/`0026`,
 and decrypted all three current credentials. Repeated restore quarantine preserved
 attempts and claims while disabling restored access and work. No production
-restore occurred. The owner authorized one or two real contacts,
-QRZ first then LoTW, after sufficient evidence; no vendor write has occurred.
+restore occurred. The earlier authorization for one or two real contacts,
+QRZ first then LoTW, is superseded by the latest instruction to keep exports
+disabled. No actual trial may run until that instruction changes; no vendor write
+has occurred.
 
-Next: observe continued production baseline progress and handoff with gates closed, then
-finish and validate fresh positive source/context enforcement. Continue observing
-the deployed QRZ fallback and review
-the exact first-write packet. Main exports remain disabled;
-a sampled agreement is not a global source-boundary proof. See the [roadmap](ROADMAP.md)
+Next: observe the deployed mandatory source-proof checks and production
+baseline/drain/quarantine handoff with gates closed. Before
+any narrow trial, decouple per-contact proof-based delivery from the global
+`SOURCE_BOUNDARY_VERIFIED` effects—source-wide cutovers and no-query inference—or
+otherwise exclude those effects with enforced guards. Exact fresh proofs do not
+prove universal UUID, tombstone or purge coverage; baseline completion alone is
+not readiness to enable. Refresh QRZ evidence and prepare the packet read-only.
+Main exports remain disabled until the owner changes that instruction and all
+prerequisites are met. See the [roadmap](ROADMAP.md)
 and [rollout checklist](docs/rollout-checklist.md).
 
 Previous checkpoint, 2026-10-24 01:06 UTC: signed revision
@@ -506,10 +553,11 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 
 ## Next action and rollout boundaries
 
-1. Finish CI and release the signed all-client baseline and guards with exports closed, then observe its production handoff. The two complete inventories and known-positive forward sample match Ferry; they do not establish continuous source coverage. Require current ready policy membership and implement fresh positive source/context validation before main exports. Contacts attached to deleted or unverified operations stay held; zero pending rereads does not establish eligibility.
-2. Observe the remaining QRZ gaps after the first successful automatic covering read, then review the exact trial contacts and destinations, including fractional timestamps, full station grids, certificates, identity claims and fresh remote checks. Historical minute-only time, lower grid precision, location mismatch and routing holds require explicit evidence; cron does not approve them.
-3. Prepare the exact first-write packet in the [rollout checklist](docs/rollout-checklist.md). The protected SQL backup passed isolated restore and current credential-decryption checks; refresh it before external changes if needed. Off-device key storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account.
-4. The owner has already authorized a one- or two-contact trial, QRZ first then LoTW, after the evidence prerequisites. Bind it to exact contact and destination scopes, verify QRZ receipt/readback and LoTW observed acceptance, then close the gates and review before broader scope.
+1. Observe the deployed mandatory proof checks and the existing all-client baseline's production handoff with exports closed. The complete inventories and known-positive forward sample do not establish continuous coverage. Current ready policy membership and fresh exact dependency proofs are mandatory in the new path; unavailable or over-budget evidence remains held.
+2. Remove the remaining authority coupling before any narrow trial: global `SOURCE_BOUNDARY_VERIFIED` permits source-wide cutovers and no-query inference. Exact fresh contact proofs do not establish universal UUID/tombstone/purge guarantees. Decouple per-contact proof-based delivery or otherwise enforce exclusion of those effects; baseline completion and deployed proof checks alone do not make exports ready.
+3. Refresh QRZ coverage for the exact proposed contacts and destinations. The earlier retained cover expired; a smaller partition count is not absence evidence. Review fractional timestamps, full station grids, certificates, identity claims and fresh remote checks. Historical precision, location and routing holds need explicit evidence; cron does not approve them.
+4. Prepare the exact first-write packet read-only in the [rollout checklist](docs/rollout-checklist.md), preserving the verified 04:25 UTC SQL backup and refreshing it if needed before external changes. Off-device key storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account.
+5. Keep exports disabled. The latest instruction supersedes the earlier one- or two-contact trial authorization; no actual trial may run until the owner changes that instruction. Any later trial also requires the enforced authority separation and exact contact/destination evidence above.
 
 All six gates remain closed. Unrelated historical exceptions may remain isolated during an explicitly scoped trial; broad automatic coverage needs its own review. Replacement and old-identity cleanup remain disabled until separately proven. Continue resource/cost, restore/revocation, browser/passkey and full workload acceptance before expansion. Staging remains undeployed. See [roadmap](ROADMAP.md), [deployment](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md).
 

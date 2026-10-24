@@ -4,16 +4,33 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-24 UTC)
 
-Signed revision `3d7b0cac782af45bcd6684129f77da4cd8f159e2` deployed read-only
-at 04:13:24 UTC as Worker `4a8c5a8b-8eb1-4569-b0b5-33a7acd2a043`, at 100% traffic.
-All **1,098 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40060259245).
-Independent 04:18:07–04:18:08 checks confirm healthy service, matching assets,
-all six export gates closed, 28 migrations, 380 LoTW identity claims and zero
-uncovered mappings, attempts, cutovers or stage/history guards. The all-client
-policy remains in backfill, with all 218 operations and 800 QSO-stream records
-in the current epoch, no ready policy and zero eligible exports. Baseline handoff
-remains unfinished. Fresh-positive proof building blocks are deployed; mandatory
-preparation/dispatch binding and scheduler integration remain in progress.
+A separate, default-disabled QRZ first-insert capability is being implemented in
+the isolated checkout. It must retain mandatory source proofs while excluding
+source-wide cutovers, no-query inference, LoTW, replacement and changed-identity
+corrections. This capability is not deployed or enabled.
+
+Signed revision `5a416de5898657a6b12b60fd900d787f60341d51` deployed read-only
+at 05:11:14 UTC as Worker `a16f8d42-d039-437e-8fee-44116ddb5195`, at 100% traffic.
+All **1,131 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40064363238).
+Independent 05:11:28 checks confirm healthy service, all three asset hashes
+matching, all six export gates closed, 29 migrations through `0030`, 380 LoTW
+identity claims and zero uncovered mappings, attempts, cutovers or temporary
+guards. Mandatory preparation/dispatch proof binding and bounded scheduler
+integration are deployed. No proof, attempt pin or retention candidate exists
+while exports are closed. All 4,500 retained source bodies have incarnations;
+1,055 positive observations have no future or partially populated metadata.
+The all-client policy remains in backfill with 218 operations and 1,750 QSO-stream
+records in the current epoch, zero ready sources and zero eligible exports.
+
+At 04:51:11 UTC, current membership covered 218 operations and 1,425 QSO-stream
+records, still in backfill with zero ready sources or eligible exports. QRZ had
+36 complete and one pending partition, but no retained covering plan; the earlier
+98-record cover expired at 04:00:56. Its ledger retained 3,435 ambiguous and 398
+pending rows. Attempts, cutovers and temporary guards were zero. Partition expiry
+can reduce counts without resolving a gap; the trial needs fresh coverage.
+At approximately 04:58 UTC the one pending partition was an expired, empty base
+manifest awaiting cleanup or rebuilding. The count of complete partitions was
+not independently verified for freshness.
 
 At 02:52:53 UTC, QRZ had 35 complete and five pending history partitions, with
 the same single completed 98-record cover and zero target records. Its ledger
@@ -36,7 +53,7 @@ Timestamp/grid precision, routing and source-validity holds still require review
 
 Core feature paths, owner enrollment and service linking are implemented. The next milestone is a safe one- or two-user export trial; the full large-scale capacity plan follows separately. Production remains read-only. Linking credentials and waiting for cron do not establish export readiness. See the [personal acceptance checklist](docs/rollout-checklist.md) for exact prerequisites and the first-write packet.
 Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-character LoTW signing and the aggregate source audit are implemented, tested and deployed. Claims protect adoption, preparation and dispatch across cancellation, uncertainty, source edits and payload expiry. Historical precision holds and live vendor acceptance remain separate.
-1. **Observe the repaired source reader, then finish fresh-source enforcement.** At
+1. **Observe deployed source proofs and the source handoff.** At
    02:41:09 UTC, two complete 4,500-record all-client inventories matched each
    other and Ferry exactly. HaLo's stable differences remain 13 additional
    server contacts, 3,247 server stamps and 180 unknown versions. At 02:42:27,
@@ -50,40 +67,53 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    passed before the initial baseline deployment at 03:28 UTC.
    It fences old Workers, keeps recovered rows historical and holds unseen
    members. Transitional guards are dormant without a policy row: main exports
-   must require current ready policy membership. Fresh positive source/context
-   validation remains a separate implementation prerequisite for future hard
-   purges. Collection, witness storage, drain markers, immutable proofs, indexed
+   must require current ready policy membership. Collection, witness storage,
+   drain markers, immutable proofs, indexed
    observation anchors and shared cohort coordination are signed and pushed
    through `e16f987441fc`, with exact-key lookup correction `3d7b0cac782a`; all
    1,098 tests pass and that foundation is deployed read-only at 04:13 UTC.
-   Mandatory preparation/dispatch proof binding and scheduler integration are in
-   progress. Missing policy/null context must fail closed, and an attempt must
-   retain its original proof ID. Keep `SOURCE_BOUNDARY_VERIFIED=false`.
-2. **Observe integrated QRZ coverage and review an eligible cohort.** History
+   Mandatory binding and scheduler integration are deployed in `5a416de5`. Migration `0030` rejects missing policy, null context or missing
+   proof at both boundaries; attempts pin immutable IDs and final transport
+   authorization rechecks expiry after vendor admission. Known-unsent stale work
+   may be rebuilt; uncertain work retains its original artifact and ownership.
+   No deployment or test automatically opens `SOURCE_BOUNDARY_VERIFIED`.
+2. **Separate narrow delivery authority from global source-boundary effects.**
+   `SOURCE_BOUNDARY_VERIFIED` currently permits source-wide cutovers and no-query
+   inference. Exact fresh contact proofs establish neither a universal UUID
+   inventory nor tombstone/purge guarantees. Before any narrow QRZ trial, decouple
+   per-contact proof-based delivery from those effects or otherwise exclude them
+   with enforced guards. Baseline completion and deployed proof checks alone are
+   insufficient to enable exports. Keep the global source gate closed.
+3. **Observe integrated QRZ coverage and review an eligible cohort.** History
    fallback and fresh pre-write collision checks are implemented and deployed.
    History requires two matching complete bounded covers; cached metadata only
-   selects the range. Verify scheduled completion for the remaining gaps and
+   selects the range. Refresh expired coverage for the selected cohort and
    review exact identities, context, routing and ownership. Minute-only history,
    ambiguous associations and lower-precision locations remain review holds.
-3. **Run the authorized one- or two-contact trial when evidence is sufficient.**
-   QRZ comes first, then LoTW. Both contact and destination allowlists must be
-   exact, so LoTW remains excluded during QRZ work. The refreshed 03:50:46 UTC
-   protected production backup passed isolated restore, pending `0027`–`0029`,
-   all three credential decryptions and repeat quarantine checks. It retained
-   380 identity claims and zero attempts or cutovers. Preserve each contact's
+4. **Prepare a trial packet; do not execute it under the current instruction.**
+   The latest instruction to keep exports disabled supersedes the earlier one-
+   or two-contact trial authorization. No actual trial may run until the owner
+   changes that instruction and the authority separation above is enforced.
+   The proposed sequence remains QRZ first, then LoTW. Both contact and destination allowlists must be
+   exact, so LoTW remains excluded during QRZ work. A fresh protected production
+   SQL backup was verified at 04:25 UTC: isolated restore with 28 migrations plus
+   `0030`, integrity/foreign-key checks, three credential decryptions and repeated
+   quarantine passed, preserving 380 claims and zero attempts/cutovers. Preserve its evidence and
+   refresh it if needed before external changes. Earlier restore rehearsals
+   remain recorded in the deployment history. Preserve each contact's
    actual 4/6/8-character grid. No
    source or vendor write has occurred. Record exact readback and deployed
    signing evidence, close gates after the trial, and review before expansion.
    Replacement and old-record deletion can remain disabled. A second passkey is
    recommended, not an owner-pilot gate; manual operator recovery is documented.
-4. **Expand automatic coverage and prove capacity.** Source policy and fresh
+5. **Expand automatic coverage and prove capacity.** Source policy and fresh
    positive evidence must protect main exports, not only the trial. Then review
    historical associations and broaden the scopes deliberately. Measure queue
    age, cost, vendor fairness and complete import throughput before promising
    100-account daily volume or 200,000-contact imports. The audit's 200-row pages
    are not a runtime intake throughput measurement.
 
-The new throughput implementation reduces the measured intake/context database calls from 32→7, 33→9, 56→7 and 102→5 across the four local fixtures. Indexed selection returns 100 contacts using 200 rows read at both 4,000 and 200,000 contacts (7.68/7.63 ms locally). These validate database work bounds, not an end-to-end service rate. Background processing uses batches of 20, live processing remains one at a time to reserve write capacity, and the scheduler yields at a 90-second or 850-D1-call soft budget. Stage duration, database RPC/SQL counts, inventory reuse and classification telemetry support the next production observation. See the [implementation status and measurements](docs/reconciliation-investigation.md#implementation-status).
+The new throughput implementation reduces the measured intake/context database calls from 32→7, 33→9, 56→7 and 102→5 across the four local fixtures. Indexed selection returns 100 contacts using 200 rows read at both 4,000 and 200,000 contacts (7.68/7.63 ms locally). These validate database work bounds, not an end-to-end service rate. Read-only background processing uses batches of 20. The deployed mandatory-proof path can select up to six live contacts for shared evidence while dispatch remains sequential; background preparation shares two attempt slots. A source cohort has at most four actual source requests including the final drain. Complete witnessed subsets can proceed, and prior budget holds receive a later singleton turn. An unsuccessful budget-limited singleton receives an exact-version ten-minute delay, yielding to neighbors on the ordinary five-minute schedule; a single dependency closure requiring more than three collection reads remains held. The scheduler still yields at a 90-second or 850-D1-call soft budget. See the [implementation status and measurements](docs/reconciliation-investigation.md#implementation-status).
 
 The previous release at 15:04:09 UTC contains signed commits `32758f5` (general-log station projection and scoped retry migration), `789d652` (precision-specific review holds), and `fa822ba` (cleanup query scaling). Local checks passed 391 tests plus 35 focused tests after the final diagnostic refinement. All 392 tests and required checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39974178346), and revision `cf34ac0` was deployed with all gates closed. Those release results predate the throughput release. The new release `bbc2346c` passed all 452 tests and required checks in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39983716440) and deployed at 16:12 UTC as Worker `c592733f-171f-406e-bb8d-827b7ffd7fd9`; all gates remain closed.
 
@@ -187,6 +217,7 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 - [x] Coalesce destination-relevant changes per contact. Set the default quiet period to 30 minutes and poll every five minutes; expose a 20–60-minute setting.
 - [x] Preserve temporary source/context data only where necessary for delayed delivery or reread limitations. An operation edit can trigger a bounded reread; a template edit cannot.
 - [x] Batch source-page metadata/checkpoint access and share operation/event ciphertext reads within a bounded contact batch; validate atomic rollback and complete projection locally.
+- [x] Implement immutable short-lived source proofs, mandatory staging/dispatch pins and post-admission validation. The release is deployed with 1,131 tests passing; production baseline handoff and scoped live acceptance remain separate.
 - [ ] Verify larger LoFi source pages in production and reduce redundant source passes where the source contract permits. Background source pages remain 25 records.
 
 **Acceptance:** ongoing logging does not postpone earlier stable contacts. Offline arrivals and old-contact corrections work. Location/park changes at segment boundaries affect the correct contacts; changes to unsupported LoTW narrative fields create no LoTW work.

@@ -2,21 +2,21 @@
 
 Verified 2026-10-24 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
 
-| Resource                 | Current value                                                                                                  |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                          |
-| Worker                   | `lofi-qso-ferry`, environment `production`                                                                     |
-| Deployed source revision | `3d7b0cac782af45bcd6684129f77da4cd8f159e2`                                                                     |
-| Worker version           | `4a8c5a8b-8eb1-4569-b0b5-33a7acd2a043`, created `2026-10-24T04:13:22.852656Z`                                  |
-| Deployment               | `b8e9e7a4-5945-40ed-a911-4f7bbc465c33`, `2026-10-24T04:13:24.183263Z`, 100% of traffic                         |
-| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                                  |
-| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                               |
-| Migrations               | All 28 migrations through `0029_source_presence_anchors`; independently verified at `2026-10-24T04:18:07.379Z` |
-| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                              |
-| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                           |
-| Schedule                 | `*/5 * * * *`                                                                                                  |
-| Alternate origins        | workers.dev and version previews disabled                                                                      |
-| Artifact                 | 1,844.33 KiB raw / 357.32 KiB gzip; reported startup 32 ms                                                     |
+| Resource                 | Current value                                                                                               |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                       |
+| Worker                   | `lofi-qso-ferry`, environment `production`                                                                  |
+| Deployed source revision | `5a416de5898657a6b12b60fd900d787f60341d51`                                                                  |
+| Worker version           | `a16f8d42-d039-437e-8fee-44116ddb5195`, created `2026-10-24T05:11:13.236031Z`                               |
+| Deployment               | `2b5b90a1-db3e-402f-a0b5-6073f17fd28d`, `2026-10-24T05:11:14.145137Z`, 100% of traffic                      |
+| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                               |
+| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                            |
+| Migrations               | All 29 migrations through `0030_source_export_guards`; independently verified at `2026-10-24T05:11:28.114Z` |
+| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                           |
+| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                        |
+| Schedule                 | `*/5 * * * *`                                                                                               |
+| Alternate origins        | workers.dev and version previews disabled                                                                   |
+| Artifact                 | 1,908.87 KiB raw / 370.90 KiB gzip; reported startup 40 ms                                                  |
 
 The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
 
@@ -47,9 +47,64 @@ ROLLOUT_DESTINATION_IDS_JSON=[]
 
 The reported startup is deployment evidence, not per-request billed CPU or peak memory. No representative monthly workload/cost has been measured. Physical and synced passkey behavior remains for the owner to verify at this permanent origin. See [rollout acceptance](rollout-checklist.md) for the remaining vendor checks.
 
+## Mandatory source-proof release (2026-10-24, 05:11 UTC)
+
+Signed revision `5a416de5898657a6b12b60fd900d787f60341d51` deployed read-only
+at 05:11:14 UTC as Worker `a16f8d42-d039-437e-8fee-44116ddb5195`, at 100% traffic.
+All **1,131 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40064363238).
+Independent 05:11:28 checks confirm healthy service, all three asset hashes
+matching, all six export gates closed, 29 migrations through `0030`, 380 LoTW
+identity claims and zero uncovered mappings, attempts, cutovers or temporary
+guards. Mandatory preparation/dispatch proof binding and bounded scheduler
+integration are deployed. No proof, attempt pin or retention candidate exists
+while exports are closed. All 4,500 retained source bodies have incarnations;
+1,055 positive observations have no future or partially populated metadata.
+The all-client policy remains in backfill with 218 operations and 1,750 QSO-stream
+records in the current epoch, zero ready sources and zero eligible exports.
+
+The first deployment attempt failed the D1 access check before applying migrations.
+A read-only authorization check succeeded, and the same read-only deployment
+then completed. No export gate was changed and no production restore occurred.
+
+Migration `0030` makes current source proof mandatory independently of legacy
+identity or null-context shortcuts. Each attempt pins an immutable proof; missing
+policy, stale dependency membership, changed source/credential/context or expired
+evidence cannot authorize staging or dispatch. Final transport authorization runs
+after vendor admission, with proof, lease and certificate deadlines checked before
+mutation begins. Known-unsent stale artifacts may be cancelled and rebuilt;
+uncertain artifacts and permanent identity claims are retained. Indexed cleanup
+removes bounded unpinned proof candidates while preserving pinned audit evidence.
+
+Shared collection keeps the four-request cap, including authentication and the
+final canonical drain. A budget-limited cohort can publish only fully witnessed
+contacts after that drain and exact dependency reload. Previously budget-held
+contacts receive a later singleton turn. An unsuccessful budget-limited singleton
+gets an exact-version ten-minute retry delay, allowing neighbors their ordinary
+five-minute turns. A single contact requiring more than three collection reads
+remains held. This does not establish sustained capacity or open any gate.
+
+A fresh protected production SQL backup completed and was verified at 04:25:27 UTC
+before this release. Its isolated restore passed all 28 existing migrations plus
+pending `0030`, integrity checks and zero foreign-key violations. All three current
+credentials decrypted; repeated quarantine preserved 380 permanent identity claims
+and zero attempts/cutovers. No production restore or vendor mutation occurred.
+Preserve that backup and its verification evidence before external changes.
+
+The latest pre-release aggregate at 04:51:11 UTC has all 218 operations and
+1,425 QSO-stream records in the policy epoch, still in backfill with zero ready
+sources or eligible exports. Attempts, cutovers and temporary guards are zero.
+QRZ has 36 complete and one pending partition, with 3,435 ambiguous and 398 pending
+ledger rows. No covering plan remains retained: the prior 98-record plan expired
+at 04:00:56. Partition cleanup can reduce counts without resolving a gap. Fresh
+coverage for the exact trial cohort and live vendor acceptance remain outstanding.
+At approximately 04:58 UTC, the pending partition was an expired, empty base
+manifest awaiting cleanup or rebuilding. The complete-partition count was not
+independently verified for freshness. By 05:11:28 the expired pending row had
+been removed; the remaining 36 complete cache rows are not new absence evidence.
+
 ## Source-proof foundation (2026-10-24, 04:13 UTC)
 
-Signed `3d7b0cac782af45bcd6684129f77da4cd8f159e2` is deployed at 100% traffic as
+Signed `3d7b0cac782af45bcd6684129f77da4cd8f159e2` was deployed at 100% traffic as
 Worker `4a8c5a8b-8eb1-4569-b0b5-33a7acd2a043`. Independent 04:18:07–04:18:08 UTC
 checks confirm all six gates closed, healthy service, matching hashes for all
 three static assets, 28 migrations, 380 LoTW identity claims and zero attempts,

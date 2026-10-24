@@ -9,16 +9,28 @@ replaced, deleted or uploaded during this implementation work.
 ## Current evidence (2026-10-24 UTC)
 
 The owner has enrolled and linked LoFi, QRZ and LoTW.
-Signed revision `3d7b0cac782af45bcd6684129f77da4cd8f159e2` deployed read-only
-at 04:13:24 UTC as Worker `4a8c5a8b-8eb1-4569-b0b5-33a7acd2a043`, at 100% traffic.
-All **1,098 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40060259245).
-Independent 04:18:07–04:18:08 checks confirm healthy service, matching assets,
-all six export gates closed, 28 migrations, 380 LoTW identity claims and zero
-uncovered mappings, attempts, cutovers or stage/history guards. At 04:18:08 the
-all-client policy remained in backfill with all 218 operations and 800 QSO-stream
-records in the current epoch, no ready policy and zero eligible exports.
-Fresh-positive proof building blocks are deployed; mandatory preparation/dispatch
-binding and scheduler integration remain in progress.
+Signed revision `5a416de5898657a6b12b60fd900d787f60341d51` deployed read-only
+at 05:11:14 UTC as Worker `a16f8d42-d039-437e-8fee-44116ddb5195`, at 100% traffic.
+All **1,131 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40064363238).
+Independent 05:11:28 checks confirm healthy service, all three asset hashes
+matching, all six export gates closed, 29 migrations through `0030`, 380 LoTW
+identity claims and zero uncovered mappings, attempts, cutovers or temporary
+guards. Mandatory preparation/dispatch proof binding and bounded scheduler
+integration are deployed. No proof, attempt pin or retention candidate exists
+while exports are closed. All 4,500 retained source bodies have incarnations;
+1,055 positive observations have no future or partially populated metadata.
+The all-client policy remains in backfill with 218 operations and 1,750 QSO-stream
+records in the current epoch, zero ready sources and zero eligible exports.
+
+At 04:51:11 UTC, policy membership covered 218 operations and 1,425 QSO-stream
+records, still in backfill with no ready source or eligible export. QRZ had 36
+complete and one pending partition, but zero retained covering plans; the prior
+98-record plan expired at 04:00:56. Its ledger had 3,435 ambiguous and 398 pending
+rows. Attempts, cutovers and temporary guards were zero. Expiry cleanup can reduce
+partition counts without resolving gaps. Refresh QRZ evidence for the exact trial.
+At approximately 04:58 UTC, the pending partition was an expired, empty base
+manifest awaiting cleanup or rebuilding; freshness of all complete partitions
+was not independently verified.
 
 At 02:52:53 UTC, QRZ had 35 complete and five pending history partitions. The
 same single complete covering plan contained 98 surrounding records and zero
@@ -39,14 +51,14 @@ Source review separately includes eight test contacts and one blocked contact.
 Waiting for cron advances available inventory and retry work; it does not approve
 ambiguous identities, lower-precision locations or missing routes.
 
-| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                                               |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed.                      |
-| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                                                   |
-| Source boundary           | Two complete inventories match Ferry, and a 20-target all-client forward sample matches. Versioned baseline/runtime guards are deployed; the first policy is in backfill, with handoff still pending. Continuous coverage, purge exclusion and fresh positive source/context enforcement remain open. A completed cursor is insufficient. |
-| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                                                  |
-| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Historical lower-precision associations and live ARRL acceptance remain unproved.                                                                                                                          |
-| First vendor writes       | The owner authorized one or two contacts, QRZ first and LoTW afterward, with a database backup before external changes. No write has occurred. Exact source/destination selection, current evidence and normal delivery prerequisites remain required.                                                                                    |
+| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                          |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed. |
+| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                              |
+| Source boundary           | Two inventories and a bounded forward sample match Ferry. The deployed policy is still in backfill. Mandatory exact-dependency source proofs are deployed; production handoff and current trial evidence remain outstanding. These proofs do not establish global purge/replay guarantees.                           |
+| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                             |
+| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Historical lower-precision associations and live ARRL acceptance remain unproved.                                                                                                     |
+| First vendor writes       | The latest instruction to keep exports disabled supersedes the earlier one- or two-contact trial authorization. No write or actual trial may occur until the owner changes that instruction. Exact scope, fresh evidence, backup and enforced exclusion of global cutover/no-query effects are still required.       |
 
 ## Finish reconciliation and review exceptions
 
@@ -54,19 +66,20 @@ Keep all six export gates closed while doing this work. Preserve cursors, source
 birth evidence, current context and destination reservations; clearing counts or
 forcing a contact into an eligible state is not reconciliation.
 
-| Outcome                                                       | Next action                                                                                                                             | Can scheduled work resolve it?                                         |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Inventory/context pending                                     | Let bounded reads finish; diagnose persistent vendor failures and expired or missing dependencies.                                      | Yes, when the dependency is obtainable and retries succeed.            |
-| QRZ minute-only or nonunique identity                         | Compare the specific source and remote records; establish an explicit association policy with adequate evidence.                        | No; another unchanged read cannot supply missing precision.            |
-| LoTW six-character history versus eight-character source grid | Review the actual station location and association. Full-grid outbound support does not retroactively establish historical equivalence. | No automatic adoption or grid truncation.                              |
-| Other location mismatch                                       | Compare exact station fields and authoritative source context. Keep the hold until the discrepancy is understood.                       | Only a meaningful source/remote correction can change the evidence.    |
-| Missing or ambiguous route                                    | Select the intended station/book/account coverage.                                                                                      | No; the scheduler cannot invent destination coverage.                  |
-| Test or invalid contact                                       | Tests stay excluded; correct an invalid real source record through its normal source application.                                       | Test exclusion is intentional. Invalid source data needs a correction. |
+| Outcome                                                       | Next action                                                                                                                             | Can scheduled work resolve it?                                                                                                                                                                                                                           |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inventory/context pending                                     | Let bounded reads finish; diagnose persistent vendor failures and expired or missing dependencies.                                      | Yes, when the dependency is obtainable and retries succeed.                                                                                                                                                                                              |
+| Waiting for current source verification                       | Obtain fresh exact QSO/base/event observations and a complete final canonical drain under the ordinary budget.                          | Complete subsets and later singleton turns can progress. A budget-limited singleton with no ready contact receives an exact-version ten-minute delay; neighbors retain five-minute turns. A contact needing more than three collection reads stays held. |
+| QRZ minute-only or nonunique identity                         | Compare the specific source and remote records; establish an explicit association policy with adequate evidence.                        | No; another unchanged read cannot supply missing precision.                                                                                                                                                                                              |
+| LoTW six-character history versus eight-character source grid | Review the actual station location and association. Full-grid outbound support does not retroactively establish historical equivalence. | No automatic adoption or grid truncation.                                                                                                                                                                                                                |
+| Other location mismatch                                       | Compare exact station fields and authoritative source context. Keep the hold until the discrepancy is understood.                       | Only a meaningful source/remote correction can change the evidence.                                                                                                                                                                                      |
+| Missing or ambiguous route                                    | Select the intended station/book/account coverage.                                                                                      | No; the scheduler cannot invent destination coverage.                                                                                                                                                                                                    |
+| Test or invalid contact                                       | Tests stay excluded; correct an invalid real source record through its normal source application.                                       | Test exclusion is intentional. Invalid source data needs a correction.                                                                                                                                                                                   |
 
 A narrow first-export trial does not require approving every historical exception.
 Its selected contacts must have complete current context, unambiguous routing,
-valid certificate/location/mode fields, durable identity ownership and fresh
-remote checks. Other held contacts remain outside the trial. General automatic
+valid certificate/location/mode fields, durable identity ownership, a current
+immutable source proof and fresh remote checks. Other held contacts remain outside the trial. General automatic
 coverage requires its own scope review afterward.
 
 ## Source boundary before cutover
@@ -81,6 +94,13 @@ covered by the supported contract or a deliberately scoped experiment.
 
 Keep `SOURCE_BOUNDARY_VERIFIED=false` until that evidence supports the real source
 connection. The 2026-10-23 22:19 UTC audit confirms both destination rescans complete and no missing births or unavailable current payloads. Two contacts still reference deleted operations. Keep those contacts held. The source gate is global and applies even to an exact-UUID trial.
+
+**Remaining blocker before a narrow trial:** this global gate also permits
+source-wide cutovers and no-query inference. Exact fresh per-contact proofs do
+not establish universal UUID, tombstone or purge guarantees. Decouple proof-based
+contact delivery from those effects, or otherwise exclude them with enforced
+guards, before any QRZ trial. Completing the baseline and deploying mandatory
+proofs alone is insufficient to enable exports. Keep the global gate closed.
 A naturally whole-second contact does not waive it. Never alter a source timestamp
 merely to bypass a safety check.
 
@@ -132,17 +152,33 @@ Fresh-positive collection, canonical witness storage, completed-drain markers,
 immutable proofs, indexed observation anchors and shared cohort coordination are
 signed and pushed through `e16f987441fc`, with exact-key lookup correction
 `3d7b0cac782a`. All 1,098 tests pass and the foundation deployed at 04:13 UTC.
-It grants no export authority. Mandatory proof binding at both boundaries and
-scheduler integration remain in progress. The diagnostic observations and signed
-guards do not open the global source gate or authorize a trial before those prerequisites.
+It grants no export authority by itself. Mandatory proof binding at both boundaries
+and scheduler integration deployed in `5a416de5` at 05:11 UTC. Migration
+`0030` requires current ready policy and exact dependency proof even for old
+workers, missing policy or null context. Evidence expires from its oldest original
+positive observation within five minutes; an empty drain cannot renew it. Each
+attempt pins its original proof ID. Stale known-unsent work may be rebuilt, but
+dispatched uncertainty and permanent identity ownership remain. These safeguards
+do not open the global source gate or establish source-wide cutover authority.
 
 ## First-export trial packet
 
-The owner has authorized a one- or two-contact trial with QRZ first, followed by
-LoTW. Prepare this restricted packet and satisfy the evidence prerequisites before
-executing that scope. Keep private contact details out of repository documentation.
+The latest instruction to keep exports disabled supersedes the earlier one- or
+two-contact trial authorization. Prepare this packet read-only; no actual trial
+may run until the owner changes that instruction. Any later trial also requires
+enforced separation from the global cutover/no-query effects described above,
+then current evidence for the exact scope. The proposed order remains QRZ first,
+followed by LoTW. Keep private contact details out of repository documentation.
 
-A refreshed protected production SQL backup completed at **03:50:46 UTC on
+A fresh protected production SQL backup was verified at **04:25:27 UTC on
+2026-10-24**, before the mandatory-proof release. Its isolated restore passed all
+28 existing migrations plus pending `0030`, integrity checks and zero foreign-key
+violations. All three current credentials decrypted; repeated quarantine preserved
+380 permanent identity claims and zero attempts/cutovers. No production restore
+or vendor mutation occurred. Preserve that backup and its verification evidence
+before external changes; refresh it if intervening state changes warrant it.
+
+The earlier protected production SQL backup completed at **03:50:46 UTC on
 2026-10-24**. It restored successfully into isolated in-memory SQLite with valid
 integrity, zero foreign-key violations and all 25 current migrations; pending
 migrations `0027`–`0029` also applied successfully in that isolated copy. It retained
@@ -162,8 +198,9 @@ live sample, both routes passed the current metadata and ownership checks but
 neither had an eligible first-insert classification. That contact remains held.
 Its six-character source grid and fractional timestamp were preserved; the audit
 does not impose eight-character grids on other users or contacts.
-1. Record the signed deployed revision, closed-gate readback and completed source
-   boundary evidence. Verify access to the existing production encryption-key
+1. Record the signed deployed revision, closed-gate readback and the source
+   evidence. Verify that narrow delivery cannot invoke source-wide cutovers or
+   no-query inference without independent authority. Verify access to the existing production encryption-key
    backup; do not rotate or recreate keys. A second independent passkey is
    recommended but is not a hard requirement for this owner-operated pilot.
    Operator database recovery can associate a newly verified passkey with the
@@ -179,13 +216,17 @@ does not impose eight-character grids on other users or contacts.
    reviewed scope. The destination allowlist must exclude LoTW during the first
    QRZ trial; absent or empty scope grants no write permission.
 4. Review fresh absence or existing association evidence, identity reservations,
-   source context, quiet period, credentials and all unresolved attempts. Confirm
+   source context, quiet period, credentials and all unresolved attempts. Require
+   a current immutable source proof for the complete selected QSO/base/live-event
+   set after the final canonical drain; cached destination absence and a completed
+   cursor alone are insufficient. Confirm
    the selected contact has no ambiguity, location mismatch or competing owner.
 5. Show the expected QRZ record/narrative and LoTW signed station fields, the exact
-   UUID and destination scope, and the stop conditions. Use the owner's existing
-   one- or two-contact authorization only within that scope. A test callsign is
-   excluded by Ferry and is not a bypass.
-6. Enable only the approved scope after prerequisites are met. Record QRZ receipt
+   UUID and destination scope, and the stop conditions. Keep the packet read-only
+   until the owner changes the current keep-disabled instruction. A test callsign
+   is excluded by Ferry and is not a bypass.
+6. Only after that instruction changes and all prerequisites are met, enable the
+   newly approved scope. Record QRZ receipt
    and exact readback. For LoTW, distinguish upload acknowledgment (**submitted**)
    from exact later readback (**observed**); QSL confirmation is independent.
    Capture deployed signing/resource measurements without logging credentials or

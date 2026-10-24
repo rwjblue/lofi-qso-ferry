@@ -1,6 +1,38 @@
 # Capacity plan
 
-Status: signed revision `32e25b0ebc4d2ef5716bc3e60e166561a5b0931a` deployed
+Current status, 2026-10-24 UTC:
+
+Signed revision `5a416de5898657a6b12b60fd900d787f60341d51` deployed read-only
+at 05:11:14 UTC as Worker `a16f8d42-d039-437e-8fee-44116ddb5195`, at 100% traffic.
+All **1,131 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40064363238).
+Independent 05:11:28 checks confirm healthy service, all three asset hashes
+matching, all six export gates closed, 29 migrations through `0030`, 380 LoTW
+identity claims and zero uncovered mappings, attempts, cutovers or temporary
+guards. Mandatory preparation/dispatch proof binding and bounded scheduler
+integration are deployed. No proof, attempt pin or retention candidate exists
+while exports are closed. All 4,500 retained source bodies have incarnations;
+1,055 positive observations have no future or partially populated metadata.
+The all-client policy remains in backfill with 218 operations and 1,750 QSO-stream
+records in the current epoch, zero ready sources and zero eligible exports.
+
+The 04:51:11 UTC snapshot has 218 operations and 1,425 QSO-stream records in the
+current epoch, still in backfill with zero ready sources, eligible exports,
+attempts, cutovers or temporary guards. QRZ has 36 complete partitions and one
+pending, but no retained covering plan: the earlier 98-record cover expired at
+04:00:56 UTC. Partition-count reductions can include retention cleanup and do not
+prove reconciliation completion. The 04:25 UTC protected backup and isolated
+`0030` restore passed; [release evidence](deployment.md#mandatory-source-proof-release-2026-10-24-0511-utc)
+records the checks. Production source handoff, refreshed exact trial evidence and
+live acceptance remain outstanding. No sustained capacity target below is met
+by these implementation or diagnostic results.
+At approximately 04:58 UTC the pending QRZ partition was an expired, empty base
+manifest awaiting cleanup or rebuilding; the complete count was not independently
+verified for freshness.
+The five baseline runs from 04:35 through 04:55 each committed four source pages,
+with zero contact turns/errors and one budget deferral, in 9.635–31.143 seconds.
+This shows ongoing read-limited baseline progress, not completed-contact throughput.
+
+Historical retry release: signed revision `32e25b0ebc4d2ef5716bc3e60e166561a5b0931a` deployed
 read-only at 2026-10-24 00:00 UTC as Worker
 `076adec3-eeb7-4dc9-bcd8-f6b04ce75318`, at 100% traffic. All **675 tests** and
 required checks passed locally and in
@@ -399,11 +431,13 @@ neither a successful audit nor a completed policy phase opens a gate.
    cutover and policy baseline. Old immutable births cannot regain eligibility
    merely because the policy resets.
 
-**Transition limitation:** stage/dispatch and cutover policy fences are dormant
-when no policy row exists. Scheduler/intake selects unactivated sources for
-baseline work, but main-export activation must additionally require an existing,
-current ready policy for every exporting source. Applying these migrations alone
-does not establish that requirement or the upstream source boundary.
+**Transition limitation of `0025`/`0026`:** their stage/dispatch and cutover policy
+fences are dormant when no policy row exists. Scheduler/intake selects unactivated
+sources for baseline work. Deployed migration `0030`
+adds mandatory current ready policy and per-contact proof requirements to staging
+and dispatch, including old-worker and null-context paths. This closes the local
+write-authority gap; it does not establish the upstream source boundary or narrow
+the global gate's cutover/no-query effects.
 
 Focused validation covers old/new Worker overlap, rollback, phase resumption,
 historical drain discoveries, stale leases/account changes, missing dependencies,
@@ -424,7 +458,8 @@ immutable proofs, indexed observation anchors and shared cohort coordination are
 signed and pushed through `e16f987441fc`, with exact-key lookup correction
 `3d7b0cac782a`. All 1,098 tests pass and the foundation deployed read-only at
 04:13 UTC with migrations `0027`–`0029`. Mandatory database proof binding,
-last-moment dispatch validation and scheduler integration are in progress.
+last-moment dispatch validation and scheduler integration deployed in `5a416de5`
+at 05:11 UTC, as described below.
 
 The 04:18:08 UTC production snapshot has all 218 operations and 800 QSO-stream
 records in the current epoch, still in backfill with zero eligible exports.
@@ -432,6 +467,9 @@ The 04:15 run processed four source pages and 110 records in 15.674 seconds,
 with 138 D1 calls, 723 statements, 14.573 seconds of D1 wall time and 419 ms of
 reported SQL time. No errors or attempts occurred; one vendor-budget deferral
 was recorded. This is an individual baseline run, not sustained capacity acceptance.
+The later 04:51:11 UTC snapshot has 218 operations and 1,425 QSO-stream records,
+still in backfill with no ready source or eligible export. Phase completion and
+handoff must be observed before selecting a production export cohort.
 
 Runtime background pages remain **25 rows** with at most **four shared LoFi
 background requests per five minutes**. A QSO pass alone therefore has ideal
@@ -468,14 +506,48 @@ calls and 1,508 statements in one atomic checkpoint, versus 1,308 statements in 
 deployed baseline. This proves a bounded local transaction, not production headroom
 under D1's execution limits.
 
-Fresh positive source validation is a separate export prerequisite. A hard purge
-may leave no tombstone, so all-client forward completion cannot prove continued
-upstream presence. Design short-lived, scope/version-bound positive evidence for
-the selected QSO, base operation and required event context, checked atomically
-before dispatch; absent, changed or over-budget evidence remains held. Reusing a
-retained body or renewing a cursor-complete flag cannot renew that evidence.
-The exact bounded sync-read contract still needs validation; do not assume the
-operation REST endpoint supplies unrestricted historical coverage.
+#### Deployed mandatory source proofs and bounded progress
+
+The deployed implementation requires short-lived positive evidence for the
+selected QSO, base operation and every retained live event, even an event that
+does not change the effective projection. A hard purge may leave no tombstone;
+all-client forward completion alone cannot prove continued upstream presence.
+Proofs bind current logical scope, credentials, policy epoch, source and
+reconciliation versions, and post-drain sync/context generations. A fresh complete
+canonical drain must follow collection; reloading the exact dependency set checks
+both supplied and newly present members. Immutable attempt pins and final
+post-admission validation enforce the same proof at staging and dispatch.
+Expiry is bounded by the oldest original positive request start plus five minutes.
+Neither a retained body nor an empty drain renews that clock.
+
+Normal service can select up to six live contacts for shared evidence while
+dispatch remains sequential; background preparation shares two attempt slots.
+Each source turn permits at most **four actual source HTTP attempts**, including
+authentication/renewal and the reserved final drain. Only the collector's exact
+`request_budget` outcome permits a fully witnessed subset to proceed through that
+drain, dependency reload and atomic mint. Other read, scope, freshness or drain
+failures publish no proofs. Local real-D1 tests demonstrate a non-prefix subset
+of three out of six contacts progressing in four requests, then the remaining
+three on a later turn; this is bounded correctness evidence, not a service rate.
+
+Prior budget-held contacts receive a singleton turn. If that attempted singleton
+again reaches the collection budget with zero ready contacts, an exact-version
+ten-minute queue delay yields to neighbors on the ordinary five-minute schedule.
+This prevents one large closure repeatedly occupying the first slot. A single
+contact whose dependency closure needs more than **three collection reads** still
+remains held; incremental collection across turns is future work. These changes
+raise neither shared vendor budgets nor the 25-row runtime page size, and do not
+open any gate.
+
+Before live acceptance, observe production baseline/drain/quarantine handoff,
+refresh expired QRZ covering evidence, select the exact source/contact/destination
+trial cohort and verify current proofs and fresh destination checks. The protected
+04:25 UTC backup passed an isolated restore with 28 migrations plus `0030`,
+integrity/foreign-key checks, three current credential decryptions and repeated
+quarantine, preserving 380 claims and zero attempts/cutovers. No external write
+has occurred. Exact small-cohort acceptance, 100-account steady-state capacity and
+200,000-contact end-to-end completion remain unproved; later work includes
+incremental evidence collection, pacing and separately measured larger source pages.
 
 ### 3. Make live delivery economical without weakening write safety
 

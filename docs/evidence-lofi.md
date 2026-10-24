@@ -105,10 +105,10 @@ replay, tombstone or retention contract.
 ### Evidence packet still required
 
 Keep the following distinct in the personal canary record:
-1. **Local integrity:** deployed revision and observation time; all five gates closed; the scoped audit; current source account identity verified in memory; and aggregate candidate classifications. Preserve exact candidate UUIDs only in the protected owner review/allowlist, never in repository evidence.
+1. **Local integrity:** deployed revision and observation time; all six gates closed; the scoped audit; current source account identity verified in memory; and aggregate candidate classifications. Preserve exact candidate UUIDs only in the protected owner review/allowlist, never in repository evidence.
 2. **Observed source replay:** independent expected UUID membership for the selected operation and its full event timeline, including any known tombstones; completed read counts; server-watermark comparisons; and repeated-page/resume results. A matching second read establishes observed repeatability for that sample. A missing expected UUID falsifies completeness. Neither result proves that an independently unknown historical UUID never existed.
-3. **Server boundary:** a primary server contract or controlled, separately authorized experiment covering a historical QSO edit, base-operation edit, event edit/delete, QSO/operation delete or purge, null-operation contact, same-millisecond page boundary and a mutation during initial inventory. It must show delivery through forward `anyClient: false` from another client, not merely discovery through `anyClient: true` backfill. Record what happens when a saved cursor is rejected or aged, the oldest supported replay position and tombstone retention. A finite experiment establishes only its tested duration; do not invent an indefinite retention guarantee.
-4. **Selected-contact freshness:** current unrevoked QSO/base/event bodies, exact projected station and destination identity, unique destination-history outcome, and fresh commit-time source/context guards for the approved UUIDs. For general-log contacts there is still no established selective UUID reread endpoint; a small operation-scoped cohort has a more bounded verification path. This source packet does not replace outbound collision claims, station/signing acceptance or explicit vendor-write authorization.
+3. **Server boundary:** a primary server contract or controlled, separately authorized experiment covering a historical QSO edit, base-operation edit, event edit/delete, QSO/operation delete or purge, null-operation contact, same-millisecond page boundary and a mutation during initial inventory. It must exercise the deployed versioned all-client forward path, not merely establish backfill discovery. The earlier `anyClient:false` requirement belonged to the replaced reader policy. Record what happens when a saved cursor is rejected or aged, the oldest supported replay position and tombstone retention. A finite experiment establishes only its tested duration; do not invent an indefinite retention guarantee.
+4. **Selected-contact freshness:** current unrevoked QSO/base/event bodies, exact projected station and destination identity, unique destination-history outcome, and a current immutable source proof for the approved UUIDs. The deployed mandatory path obtains bounded sync positives and a final canonical drain; it does not assume a selective UUID endpoint or unrestricted operation REST history. This source packet does not replace outbound collision claims, station/signing acceptance or explicit vendor-write authorization.
 
 ### Bounded read-only replay plan
 
@@ -213,9 +213,39 @@ observation anchors and shared cohort coordination are signed and pushed through
 pass and the foundation deployed read-only at 04:13 UTC with migrations
 `0027`–`0029`. At 04:18:08 the current epoch covered all 218 operations and 800
 QSO-stream records, but the policy remained in backfill with zero eligible exports.
-Mandatory stage/dispatch binding and scheduler integration remain in progress.
-Runtime positive source/context enforcement remains a prerequisite;
-these diagnostic reads cannot establish future upstream presence after a hard purge.
+Mandatory stage/dispatch binding and scheduler integration deployed in
+`5a416de5898657a6b12b60fd900d787f60341d51` at 05:11:14 UTC after all 1,131 tests
+and required checks passed. Independent 05:11:28 checks confirm migration `0030`,
+all six gates closed, no attempts/proofs/pins/cutovers, and 218 operations plus
+1,750 QSO-stream records in the current backfill epoch. Migration `0030`
+requires an immutable proof for the current account, credential, policy epoch,
+source and reconciliation versions. Its dependency set contains the selected
+QSO, base operation and every retained live event, including events that do not
+change the effective projection. Fresh positives retain their original request
+start times; proof expiry is no later than five minutes after the oldest one.
+A qualifying final canonical drain and exact dependency reload precede minting.
+Attempts pin the proof, and dispatch rechecks it after vendor-budget admission.
+Known-unsent stale work can be rebuilt; dispatched or uncertain work and permanent
+identity ownership remain retained.
+
+The coordinator allows at most four actual source requests, including authentication
+and the final drain, under the ordinary shared budget. Only a collection
+`request_budget` hold can salvage fully witnessed contacts; other failures cannot
+publish partial proofs. Remaining contacts receive a later singleton turn. If that
+singleton again exhausts collection reads with no ready contact, an exact-version
+ten-minute retry delay lets neighbors on the ordinary five-minute schedule proceed.
+A single contact needing more than three collection reads remains held. These
+bounded progress rules do not establish an upstream snapshot or general capacity.
+
+At 04:51:11 UTC, the current epoch contained 218 operations and 1,425 QSO-stream
+records, still in backfill with no ready source, eligible export, attempt, cutover
+or temporary guard. Production handoff and fresh evidence for the selected trial
+contacts remain prerequisites. The 04:25 UTC protected backup passed an isolated
+restore with all 28 existing migrations plus pending `0030`, integrity and
+foreign-key checks, three current credential decryptions and repeated quarantine;
+380 identity claims and zero attempts/cutovers were preserved. No production
+restore or vendor mutation occurred. Neither this backup nor the diagnostic reads
+opens a gate or establishes future presence after a hard purge.
 
 ### Independent membership probe and conflicting purge evidence
 
@@ -334,8 +364,8 @@ without claiming writer provenance.
 
 The existing global source gate also permits source-wide cutover creation; a
 UUID allowlist does not narrow that effect. A future limited pilot cannot simply
-rename these observations as a global retention guarantee. Any distinct scoped
-proof mechanism needs its own reviewed preparation/dispatch enforcement, exact
-source/contact/destination and revision bindings, short validity, existing
-ownership fences, and exclusion of source-wide cutovers and no-query fallbacks.
-That mechanism is not implemented or authorized by these diagnostic probes.
+rename these observations as a global retention guarantee. Mandatory per-contact
+proof enforcement is deployed, but it does not
+narrow the global gate's source-wide cutover or no-query fallback effects. Those
+effects must remain excluded from a narrow pilot unless independently proven.
+The diagnostic probes themselves authorize neither those effects nor a vendor write.

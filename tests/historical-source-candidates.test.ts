@@ -3,6 +3,7 @@ import test, { type TestContext } from "node:test";
 import type { AdifRecord } from "../src/adif.ts";
 import { measuredDatabase } from "../src/database-metrics.ts";
 import { contactReconciliationAdif } from "../src/delivery.ts";
+import type { HistoricalVendor } from "../src/historical-matching.ts";
 import {
   HISTORICAL_SOURCE_CANDIDATE_LIMIT,
   type HistoricalSourceCandidateResult,
@@ -36,8 +37,15 @@ const operation: SourceRecord = {
   stationCall: "N0CALL",
   grid: "FN31AA",
 };
-const route = (destination: Connection, contact: { stationCall: string }) =>
-  JSON.parse(destination.config).stationCallsign === contact.stationCall;
+const route = (destination: Connection, contact: { stationCall: string }) => {
+  const config = JSON.parse(destination.config);
+  return destination.kind === "lotw"
+    ? config.stations.some(
+        (station: { callsign: string }) =>
+          station.callsign === contact.stationCall,
+      )
+    : config.stationCallsign === contact.stationCall;
+};
 
 async function index(store: Store) {
   for (let i = 0; i < 10; i++) {
@@ -54,6 +62,7 @@ async function setup(
   t: TestContext,
   records = [qso("q1")],
   ops: SourceRecord[] = [],
+  vendor: HistoricalVendor = "qrz",
 ) {
   const h = await database();
   t.after(() => h.mf.dispose());
@@ -61,12 +70,22 @@ async function setup(
   await seed(h.store);
   await h.store
     .statement(
-      "UPDATE connections SET config=? WHERE tenant='a' AND id='destination'",
-      JSON.stringify({
-        stationCallsign: "N0CALL",
-        startDate: "2020-01-01",
-        endDate: "2030-01-01",
-      }),
+      "UPDATE connections SET kind=?,config=? WHERE tenant='a' AND id='destination'",
+      vendor,
+      JSON.stringify(
+        vendor === "lotw"
+          ? {
+              stations: [
+                { callsign: "N0CALL", dxcc: 291 },
+                { callsign: "N0CALL/P", dxcc: 291 },
+              ],
+            }
+          : {
+              stationCallsign: "N0CALL",
+              startDate: "2020-01-01",
+              endDate: "2030-01-01",
+            },
+      ),
     )
     .run();
   let window = 0;
@@ -188,7 +207,7 @@ async function setup(
   );
   const remote: AdifRecord = {
     ...contactReconciliationAdif(selected),
-    APP_QRZLOG_LOGID: "123",
+    ...(vendor === "qrz" ? { APP_QRZLOG_LOGID: "123" } : {}),
   };
   const compare = (
     changes: Partial<Parameters<typeof historicalSourceCandidates>[1]> = {},
@@ -202,7 +221,7 @@ async function setup(
         qso: selected.id,
         generation: selected.generation,
       },
-      vendor: "qrz",
+      vendor,
       routeMatches: route,
       ...changes,
     });
@@ -642,4 +661,97 @@ test("an archived body holds only a potentially overlapping source cohort", asyn
     "held",
     "missing ciphertext cannot disappear from its matching cohort",
   );
+});
+
+test("LoTW reverse comparison accepts a unique DATA-group owner at the inclusive thirty-minute limit", async (t) => {
+  const h = await setup(t, [qso("q1", { mode: "FT8" })], [], "lotw");
+  const remote = { ...h.remote, MODE: "RTTY", TIME_ON: "123000" };
+  const result = await h.compare({ remote });
+  assert.equal(result.state, "unique");
+  assert.equal(result.competitors, 1);
+  if (result.state !== "unique") return;
+  assert.equal(result.candidate.modeBasis, "group");
+  assert.equal(result.candidate.time.maximumSeparationMs, 30 * 60_000);
+  assert.deepEqual(result.candidate.record, remote);
+  assert.equal(await guardCurrent(h.store, result), true);
+  assert.equal(result.authoritative, false);
+});
+
+test("LoTW reverse comparison counts group-mode competitors across the full remote window regardless of location", async (t) => {
+  const h = await setup(
+    t,
+    [
+      qso("q1", { mode: "FT8", startAtMillis: at - 30 * 60_000 }),
+      qso("q2", {
+        mode: "RTTY",
+        startAtMillis: at + 30 * 60_000,
+        our: { call: "N0CALL", grid: "JO22AA" },
+      }),
+    ],
+    [],
+    "lotw",
+  );
+  const result = await h.compare({
+    remote: {
+      ...h.remote,
+      MODE: "DATA",
+      APP_LOTW_MODE: "FT8",
+      TIME_ON: "120000",
+    },
+  });
+  assert.equal(result.state, "ambiguous");
+  assert.equal(result.competitors, 2);
+  assert.equal(result.inspected, 2);
+});
+
+test("LoTW minute precision crosses UTC midnight without hiding another source owner", async (t) => {
+  const h = await setup(
+    t,
+    [
+      qso("q1", { startAtMillis: Date.UTC(2026, 9, 23, 23, 45) }),
+      qso("q2", { startAtMillis: Date.UTC(2026, 9, 24, 0, 45, 59) }),
+    ],
+    [],
+    "lotw",
+  );
+  const result = await h.compare({
+    remote: { ...h.remote, QSO_DATE: "20261024", TIME_ON: "0015" },
+  });
+  assert.equal(result.state, "ambiguous");
+  assert.equal(result.competitors, 2);
+});
+
+test("LoTW source comparison preserves exact portable station namespaces", async (t) => {
+  const h = await setup(
+    t,
+    [qso("q1"), qso("portable", { our: { call: "N0CALL/P", grid: "FN31AA" } })],
+    [],
+    "lotw",
+  );
+  const result = await h.compare();
+  assert.equal(result.state, "unique");
+  assert.equal(result.inspected, 2);
+  assert.equal(result.competitors, 1);
+  assert.equal(await guardCurrent(h.store, result), true);
+});
+
+test("LoTW source comparison guards reject a late competing connection in the commit transaction", async (t) => {
+  const h = await setup(t, [qso("q1")], [], "lotw");
+  const result = await h.compare();
+  assert.equal(result.state, "unique");
+  if (result.state !== "unique") return;
+  const other = await h.prepareSource("other-source");
+  await h.initialize(other, [qso("other-qso")]);
+  const guard = result.commitGuard(Date.now());
+  const committed = await h.store
+    .statement(
+      `INSERT INTO history_adoption_guards(id) SELECT 'lotw-late' WHERE ${guard.sql} RETURNING id`,
+      ...guard.params,
+    )
+    .all();
+  assert.equal(committed.results.length, 0);
+  await index(h.store);
+  const after = await h.compare();
+  assert.equal(after.state, "ambiguous");
+  assert.equal(after.competitors, 2);
 });

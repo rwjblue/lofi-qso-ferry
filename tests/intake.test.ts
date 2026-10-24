@@ -2747,6 +2747,254 @@ test("null-operation records project independently and sparse tombstones cancel 
   }
 });
 
+test("ordinary web tombstones with unchanged application revisions follow newer server stamps and preserve dispatched uncertainty", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const statuses = ["prepared", "dispatching", "uncertain"] as const;
+  const records = statuses.map((status, index) => ({
+    ...loose,
+    uuid: `web-delete-${status}`,
+    startAtMillis: at + index * 1000,
+    updatedAtMillis: 50,
+    syncedAtMillis: 102,
+  }));
+  await pollSource(store, source, async () => response([], records), now);
+  const contacts = await pendingContacts(store, source, 40, now + 1);
+  assert.equal(contacts.length, statuses.length);
+  const template = await store.saveTemplate("a", "destination", {
+    fields: { COMMENT: "Immutable before the source delete" },
+  });
+  const lease = await store.claim("a", "delivery:destination", now + 2);
+  assert.ok(lease);
+  const attempts = new Map<string, string>();
+  for (const contact of contacts) {
+    const status = contact.id.slice("web-delete-".length);
+    const key = { ...state.key, qso: contact.id };
+    await observeContact(store, source, contact, now + 1);
+    await store
+      .statement(
+        "UPDATE ledger SET state='live_new',due_at=? WHERE tenant='a' AND qso=?",
+        now,
+        contact.id,
+      )
+      .run();
+    const attempt = await store.stage(
+      key,
+      contact.generation,
+      { immutable: status },
+      "v1",
+      template,
+      now + 2,
+      undefined,
+      undefined,
+      undefined,
+      {
+        claim: await destinationIdentityClaim("qrz", contactAdif(contact)),
+        sourceVersion: contact.reconciliationVersion,
+      },
+    );
+    attempts.set(status, attempt);
+    if (status !== "prepared")
+      assert.equal(
+        await store.claimAttempt("a", attempt, lease, now + 3),
+        true,
+      );
+    if (status === "uncertain")
+      await store.resolve("a", attempt, lease, "uncertain", null, now + 4);
+  }
+  const immutable = (
+    await store.statement("SELECT * FROM attempts ORDER BY id").all()
+  ).results;
+  const claims = (
+    await store
+      .statement(
+        "SELECT * FROM destination_identity_claims ORDER BY identity_hash",
+      )
+      .all()
+  ).results;
+  const cursor = await store
+    .statement("SELECT * FROM cursors WHERE stream='sync'")
+    .first();
+  await assert.rejects(
+    pollSource(
+      store,
+      source,
+      async () =>
+        response(
+          [],
+          records.map((record) => ({ ...record, deleted: 1 })),
+        ),
+      now + 5,
+    ),
+    /conflicting_server_timestamp_requires_reconciliation/,
+    "a changed tombstone at the same server stamp must not acquire ordering authority",
+  );
+  assert.deepEqual(
+    await store.statement("SELECT * FROM cursors WHERE stream='sync'").first(),
+    cursor,
+  );
+  for (const record of records)
+    assert.equal(
+      (await work(state, record.uuid))?.synced_at,
+      record.syncedAtMillis,
+    );
+
+  await pollSource(
+    store,
+    source,
+    async () =>
+      response(
+        [],
+        records.map((record) => ({
+          ...record,
+          deleted: 1,
+          syncedAtMillis: 202,
+        })),
+      ),
+    now + 6,
+  );
+  assert.deepEqual(await pendingContacts(store, source, 40, now + 7), []);
+  for (const status of statuses) {
+    const id = `web-delete-${status}`;
+    const row = await work(state, id);
+    assert.ok(row);
+    assert.equal(row.synced_at, 202);
+    const raw = await store.private<SourceRecord>(
+      "a",
+      "source",
+      row.private_id,
+      "source",
+    );
+    assert.equal(
+      raw?.updatedAtMillis,
+      50,
+      "the application revision does not need to advance for a server delete",
+    );
+    assert.equal(raw?.deleted, 1);
+    assert.equal(
+      (await store.ledger({ ...state.key, qso: id }))?.state,
+      "source_deleted",
+    );
+    const attempt = attempts.get(status)!;
+    assert.equal(
+      (
+        await store
+          .statement("SELECT state FROM attempt_state WHERE attempt=?", attempt)
+          .first<{ state: string }>()
+      )?.state,
+      status === "prepared" ? "cancelled" : status,
+    );
+    assert.equal(
+      (
+        await store
+          .statement(
+            "SELECT COUNT(*) n FROM attempt_events WHERE attempt=? AND state='cancelled'",
+            attempt,
+          )
+          .first<{ n: number }>()
+      )?.n,
+      status === "prepared" ? 1 : 0,
+    );
+  }
+  assert.deepEqual(
+    (await store.statement("SELECT * FROM attempts ORDER BY id").all()).results,
+    immutable,
+  );
+  assert.deepEqual(
+    (
+      await store
+        .statement(
+          "SELECT * FROM destination_identity_claims ORDER BY identity_hash",
+        )
+        .all()
+    ).results,
+    claims,
+    "a source tombstone cannot release a destination identity or erase possible delivery",
+  );
+});
+
+test("ordinary web operation deletion with an unchanged application revision invalidates dependent dispatch", async (t) => {
+  const state = await setup();
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const original = { ...op, updatedAtMillis: 50 };
+  await pollSource(store, source, async () => response([original], [qso]), now);
+  await rereadOperation(
+    store,
+    source,
+    async () => operationResponse([qso]),
+    now + 1,
+  );
+  const [contact] = await pendingContacts(store, source, 40, now + 2);
+  assert.ok(contact);
+  const key = { ...state.key, qso: contact.id };
+  await observeContact(store, source, contact, now + 2);
+  await store
+    .statement(
+      "UPDATE ledger SET state='live_new',due_at=? WHERE tenant='a'",
+      now,
+    )
+    .run();
+  const template = await store.saveTemplate("a", "destination", {
+    fields: { COMMENT: "Frozen before the operation delete" },
+  });
+  const attempt = await store.stage(
+    key,
+    contact.generation,
+    { immutable: "prepared" },
+    "v1",
+    template,
+    now + 2,
+    undefined,
+    undefined,
+    undefined,
+    {
+      claim: await destinationIdentityClaim("qrz", contactAdif(contact)),
+      sourceVersion: contact.reconciliationVersion,
+    },
+  );
+  await pollSource(
+    store,
+    source,
+    async () =>
+      response([{ ...original, deleted: 1, syncedAtMillis: 200 }], []),
+    now + 3,
+  );
+  const operation = await work(state, "op-1", "operation");
+  assert.ok(operation);
+  assert.equal(operation.synced_at, 200);
+  const raw = await store.private<SourceRecord>(
+    "a",
+    "source",
+    operation.private_id,
+    "source",
+  );
+  assert.equal(raw?.updatedAtMillis, 50);
+  assert.equal(raw?.deleted, 1);
+  const lease = await store.claim("a", "delivery:destination", now + 4);
+  assert.ok(lease);
+  await assert.rejects(store.claimAttempt("a", attempt, lease, now + 4));
+  assert.deepEqual(await pendingContacts(store, source, 40, now + 5), []);
+  assert.equal((await work(state, "qso-1"))?.state, "blocked");
+  assert.equal(
+    (await work(state, "qso-1"))?.reason,
+    "operation_context_unavailable",
+  );
+  assert.equal(
+    (
+      await store
+        .statement(
+          "SELECT dispatched_at FROM attempt_state WHERE attempt=?",
+          attempt,
+        )
+        .first<{ dispatched_at: number | null }>()
+    )?.dispatched_at,
+    null,
+    "an operation tombstone blocks the prepared contact even though its own QSO has not changed",
+  );
+});
+
 test("event expiry and missing membership never erase a segment or block an unrelated general log", async () => {
   const state = await setup();
   const { store, source, now, mf } = state;

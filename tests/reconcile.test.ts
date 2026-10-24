@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { measuredDatabase } from "../src/database-metrics.ts";
 import { contactReconciliationAdif, prepareDue } from "../src/delivery.ts";
+import { historicalGridsCompatible } from "../src/historical-location.ts";
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
 import { observeLotwContact } from "../src/lotw.ts";
 import { projectContact, sourceFingerprint } from "../src/projection.ts";
@@ -1347,7 +1348,7 @@ test("LoTW historical association accepts nested grid regions in either directio
   const candidate = { ...remote, MY_GRIDSQUARE: "FN31PR" };
   assert.equal(
     classifyHistory(current, [candidate], evidence).state,
-    "history_mismatch",
+    "adopted_existing",
   );
   assert.equal(
     classifyHistory(
@@ -1376,7 +1377,7 @@ test("LoTW grid association requires valid nested regions and agreement on every
     [current, [{ ...candidate, MY_GRIDSQUARE: "FN31PS" }], "history_mismatch"],
     [current, [{ ...candidate, MY_GRIDSQUARE: "FN31P?" }], "history_mismatch"],
     [current, [{ ...candidate, MY_GRIDSQUARE: "FN31P" }], "history_mismatch"],
-    [current, [{ ...candidate, MY_GRIDSQUARE: "FN" }], "history_mismatch"],
+    [current, [{ ...candidate, MY_GRIDSQUARE: "F" }], "history_mismatch"],
     [
       current,
       [{ ...candidate, MY_GRIDSQUARE: "FN31PR\n" }],
@@ -1420,6 +1421,138 @@ test("LoTW grid association requires valid nested regions and agreement on every
     assert.equal(outcome.state, state);
     assert.equal(outcome.remote, undefined);
   }
+});
+test("historical grid subsets include valid two-character fields for both destinations without rewriting evidence", () => {
+  for (const destination of ["qrz", "lotw"] as const)
+    for (const [localGrid, remoteGrid] of [
+      ["FN31PR12", "FN"],
+      ["FN31PR", "FN"],
+      ["FN31", "FN"],
+      ["FN", "FN31PR12"],
+      ["FN", "FN31PR"],
+      ["FN", "FN31"],
+      ["FN31PR12", "FN31"],
+      ["FN31PR12", "FN31PR"],
+      ["FN31PR", "FN31"],
+      ["fn31pr12", "fn"],
+      ["fn", "fn31pr12"],
+    ]) {
+      const current = Object.freeze({ ...source, MY_GRIDSQUARE: localGrid });
+      const candidate = Object.freeze({ ...remote, MY_GRIDSQUARE: remoteGrid });
+      const outcome = classifyHistory(current, [candidate], {
+        ...evidence,
+        destination,
+      });
+      assert.equal(outcome.state, "adopted_existing");
+      assert.equal(outcome.reason, null);
+      assert.equal(outcome.remote, candidate);
+      assert.equal(current.MY_GRIDSQUARE, localGrid);
+      assert.equal(candidate.MY_GRIDSQUARE, remoteGrid);
+      assert.equal(candidate.COMMENT, remote.COMMENT);
+      assert.equal(
+        reconcileQrzAttempt(current, [candidate]).state,
+        "unresolved",
+      );
+    }
+});
+test("historical nested-grid compatibility rejects invalid lengths and non-ASCII input", () => {
+  for (const invalid of [
+    undefined,
+    "",
+    "F",
+    "FN3",
+    "FN31P",
+    "FN31PR1",
+    "FN31PR123",
+    "FN31PR1234",
+    "SN",
+    "FN31PY",
+    "FN31PRAB",
+    "FN\n",
+    "FN31PR\n",
+    "ＦＮ",
+    "FN31Pſ",
+    " FN",
+    "FN ",
+    "FN31PR12\u0000",
+  ]) {
+    assert.equal(historicalGridsCompatible("FN31PR12", invalid), false);
+    assert.equal(historicalGridsCompatible(invalid, "FN31PR12"), false);
+  }
+  assert.equal(historicalGridsCompatible("FN31PR12", "FM"), false);
+  assert.equal(historicalGridsCompatible("FN31PR12", "FN32"), false);
+  assert.equal(historicalGridsCompatible("FN31PR12", "FN31PS"), false);
+  for (const destination of ["qrz", "lotw"] as const)
+    for (const grid of ["F", "FN3", "FN31Pſ", "ＦＮ", "FM", "FN32", "FN31PS"]) {
+      const outcome = classifyHistory(
+        { ...source, MY_GRIDSQUARE: "FN31PR12" },
+        [{ ...remote, MY_GRIDSQUARE: grid }],
+        { ...evidence, destination },
+      );
+      assert.equal(outcome.state, "history_mismatch");
+      assert.equal(outcome.remote, undefined);
+    }
+});
+test("QRZ nested-grid association retains exact time, unique identity, LOGID and other-field requirements", () => {
+  const current = {
+    ...source,
+    MY_GRIDSQUARE: "FN31PR12",
+    MY_STATE: "CT",
+    FREQ: "14.074",
+  };
+  const candidate = {
+    ...remote,
+    MY_GRIDSQUARE: "FN",
+    MY_STATE: "CT",
+    FREQ: "14.074",
+  };
+  const neighbor = { ...candidate, TIME_ON: "120002", APP_QRZLOG_LOGID: "101" };
+  assert.equal(
+    classifyHistory(current, [neighbor, candidate], evidence).remote,
+    candidate,
+  );
+  for (const [expected, candidates, state] of [
+    [
+      current,
+      [candidate, { ...candidate, APP_QRZLOG_LOGID: "101" }],
+      "history_ambiguous",
+    ],
+    [current, [{ ...candidate, APP_QRZLOG_LOGID: "" }], "history_ambiguous"],
+    [
+      current,
+      [{ ...candidate, APP_QRZLOG_LOGID: "invalid" }],
+      "history_ambiguous",
+    ],
+    [current, [{ ...candidate, TIME_ON: "1200" }], "history_ambiguous"],
+    [
+      { ...current, TIME_ON: "1200" },
+      [{ ...candidate, TIME_ON: "1200" }],
+      "history_mismatch",
+    ],
+    [
+      { ...current, TIME_ON: "240000" },
+      [{ ...candidate, TIME_ON: "240000" }],
+      "history_mismatch",
+    ],
+    [current, [{ ...candidate, MODE: "SSB" }], "history_ambiguous"],
+    [current, [{ ...candidate, MY_STATE: "NY" }], "history_mismatch"],
+    [current, [{ ...candidate, MY_STATE: "" }], "history_mismatch"],
+    [current, [{ ...candidate, FREQ: "14.075" }], "history_mismatch"],
+    [current, [{ ...candidate, FREQ: "" }], "history_ambiguous"],
+    [
+      { ...current, MY_DXCC: "291" },
+      [{ ...candidate, MY_DXCC: "1" }],
+      "history_mismatch",
+    ],
+  ] as const) {
+    const outcome = classifyHistory(expected, [...candidates], evidence);
+    assert.equal(outcome.state, state);
+    assert.equal(outcome.remote, undefined);
+  }
+  const { APP_QRZLOG_LOGID: _logId, ...withoutLogId } = candidate;
+  const missingId = classifyHistory(current, [withoutLogId], evidence);
+  assert.equal(missingId.state, "history_ambiguous");
+  assert.equal(missingId.reason, "Matched QRZ record has no verified LOGID");
 });
 test("LoTW grid association ignores unrelated neighbors but requires one exact normalized identity", () => {
   const scope = { ...evidence, destination: "lotw" as const };
@@ -1491,6 +1624,62 @@ test("LoTW historical grid association does not relax exact upload receipt verif
     );
     assert.equal(observation.state, "projection_mismatch");
     assert.deepEqual(observation.differingFields, ["MY_GRIDSQUARE"]);
+  }
+});
+test("QRZ grid association persists original evidence and quarantines competing owners without attempts", async () => {
+  const { mf, store } = await reconciliationDatabase();
+  try {
+    const first = await seed(store);
+    const candidate = Object.freeze({ ...remote, MY_GRIDSQUARE: "FN" });
+    for (const [index, grid] of ["FN31PR12", "FN31PR34"].entries()) {
+      const key = { ...first, qso: `grid-${index}` };
+      const current = Object.freeze({ ...source, MY_GRIDSQUARE: grid });
+      const fingerprint = await sha256(canonical(current));
+      await store.observe(key, "g1", fingerprint, 30, false, 0);
+      const outcome = classifyHistory(current, [candidate], evidence);
+      assert.equal(outcome.state, "adopted_existing");
+      assert.equal(outcome.remote, candidate);
+      const result = await adoptHistory(store, key, "g1", outcome, 1);
+      assert.equal(result.applied, index === 0);
+      assert.equal(current.MY_GRIDSQUARE, grid);
+      assert.equal(candidate.MY_GRIDSQUARE, "FN");
+      if (index === 0) {
+        const ledger = (await store.ledger(key))!;
+        assert.equal(ledger.remote_id, "100");
+        assert.equal(ledger.source_hash, fingerprint);
+        assert.equal(ledger.baseline_hash, fingerprint);
+        assert.equal(ledger.narrative, "remote_preserved");
+        assert.equal(
+          ledger.remote_hash,
+          await sha256(canonical(comparableRemote(candidate))),
+        );
+        assert.equal(ledger.sent_hash, null);
+        assert.equal(
+          (await store
+            .statement(
+              "SELECT COUNT(*) n FROM legacy_qrz_identity_reservations",
+            )
+            .first<{ n: number }>())!.n,
+          0,
+        );
+      } else {
+        assert.equal(result.reason, "remote_identity_claim_conflict");
+      }
+    }
+    for (const qso of ["grid-0", "grid-1"]) {
+      const ledger = (await store.ledger({ ...first, qso }))!;
+      assert.equal(ledger.provenance, "adoption_conflict");
+      assert.equal(ledger.state, "history_ambiguous");
+      assert.equal(ledger.sent_hash, null);
+    }
+    assert.equal(
+      (await store
+        .statement("SELECT COUNT(*) n FROM attempts")
+        .first<{ n: number }>())!.n,
+      0,
+    );
+  } finally {
+    await mf.dispose();
   }
 });
 test("LoTW grid association retains exact source and remote evidence and quarantines competing owners", async () => {

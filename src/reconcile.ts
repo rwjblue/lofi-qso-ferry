@@ -1,4 +1,5 @@
 import type { AdifRecord } from "./adif.ts";
+import { historicalGridsCompatible } from "./historical-location.ts";
 import {
   availableIdentityClaim,
   destinationIdentityClaim,
@@ -131,7 +132,7 @@ export interface ReconciliationOutcome {
 export const ADOPTION_CONFLICT_REASON =
   "Multiple source contacts claim one destination identity; review associations before exporting";
 /** Included in scheduling policy fingerprints so changed matching rules revisit held work. */
-export const HISTORICAL_MATCHING_VERSION = 2;
+export const HISTORICAL_MATCHING_VERSION = 3;
 /** Pure read-only classification. Partial evidence is never transformed into absence. */
 export function classifyHistory(
   source: AdifRecord,
@@ -234,24 +235,19 @@ export function classifyHistory(
           `LoTW query cannot establish the transmitted precision of ${field}`,
         );
     }
-  const match = matchQrzHistory(matchingSource, matchingRemote);
-  if (evidence.destination === "lotw" && match.state === "history_mismatch") {
+  let match = matchQrzHistory(matchingSource, matchingRemote);
+  if (match.state === "history_mismatch") {
     const exact = matchingRemote.filter((record) =>
       sameQrzIdentity(matchingSource, record),
     );
     const candidate = exact.length === 1 ? exact[0] : undefined;
-    const localGrid = (matchingSource.MY_GRIDSQUARE ?? "").toUpperCase();
-    const remoteGrid = (candidate?.MY_GRIDSQUARE ?? "").toUpperCase();
-    const validGrid = /^[A-R]{2}[0-9]{2}(?:[A-X]{2}(?:[0-9]{2})?)?$/;
+    const remoteGrid = candidate?.MY_GRIDSQUARE;
     if (
       candidate &&
       /^([01]\d|2[0-3])[0-5]\d[0-5]\d$/.test(candidate.TIME_ON ?? "") &&
       candidate.TIME_ON.length === 6 &&
-      [4, 6, 8].includes(localGrid.length) &&
-      [4, 6, 8].includes(remoteGrid.length) &&
-      validGrid.test(localGrid) &&
-      validGrid.test(remoteGrid) &&
-      (localGrid.startsWith(remoteGrid) || remoteGrid.startsWith(localGrid)) &&
+      remoteGrid &&
+      historicalGridsCompatible(matchingSource.MY_GRIDSQUARE, remoteGrid) &&
       // A nested Maidenhead region is compatible historical location evidence,
       // not proof that the full transmitted station projection is identical.
       // Every other comparison must agree; neither original record is changed.
@@ -259,9 +255,9 @@ export function classifyHistory(
         candidate,
       ]).state === "adopted_existing"
     )
-      return {
-        ...result("adopted_existing"),
-        remote: remote[matchingRemote.indexOf(candidate)],
+      match = {
+        state: "adopted_existing",
+        record: remote[matchingRemote.indexOf(candidate)],
       };
   }
   if (match.state === "adopted_existing") {

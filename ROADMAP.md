@@ -4,23 +4,28 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-24 UTC)
 
-A separate, default-disabled QRZ first-insert capability is being implemented in
-the isolated checkout. It must retain mandatory source proofs while excluding
-source-wide cutovers, no-query inference, LoTW, replacement and changed-identity
-corrections. This capability is not deployed or enabled.
+The separate, default-disabled QRZ first-insert capability is deployed. It retains
+mandatory source proofs while excluding source-wide cutovers, no-query inference,
+LoTW, replacement and corrections. It remains disabled. The policy-aware review
+audit and bounded 100-record baseline pages are deployed in `02e3dc89b99a`.
+The first production tick continued the saved cursor without errors; full source
+handoff, sustained capacity and current QRZ absence evidence remain outstanding.
 
-Signed revision `5a416de5898657a6b12b60fd900d787f60341d51` deployed read-only
-at 05:11:14 UTC as Worker `a16f8d42-d039-437e-8fee-44116ddb5195`, at 100% traffic.
-All **1,131 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40064363238).
-Independent 05:11:28 checks confirm healthy service, all three asset hashes
-matching, all six export gates closed, 29 migrations through `0030`, 380 LoTW
-identity claims and zero uncovered mappings, attempts, cutovers or temporary
-guards. Mandatory preparation/dispatch proof binding and bounded scheduler
-integration are deployed. No proof, attempt pin or retention candidate exists
-while exports are closed. All 4,500 retained source bodies have incarnations;
-1,055 positive observations have no future or partially populated metadata.
-The all-client policy remains in backfill with 218 operations and 1,750 QSO-stream
-records in the current epoch, zero ready sources and zero eligible exports.
+Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
+at 06:09:06 UTC as Worker `da7b7b70-6b7e-4cab-b9f6-f4b88f38390d`, at 100% traffic.
+All **1,178 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40068069314).
+Independent 06:09:17–18 checks confirm healthy service, matching hashes for all
+three assets and all seven export controls closed. Health reports no active
+export mode and `sourceBoundaryVerified:false`. All 30 migrations through `0031`
+are applied. The 380 LoTW identity claims have no uncovered mappings; attempts,
+cutovers, proofs, pins and temporary guards remain zero. All 4,500 source bodies
+have incarnations, and 2,155 positive observations have no future or partial metadata.
+At 06:13:06, the all-client policy remains in backfill with 218 operations and
+2,950 QSO-stream records in the current epoch, zero ready sources and zero eligible
+source members. The first larger-page tick advanced the saved cursor twice and
+added 100 QSO-stream members in 2.977 seconds, without errors or vendor writes.
+The 398 structurally eligible QRZ routes are not ready exports: source completion,
+fresh proofs, current QRZ checks and explicit future authorization remain required.
 
 At 04:51:11 UTC, current membership covered 218 operations and 1,425 QSO-stream
 records, still in backfill with zero ready sources or eligible exports. QRZ had
@@ -77,13 +82,14 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    authorization rechecks expiry after vendor admission. Known-unsent stale work
    may be rebuilt; uncertain work retains its original artifact and ownership.
    No deployment or test automatically opens `SOURCE_BOUNDARY_VERIFIED`.
-2. **Separate narrow delivery authority from global source-boundary effects.**
-   `SOURCE_BOUNDARY_VERIFIED` currently permits source-wide cutovers and no-query
-   inference. Exact fresh contact proofs establish neither a universal UUID
-   inventory nor tombstone/purge guarantees. Before any narrow QRZ trial, decouple
-   per-contact proof-based delivery from those effects or otherwise exclude them
-   with enforced guards. Baseline completion and deployed proof checks alone are
-   insufficient to enable exports. Keep the global source gate closed.
+2. **Authority separation implemented and deployed.** The independent
+   `QRZ_FRESH_INSERTS_ENABLED` mode is off by default and limited to a first INSERT.
+   It pins its authorization mode immutably and rechecks exact scope, current
+   source proof, first-insert history and the final request after vendor admission.
+   It cannot grant source-wide cutovers, no-query inference, LoTW, replacements or
+   corrections. Keep `SOURCE_BOUNDARY_VERIFIED=false`; universal UUID, tombstone
+   and purge guarantees remain unproved. This completes the permission split,
+   not source completeness or live vendor acceptance.
 3. **Observe integrated QRZ coverage and review an eligible cohort.** History
    fallback and fresh pre-write collision checks are implemented and deployed.
    History requires two matching complete bounded covers; cached metadata only
@@ -93,11 +99,11 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
 4. **Prepare a trial packet; do not execute it under the current instruction.**
    The latest instruction to keep exports disabled supersedes the earlier one-
    or two-contact trial authorization. No actual trial may run until the owner
-   changes that instruction and the authority separation above is enforced.
+   changes that instruction and the remaining evidence checks pass.
    The proposed sequence remains QRZ first, then LoTW. Both contact and destination allowlists must be
    exact, so LoTW remains excluded during QRZ work. A fresh protected production
-   SQL backup was verified at 04:25 UTC: isolated restore with 28 migrations plus
-   `0030`, integrity/foreign-key checks, three credential decryptions and repeated
+   SQL backup was verified at 05:20 UTC: isolated restore with 29 migrations plus
+   `0031`, integrity/foreign-key checks, three credential decryptions and repeated
    quarantine passed, preserving 380 claims and zero attempts/cutovers. Preserve its evidence and
    refresh it if needed before external changes. Earlier restore rehearsals
    remain recorded in the deployment history. Preserve each contact's
@@ -218,6 +224,7 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 - [x] Preserve temporary source/context data only where necessary for delayed delivery or reread limitations. An operation edit can trigger a bounded reread; a template edit cannot.
 - [x] Batch source-page metadata/checkpoint access and share operation/event ciphertext reads within a bounded contact batch; validate atomic rollback and complete projection locally.
 - [x] Implement immutable short-lived source proofs, mandatory staging/dispatch pins and post-admission validation. The release is deployed with 1,131 tests passing; production baseline handoff and scoped live acceptance remain separate.
+- [x] Separate default-off QRZ first-insert authority from global source-boundary effects, with immutable mode pins, structural history guards and final exact-request validation. Deployed with all seven controls closed; live acceptance remains outstanding.
 - [ ] Verify larger LoFi source pages in production and reduce redundant source passes where the source contract permits. Background source pages remain 25 records.
 
 **Acceptance:** ongoing logging does not postpone earlier stable contacts. Offline arrivals and old-contact corrections work. Location/park changes at segment boundaries affect the correct contacts; changes to unsupported LoTW narrative fields create no LoTW work.

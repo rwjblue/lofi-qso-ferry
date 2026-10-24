@@ -1,20 +1,23 @@
 # Implementation progress
 
-Current checkpoint, 2026-10-24 UTC; mandatory source-proof enforcement deployed
-read-only:
+Current checkpoint, 2026-10-24 UTC; independent QRZ first-insert authority and
+bounded 100-record source baseline deployed read-only:
 
-Signed revision `5a416de5898657a6b12b60fd900d787f60341d51` deployed read-only
-at 05:11:14 UTC as Worker `a16f8d42-d039-437e-8fee-44116ddb5195`, at 100% traffic.
-All **1,131 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40064363238).
-Independent 05:11:28 checks confirm healthy service, all three asset hashes
-matching, all six export gates closed, 29 migrations through `0030`, 380 LoTW
-identity claims and zero uncovered mappings, attempts, cutovers or temporary
-guards. Mandatory preparation/dispatch proof binding and bounded scheduler
-integration are deployed. No proof, attempt pin or retention candidate exists
-while exports are closed. All 4,500 retained source bodies have incarnations;
-1,055 positive observations have no future or partially populated metadata.
-The all-client policy remains in backfill with 218 operations and 1,750 QSO-stream
-records in the current epoch, zero ready sources and zero eligible exports.
+Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
+at 06:09:06 UTC as Worker `da7b7b70-6b7e-4cab-b9f6-f4b88f38390d`, at 100% traffic.
+All **1,178 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40068069314).
+Independent 06:09:17–18 checks confirm healthy service, matching hashes for all
+three assets and all seven export controls closed. Health reports no active
+export mode and `sourceBoundaryVerified:false`. All 30 migrations through `0031`
+are applied. The 380 LoTW identity claims have no uncovered mappings; attempts,
+cutovers, proofs, pins and temporary guards remain zero. All 4,500 source bodies
+have incarnations, and 2,155 positive observations have no future or partial metadata.
+At 06:13:06, the all-client policy remains in backfill with 218 operations and
+2,950 QSO-stream records in the current epoch, zero ready sources and zero eligible
+source members. The first larger-page tick advanced the saved cursor twice and
+added 100 QSO-stream members in 2.977 seconds, without errors or vendor writes.
+The 398 structurally eligible QRZ routes are not ready exports: source completion,
+fresh proofs, current QRZ checks and explicit future authorization remain required.
 
 The first scheduled run activated one all-client policy at 03:30:43.295 UTC.
 At 03:31:37.477 it remained in backfill, with 25 operations and 25 QSOs marked
@@ -141,16 +144,16 @@ QRZ first then LoTW, is superseded by the latest instruction to keep exports
 disabled. No actual trial may run until that instruction changes; no vendor write
 has occurred.
 
-Next: observe the deployed mandatory source-proof checks and production
-baseline/drain/quarantine handoff with gates closed. Before
-any narrow trial, decouple per-contact proof-based delivery from the global
-`SOURCE_BOUNDARY_VERIFIED` effects—source-wide cutovers and no-query inference—or
-otherwise exclude those effects with enforced guards. Exact fresh proofs do not
-prove universal UUID, tombstone or purge coverage; baseline completion alone is
-not readiness to enable. Refresh QRZ evidence and prepare the packet read-only.
-Main exports remain disabled until the owner changes that instruction and all
-prerequisites are met. See the [roadmap](ROADMAP.md)
-and [rollout checklist](docs/rollout-checklist.md).
+Next: finish the production baseline/drain/quarantine handoff with gates closed,
+then refresh QRZ evidence for one exact structurally eligible contact and prepare
+its review packet. The independent first-insert mode excludes global cutover and
+no-query effects; exact fresh proofs still do not establish universal UUID,
+tombstone or purge coverage. The policy-aware audit and bounded
+100-record baseline pages are deployed in `02e3dc89b99a`, with all 1,178 tests
+passing. The first tick used two pages rather than the maximum four allowed
+requests; continued progress and that early idle stop need observation. No actual trial may run under the current keep-disabled
+instruction. See the [roadmap](ROADMAP.md) and
+[rollout checklist](docs/rollout-checklist.md).
 
 Previous checkpoint, 2026-10-24 01:06 UTC: signed revision
 `4fefd2ae3941f68cd07af22743df478a95976a5c` is deployed as Worker
@@ -498,7 +501,7 @@ The owner requested four individual investigations. Results and the ordered impl
 - The general-log callsign hold contains canonical `our.call`; the narrow parser compatibility fix is implemented with a scoped reprojection migration. The five station-route holds correctly exclude other transmitting stations, including a test suffix. No owner log edits or new routes were made.
 - The five completed runs from 14:05–14:25 UTC each examined two contacts in 128.8–140.7 seconds. At 14:38, 134 operation contexts were complete and 42 pending, with 734 unexpired context-held contacts and both rescans unfinished. Canonical sync was forward. These are processing/dependency observations, not completed reconciliation.
 - Exact production DELETE query plans and local fixtures identified a correlated cleanup scan. The tuple-key rewrite preserves resolution/tenant boundaries and reduces local cleanup from 1,240 ms to 2.74 ms at 4,000 contacts; at 200,000 it takes 172 ms. These are local query measurements, not a deployed throughput claim. Before the new batching work, a 25-record unchanged rescan made 56 sequential database calls and the 200,000-row one-contact selector took 1.36–1.58 seconds locally. The new local measurements above supersede those costs for the implemented paths.
-- Per-contact destination reads have a structural scale limit: eight LoTW background queries per five minutes require at least 86.8 days for 200,000 contacts, even before retries or other tenants. The observed two-turn rate would take about 347 days if every turn completed a different contact. Shared partitions and local matching are required, alongside immediate database fixes. Current 25-contact LoFi background pages also impose a 6.9-day floor for one 200,000-contact source pass before rereads/rescans; larger verified pages and shared source coverage are part of the capacity work.
+- Per-contact destination reads have a structural scale limit: eight LoTW background queries per five minutes require at least 86.8 days for 200,000 contacts, even before retries or other tenants. The observed two-turn rate would take about 347 days if every turn completed a different contact. Shared partitions and local matching are required, alongside immediate database fixes. At that checkpoint, 25-contact LoFi background pages imposed a 6.9-day floor for one 200,000-contact source pass before rereads/rescans. The later 06:09 UTC release raises canonical baseline pages to 100; measured sustained capacity and shared source coverage remain open.
 
 The probes used three QRZ and two LoTW background budget reservations, with zero vendor mutations, signatures or adoption/cursor changes. Raw source/vendor payloads and credentials were not persisted or committed.
 

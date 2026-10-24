@@ -2,18 +2,21 @@
 
 Current status, 2026-10-24 UTC:
 
-Signed revision `5a416de5898657a6b12b60fd900d787f60341d51` deployed read-only
-at 05:11:14 UTC as Worker `a16f8d42-d039-437e-8fee-44116ddb5195`, at 100% traffic.
-All **1,131 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40064363238).
-Independent 05:11:28 checks confirm healthy service, all three asset hashes
-matching, all six export gates closed, 29 migrations through `0030`, 380 LoTW
-identity claims and zero uncovered mappings, attempts, cutovers or temporary
-guards. Mandatory preparation/dispatch proof binding and bounded scheduler
-integration are deployed. No proof, attempt pin or retention candidate exists
-while exports are closed. All 4,500 retained source bodies have incarnations;
-1,055 positive observations have no future or partially populated metadata.
-The all-client policy remains in backfill with 218 operations and 1,750 QSO-stream
-records in the current epoch, zero ready sources and zero eligible exports.
+Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
+at 06:09:06 UTC as Worker `da7b7b70-6b7e-4cab-b9f6-f4b88f38390d`, at 100% traffic.
+All **1,178 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40068069314).
+Independent 06:09:17–18 checks confirm healthy service, matching hashes for all
+three assets and all seven export controls closed. Health reports no active
+export mode and `sourceBoundaryVerified:false`. All 30 migrations through `0031`
+are applied. The 380 LoTW identity claims have no uncovered mappings; attempts,
+cutovers, proofs, pins and temporary guards remain zero. All 4,500 source bodies
+have incarnations, and 2,155 positive observations have no future or partial metadata.
+At 06:13:06, the all-client policy remains in backfill with 218 operations and
+2,950 QSO-stream records in the current epoch, zero ready sources and zero eligible
+source members. The first larger-page tick advanced the saved cursor twice and
+added 100 QSO-stream members in 2.977 seconds, without errors or vendor writes.
+The 398 structurally eligible QRZ routes are not ready exports: source completion,
+fresh proofs, current QRZ checks and explicit future authorization remain required.
 
 The 04:51:11 UTC snapshot has 218 operations and 1,425 QSO-stream records in the
 current epoch, still in backfill with zero ready sources, eligible exports,
@@ -358,21 +361,21 @@ Validate larger LoFi page sizes against real responses before changing them;
 repeated context and destination rescans must share retained source work where
 its proof allows reuse.
 
-The next source-page slice should begin with 100-record operation rereads, then
-100-record sync/rescan streams, under the existing request allowances. The
-adapter accepts up to 200 and the pinned HaLo client defaults to 100, but Ferry's
-early live probe requested only five records per stream; the later protected
-inventory audit used 200, without changing runtime background page sizes. The
-current local 100-operation/100-contact checkpoint uses nine RPCs and 1,308 SQL statements;
-measure encrypted bytes and complete checkpoint time before enabling larger
-background pages. Preserve the cursor on failure and defer any smaller retry
-to a later scheduled turn. Shared source coverage needs explicit scan
-subscribers and atomic progress; retained rows alone cannot replace each
-destination's cutover evidence or justify merging divergent scan cursors.
-Even 100 contacts per request would leave an ideal 200,000-contact source pass
-at about 1.7 days with four background requests per five minutes, before context,
-rescans, other accounts or retries. Larger pages alone do not meet the proposed
-one-day import target.
+The signed follow-up first enlarges canonical policy-baseline backfill to 100
+records per stream; full CI and production deployment are pending. Live forward
+polling already uses 100 and remains unchanged; final drains, quarantine,
+operation rereads and independent repair/destination rescans stay at 25. The
+protected 200-record inventory established transport behavior, not runtime
+checkpoint headroom. The bounded baseline follow-up adds explicit work limits
+and same-cursor fallback as described below. Larger reread/rescan pages remain
+separate work.
+
+Shared source coverage needs explicit scan subscribers and atomic progress;
+retained rows alone cannot replace destination cutover evidence or justify
+merging divergent scan cursors. Even 100 QSO records per request leave an ideal
+200,000-record canonical source pass at about 1.7 days with four background
+requests per five minutes, before context, rescans, other accounts or retries.
+Larger pages alone do not meet the proposed one-day import target.
 
 Complete indexed due work and bounded account turns across the service.
 Separate live arrivals, history imports, readback and maintenance. Reserve live
@@ -471,13 +474,13 @@ The later 04:51:11 UTC snapshot has 218 operations and 1,425 QSO-stream records,
 still in backfill with no ready source or eligible export. Phase completion and
 handoff must be observed before selecting a production export cohort.
 
-Runtime background pages remain **25 rows** with at most **four shared LoFi
+At the initial 03:28 baseline deployment, background pages used **25 rows** with at most **four shared LoFi
 background requests per five minutes**. A QSO pass alone therefore has ideal
 lower bounds of about **3.3 hours for 4,000 rows** and **6.9 days for 200,000**;
 forward drain, context, competing accounts and retries add time. The protected
 [inventory audit](../scripts/source-inventory-audit.ts) requests 200 rows per
 stream, but it neither changes runtime page size nor establishes production
-checkpoint capacity. Larger runtime pages remain a separately measured change.
+checkpoint capacity. The later bounded 100-record follow-up below is a separate change.
 
 The 03:42:54 UTC snapshot had current membership for 100 operations and 100
 QSO-stream records, including three events. The 03:35 run committed three source
@@ -505,6 +508,52 @@ With witness storage, the local 100-operation/100-QSO fixture uses nine D1 bindi
 calls and 1,508 statements in one atomic checkpoint, versus 1,308 statements in the
 deployed baseline. This proves a bounded local transaction, not production headroom
 under D1's execution limits.
+
+#### Bounded 100-record baseline follow-up (deployed 06:09 UTC)
+
+Signed `b98bf8e50602` selects 100 records per stream only for canonical policy
+backfill. Shared LoFi allowance remains four background requests per five minutes.
+The existing 2 MiB response cap is supplemented by at most 100 rows per side,
+1 MiB aggregate serialized record bytes, 1,800 checkpoint statements including
+guards, and 60 seconds for preparation under the 90-second poll lease. Every body,
+membership, birth, context change and cursor still commits in one guarded batch.
+
+A deterministic response/record/byte/statement size failure can retry once at 25
+from the identical original cursor, only before any checkpoint and with 30 seconds
+of preparation time remaining. Both requests consume the same shared budget.
+Deadline, protocol, lease or uncertain checkpoint failures never enter this retry.
+No response is truncated and no cursor is advanced for discarded preparation.
+
+The new nine-case fixture covers restart continuation, fallback, overflow on the
+last budget slot, lease rollback of 200 rows and a lost checkpoint acknowledgment.
+The 100-base/100-event case commits 1,708 statements in one local batch (389 ms in
+the recorded run). The combined intake/policy/baseline suite passes 78 tests, and
+22 adapter/drain-marker tests pass. The first full suite exposed one scheduler
+fixture expecting the old size; that fixture is corrected. All 1,178 tests and
+required checks pass on deployed `02e3dc89b99a`.
+
+The first production tick, 06:10:43–46 UTC, committed two pages and 105 raw
+records in 2.977 seconds, adding 100 QSO-stream members and advancing the saved
+cursor generation from 461 to 463. It had no errors or deferrals and stopped idle,
+with 84 D1 calls, 631 statements, 2.671 seconds of D1 wall time and 447 ms reported
+SQL time. Policy membership reached 218 operations and 2,950 QSO-stream records;
+1,332 QSO-stream records remain outside the current epoch. Attempts, cutovers and
+temporary guards remain zero. This verifies real continuation but not a sustained
+speedup: the run used two pages despite a four-request ceiling. Investigate that
+idle stop and measure further ticks before claiming throughput acceptance.
+
+At four full 100-row QSO pages per five minutes, the ideal single-stream floor
+would be 50 minutes for 4,000 rows or 41 hours 40 minutes for 200,000 (about 1.7
+days). These are arithmetic lower bounds, not measured service guarantees; events,
+operations, empty pages, drain, other accounts and retries consume capacity.
+
+The before-change snapshot at 05:48:38 UTC has 218 operations and 2,450 QSO-stream
+members, with 1,832 retained QSO-stream rows still outside the current epoch. Five
+completed ticks from 05:25 through 05:45 each committed four pages and 110 raw
+records, zero contact turns/errors and one budget deferral. Their total durations
+were 6.733–28.968 seconds (median 8.248); the latest used 139 D1 calls, 724 SQL
+statements and 7.518 seconds of D1 wall time. Compare membership progress as well
+as elapsed time after deployment; raw source records include repeats and events.
 
 #### Deployed mandatory source proofs and bounded progress
 
@@ -536,8 +585,8 @@ ten-minute queue delay yields to neighbors on the ordinary five-minute schedule.
 This prevents one large closure repeatedly occupying the first slot. A single
 contact whose dependency closure needs more than **three collection reads** still
 remains held; incremental collection across turns is future work. These changes
-raise neither shared vendor budgets nor the 25-row runtime page size, and do not
-open any gate.
+raise neither shared vendor budgets nor positive-proof collection page sizes, and
+do not open any gate. Canonical baseline page sizing is a separate change above.
 
 Before live acceptance, observe production baseline/drain/quarantine handoff,
 refresh expired QRZ covering evidence, select the exact source/contact/destination

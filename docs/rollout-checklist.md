@@ -1,26 +1,29 @@
 # Personal rollout acceptance
 
 Ferry is suitable for an invite-only, read-only pilot with one or two users.
-Automatic exports are still disabled. A small first-export trial requires source
-boundary evidence and exact contact review; finishing the 200,000-contact capacity
+Automatic exports are still disabled. A small first-export trial requires current source
+proofs, fresh vendor evidence and exact contact review; finishing the 200,000-contact capacity
 plan is a separate expansion milestone. No real logbook entry has been inserted,
 replaced, deleted or uploaded during this implementation work.
 
 ## Current evidence (2026-10-24 UTC)
 
 The owner has enrolled and linked LoFi, QRZ and LoTW.
-Signed revision `5a416de5898657a6b12b60fd900d787f60341d51` deployed read-only
-at 05:11:14 UTC as Worker `a16f8d42-d039-437e-8fee-44116ddb5195`, at 100% traffic.
-All **1,131 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40064363238).
-Independent 05:11:28 checks confirm healthy service, all three asset hashes
-matching, all six export gates closed, 29 migrations through `0030`, 380 LoTW
-identity claims and zero uncovered mappings, attempts, cutovers or temporary
-guards. Mandatory preparation/dispatch proof binding and bounded scheduler
-integration are deployed. No proof, attempt pin or retention candidate exists
-while exports are closed. All 4,500 retained source bodies have incarnations;
-1,055 positive observations have no future or partially populated metadata.
-The all-client policy remains in backfill with 218 operations and 1,750 QSO-stream
-records in the current epoch, zero ready sources and zero eligible exports.
+Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
+at 06:09:06 UTC as Worker `da7b7b70-6b7e-4cab-b9f6-f4b88f38390d`, at 100% traffic.
+All **1,178 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40068069314).
+Independent 06:09:17–18 checks confirm healthy service, matching hashes for all
+three assets and all seven export controls closed. Health reports no active
+export mode and `sourceBoundaryVerified:false`. All 30 migrations through `0031`
+are applied. The 380 LoTW identity claims have no uncovered mappings; attempts,
+cutovers, proofs, pins and temporary guards remain zero. All 4,500 source bodies
+have incarnations, and 2,155 positive observations have no future or partial metadata.
+At 06:13:06, the all-client policy remains in backfill with 218 operations and
+2,950 QSO-stream records in the current epoch, zero ready sources and zero eligible
+source members. The first larger-page tick advanced the saved cursor twice and
+added 100 QSO-stream members in 2.977 seconds, without errors or vendor writes.
+The 398 structurally eligible QRZ routes are not ready exports: source completion,
+fresh proofs, current QRZ checks and explicit future authorization remain required.
 
 At 04:51:11 UTC, policy membership covered 218 operations and 1,425 QSO-stream
 records, still in backfill with no ready source or eligible export. QRZ had 36
@@ -58,11 +61,11 @@ ambiguous identities, lower-precision locations or missing routes.
 | Source boundary           | Two inventories and a bounded forward sample match Ferry. The deployed policy is still in backfill. Mandatory exact-dependency source proofs are deployed; production handoff and current trial evidence remain outstanding. These proofs do not establish global purge/replay guarantees.                           |
 | Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                             |
 | LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Historical lower-precision associations and live ARRL acceptance remain unproved.                                                                                                     |
-| First vendor writes       | The latest instruction to keep exports disabled supersedes the earlier one- or two-contact trial authorization. No write or actual trial may occur until the owner changes that instruction. Exact scope, fresh evidence, backup and enforced exclusion of global cutover/no-query effects are still required.       |
+| First vendor writes       | The latest instruction to keep exports disabled supersedes the earlier one- or two-contact trial authorization. No write or actual trial may occur until the owner changes that instruction. The authority split is deployed. Exact scope, source completion, fresh evidence and backup remain required.             |
 
 ## Finish reconciliation and review exceptions
 
-Keep all six export gates closed while doing this work. Preserve cursors, source
+Keep all seven export controls closed while doing this work. Preserve cursors, source
 birth evidence, current context and destination reservations; clearing counts or
 forcing a contact into an eligible state is not reconciliation.
 
@@ -93,16 +96,15 @@ recovery. Late uploads, historical edits, segment changes and deletion must be
 covered by the supported contract or a deliberately scoped experiment.
 
 Keep `SOURCE_BOUNDARY_VERIFIED=false` until that evidence supports the real source
-connection. The 2026-10-23 22:19 UTC audit confirms both destination rescans complete and no missing births or unavailable current payloads. Two contacts still reference deleted operations. Keep those contacts held. The source gate is global and applies even to an exact-UUID trial.
+connection. The 2026-10-23 22:19 UTC audit confirms both destination rescans complete and no missing births or unavailable current payloads. Two contacts still reference deleted operations. Keep those contacts held. The global source gate remains closed; the separate narrow QRZ mode does not grant its effects.
 
-**Remaining blocker before a narrow trial:** this global gate also permits
-source-wide cutovers and no-query inference. Exact fresh per-contact proofs do
-not establish universal UUID, tombstone or purge guarantees. Decouple proof-based
-contact delivery from those effects, or otherwise exclude them with enforced
-guards, before any QRZ trial. Completing the baseline and deploying mandatory
-proofs alone is insufficient to enable exports. Keep the global gate closed.
-A naturally whole-second contact does not waive it. Never alter a source timestamp
-merely to bypass a safety check.
+**Authority split deployed:** the default-off `QRZ_FRESH_INSERTS_ENABLED` mode
+permits only an unmapped, unaccepted QRZ first INSERT with a current immutable
+source proof and exact authorized scopes. Its pinned mode and final transport
+checks exclude replacements, corrections, LoTW, source-wide cutovers and no-query
+inference. The global gate remains closed. Baseline completion, fresh exact
+contact evidence and a future change to the owner's keep-disabled instruction
+are still required. Never alter a source timestamp to bypass a check.
 
 The later [independent comparison and live replay](evidence-lofi.md#observed-local-and-live-comparisons)
 found every local HaLo UUID in Ferry and matched two ordinary tombstones across

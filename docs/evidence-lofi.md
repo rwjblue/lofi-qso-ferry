@@ -105,7 +105,7 @@ replay, tombstone or retention contract.
 ### Evidence packet still required
 
 Keep the following distinct in the personal canary record:
-1. **Local integrity:** deployed revision and observation time; all six gates closed; the scoped audit; current source account identity verified in memory; and aggregate candidate classifications. Preserve exact candidate UUIDs only in the protected owner review/allowlist, never in repository evidence.
+1. **Local integrity:** deployed revision and observation time; all seven export controls closed; the scoped audit; current source account identity verified in memory; and aggregate candidate classifications. Preserve exact candidate UUIDs only in the protected owner review/allowlist, never in repository evidence.
 2. **Observed source replay:** independent expected UUID membership for the selected operation and its full event timeline, including any known tombstones; completed read counts; server-watermark comparisons; and repeated-page/resume results. A matching second read establishes observed repeatability for that sample. A missing expected UUID falsifies completeness. Neither result proves that an independently unknown historical UUID never existed.
 3. **Server boundary:** a primary server contract or controlled, separately authorized experiment covering a historical QSO edit, base-operation edit, event edit/delete, QSO/operation delete or purge, null-operation contact, same-millisecond page boundary and a mutation during initial inventory. It must exercise the deployed versioned all-client forward path, not merely establish backfill discovery. The earlier `anyClient:false` requirement belonged to the replaced reader policy. Record what happens when a saved cursor is rejected or aged, the oldest supported replay position and tombstone retention. A finite experiment establishes only its tested duration; do not invent an indefinite retention guarantee.
 4. **Selected-contact freshness:** current unrevoked QSO/base/event bodies, exact projected station and destination identity, unique destination-history outcome, and a current immutable source proof for the approved UUIDs. The deployed mandatory path obtains bounded sync positives and a final canonical drain; it does not assume a selective UUID endpoint or unrestricted operation REST history. This source packet does not replace outbound collision claims, station/signing acceptance or explicit vendor-write authorization.
@@ -363,9 +363,20 @@ separate all-client probe observed the bounded positive replay described above
 without claiming writer provenance.
 
 The existing global source gate also permits source-wide cutover creation; a
-UUID allowlist does not narrow that effect. A future limited pilot cannot simply
-rename these observations as a global retention guarantee. Mandatory per-contact
-proof enforcement is deployed, but it does not
-narrow the global gate's source-wide cutover or no-query fallback effects. Those
-effects must remain excluded from a narrow pilot unless independently proven.
-The diagnostic probes themselves authorize neither those effects nor a vendor write.
+UUID allowlist does not narrow that effect. The 05:40 UTC release independently
+pins a default-off QRZ first-insert authorization mode. It requires mandatory
+current per-contact proofs and excludes source-wide cutovers, no-query inference,
+LoTW, replacement and corrections while the global source gate remains closed.
+All seven production controls are verified closed. These observations are not
+a global retention guarantee, and neither the probes nor the new mode's deployment
+authorizes a vendor write. Baseline completion and fresh exact contact evidence
+remain outstanding.
+
+
+The 06:09 UTC release adds bounded 100-record canonical baseline pages. Its first
+scheduled tick continued the saved opaque cursor across two checkpoints and added
+100 current-epoch QSO-stream members, with no errors or export attempts. At
+06:13:06 UTC, all 218 operations and 2,950 of 4,282 retained QSO-stream records
+were current members. The policy remains in backfill with no ready source. This
+is progress toward a fresh inventory, not completed drain/quarantine handoff,
+historical purge exclusion or export authority.

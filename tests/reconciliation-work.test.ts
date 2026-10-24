@@ -1,22 +1,23 @@
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
 import test from "node:test";
-import { database, keys, seed } from "./helpers.ts";
-import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
-import { Store } from "../src/store.ts";
-import { lockRestoredDatabase } from "../src/restore.ts";
 import { measuredDatabase } from "../src/database-metrics.ts";
 import {
   finishReconciliationWork,
+  finishReconciliationWorkStatement,
   reconciliationCheckDue,
+  reconciliationCheckStatement,
   reconciliationPreflight,
   reconciliationPreflightBatch,
-  reconciliationCheckStatement,
-  finishReconciliationWorkStatement,
   recordReconciliationCheck,
   selectReconciliationWork,
   syncReconciliationPolicy,
   wakeReconciliationWork,
 } from "../src/reconciliation-work.ts";
+import { lockRestoredDatabase } from "../src/restore.ts";
+import { Store } from "../src/store.ts";
+import { applyMigration, database, keys, seed } from "./helpers.ts";
+import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
 const now = Date.now();
 const source = { tenant: "a", id: "source" };
@@ -26,11 +27,35 @@ const key = {
   qso: "q1",
   destination: "destination",
 };
-async function fixture() {
+async function fixture(
+  historical?: (h: Awaited<ReturnType<typeof database>>) => Promise<void>,
+) {
   const h = await database();
-  await applyAdditionalMigrations(h.db);
-  await seed(h.store);
-  return h;
+  try {
+    const migrations = historical
+      ? (await readdir(new URL("../migrations/", import.meta.url)))
+          .filter(
+            (name) => /^\d{4}_.*\.sql$/.test(name) && !name.startsWith("0001_"),
+          )
+          .sort()
+      : [];
+    if (historical) {
+      for (const name of migrations.filter((name) => name < "0030_"))
+        await applyMigration(h.db, name);
+    } else await applyAdditionalMigrations(h.db);
+    await seed(h.store);
+    if (historical) {
+      // Old attempts are migration inputs, never new attempts inserted around a
+      // disabled guard. Every assertion below runs with the current schema.
+      await historical(h);
+      for (const name of migrations.filter((name) => name >= "0030_"))
+        await applyMigration(h.db, name);
+    }
+    return h;
+  } catch (error) {
+    await h.mf.dispose();
+    throw error;
+  }
 }
 async function qso(
   store: Store,
@@ -87,7 +112,19 @@ async function hold(store: Store) {
 }
 
 test("one-query reconciliation preflight preserves generation, memo, attempt and tenant fences", async () => {
-  const h = await fixture();
+  const attemptedKey = { ...key, qso: "attempted" };
+  const h = await fixture(async ({ store }) => {
+    await qso(store, "attempted");
+    await store.observe(attemptedKey, "generation", "hash", 30);
+    await store.db.batch([
+      store.statement(
+        "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a','attempt','source','attempted','destination','generation','payload','hash','v1',0,'hash')",
+      ),
+      store.statement(
+        "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','attempt','prepared',0,0)",
+      ),
+    ]);
+  });
   try {
     await qso(h.store, "q1");
     await h.store.observe(key, "generation", "hash", 30);
@@ -145,14 +182,6 @@ test("one-query reconciliation preflight preserves generation, memo, attempt and
       .statement("UPDATE reconciliation_checks SET generation='old'")
       .run();
     assert(await reconciliationPreflight(store, key, "generation", now));
-    await h.store.db.batch([
-      h.store.statement(
-        "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a','attempt','source','q1','destination','generation','payload','hash','v1',0,'hash')",
-      ),
-      h.store.statement(
-        "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','attempt','prepared',0,0)",
-      ),
-    ]);
     for (const state of [
       "prepared",
       "uncertain",
@@ -161,13 +190,15 @@ test("one-query reconciliation preflight preserves generation, memo, attempt and
     ]) {
       await h.store.statement("UPDATE attempt_state SET state=?", state).run();
       assert.equal(
-        await reconciliationPreflight(store, key, "generation", now),
+        await reconciliationPreflight(store, attemptedKey, "generation", now),
         null,
       );
     }
     for (const state of ["delivered", "observed", "rejected", "cancelled"]) {
       await h.store.statement("UPDATE attempt_state SET state=?", state).run();
-      assert(await reconciliationPreflight(store, key, "generation", now));
+      assert(
+        await reconciliationPreflight(store, attemptedKey, "generation", now),
+      );
     }
     for (const values of [
       ["changed", "unknown", null],
@@ -176,7 +207,7 @@ test("one-query reconciliation preflight preserves generation, memo, attempt and
     ] as const) {
       await h.store
         .statement(
-          "UPDATE ledger SET state=?,provenance=?,remote_id=?",
+          "UPDATE ledger SET state=?,provenance=?,remote_id=? WHERE tenant='a' AND source='source' AND qso='q1'",
           ...values,
         )
         .run();
@@ -191,7 +222,18 @@ test("one-query reconciliation preflight preserves generation, memo, attempt and
 });
 
 test("batched preflight isolates tenants and excludes stale, mapped, attempted and remembered routes", async () => {
-  const h = await fixture();
+  const h = await fixture(async ({ store }) => {
+    await qso(store, "attempt");
+    await store.observe({ ...key, qso: "attempt" }, "g1", "hash", 30);
+    await store.db.batch([
+      store.statement(
+        "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a','batch-attempt','source','attempt','destination','g1','payload','hash','v1',0,'hash')",
+      ),
+      store.statement(
+        "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','batch-attempt','uncertain',0,0)",
+      ),
+    ]);
+  });
   try {
     await seed(h.store, "b");
     const names = [
@@ -204,6 +246,7 @@ test("batched preflight isolates tenants and excludes stale, mapped, attempted a
       "stale",
     ];
     for (const id of names) {
+      if (id === "attempt") continue;
       await qso(h.store, id);
       await h.store.observe({ ...key, qso: id }, "g1", "hash", 30);
     }
@@ -227,12 +270,6 @@ test("batched preflight isolates tenants and excludes stale, mapped, attempted a
         "INSERT INTO reconciliation_checks VALUES('a','source','memo','destination','g1',?,?)",
         now,
         now + 300000,
-      ),
-      h.store.statement(
-        "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a','batch-attempt','source','attempt','destination','g1','payload','hash','v1',0,'hash')",
-      ),
-      h.store.statement(
-        "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','batch-attempt','uncertain',0,0)",
       ),
     ]);
     const measured = measuredDatabase(h.db);

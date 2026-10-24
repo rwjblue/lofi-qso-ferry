@@ -51,13 +51,24 @@ const reply = (
     }),
   );
 
-async function setup(t: TestContext) {
+async function setup(t: TestContext, historicalAttempts = false) {
   const h = await database();
   t.after(() => h.mf.dispose());
-  for (const name of (await readdir(new URL("../migrations/", import.meta.url)))
+  const migrations = (await readdir(new URL("../migrations/", import.meta.url)))
     .filter((name) => /^\d{4}_.*\.sql$/.test(name) && !name.startsWith("0001_"))
-    .sort())
+    .sort();
+  for (const name of migrations.filter(
+    (name) => !historicalAttempts || name < "0030_",
+  ))
     await applyMigration(h.db, name);
+  const installSourceProofGuards = async () => {
+    assert(
+      historicalAttempts,
+      "only historical fixtures defer the proof migration",
+    );
+    for (const name of migrations.filter((name) => name >= "0030_"))
+      await applyMigration(h.db, name);
+  };
   await seed(h.store);
   await h.store
     .statement(
@@ -114,7 +125,17 @@ async function setup(t: TestContext) {
         )
         .first<{ cursor: string }>())!.cursor,
     );
-  return { ...h, source, now, requests, poll, row, policy, context };
+  return {
+    ...h,
+    source,
+    now,
+    requests,
+    poll,
+    row,
+    policy,
+    context,
+    installSourceProofGuards,
+  };
 }
 
 test("all-client baseline and forward drain stay historical until a fresh final handoff", async (t) => {
@@ -249,7 +270,7 @@ test("exact canonical witnesses release only membership holds and never wake an 
 });
 
 test("quarantine is bounded, holds all record kinds, and cancels only linked prepared attempts", async (t) => {
-  const h = await setup(t);
+  const h = await setup(t, true);
   const keys = Array.from(
     { length: 102 },
     (_, i) => `old-${String(i).padStart(3, "0")}`,
@@ -308,6 +329,9 @@ test("quarantine is bounded, holds all record kinds, and cancels only linked pre
       })
     ).run();
   }
+  // These are genuine pre-migration records; quarantine runs with the new
+  // mandatory stage/dispatch guards installed and no fabricated proof pins.
+  await h.installSourceProofGuards();
   await h.poll();
   await h.poll();
   assert.equal((await h.poll()).complete, false);
@@ -470,7 +494,7 @@ test("expiry and cursor gaps start fresh tagged epochs without restarting active
 });
 
 test("a current positive witness in the quarantine page wins over the earlier absence selection", async (t) => {
-  const h = await setup(t);
+  const h = await setup(t, true);
   await h.poll([contact("returns")], [], 0, "repair");
   await h.store.observe(
     {
@@ -503,6 +527,7 @@ test("a current positive witness in the quarantine page wins over the earlier ab
       { sample: true },
     ),
   ]);
+  await h.installSourceProofGuards();
   await h.poll();
   await h.poll();
   assert.equal((await h.row("returns"))?.policy_seen_epoch, null);

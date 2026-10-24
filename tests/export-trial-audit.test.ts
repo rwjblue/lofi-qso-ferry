@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
 import test from "node:test";
 import {
   type ExportTrialAuditScope,
@@ -6,7 +7,7 @@ import {
   exportTrialAuditReport,
 } from "../scripts/export-trial-audit.ts";
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
-import { database, seed } from "./helpers.ts";
+import { applyMigration, database, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
 const now = 1000;
@@ -19,10 +20,22 @@ const record = {
   MODE: "FT8",
   MY_GRIDSQUARE: "FN31AA12",
 };
-async function setup() {
+async function setup(beforeMandatoryProofMigration = false) {
   const h = await database();
   try {
-    await applyAdditionalMigrations(h.db);
+    if (beforeMandatoryProofMigration) {
+      for (const file of (
+        await readdir(new URL("../migrations/", import.meta.url))
+      )
+        .filter(
+          (name) =>
+            name.endsWith(".sql") &&
+            name !== "0001_foundation.sql" &&
+            name < "0030",
+        )
+        .sort())
+        await applyMigration(h.db, file);
+    } else await applyAdditionalMigrations(h.db);
     await seed(h.store);
     await h.store
       .statement(
@@ -286,8 +299,16 @@ test("missing, revoked and expired dependencies and credentials cannot pass meta
 });
 
 test("identity ownership and unresolved attempts stay scoped to the exact tenant, destination and source UUID", async () => {
-  const h = await setup();
+  const h = await setup(true);
   try {
+    // Model a historical artifact with missing state on its original schema,
+    // then test the auditor after upgrading with every current guard intact.
+    await h.store
+      .statement(
+        "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a','attempt','source','private-contact','destination','private-generation','missing','h','v1',0,'h')",
+      )
+      .run();
+    await applyMigration(h.db, "0030_source_export_guards.sql");
     await seed(h.store, "foreign");
     await h.store.observe(
       {
@@ -350,11 +371,6 @@ test("identity ownership and unresolved attempts stay scoped to the exact tenant
       .run();
     assert.equal((await h.audit()).routes[0].counts.competing_claims, 1);
     assert.equal((await h.audit()).routes[1].counts.competing_claims, 0);
-    await h.store
-      .statement(
-        "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a','attempt','source','private-contact','destination','private-generation','missing','h','v1',0,'h')",
-      )
-      .run();
     assert.equal((await h.audit()).routes[0].counts.attempt_states_missing, 1);
     await h.store
       .statement(

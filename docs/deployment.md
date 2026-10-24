@@ -2,21 +2,21 @@
 
 Verified 2026-10-24 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
 
-| Resource                 | Current value                                                                                                   |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------- |
-| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                           |
-| Worker                   | `lofi-qso-ferry`, environment `production`                                                                      |
-| Deployed source revision | `d575e21ca0b8f803c91bb2029c7c2246949483bc`                                                                      |
-| Worker version           | `a0c6a5a8-b062-43a0-a06b-789d6345954f`, created `2026-10-24T01:59:38.889726Z`                                   |
-| Deployment               | `fb6e655e-3b4f-4a68-9a37-a44cc6a83cf2`, `2026-10-24T01:59:40.009584Z`, 100% of traffic                          |
-| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                                   |
-| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                                |
-| Migrations               | All 23 migrations through `0024_identity_mapping_overlap`; independently verified at `2026-10-24T02:01:16.953Z` |
-| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                               |
-| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                            |
-| Schedule                 | `*/5 * * * *`                                                                                                   |
-| Alternate origins        | workers.dev and version previews disabled                                                                       |
-| Artifact                 | 1,824.87 KiB raw / 353.36 KiB gzip; reported startup 56 ms                                                      |
+| Resource                 | Current value                                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------------------------------- |
+| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                     |
+| Worker                   | `lofi-qso-ferry`, environment `production`                                                                |
+| Deployed source revision | `ce238cdcfea72ed5cbc7b624ec6a7efc01978154`                                                                |
+| Worker version           | `aabdd51c-1665-480a-8806-fe993967bc27`, created `2026-10-24T03:28:46.8142Z`                               |
+| Deployment               | `bc0bf26d-1deb-4f09-b861-bae0cf102208`, `2026-10-24T03:28:48.483616Z`, 100% of traffic                    |
+| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                             |
+| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                          |
+| Migrations               | All 25 migrations through `0026_source_read_guards`; independently verified at `2026-10-24T03:29:42.840Z` |
+| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                         |
+| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                      |
+| Schedule                 | `*/5 * * * *`                                                                                             |
+| Alternate origins        | workers.dev and version previews disabled                                                                 |
+| Artifact                 | 1,842.12 KiB raw / 356.85 KiB gzip; reported startup 29 ms                                                |
 
 The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
 
@@ -41,11 +41,34 @@ ROLLOUT_DESTINATION_IDS_JSON=[]
 - Session endpoint returns unauthenticated state with `signupAllowed=false`. The public landing shows an invite-only notice and passkey sign-in; the signup form is hidden. A live uninvited signup probe returned 403 before proof creation or sending.
 - Following the invitation link stays at `/join`, serves the app without the asset-canonicalization redirect, reveals invited enrollment and focuses its email field. Both confirmation inputs expose six-digit numeric/one-time-code attributes.
 - Remote settings independently confirm every closed gate, exact origin/RP, dedicated D1 and sender allowlist. Production local-mailbox and alternate workers.dev endpoints return 404. Email-content previews remain disabled, and no secrets were rotated.
-- The current release passes **925 tests** and all required checks in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40051457580). Focused history, QRZ, delivery, gate and admin checks plus formatting, lint, TypeScript and build passed locally. Additional read-only source audit/forward tooling has 116 focused passing tests. The full release suite result is from CI; no full 925-test local run is claimed.
+- The current release passes **1,031 tests** and all required checks in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40057488314). The earlier run was cancelled after a delivery fixture leaked `workerd`; the signed fixture repair is included. The complete release-suite result is from CI.
 - Read-only remote D1 probes verified that the invite task must use query results, rather than bulk-file import summaries, to establish an exact email/deadline grant. Existing OAuth includes Email Sending write access. No real invitation grant/send was performed; CLI sends still require recipient-specific delivery confirmation.
 - The initial deployment delivered one real verification message to the owner's inbox through the same native provider path; only fixed delivery metadata was inspected. That smoke test enrolled no production account and initially observed zero account/connection/ledger/attempt rows. These are historical counts, not a claim about subsequent personal use. New branded mail was rendered/tested locally; email-client/device autofill remains unverified.
 
 The reported startup is deployment evidence, not per-request billed CPU or peak memory. No representative monthly workload/cost has been measured. Physical and synced passkey behavior remains for the owner to verify at this permanent origin. See [rollout acceptance](rollout-checklist.md) for the remaining vendor checks.
+
+## Versioned all-client baseline (2026-10-24, 03:28 UTC)
+
+Signed `ce238cdcfea72ed5cbc7b624ec6a7efc01978154` is deployed at 100% traffic as
+Worker `aabdd51c-1665-480a-8806-fe993967bc27`. The 03:29:43.001 UTC verification
+confirmed all six gates closed, healthy service with `exportsEnabled:false`, and
+matching hashes for all three static assets. The 03:29:42.840 D1 read confirmed
+25 migrations, 380 LoTW identity claims, zero uncovered mappings and zero attempts,
+cutovers or stage/history guards. The 03:29:42.839 policy read found one active
+source and no policy row before the first scheduled poll. The first run activated
+one all-client policy at 03:30:43.295. At 03:31:37.477, it was in backfill with
+25 operations and 25 QSOs in the current epoch and no ready policy or eligible
+export; attempts, cutovers and guards remained zero. The 03:30:42.584–03:30:44.847
+run completed in 2.263 seconds, with two source pages, 50 records, zero contact
+turns/errors/deferrals and an idle stop. Continued baseline progress and handoff
+still need observation.
+
+The release migrates canonical source reads to a versioned all-client baseline,
+preserves historical births, quarantines unseen dependencies and fences old
+checkpoints and stale dispatch after policy activation. It does not establish
+global source-boundary authority. Fresh-positive collection, witness storage and
+proof foundation are separate uncommitted work in an isolated worktree; none is
+deployed or integrated with stage/dispatch. No real vendor write occurred.
 
 ## Integrated QRZ coverage and destination scope (2026-10-24, 01:59 UTC)
 
@@ -72,10 +95,28 @@ and zero target records after matching base/verification reads. QRZ then had
 delivery. Attempts, cutovers and transient guards remained zero. Other gaps and
 sustained throughput still need observation.
 
-The separately protected source audit completed its first 4,500-record inventory
-at 02:10 UTC, matching Ferry identities and versions without source mutations
-or production cursor writes. The second pass has 400 records and is incomplete. The 01:23 protected database backup passed isolated restore,
-all three current credential decryptions and idempotent quarantine. No live
+The later 02:52:53 UTC aggregate has 35 complete and five pending QRZ history
+partitions and the same single complete covering plan (98 surrounding records,
+zero target records). QRZ ledger states are 3,438 ambiguous and 395 pending;
+attempts, cutovers and temporary guards remain zero. These are read-only
+classification counts, not delivery evidence.
+
+The separately protected source audit completed both 4,500-record inventories
+at 02:41:09 UTC, matching each other and Ferry exactly. A separate 02:42:27
+all-client forward probe matched 20 known targets twice. These observations
+performed no source mutation or production cursor write and do not establish
+continuous coverage, purge exclusion or write authority. The versioned reader
+and guards were signed through `339590e08e229b411f411d3878e921d4a02265df`.
+The [first release CI run](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40055506398)
+was cancelled after a delivery test fixture leaked `workerd`. Fixture fixes are
+signed and pushed as `ce238cdcfea72ed5cbc7b624ec6a7efc01978154`, and
+[replacement CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40057488314)
+passed before the later 03:28 baseline deployment documented above. Fresh-positive
+enforcement remains separate work outside that release.
+The refreshed 02:48:09 protected database backup passed isolated restore with all
+23 current migrations and both pending migrations `0025`/`0026`, integrity and
+foreign-key checks, all three current credential decryptions and repeated quarantine.
+It retained 380 identity claims and zero attempts or cutovers. No live
 restore or real logbook write occurred. See [source evidence](evidence-lofi.md#all-client-inventory-audit-and-remaining-read-policy-work-2026-10-24-utc)
 and [rollout prerequisites](rollout-checklist.md).
 

@@ -136,7 +136,7 @@ The first successful continuation ended at 01:47:15 UTC after four reads and
 77.929 seconds. It retained 1,018 records: 218 operations, 795 contacts and five
 events, including 46 deleted records. Five duplicate observations and four
 timestamp ties were consistent; no page expansion occurred. Both inventories
-are still incomplete, so this is progress rather than completeness evidence.
+were incomplete at that checkpoint, so it was progress rather than completeness evidence.
 The checkpoint is durable; source mutations and production cursor writes were
 zero. Future continuations must retain the same scope and the shared vendor
 budget. All source-boundary and write-authority flags remain false.
@@ -147,9 +147,30 @@ pass: 4,500 records, including 218 operations, 4,154 contacts, 128 events and
 versions, server stamps and revisions. HaLo has 13 fewer contacts, 3,247 differing
 server stamps and 180 unknown versions; shared flags, membership and application
 versions agree. Both independent local snapshots remained stable through the
-first comparison. The second server pass has 400 records and is incomplete, so
-repeat agreement is not yet established. No source mutation or production cursor
-write occurred.
+first comparison. The second server pass then had 400 records and was incomplete.
+No source mutation or production cursor write occurred.
+
+At **02:41:09 UTC**, both inventories completed with **4,500 records each**.
+They matched each other and Ferry exactly across identities, membership, flags,
+application versions, server stamps and revisions. Across 46 attempts, 44 pages
+were accepted; 100 duplicate observations and 306 timestamp ties were consistent,
+with no expanded page. HaLo and Ferry snapshots stayed stable. The HaLo comparison
+still reports 13 additional server contacts, 3,247 differing server stamps and
+180 unknown versions, with zero missing local UUIDs and no shared application,
+flag, membership or known-revision differences. The overall report remains
+`discrepancy`, rather than rounding unknown/different metadata into agreement.
+
+At **02:42:27 UTC**, the [all-client forward probe](../scripts/source-all-client-forward-probe.ts)
+returned `observed_match`: two complete passes over 20 known-positive targets,
+ten operations and ten contacts, using two network reads. Missing, changed,
+unexpected and repeat-different counts were all zero. The sample contained no
+events, deleted records, duplicates or tied server stamps. The completed baseline
+remained stable and current scope was verified; positive delivery was observed.
+This does not establish account-wide membership, continuous forward coverage,
+writer provenance, unknown historical purge exclusion or source-boundary
+authority. All those report flags and `writesAuthorized` remain false. Neither
+diagnostic mutated source/vendor records or production cursors; only protected
+local audit checkpoints and ordinary shared request-budget counters changed.
 
 Independent HaLo metadata contains fractional historical server stamps and some
 missing stamps. The audit preserves those values exactly and reports version
@@ -168,13 +189,28 @@ was fixed. [HALO-787](https://cabo.ham2k.com/halo/c/787) describes all-client
 forward reads for claims; that alone does not prove deployed QSO/operation
 behavior.
 
-Ferry's current forward policy therefore needs a versioned all-client baseline
-and handoff, with recovered old rows classified as historical. Merely changing a
-flag while reusing filtered opaque cursors cannot recover prior omissions and
-could misclassify a newly discovered old row as a new contact. Missing inventory
-members must remain held for revalidation, never become inferred deletions.
-Fresh positive source/context evidence and a bounded all-client forward probe
-remain follow-ups before broad export readiness.
+The [versioned all-client baseline and handoff](capacity-plan.md#implemented-versioned-all-client-source-baseline-and-handoff)
+is deployed in signed revision `ce238cdcfea72ed5cbc7b624ec6a7efc01978154`, including
+the five baseline commits through `339590e08e229b411f411d3878e921d4a02265df`.
+The [first release CI run](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40055506398)
+was cancelled after a delivery test fixture leaked `workerd`. Fixture fixes are
+signed and pushed as `ce238cdcfea72ed5cbc7b624ec6a7efc01978154`, with
+[replacement CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40057488314)
+passing all 1,031 tests and required checks. Worker `aabdd51c-1665-480a-8806-fe993967bc27`
+deployed at 03:28:48 UTC; independent 03:29 checks confirm all six gates closed
+and 25 migrations. Recovered old rows remain
+historical; unseen members are held, never inferred deleted. Migrations `0025`
+and `0026` fence old canonical checkpoints, independent reread version changes,
+staging, dispatch and cutover provenance after a policy is activated. Transitional
+fences remain dormant for sources with no policy row, so main exports must require
+current ready policy membership explicitly. The first scheduled run activated one
+all-client policy at 03:30:43.295 UTC. The 03:31:37.477 snapshot showed backfill
+with 25 operations and 25 QSOs in the current epoch, no ready policy and zero
+eligible exports; baseline completion and handoff remain unobserved. Fresh-positive collection, witness
+storage and proof foundation are uncommitted work in an isolated worktree,
+excluded from this release and not integrated with stage/dispatch. Runtime positive
+source/context enforcement is still a separate prerequisite; these diagnostic reads
+cannot establish future upstream presence after a hard purge.
 
 ### Independent membership probe and conflicting purge evidence
 
@@ -286,8 +322,10 @@ changed, missing, unknown-version or unknown-writer evidence cannot pass.
 Incidental records are compared separately and never turn the known sample into
 an account-wide membership claim. All write, boundary, membership and historical
 purge-exclusion flags stay false. Its 68 focused tests and independent review
-passed. No live forward probe has run: independently verified writer provenance
-or a separately authorized controlled edit is still required.
+passed. This client-filtered probe has not run live: independently verified writer
+provenance or a separately authorized controlled edit is still required. The
+separate all-client probe observed the bounded positive replay described above
+without claiming writer provenance.
 
 The existing global source gate also permits source-wide cutover creation; a
 UUID allowlist does not narrow that effect. A future limited pilot cannot simply

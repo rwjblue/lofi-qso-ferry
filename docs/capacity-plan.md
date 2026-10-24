@@ -329,8 +329,9 @@ its proof allows reuse.
 The next source-page slice should begin with 100-record operation rereads, then
 100-record sync/rescan streams, under the existing request allowances. The
 adapter accepts up to 200 and the pinned HaLo client defaults to 100, but Ferry's
-recorded live probe requested only five records per stream. The existing local
-100-operation/100-contact checkpoint uses eight RPCs and 1,307 SQL statements;
+early live probe requested only five records per stream; the later protected
+inventory audit used 200, without changing runtime background page sizes. The
+current local 100-operation/100-contact checkpoint uses nine RPCs and 1,308 SQL statements;
 measure encrypted bytes and complete checkpoint time before enabling larger
 background pages. Preserve the cursor on failure and defer any smaller retry
 to a later scheduled turn. Shared source coverage needs explicit scan
@@ -353,50 +354,74 @@ Acceptance: deterministic multi-account tests demonstrate bounded wait and
 progress under bursts, cooldowns and a 200,000-contact import. Report actual
 poll age and oldest eligible work, not just completed turns.
 
-#### Planned: versioned all-client source baseline and handoff
+#### Implemented: versioned all-client source baseline and handoff
 
-This reviewed plan is **not implemented**. The [LoFi evidence](evidence-lofi.md#all-client-inventory-audit-and-remaining-read-policy-work-2026-10-24-utc)
-identifies a NULL-writer exclusion under `anyClient:false`; switching that flag
-while retaining filtered opaque cursors could miss old rows or label recovered
-history as new. Keep exports and `SOURCE_BOUNDARY_VERIFIED` disabled throughout
-this transition. Neither completion nor a successful audit opens a gate.
-1. **Version and fence the reader.** Add one policy table recording tenant/source,
-   logical account identity, policy epoch, phase and completed baseline generation,
-   plus a separate `source_work.policy_seen_epoch`. Existing `seen_epoch` belongs
-   to operation rereads. Under the existing source poll lease, atomically archive
-   the old cursor, increment its generation, install a tagged all-client backfill
-   cursor and invalidate context completeness. Cursor INSERT/UPDATE triggers must
-   reject absent or wrong policy tags after activation. This fences old Workers
-   even if they read the new cursor: an untagged checkpoint rolls back its entire
-   page transaction. Preserve receipts, claims and the immutable
-   [inventory epochs, births and cutovers](../migrations/0005_cutover.sql).
-2. **Baseline, then drain.** Reuse [pollSource and its checkpointed intake](../src/intake.ts)
-   with [all-client reads](../src/lofi.ts) in both modes. Persist policy tags and
-   mark membership even when payloads are unchanged. Keep baseline and forward
-   catch-up on bounded background turns. Every first observation remains
-   historical through backfill, drain and quarantine; independent stream
-   watermarks and opaque cursors retain their existing direction rules.
-3. **Quarantine and hand off.** Hold prior QSO, base-operation and event metadata
-   absent from the completed baseline in bounded batches; never infer deletion.
-   Cancel only prepared attempts, preserving sent/uncertain work and identity
-   claims. Context remains incomplete until no unclassified old dependency
-   remains and an atomic lease, epoch, source-identity and current complete
-   forward-cursor check establishes readiness. A concurrent operation reread
-   cannot bypass the policy hold. Positive unchanged reappearance must explicitly
-   release it. Expiry and gap recovery must preserve policy tags or begin a new
-   baseline; ordinary bearer renewal must not restart the logical source.
-4. **Require current membership and provenance.** Runtime and transactional stage/
-   dispatch guards must require the current policy and dependency membership.
-   [Cutover proof](../src/cutover.ts) must require a `forward_new` birth after both
-   the existing destination cutover and the completed policy baseline generation.
-   Preserve old immutable births; they must not regain eligibility after reset.
+This slice is **deployed read-only** in signed revision
+`ce238cdcfea72ed5cbc7b624ec6a7efc01978154`, including the five baseline commits
+through `339590e08e229b411f411d3878e921d4a02265df`.
+The [first release CI run](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40055506398)
+was cancelled after a delivery test fixture leaked `workerd`. Fixture fixes are
+signed and pushed in `ce238cdcfea72ed5cbc7b624ec6a7efc01978154`;
+[replacement CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40057488314)
+passed all 1,031 tests and required checks. Worker `aabdd51c-1665-480a-8806-fe993967bc27`
+deployed at 03:28:48 UTC; 03:29 checks confirm 25 migrations and all six gates
+closed. The [LoFi evidence](evidence-lofi.md#all-client-inventory-audit-and-remaining-read-policy-work-2026-10-24-utc)
+identifies a NULL-writer exclusion under `anyClient:false`. Switching only the
+flag while retaining filtered opaque cursors could miss old rows or label
+recovered history as new. Exports and `SOURCE_BOUNDARY_VERIFIED` remain disabled;
+neither a successful audit nor a completed policy phase opens a gate.
+1. **Versioned, fenced reader.** [Migration 0025](../migrations/0025_source_read_policy.sql)
+   and the [policy helper](../src/source-read-policy.ts) retain logical account,
+   epoch, phase and baseline generation, separately from operation-reread
+   membership. Activation under the source poll lease archives the old cursor,
+   increments its generation and installs tagged all-client backfill with
+   incomplete context. Missing/wrong tags abort an old Worker's entire canonical
+   checkpoint. Receipts, claims, immutable births and destination cutovers remain.
+2. **Baseline and drain.** [Intake](../src/intake.ts) uses [all-client reads](../src/lofi.ts)
+   in backfill and forward modes, marking exact current versions even when their
+   bodies are unchanged. Baseline, drain and quarantine use background admission;
+   newly discovered rows remain historical throughout these phases. Complete
+   empty phase transitions may continue within the same invocation, subject to
+   the shared request, lease and deadline limits.
+3. **Quarantine and handoff.** Unseen QSO/base/event metadata is held in bounded
+   batches, never inferred deleted. Only prepared attempts are cancelled; sent
+   uncertainty and identity ownership remain. Current complete forward coverage,
+   no unclassified old dependency and the atomic checkpoint establish the ready
+   phase. Positive unchanged reappearance can release a membership hold. Reset
+   and expiry paths preserve tags or start a new baseline; ordinary bearer renewal
+   does not change the logical source epoch.
+4. **Membership and provenance guards.** [Migration 0026](../migrations/0026_source_read_guards.sql)
+   and the final attempt check require current contact/base/event membership for
+   activated policies. Legacy rows without context generation must be reobserved.
+   Semantic or server-version changes by an old noncanonical reader clear
+   membership; identical-version ciphertext renewal preserves it.
+   [Cutover proof](../src/cutover.ts) requires a new birth after both the destination
+   cutover and policy baseline. Old immutable births cannot regain eligibility
+   merely because the policy resets.
 
-The implementation spans one migration and policy helper, `lofi.ts`, `intake.ts`,
-`cutover.ts`, stage/dispatch guards and a small scheduler phase adjustment.
-Acceptance covers old/new Worker overlap and atomic rollback, restart in every
-phase, edits during backfill, historical discoveries during drain, stale leases
-and logical-account changes, unseen dependencies, independent reread membership,
-prepared versus uncertain attempts, unchanged reappearance, and expiry/gap resets.
+**Transition limitation:** stage/dispatch and cutover policy fences are dormant
+when no policy row exists. Scheduler/intake selects unactivated sources for
+baseline work, but main-export activation must additionally require an existing,
+current ready policy for every exporting source. Applying these migrations alone
+does not establish that requirement or the upstream source boundary.
+
+Focused validation covers old/new Worker overlap, rollback, phase resumption,
+historical drain discoveries, stale leases/account changes, missing dependencies,
+independent rereads, prepared versus uncertain work, reappearance and expiry/gap
+resets. Service fixtures preserve the shared vendor limits and reject responses
+that outlive their leases. Production phase completion and resource measurements
+remain unproved. The first scheduled run activated a policy at 03:30:43.295 UTC;
+the 03:31:37.477 snapshot showed backfill with 25 operations and 25 QSOs in the
+current epoch and no ready policy. That run completed in 2.263 seconds, with two
+source pages, 50 records, zero contact turns/errors/deferrals, 88 D1 calls,
+295 statements and 86,150 reported rows read. It stopped idle; the reason for
+stopping after two pages needs confirmation before extrapolating a rate.
+The 02:48:09 UTC protected
+backup passed an isolated restore with both pending migrations, integrity and
+foreign-key checks, three current credential decryptions and repeated quarantine.
+Fresh-positive collection, witness storage and proof foundation are uncommitted
+work in an isolated worktree, outside this release. They are not deployed;
+stage/dispatch integration and runtime fresh-positive enforcement are outstanding.
 
 Runtime background pages remain **25 rows** with at most **four shared LoFi
 background requests per five minutes**. A QSO pass alone therefore has ideal
@@ -478,6 +503,19 @@ provide that authorization or evidence.
 [D1 batches](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch)
 reduce client round trips and execute transactionally; reducing RPCs does not
 eliminate SQL work or [D1 database limits](https://developers.cloudflare.com/d1/platform/limits/).
+Batch members are not separate binding RPCs: Cloudflare's
+[D1 binding implementation](https://github.com/cloudflare/workerd/blob/main/src/cloudflare/internal/d1-api.ts)
+sends the statements together in one request. Ferry therefore budgets binding
+calls and retains SQL-statement counts separately. The D1 limits table still
+lists 1,000 queries and links to Workers subrequests, while the
+[February 2026 platform change](https://developers.cloudflare.com/changelog/post/2026-02-11-subrequests-limit/)
+and [current Workers limits](https://developers.cloudflare.com/workers/platform/limits/#subrequests)
+set the paid default at 10,000 subrequests. Retain Ferry's conservative 850-call
+soft budget. D1 still limits the **entire batch to 30 seconds**, and applies
+100 bound parameters and 100 KB SQL to each member. The 1,308-statement fixture
+does not establish production batch duration; measure it before increasing
+background pages, preserving the atomic page checkpoint on any failure.
+
 [Cloudflare Queues delivery](https://developers.cloudflare.com/queues/reference/delivery-guarantees/)
 is at least once, which is why leases, idempotency and the outbox precede queue
 adoption. [LoTW signed submission](https://lotw.arrl.org/lotw-help/developer-submit-qsos/)

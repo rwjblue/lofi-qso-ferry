@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { contactReconciliationAdif } from "../src/delivery.ts";
 import {
+  HISTORY_READ_RETRY_DELAY,
   historyCandidates,
   historyInventoryGuard,
 } from "../src/history-inventory.ts";
@@ -56,12 +57,14 @@ test("twenty distinct history weeks share inventory while guarding wider source 
     const destinations = (await h.store.connections("a")).filter(
       (connection) => connection.kind !== "lofi",
     );
-    const primeAt = FIXTURE_NOW + 300_000;
+    // The intentional first-read failures now hold their partitions until the
+    // bounded retry is due; priming must honor that production scheduling rule.
+    const primeAt = FIXTURE_NOW + HISTORY_READ_RETRY_DELAY;
     const batch = await pendingContactBatch(h.store, source, 20, primeAt);
     assert.equal(batch.contacts.length, 20);
     const expected = [];
     const fences: D1PreparedStatement[] = [];
-    const warmAt = FIXTURE_NOW + 600_000;
+    const warmAt = primeAt + 300_000;
     for (const contact of batch.contacts) {
       const record = contactReconciliationAdif(contact);
       for (const destination of destinations) {

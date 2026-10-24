@@ -1,5 +1,5 @@
 import type { AdifRecord } from "./adif.ts";
-import { LotwClient } from "./lotw.ts";
+import { LotwClient, LotwLoginError } from "./lotw.ts";
 import { adifInstant, QrzClient, QrzError, type QrzPage } from "./qrz.ts";
 import {
   type QrzCoveringProgress,
@@ -15,8 +15,11 @@ import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
 const DAY = 86_400_000;
 export const HISTORY_INVENTORY_TTL = 4 * 3_600_000;
 export const QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY = 15 * 60_000;
+export const HISTORY_READ_RETRY_DELAY = 15 * 60_000;
 const qrzRetryReason =
   "QRZ returned an ambiguous empty selection; bounded retry is scheduled";
+const readRetryReason =
+  "Destination history read failed; bounded retry is scheduled";
 const MAX_PARTITIONS = 2048;
 const MAX_SCOPE_BYTES = 128 * 1024 * 1024;
 const MAX_PARTITION_BYTES = 2 * 1024 * 1024;
@@ -196,6 +199,12 @@ interface Manifest extends Range {
   reason?: string;
   retryStartedAt?: number;
   retryAfter?: number;
+  /** Scheduling only. Failed responses supply no retained evidence. */
+  readRetry?: {
+    code: "read_failed" | "report_invalid";
+    startedAt: number;
+    retryAfter: number;
+  };
   /** Read plan/progress only; the target stays the original weekly range. */
   qrzCover?: Range & {
     attempts: number;
@@ -293,6 +302,17 @@ function manifest(row: Partition): Manifest | null {
       value.recordCount < 0 ||
       value.recordCount > MAX_RECORDS ||
       (value.qrzCover !== undefined && !validCoverManifest(value)) ||
+      (value.readRetry !== undefined &&
+        (!value.readRetry ||
+          !["read_failed", "report_invalid"].includes(value.readRetry.code) ||
+          !Number.isSafeInteger(value.readRetry.startedAt) ||
+          !Number.isSafeInteger(value.readRetry.retryAfter) ||
+          value.readRetry.startedAt < value.createdAt ||
+          value.readRetry.retryAfter <= value.readRetry.startedAt ||
+          value.readRetry.retryAfter - value.readRetry.startedAt >
+            HISTORY_READ_RETRY_DELAY ||
+          value.readRetry.retryAfter > row.expires_at ||
+          !["base", "catchup", "verify"].includes(value.phase))) ||
       ((value.retryAfter !== undefined || value.retryStartedAt !== undefined) &&
         (typeof value.retryAfter !== "number" ||
           typeof value.retryStartedAt !== "number" ||
@@ -373,12 +393,19 @@ function retryHeld(state: Manifest, now: number): boolean {
   // A clock moving backward must not turn a bounded retry into an arbitrary
   // future hold. Retry metadata is scheduling information, never coverage.
   return (
-    state.retryStartedAt !== undefined &&
-    state.retryAfter !== undefined &&
-    state.retryStartedAt <= now &&
-    state.retryAfter > now &&
-    state.retryAfter - now <= QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY
+    (state.readRetry !== undefined &&
+      state.readRetry.startedAt <= now &&
+      state.readRetry.retryAfter > now &&
+      state.readRetry.retryAfter - now <= HISTORY_READ_RETRY_DELAY) ||
+    (state.retryStartedAt !== undefined &&
+      state.retryAfter !== undefined &&
+      state.retryStartedAt <= now &&
+      state.retryAfter > now &&
+      state.retryAfter - now <= QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY)
   );
+}
+function retryReason(state: Manifest): string {
+  return state.readRetry ? readRetryReason : qrzRetryReason;
 }
 function credentialVersion(input: HistoryInventoryInput): string {
   const version = input.destination.credential_version;
@@ -889,7 +916,8 @@ async function advance(
       .first<Partition & { credential_envelope: string }>();
     if (!latest || latest.evidence !== row.evidence)
       return { fetched: false, progressed: false, complete: false };
-    const prior = requireManifest(row);
+    const prior = { ...requireManifest(row) };
+    delete prior.readRetry;
     const credentials = await open<{
       apiKey?: string;
       query?: { username: string; password: string };
@@ -904,16 +932,61 @@ async function advance(
       },
       store.keys,
     );
+    let requestStarted = false;
     const transport = vendorFetch(
       store,
       input.destination.kind as "qrz" | "lotw",
-      options.fetcher,
+      (request, init) => {
+        // This runs only after ordinary vendor budget/cooldown admission.
+        requestStarted = true;
+        return (options.fetcher ?? fetch)(request, init);
+      },
       { priority: options.priority ?? "background", now: options.vendorNow },
     );
+    const deferReadFailure = async (
+      error: unknown,
+      code: NonNullable<Manifest["readRetry"]>["code"],
+    ) => {
+      // Auth, vendor deferrals, and existing rejected/covering-read handling
+      // keep their original classification and retry policy. Never cache a
+      // local/pre-admission failure or a failed database commit as a read.
+      if (
+        !requestStarted ||
+        error instanceof VendorDeferredError ||
+        error instanceof LotwLoginError ||
+        (error instanceof QrzError &&
+          !["protocol", "transient"].includes(error.kind))
+      )
+        return;
+      const at = now();
+      if (at < prior.createdAt || at >= row.expires_at) return;
+      // Keep the complete original page/cursor/epoch. The normal atomic save
+      // guard rejects a changed lease, scope, credential, or partition. Such
+      // commit failures propagate; they are never turned into retry evidence.
+      await save(
+        store,
+        input,
+        row,
+        lease,
+        {
+          ...prior,
+          retryStartedAt: undefined,
+          retryAfter: undefined,
+          readRetry: {
+            code,
+            startedAt: at,
+            retryAfter: Math.min(at + HISTORY_READ_RETRY_DELAY, row.expires_at),
+          },
+        },
+        [],
+        at,
+      );
+    };
     let records: AdifRecord[];
     let next: Manifest = { ...prior };
     delete next.retryStartedAt;
     delete next.retryAfter;
+    delete next.readRetry;
     if (input.destination.kind === "qrz") {
       if (!credentials?.apiKey)
         return {
@@ -976,6 +1049,7 @@ async function advance(
                 createdAt: checkedAt,
                 retryStartedAt: undefined,
                 retryAfter: undefined,
+                readRetry: undefined,
                 qrzCover: {
                   startDate: cover[0],
                   endDate: cover[1],
@@ -996,6 +1070,7 @@ async function advance(
             {
               ...prior,
               retryStartedAt: checkedAt,
+              readRetry: undefined,
               retryAfter: Math.min(
                 checkedAt + QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY,
                 row.expires_at,
@@ -1009,8 +1084,10 @@ async function advance(
           prior.phase !== "catchup" ||
           !(error instanceof QrzError) ||
           error.kind !== "rejected"
-        )
+        ) {
+          await deferReadFailure(error, "read_failed");
           throw isolateReadFailures ? new HistoryReadFailure(error) : error;
+        }
         // QRZ can reject an empty MODSINCE selection without explaining why.
         // That response proves nothing. Discard the incomplete first pass and
         // require a new, successful full scan before returning any evidence.
@@ -1027,6 +1104,7 @@ async function advance(
             pageCount: 0,
             recordCount: 0,
             createdAt: now(),
+            readRetry: undefined,
           },
           [],
           now(),
@@ -1037,6 +1115,7 @@ async function advance(
       try {
         records = compact(page.records, input, prior);
       } catch (error) {
+        await deferReadFailure(error, "report_invalid");
         throw isolateReadFailures ? new HistoryReadFailure(error) : error;
       }
       if (page.nextAfterLogId !== null) next.cursor = page.nextAfterLogId;
@@ -1055,6 +1134,7 @@ async function advance(
           complete: false,
           noReadAccess: true,
         };
+      let reportReceived = false;
       try {
         const report = await new LotwClient(credentials.query, {
           fetcher: transport,
@@ -1063,6 +1143,7 @@ async function advance(
           endDate: prior.endDate,
           stationCallsign: input.record.STATION_CALLSIGN,
         });
+        reportReceived = true;
         records = compact(report.records, input, prior);
         if (
           records.length > MAX_RECORDS ||
@@ -1079,8 +1160,13 @@ async function advance(
           !(error instanceof Error) ||
           error.message !==
             "Vendor response exceeds bounded partition; split the date range"
-        )
+        ) {
+          await deferReadFailure(
+            error,
+            reportReceived ? "report_invalid" : "read_failed",
+          );
           throw isolateReadFailures ? new HistoryReadFailure(error) : error;
+        }
         const start = Date.parse(prior.startDate);
         const end = Date.parse(prior.endDate);
         if (start === end)
@@ -1394,7 +1480,8 @@ async function readHistoryCandidates(
     if (state.phase === "blocked")
       return { ...result, state: "unavailable", reason: state.reason };
     if (state.phase !== "done" || row.state !== "complete") {
-      if (retryHeld(state, now())) return { ...result, reason: qrzRetryReason };
+      if (retryHeld(state, now()))
+        return { ...result, reason: retryReason(state) };
       if (!result.fetched) {
         const progress = await advance(
           store,
@@ -1645,7 +1732,7 @@ interface BatchMember {
   required: Partition[];
   advance?: string;
   unavailable?: string;
-  held?: boolean;
+  held?: string;
   hash: string;
 }
 function partitionRows(
@@ -1750,7 +1837,7 @@ async function readHistoryBatch(
       member.required = [];
       member.advance = undefined;
       member.unavailable = undefined;
-      member.held = false;
+      member.held = undefined;
       for (let index = 0; index < member.wanted.length; index++) {
         const wanted = member.wanted[index];
         const row = retained.get(wanted.id);
@@ -1776,7 +1863,7 @@ async function readHistoryBatch(
           member.unavailable =
             state.reason ?? "History partition requires review";
         else if (state.phase !== "done" || row.state !== "complete") {
-          if (retryHeld(state, now())) member.held = true;
+          if (retryHeld(state, now())) member.held = retryReason(state);
           else member.advance ??= row.id;
         }
         if (!member.required.some((entry) => entry.id === row.id))
@@ -1797,7 +1884,7 @@ async function readHistoryBatch(
         state: "unavailable",
         reason: member.unavailable,
       };
-    } else if (member.held) results[member.ordinal].reason = qrzRetryReason;
+    } else if (member.held) results[member.ordinal].reason = member.held;
     else if (member.advance && !advances.has(member.advance))
       advances.set(member.advance, member);
   }

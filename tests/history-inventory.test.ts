@@ -6,6 +6,7 @@ import { measuredDatabase } from "../src/database-metrics.ts";
 import { createFailureDiagnostics } from "../src/failure-diagnostics.ts";
 import {
   HISTORY_INVENTORY_TTL,
+  HISTORY_READ_RETRY_DELAY,
   type HistoryInventoryInput,
   historyCandidates,
   historyCandidatesBatch,
@@ -858,19 +859,29 @@ test("QRZ catch-up authentication and protocol failures do not trigger a verific
         });
         const before = await store
           .statement("SELECT evidence,history_bytes FROM partitions")
-          .first();
+          .first<{ evidence: string; history_bytes: number }>();
         await assert.rejects(
           historyCandidates(store, input, {
             ...options,
             fetcher: async () => new Response(response),
           }),
         );
-        assert.deepEqual(
-          await store
-            .statement("SELECT evidence,history_bytes FROM partitions")
-            .first(),
-          before,
-        );
+        const after = await store
+          .statement("SELECT evidence,history_bytes FROM partitions")
+          .first<{ evidence: string; history_bytes: number }>();
+        assert.ok(before && after);
+        const actual = JSON.parse(after.evidence);
+        if (response === "RESULT=AUTH")
+          assert.equal(actual.readRetry, undefined);
+        else
+          assert.deepEqual(actual.readRetry, {
+            code: "read_failed",
+            startedAt: now,
+            retryAfter: now + HISTORY_READ_RETRY_DELAY,
+          });
+        delete actual.readRetry;
+        assert.deepEqual(actual, JSON.parse(before.evidence));
+        assert.equal(after.history_bytes, before.history_bytes);
       } finally {
         await mf.dispose();
       }
@@ -1346,8 +1357,8 @@ test("incomplete LoTW framing and generation changes leave no completed coverage
     );
     await assert.rejects(
       historyCandidates(store, input, {
-        now,
-        vendorNow: now,
+        now: now + HISTORY_READ_RETRY_DELAY,
+        vendorNow: now + HISTORY_READ_RETRY_DELAY,
         fetcher: async () => {
           await store.statement("UPDATE ledger SET generation='g2'").run();
           return lotwResponse([record]);
@@ -2135,12 +2146,12 @@ test("QRZ partition rejection distinguishes fixed scope failures without retaini
     ],
   ];
   try {
-    for (const [changes, code] of cases) {
+    for (const [index, [changes, code]] of cases.entries()) {
       const diagnostics = createFailureDiagnostics();
       await assert.rejects(
         historyCandidates(h.store, h.input, {
-          now: h.now,
-          vendorNow: h.now,
+          now: h.now + index * HISTORY_READ_RETRY_DELAY,
+          vendorNow: h.now + index * HISTORY_READ_RETRY_DELAY,
           fetcher: async () =>
             qrzResponse([
               { ...record, APP_QRZLOG_LOGID: "1" },

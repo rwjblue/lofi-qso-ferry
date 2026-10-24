@@ -45,6 +45,32 @@ and retains only prior valid pages, without advancing coverage after failures.
 It is not part of c4f or these run metrics.
 Neither change establishes active 200,000-contact coverage or export authority.
 
+### Ownership bootstrap cost — isolated current-data rehearsal
+
+At **2026-10-24 17:54:43 UTC**, the exact `11ea450a` foundation completed an
+isolated in-memory backfill of the verified **17:51 UTC** production snapshot.
+All **3,833 owners** were hashed and **9,981 inputs** were covered: 3,327 each of
+identity, claim and mapping obligations. All 3,327 copied encrypted tuples passed
+exact identity, owner, key and HMAC-bucket validation; zero inputs remained pending
+or held. Existing claims, QRZ owners/markers, ledger, source/private data, cursors
+and proofs stayed unchanged. No production or vendor calls occurred.
+
+The original implementation needed **135 bounded passes**, **27,528 local adapter
+calls** and **34,649 member statements**. Its 4.123-second SQLite runtime excludes
+remote RPC latency and is not Worker capacity evidence. Repeating one such pass
+per five-minute tick would require 135 ticks for this unchanged snapshot.
+
+The reviewed, separately **undeployed** batching patch completes the identical
+snapshot in the same 135 passes with **925 calls / 24,602 member statements**,
+zero held inputs and unchanged protected tables. Its native-D1 30-contact fixture
+falls from **188 to 11 RPCs** and 248 to 188 statements. All 25 owned/Store cases,
+types and scoped formatting pass. This preserves 100-owner/100-input and 4 MiB
+bounds, version/ciphertext/key checks, missing-evidence holds and atomic two-query
+publication; native batches contain at most 100 statements. Failed or unknown
+acknowledgements propagate without an in-call retry. Scheduled bootstrap and its
+production cost remain unverified. Do not use a synchronous full-tenant scan or
+raise vendor budgets to hide this cost.
+
 ### Previous lookup and coverage release — 9aeab582
 
 Signed `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at

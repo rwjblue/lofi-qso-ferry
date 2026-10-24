@@ -33,6 +33,17 @@ competitors and one location-detail hold). Memo timing does not prove current
 canonical projection or exact policy provenance. The earlier backup and proof
 receipts below keep their original scope.
 
+Independent **18:12:34.791 UTC** readback confirms the same sole c4f Worker,
+eight closed controls and 33 migrations. QRZ has **1,219** guarded associations,
+**1,953 ambiguous / 183 mismatched / 478 pending** routes, and a clean 4,141-row
+index. Of the ambiguous labels, **1,939** lack a current-generation memo; 14 have
+post-index checks (11 remote-competitor and three location-detail holds). Memo
+timing still does not establish current canonical projection or exact policy
+provenance. The latest completed cron made 160 contact turns, 295 classifications
+and 22 adoptions, with zero errors, deferrals or attempts, in 91.812 seconds.
+This is continued read-only reconciliation, not completed exception review or
+sustained capacity. No release after c4f has been deployed.
+
 ### Next implementation — ownership foundation and bounded retries
 
 Migration `0035` and an observation-only LoTW registry preserve encrypted exact
@@ -53,7 +64,30 @@ events. Auth, vendor deferrals, scope/lease commit guards and split behavior rem
 unchanged. All 81 focused history/diagnostic cases passed. Together, the patches
 pass 161 history/Store/foundation cases plus the mixed-history integration case,
 with unchanged 158 cohort / 262 whole-tick RPCs and 1,176 statements. Types, lint,
-format and Worker build pass. Full release CI and deployment remain pending.
+format and Worker build pass. The expanded CI run passed 1,516 of 1,520 cases;
+four scheduler fixtures still expected retry after five minutes. Their timing now
+honors the production 15-minute retry policy, explicitly checks no early reads,
+and all four pass locally. The foundation, retry fixture fixes, pure classifier
+and batched backfill then passed the full local check: **1,535 tests**, formatting,
+lint, both TypeScript projects and the Worker build. Signed push is waiting for
+the 1Password signer; release CI and deployment remain pending.
+
+A fresh **17:51:44.635 UTC** backup of deployed `c4f51de8` contains 34,509,084
+bytes and 33 migrations. Isolated restore, all three credential decryptions,
+tenant-key verification and repeated quarantine pass; 3,327 claims and 1,061 QRZ
+owners/markers are retained. An isolated `0035` backfill covers all 9,981 inputs
+with 3,327 validated encrypted tuples and zero holds, preserving prior tables.
+The separately reviewed backfill batching patch reduces the same local adapter
+work from 27,528 to 925 calls; its native-D1 30-contact fixture falls from 188 to
+11 RPCs. These are local results; scheduled bootstrap and capacity remain open.
+
+All 21 reverse-source cases now pass, including five actual-D1 LoTW cases for
+mode groups, the inclusive time limit, midnight, portable station namespaces and
+late cross-source competition. A separate pure broader LoTW classifier passes
+seven cases while preserving raw precision, modes and nested grid values. This
+validated foundation is not consumed by deployed reconciliation and grants no
+ownership or write authority. Consumer wiring, raw historical references and
+ownership checks at staging, dispatch and mapping remain under implementation.
 
 Next, bind immutable LoTW attempt identities to renewable current ownership
 checks at staging, dispatch and new mapping. Exact self-writes and multi-contact

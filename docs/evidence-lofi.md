@@ -4,13 +4,19 @@ Initial adapter review: 2026-10-22, before live requests. The dated observations
 below record subsequent read-only vendor evidence; fixture results alone do not
 establish server compatibility or production coverage.
 
-Current checkpoint, 2026-10-24 06:43 UTC: the production all-client baseline,
+Current checkpoint, 2026-10-24 07:39 UTC: the production all-client baseline,
 forward drain and quarantine handoff completed at **06:35:44.881 UTC**. The policy
 is `ready`, with all 218 operations and 4,282 QSO-stream rows (4,500 retained rows)
 witnessed in the current epoch and zero unseen retained rows. There are 4,130
 contacts eligible for reconciliation processing, not authorized exports. The live
 selected-contact proof diagnostic still fails at `proof_cohort_count` after
-collection and final drain; all seven export controls remain closed.
+collection and final drain. A separate timestamp-group response bound also
+prevented collection. Its prepared fix is awaiting final signing/deployment;
+all seven export controls remain closed.
+
+A separate fresh QRZ check observed an empty neighborhood at 07:38:44. It did
+not run source collection or mint a proof. Joint same-contact readiness remains
+outstanding; see [the QRZ observation](evidence-qrz.md#current-read-only-readiness-observations-2026-10-24-utc).
 
 The protocol references are [Sidecar's browser registration and operation reads](https://github.com/rwjblue/qso-sidecar/blob/c502cecd068a6a4330afd94458e5636fa17f3a51/src/lofi.rs), [HaLo's transport](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/extensions/sync/ham2k-lofi/src/index.ts), and [its sync engine](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/packages/halo_core/lib/src/sync/sync_engine.dart). These are client implementation evidence; public server retention and replay guarantees were not found.
 
@@ -418,3 +424,32 @@ timing remain under investigation. The 06:50:20 QRZ-only diagnostic stopped in
 its SQL validation before any QRZ request. It supplied no absence evidence and
 made no database mutation; seven controls remained closed and attempts, stage
 guards and cutovers stayed zero.
+
+At 06:54:26, the same post-rollback diagnostic also passed every outer mint
+filter and lease check. D1's observed clock was 55–103 ms behind the local Node
+clock; the original proposed proof's creation time had become valid by the
+later SELECT. This is consistent with a clock-admission race, but does not prove
+the failed transaction's clock or the deployed Worker's behavior. The protected
+diagnostic can now wait at most 500 ms, using at most two D1 clock/lease checks,
+before submitting the original atomic batch once. It never rewrites timestamps,
+extends expiry, relaxes predicates or retries an uncertain mutation. This remains
+a diagnostic-only option, not a production clock fix.
+
+The 07:05:07 diagnostic stopped earlier, at `page_bound`, after one collection
+request and before its final drain or mint. HaLo's
+[pinned sync implementation](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/packages/halo_core/lib/src/sync/sync_engine.dart#L1413)
+allows a cursorless page to expand across an entire edge millisecond. Ferry's
+25-record collector ceiling rejected the expanded response. Signed
+`a8ba8dd92a15` introduced a bounded 100-record collector. A reviewed follow-up
+keeps nominal requests at 25 while accepting up to 100 per stream: requesting
+100 can reach another timestamp group and exceed the response ceiling even
+when the required positives arrived first. The final refinement is committed
+locally but awaiting 1Password signing; neither change is deployed yet.
+All 1,184 tests and required local checks pass for the final collector behavior.
+The collector has a combined 1 MiB parsed-record limit and the existing 2 MiB
+transport limit.
+Both streams validate before any new witness is published. Larger ties still
+hold; Ferry never truncates them or fabricates a continuation cursor. The four
+actual requests, reserved final drain, 120-second deadline and exact proof
+requirements remain unchanged. Deployment and a fresh same-contact check are
+still required at this checkpoint.

@@ -167,6 +167,52 @@ records in the original target. No attempt or cutover was created. This verifies
 one automatic cache completion in production. Remaining gaps, fresh live
 pre-write checks and real insert/readback acceptance remain unverified.
 
+### Current read-only readiness observations (2026-10-24 UTC)
+
+At 06:55:23 UTC, a protected read completed one targeted QRZ FETCH for an eligible
+candidate, with stable local scope/dependency metadata and no STATUS or covering
+fallback. It found **one nearby record and zero exact identity matches**. The
+neighborhood was therefore not empty: this result establishes neither absence
+nor permission for a first INSERT. Raw records were not retained, so the cause
+of the non-exact match is unknown; no precision mismatch is inferred.
+
+All seven export controls were verified closed before and after the read.
+The source side ran only a metadata plan; no fresh source export proof was
+verified. There were no vendor mutations or source, cursor, ledger, cache, proof,
+staging or attempt writes; only the normal shared QRZ request-budget reservation
+was recorded. Final counts remained zero for attempts, cutovers and stage guards.
+Fresh same-contact source proof and destination absence checks remain required
+before any guarded first insert.
+
+At 07:19:34 UTC, a SELECT-only plan examined nine currently eligible candidates.
+Three had current scoped cache hints with no matching CALL/BAND index entries;
+none had fully empty cached weeks. The selected candidate had two source
+dependencies and no events. Known stamp groups suggested one collection page,
+which is an estimate, not a coverage guarantee. This plan made zero vendor reads
+or state mutations. Cache hints only choose where to spend a fresh read; no fresh
+QRZ absence check or source proof was completed for this selection.
+
+The first cache-selected retry at 07:35:48 stopped on its first keyed eligibility
+SELECT, before any QRZ request or budget reservation. The earlier source plan had
+passed; no predicate-level diagnostic established which condition changed during
+setup. The scheduled canonical poll can advance context generation, so this is
+not evidence of a remote identity mismatch or a reason to relax the fence.
+
+At **07:38:44 UTC**, the next bounded check completed successfully: one targeted
+FETCH, one STATUS book verification and one complete covering FETCH established
+an **empty current neighborhood** for an eligible candidate with two source
+dependencies. Exact local scope and dependencies stayed stable. The deployed
+fallback completed in 2.469 seconds using 37 database queries, including three
+normal QRZ budget reservations. All seven controls were closed before and after;
+attempts, cutovers and stage guards remained zero. No source, ledger, cache,
+proof or vendor mutation occurred.
+
+This is fresh absence evidence for that observation, not a successful source
+proof or export approval. A joint same-contact source/vendor packet is still
+outstanding, and destination evidence must be refreshed before a future write.
+The 06:55 neighboring-record candidate remains unsuitable for absence-based
+insertion; the later result does not resolve that historical exception.
+
 ## ADIF and template profile
 
 [ADIF 3.1.6](https://adif.org/316/ADIF_316.htm) defines ordinary ADI string fields as ASCII; international string fields require ADX. Ferry's ADI serializer rejects non-ASCII data rather than transliterating, dropping it or claiming QRZ UTF-8 support. Final normalized lengths include both CR and LF. NOTES preserves line breaks as CRLF; COMMENT/QSLMSG collapse whitespace. Literal `<EOR>`, `&`, `+`, `=` and `%` inside field values survive local framing and form encoding. Parsing preserves four- versus six-digit times.
@@ -195,7 +241,7 @@ Legacy LoTW prior-identity exclusions still depend on retained, unrevoked `lotw_
 
 Migration `0024_identity_mapping_overlap.sql` closes the deployment overlap where an old Worker invocation can adopt a mapping after `0023` has seeded existing rows. Every subsequent LoTW mapping write atomically reserves its canonical hash; a conflicting owner aborts the mapping. QRZ mapping changes reserve the exact LOGID unless an exact completed receipt is linked to the same immutable attempt claim. Current historical adoption removes only its own exact LOGID/owner/hash reservation under the same proof transaction, including idempotent adoption. Legacy mappings without that proof remain held for bounded readback; an unresolved older LOGID reservation cannot be overwritten.
 
-The claims replace the earlier blanket fractional-timestamp block; they do not open any export gate, approve historical precision mismatches, establish source completeness or prove vendor acceptance. All six production gates remain closed. New regression fixtures cover competing-stage races, atomic rollback, retained ownership, migration, exact payload linkage and final source/dependency/lease changes, including fractional-time contacts with full eight-character grids and lost mutation responses.
+The claims replace the earlier blanket fractional-timestamp block; they do not open any export gate, approve historical precision mismatches, establish source completeness or prove vendor acceptance. All production export controls remain closed. New regression fixtures cover competing-stage races, atomic rollback, retained ownership, migration, exact payload linkage and final source/dependency/lease changes, including fractional-time contacts with full eight-character grids and lost mutation responses.
 
 Limits do not depend on clocks or cooperative timeouts: 16 KiB combined template source, 16 nesting levels, 2,048 structural tokens, 20,000 execution steps, 1,000 aggregate loop iterations, 64 KiB intermediate allocation budget and 8 KiB final UTF-8 output per field, rechecked after normalization. Filters preflight expanding joins and bound split/replacement results. There is no include, filesystem/network, JavaScript evaluation, arbitrary property traversal or compiled code path. The profile rejects prototype properties. `now` must be captured by the durable preparer once per eligible source generation; templates cannot schedule work themselves.
 

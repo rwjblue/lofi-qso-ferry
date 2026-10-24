@@ -4,9 +4,12 @@ Verified 2026-10-24 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). T
 
 Current readiness: the source baseline/drain/quarantine handoff completed at
 06:35:44.881 UTC, covering all 4,500 retained rows with zero unseen members. The
-06:43 live source-proof diagnostic still failed at the atomic `proof_cohort_count`
-guard after collection and final drain. All seven controls remain closed; no
-export attempt, stage guard or cutover was created. Fresh QRZ evidence is pending.
+live source-proof diagnostic still fails the atomic `proof_cohort_count` guard.
+A collector timestamp-expansion fix is committed but awaiting final signing and
+deployment. At 07:38:44, a fresh three-read QRZ check established an empty
+neighborhood for one eligible contact. A successful source proof and repeat joint
+fresh checks remain outstanding. All seven controls remain closed, with zero
+export attempts, stage guards, cutovers or vendor mutations.
 
 | Resource                 | Current value                                                                                                     |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------- |
@@ -78,16 +81,26 @@ deferrals before the `database_budget` stop. It made 871 D1 calls containing
 2,179 statements; database wall time was 24.125 seconds. These are processing
 turns and classifications, not unique completed contacts or sustained capacity.
 
-The protected 06:43:26 source-proof diagnostic completed one live collection read
-and one final canonical drain for a four-dependency contact, then failed the
-atomic proof-mint guard with `proof_cohort_count` (`proof_unavailable`). No current
-proof was produced. Diagnose that predicate failure before treating the source
-path as ready for an export. All seven controls were independently verified
-closed before and after; attempts, stage guards and cutovers remained zero.
-The diagnostic made normal guarded local intake/observation writes but no upstream
-source or destination mutation. No fresh QRZ neighborhood-probe result is available
-at this checkpoint; current QRZ evidence and later explicit write authorization
-remain required.
+Fresh selected-contact source proof remains unverified. The 06:43 and 06:54
+protected diagnostics collected current dependencies and completed a final drain,
+then rolled back at `proof_cohort_count`. Exact post-rollback predicates passed;
+measured local/D1 clock differences are a hypothesis, not a confirmed production
+cause. A later read stopped at the collector's 25-record response ceiling.
+The prepared fix requests 25 records but accepts bounded timestamp groups up to
+100 per stream, with whole-page validation and unchanged proof/request limits.
+Its initial commit is signed and pushed; the final refinement is committed locally
+and awaiting 1Password signing. All **1,184 tests** and required local checks pass.
+Neither collector change is deployed yet.
+
+At **07:38:44 UTC**, a fresh QRZ check established an empty neighborhood for one
+eligible candidate using one targeted FETCH, one STATUS book verification and one
+complete covering FETCH. Exact local scope and dependencies remained stable.
+This is current observed absence for that contact, not a source proof or permission
+to insert. Repeat fresh QRZ checks alongside the same contact's successful source
+proof before any later authorized write. The earlier 06:55 candidate had a nearby
+record and remains unsuitable for absence-based insertion. All seven export
+controls remain closed; attempts, stage guards, cutovers and vendor mutations
+remain zero. The owner's keep-disabled instruction still applies.
 
 Canonical all-client backfill now requests up to 100 records per stream with
 strict response, preparation and atomic checkpoint bounds. A deterministic size

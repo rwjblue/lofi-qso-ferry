@@ -572,6 +572,16 @@ before the database budget stop. It made 871 D1 calls/2,179 statements and spent
 24.125 seconds in D1 wall time. This completes the baseline observation; it does
 not establish a sustained classification rate or export readiness.
 
+Post-handoff reconciliation continued on the normal schedule. The 06:40, 06:45,
+06:50 and 06:55 ticks processed 63, 84, 120 and 140 contact turns respectively,
+with 49, 88, 151 and 186 destination classifications. Durations were 32.703,
+89.968, 56.121 and 94.336 seconds. The first three stopped at the database budget;
+the last stopped at the deadline. The 06:55 tick made 830 D1 calls containing
+3,997 statements, with 85.142 seconds of database wall time, three errors and
+41 deferrals. These are processing turns, not unique completed contacts.
+The 06:59 snapshot still had 3,922 due background contacts, and the remaining
+vendor and precision exceptions require their own resolution.
+
 Next attribute D1 latency by operation (`batch`, `first`, `all`, `run`, `raw`),
 including aggregate count, wall time, maximum and fixed latency buckets, and time
 scheduler selection/admission/lease work. No SQL, parameters or identifiers are
@@ -627,15 +637,25 @@ remains held; incremental collection across turns is future work. These changes
 raise neither shared vendor budgets nor positive-proof collection page sizes, and
 do not open any gate. Canonical baseline page sizing is a separate change above.
 
-Before live acceptance, observe production baseline/drain/quarantine handoff,
-refresh expired QRZ covering evidence, select the exact source/contact/destination
-trial cohort and verify current proofs and fresh destination checks. The protected
+Production baseline/drain/quarantine handoff is now observed. A fresh QRZ absence
+check also completed for one candidate at 07:38:44. Before live acceptance, select
+the exact source/contact/destination cohort, establish a current source proof and
+repeat fresh destination checks for that same contact. The protected
 04:25 UTC backup passed an isolated restore with 28 migrations plus `0030`,
 integrity/foreign-key checks, three current credential decryptions and repeated
 quarantine, preserving 380 claims and zero attempts/cutovers. No external write
 has occurred. Exact small-cohort acceptance, 100-account steady-state capacity and
 200,000-contact end-to-end completion remain unproved; later work includes
 incremental evidence collection, pacing and separately measured larger source pages.
+
+The separate collector compatibility fix is prepared but not deployed: nominal
+requests remain 25, while responses may contain up to 100 records per stream to
+accommodate complete timestamp groups. A combined 1 MiB parsed-record cap and the
+existing 2 MiB transport cap bound each response. Every returned row validates
+before new witnesses publish. The four-request budget, reserved final drain and
+120-second collection deadline remain unchanged; larger ties still hold. All
+1,184 tests and required local checks pass. Final signing is blocked in 1Password,
+so this change supplies no new production throughput measurement yet.
 
 ### 3. Make live delivery economical without weakening write safety
 

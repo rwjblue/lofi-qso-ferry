@@ -25,16 +25,26 @@ deferrals before the `database_budget` stop. It made 871 D1 calls containing
 2,179 statements; database wall time was 24.125 seconds. These are processing
 turns and classifications, not unique completed contacts or sustained capacity.
 
-The protected 06:43:26 source-proof diagnostic completed one live collection read
-and one final canonical drain for a four-dependency contact, then failed the
-atomic proof-mint guard with `proof_cohort_count` (`proof_unavailable`). No current
-proof was produced. Diagnose that predicate failure before treating the source
-path as ready for an export. All seven controls were independently verified
-closed before and after; attempts, stage guards and cutovers remained zero.
-The diagnostic made normal guarded local intake/observation writes but no upstream
-source or destination mutation. No fresh QRZ neighborhood-probe result is available
-at this checkpoint; current QRZ evidence and later explicit write authorization
-remain required.
+Fresh selected-contact source proof remains unverified. The 06:43 and 06:54
+protected diagnostics collected current dependencies and completed a final drain,
+then rolled back at `proof_cohort_count`. Exact post-rollback predicates passed;
+measured local/D1 clock differences are a hypothesis, not a confirmed production
+cause. A later read stopped at the collector's 25-record response ceiling.
+The prepared fix requests 25 records but accepts bounded timestamp groups up to
+100 per stream, with whole-page validation and unchanged proof/request limits.
+Its initial commit is signed and pushed; the final refinement is committed locally
+and awaiting 1Password signing. All **1,184 tests** and required local checks pass.
+Neither collector change is deployed yet.
+
+At **07:38:44 UTC**, a fresh QRZ check established an empty neighborhood for one
+eligible candidate using one targeted FETCH, one STATUS book verification and one
+complete covering FETCH. Exact local scope and dependencies remained stable.
+This is current observed absence for that contact, not a source proof or permission
+to insert. Repeat fresh QRZ checks alongside the same contact's successful source
+proof before any later authorized write. The earlier 06:55 candidate had a nearby
+record and remains unsuitable for absence-based insertion. All seven export
+controls remain closed; attempts, stage guards, cutovers and vendor mutations
+remain zero. The owner's keep-disabled instruction still applies.
 
 The initial larger-page runs preserved the saved cursor and existing request
 limits. Their variable page counts and D1 latency are recorded in the
@@ -168,8 +178,8 @@ disabled. No actual trial may run until that instruction changes; no vendor writ
 has occurred.
 
 Next: diagnose and fix the live `proof_cohort_count` mint failure without
-weakening the proof guard, then obtain fresh QRZ neighborhood evidence for the
-same exact structurally eligible contact and prepare its review packet. The
+weakening the proof guard, then repeat the successful QRZ absence check alongside
+the same exact contact's source proof and prepare its review packet. The
 production baseline/handoff is complete; waiting for more backfill is no longer
 the prerequisite. Independent first-insert mode still excludes global cutover and
 no-query effects, and exact fresh proofs do not establish universal UUID,
@@ -578,9 +588,9 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 
 ## Next action and rollout boundaries
 
-1. Diagnose and fix the deployed `proof_cohort_count` mint failure with exports closed. The all-client baseline/handoff completed at 06:35:44.881 UTC; successful fresh collection and final drain have not yet produced a current immutable proof. Preserve exact dependency, scope, generation and expiry guards.
+1. Complete signing and deployment of the reviewed collector fix, then diagnose the `proof_cohort_count` mint failure with exports closed. The all-client baseline/handoff completed at 06:35:44.881 UTC; fresh collection and final drain have not yet produced a current immutable proof. Preserve exact dependency, scope, generation and expiry guards.
 2. Keep the implemented authority split closed. Default-off QRZ first-insert mode excludes source-wide cutovers, no-query inference, LoTW, replacement and corrections. `SOURCE_BOUNDARY_VERIFIED` remains false: complete inventories and finite positive samples do not establish universal tombstone or purge guarantees.
-3. Obtain fresh QRZ neighborhood evidence for the exact proposed contact and destination. No new QRZ probe result is available at this checkpoint. Historical precision, location and routing holds need explicit evidence; cron does not approve them.
+3. Pair the observed QRZ absence with a successful current source proof. The 07:38:44 three-read probe completed and found an empty neighborhood; refresh that evidence for the same exact contact before any later authorized write. Historical precision, location and routing holds need explicit evidence; cron does not approve them.
 4. Prepare the exact first-write packet read-only in the [rollout checklist](docs/rollout-checklist.md), preserving the verified 05:20 UTC SQL backup and refreshing it if needed before external changes. Off-device key storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account.
 5. Keep exports disabled. The latest instruction supersedes the earlier one- or two-contact trial authorization; no actual trial may run until the owner changes that instruction and all current proof/vendor checks pass.
 

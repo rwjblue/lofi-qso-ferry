@@ -163,8 +163,10 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    acceptance. QRZ's mode excludes LoTW; define separate LoTW authority before its
    trial while keeping the global source-boundary gate closed. The
    [LoTW implementation sequence](docs/evidence-lotw.md#separate-lotw-first-insert-plan)
-   starts with strict response-scope validation, then separate immutable
-   authorization, fresh checks at dispatch and default-off service wiring.
+   starts with strict response-scope validation, then a conservative three-day
+   empty-report check, separate immutable authorization, fresh checks at dispatch
+   and default-off service wiring. The current one-day LoTW observation does not
+   satisfy that planned three-day policy.
 5. **Expand automatic coverage and prove capacity.** Source policy and fresh
    positive evidence must protect main exports, not only the trial. Then review
    historical associations and broaden the scopes deliberately. Measure queue

@@ -99,20 +99,35 @@ validation is implemented locally; authorization remains planned and disabled:
    absence. Reject malformed identities without losing valid minute precision,
    historical modes or unfiltered queries. The sent scope cannot change during
    transport, and fixed diagnostic categories identify rejected responses.
-2. Add a default-off `lotw_fresh_insert` authorization mode with exact contact and
+2. Implement and test a separate first-insert history check before widening
+   authorization. The proposed pilot rule queries the previous, current and
+   following UTC dates for exact own/worked calls, without band or mode filters.
+   Only a valid, complete zero-record report passes; any record, limit or failed
+   response holds. Test midnight/year/leap-day edges and incomplete, malformed
+   or changed scope. This remains unimplemented, and the observed one-day query
+   does not satisfy it.
+3. Add a default-off `lotw_fresh_insert` authorization mode with exact contact and
    destination scopes, current query credentials, mandatory source proofs and
    durable identity ownership. Preserve the existing QRZ and source-boundary
    modes. Migration `0031` constrains two immutable-mode columns; the next
    migration must preserve existing pins, guards and foreign keys unchanged.
-3. Require fresh complete readback before signing and again before first dispatch,
+4. Require the complete three-day check before signing and again before first dispatch,
    plus current certificate checks and final request validation after vendor
    admission. Start with a repeated bounded query; quota exhaustion defers work.
    The new mode must hold nearby records that differ only in mode or lack exact
    time precision; the existing mode-filtered matcher does not establish this
    stronger collision policy.
-4. Integrate service admission, health/admin reporting and deployment checks.
+5. Integrate service admission, health/admin reporting and deployment checks.
    Test migration rollback, older Worker overlap, proof expiry, credential/scope
    changes after admission and every uncertain-delivery case before deployment.
+
+The three-day empty-report rule is conservative Ferry policy, not an ARRL
+uniqueness guarantee. ARRL's [correction identity](https://lotw.arrl.org/lotw-help/submitting-qsos/)
+requires matching time to the second, while [QSL matching](https://lotw.arrl.org/lotw-help/frequently-asked-questions/#datamatch)
+allows a 30-minute difference and mode groups. The [query contract](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
+also warns that downloaded modes can differ from locally recorded modes. A
+calendar-day-only query can miss a neighboring record across midnight. These
+contracts do not justify treating a mode-only conflict as absence.
 
 Only a currently prepared, known-unsent first insertion could use this mode.
 Submitted, uncertain, missing-state or previously accepted attempts remain

@@ -12,7 +12,8 @@ import { VendorDeferredError } from "./vendor-requests.ts";
 
 export const SOURCE_PRESENCE_MAX_AGE_MS = 5 * 60_000;
 export const SOURCE_PRESENCE_COLLECTION_MS = 120_000;
-const PAGE_SIZE = 25;
+export const SOURCE_PRESENCE_PAGE_SIZE = 100;
+const MAX_PAGE_RECORD_BYTES = 1024 * 1024;
 
 /** Logical credential identity excludes in-place bearer-token renewal. */
 export interface SourcePresenceScope {
@@ -403,7 +404,7 @@ export async function collectSourcePresence(
       const windowBody = (progress: SideProgress) => ({
         syncedUntilMillis: progress.watermark,
         ...(progress.cursor ? { cursor: progress.cursor } : {}),
-        limit: PAGE_SIZE,
+        limit: SOURCE_PRESENCE_PAGE_SIZE,
         anyClient: true,
       });
       expectedSyncBody = JSON.stringify({
@@ -417,9 +418,32 @@ export async function collectSourcePresence(
         },
       });
       syncRequestStartedAt = undefined;
-      const page = await client.syncPage(state, checkTime(), PAGE_SIZE);
+      const page = await client.syncPage(
+        state,
+        checkTime(),
+        SOURCE_PRESENCE_PAGE_SIZE,
+      );
       await checkScope();
       if (syncRequestStartedAt === undefined) throw new Held("invalid_page");
+      // Cursorless source pages may expand over a tied edge millisecond. The
+      // requested limit is not a server response guarantee: retain a separate
+      // application bound and never truncate a page or manufacture its cursor.
+      // Check BOTH streams and their combined plaintext size before hashing or
+      // retaining any witness; LoFiClient separately caps transport at 2 MiB.
+      if (
+        page.operations.length > SOURCE_PRESENCE_PAGE_SIZE ||
+        page.qsos.length > SOURCE_PRESENCE_PAGE_SIZE
+      )
+        throw new Held("page_bound");
+      const encoder = new TextEncoder();
+      let recordBytes = 0;
+      for (const rows of [page.operations, page.qsos]) {
+        for (const raw of rows) {
+          checkTime();
+          recordBytes += encoder.encode(JSON.stringify(raw)).byteLength;
+          if (recordBytes > MAX_PAGE_RECORD_BYTES) throw new Held("page_bound");
+        }
+      }
       // Publish only after BOTH streams validate. A rejected page may not leave
       // reusable positive witnesses behind for a later cache-only collection.
       const pageWitnesses = new Map(witnesses);
@@ -429,11 +453,12 @@ export async function collectSourcePresence(
         ["qso", "qsos"],
       ] as const) {
         const rows = page[side];
-        if (rows.length > PAGE_SIZE) throw new Held("page_bound");
         const window = windows.get(kind);
         let prior = state[side].watermark;
         for (const raw of rows) {
+          checkTime();
           const observed = await targetFromRecord(kind, raw);
+          checkTime();
           if (
             prior === undefined ||
             observed.syncedAtMillis > prior ||

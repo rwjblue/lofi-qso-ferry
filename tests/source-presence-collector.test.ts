@@ -162,8 +162,8 @@ test("independent observed greater anchors bound both streams without inventing 
           inboundSync: true,
           lastSyncAccountUUID: "account",
           sync: {
-            operations: { syncedUntilMillis: 120, limit: 25, anyClient: true },
-            qsos: { syncedUntilMillis: 90, limit: 25, anyClient: true },
+            operations: { syncedUntilMillis: 120, limit: 100, anyClient: true },
+            qsos: { syncedUntilMillis: 90, limit: 100, anyClient: true },
           },
         },
       });
@@ -225,7 +225,7 @@ test("opaque tie continuation finds a missing equal-stamp member without arithme
       assert.deepEqual(JSON.parse(String(init?.body)).meta.sync.qsos, {
         syncedUntilMillis: 80,
         cursor: "opaque-next",
-        limit: 25,
+        limit: 100,
         anyClient: true,
       });
       return page([], [contact]);
@@ -234,6 +234,147 @@ test("opaque tie continuation finds a missing equal-stamp member without arithme
   assert.equal(result.status, "observed");
   assert.equal(calls, 2);
   assert.equal(result.remainingRequests, 2);
+});
+
+test("26 through100 tied records per stream yield exact positives without invented continuation", async () => {
+  for (const size of [26, 100]) {
+    let calls = 0;
+    const operations = [
+      ...Array.from({ length: size - 1 }, (_, i) => ({
+        ...operation,
+        uuid: `operation-neighbor-${i}`,
+      })),
+      operation,
+    ];
+    const qsos = [
+      ...Array.from({ length: size - 1 }, (_, i) => ({
+        ...contact,
+        uuid: `qso-neighbor-${i}`,
+      })),
+      contact,
+    ];
+    const result = await collectSourcePresence(await input(), {
+      now: () => clock,
+      currentScope: async () => scope,
+      fetcher: async (_url, init) => {
+        calls++;
+        const streams = JSON.parse(String(init?.body)).meta.sync;
+        for (const side of [streams.operations, streams.qsos]) {
+          assert.equal(side.limit, 100);
+          assert.equal(side.anyClient, true);
+          assert.equal(side.cursor, undefined);
+          assert.equal(side.syncedUntilMillis, clock);
+        }
+        // Positive witnesses do not require complete range coverage or a cursor.
+        return page(
+          operations,
+          qsos,
+          { records_left: 10 },
+          { records_left: 10 },
+        );
+      },
+    });
+    assert.equal(result.status, "observed");
+    assert.equal(calls, 1);
+    assert.equal(result.actualAttempts, 1);
+    assert.equal(result.remainingRequests, 3);
+    assert.deepEqual(
+      result.witnesses.map((witness) => witness.target.id).sort(),
+      ["op", "q"],
+    );
+    noAuthority(result);
+  }
+});
+
+test("100-row tied pages continue only with the original opaque cursor and retain drain reserve", async () => {
+  let calls = 0;
+  const result = await collectSourcePresence(await input(), {
+    now: () => clock,
+    currentScope: async () => scope,
+    fetcher: async (_url, init) => {
+      calls++;
+      const windows = JSON.parse(String(init?.body)).meta.sync;
+      assert.equal(windows.qsos.limit, 100);
+      if (calls === 1) {
+        assert.equal(windows.qsos.cursor, undefined);
+        return page(
+          [operation],
+          Array.from({ length: 100 }, (_, i) => ({
+            ...contact,
+            uuid: `neighbor-${i}`,
+          })),
+          { records_left: 0 },
+          { records_left: 1, next_cursor: "opaque-tied-page" },
+        );
+      }
+      assert.equal(windows.qsos.cursor, "opaque-tied-page");
+      assert.equal(windows.qsos.syncedUntilMillis, 80);
+      return page([], [contact]);
+    },
+  });
+  assert.equal(result.status, "observed");
+  assert.equal(calls, 2);
+  assert.equal(result.actualAttempts, 2);
+  assert.equal(result.remainingRequests, 2);
+  assert.equal(result.witnesses.length, 2);
+  noAuthority(result);
+});
+
+test("either stream above100 rejects the entire page without leaking matching witnesses", async () => {
+  for (const oversized of ["operations", "qsos"] as const) {
+    const operations = [operation];
+    const qsos = [contact];
+    if (oversized === "operations") {
+      operations.push(
+        ...Array.from({ length: 100 }, (_, i) => ({
+          ...operation,
+          uuid: `neighbor-${i}`,
+        })),
+      );
+    } else {
+      qsos.push(
+        ...Array.from({ length: 100 }, (_, i) => ({
+          ...contact,
+          uuid: `neighbor-${i}`,
+        })),
+      );
+    }
+    const result = await collectSourcePresence(await input(), {
+      now: () => clock,
+      currentScope: async () => scope,
+      fetcher: async () => page(operations, qsos),
+    });
+    assert.equal(result.reason, "page_bound");
+    assert.equal(result.actualAttempts, 1);
+    assert.equal(result.remainingRequests, 3);
+    assert.deepEqual(result.witnesses, []);
+    noAuthority(result);
+  }
+});
+
+test("combined UTF8 record bytes above1MiB reject before retaining either stream", async () => {
+  const largeOperation = { ...operation, note: "é".repeat(280_000) };
+  const largeContact = { ...contact, note: "é".repeat(280_000) };
+  const fixture = await input({
+    targets: [
+      await target("operation", largeOperation),
+      await target("qso", largeContact),
+    ],
+  });
+  const bytes = new TextEncoder().encode(
+    JSON.stringify([largeOperation, largeContact]),
+  ).byteLength;
+  assert(bytes > 1024 * 1024 && bytes < 2 * 1024 * 1024);
+  const result = await collectSourcePresence(fixture, {
+    now: () => clock,
+    currentScope: async () => scope,
+    fetcher: async () => page([largeOperation], [largeContact]),
+  });
+  assert.equal(result.reason, "page_bound");
+  assert.equal(result.actualAttempts, 1);
+  assert.equal(result.remainingRequests, 3);
+  assert.deepEqual(result.witnesses, []);
+  noAuthority(result);
 });
 
 test("401, same-client registration and retry consume three attempts; timestamp starts at retry", async () => {
@@ -301,13 +442,11 @@ test("unbounded history does not exceed three actual reads or consume final drai
       calls++;
       return page(
         [operation],
-        [
-          {
-            ...contact,
-            uuid: `neighbor-${calls}`,
-            syncedAtMillis: 100 - calls,
-          },
-        ],
+        Array.from({ length: 100 }, (_, index) => ({
+          ...contact,
+          uuid: `neighbor-${calls}-${index}`,
+          syncedAtMillis: 100 - calls,
+        })),
         { records_left: 0 },
         { records_left: 100, next_cursor: `cursor-${calls}` },
       );
@@ -315,6 +454,7 @@ test("unbounded history does not exceed three actual reads or consume final drai
   });
   assert.equal(result.reason, "request_budget");
   assert.equal(calls, 3);
+  assert.equal(result.actualAttempts, 3);
   assert.equal(result.remainingRequests, 1);
   noAuthority(result);
 });
@@ -510,6 +650,29 @@ test("unknown live events in selected operations force dependency reload; unrela
   }
 });
 
+test("an unknown event at the tail of a100-row page invalidates every new page witness", async () => {
+  const result = await collectSourcePresence(await input(), {
+    now: () => clock,
+    currentScope: async () => scope,
+    fetcher: async () =>
+      page(
+        [operation],
+        [
+          contact,
+          ...Array.from({ length: 98 }, (_, index) => ({
+            ...contact,
+            uuid: `neighbor-${index}`,
+          })),
+          event,
+        ],
+      ),
+  });
+  assert.equal(result.reason, "dependency_changed");
+  assert.equal(result.actualAttempts, 1);
+  assert.deepEqual(result.witnesses, []);
+  noAuthority(result);
+});
+
 test("empty partial, tied without cursor, oversized and non-descending pages remain held", async () => {
   const cases: [Response, string][] = [
     [
@@ -528,7 +691,7 @@ test("empty partial, tied without cursor, oversized and non-descending pages rem
     [
       page(
         [operation],
-        Array.from({ length: 26 }, (_, i) => ({ ...contact, uuid: `n${i}` })),
+        Array.from({ length: 101 }, (_, i) => ({ ...contact, uuid: `n${i}` })),
       ),
       "page_bound",
     ],

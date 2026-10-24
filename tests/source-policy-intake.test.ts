@@ -180,7 +180,7 @@ test("all-client baseline and forward drain stay historical until a fresh final 
   );
   assert.deepEqual(
     h.requests.map((r) => r.qsos.limit),
-    [25, 25, 25, 25, 100],
+    [100, 25, 25, 25, 100],
   );
   assert.equal((await h.row("baseline"))?.policy_seen_epoch, ready.epoch);
 });

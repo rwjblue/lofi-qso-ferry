@@ -322,7 +322,13 @@ export class LoFiClient {
     now: number,
     limit = 100,
   ): Promise<SyncPage> {
-    if (!Number.isSafeInteger(now) || now <= 0 || limit < 1 || limit > 200) {
+    if (
+      !Number.isSafeInteger(now) ||
+      now <= 0 ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 200
+    ) {
       throw new LoFiError("invalid_sync_window");
     }
     const tagged =

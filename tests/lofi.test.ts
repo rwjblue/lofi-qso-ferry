@@ -74,6 +74,20 @@ test("validated reader policy keeps all-client forward requests and tags across 
   assert.equal(requests.length, 2, "invalid tags fail before a request");
 });
 
+test("sync limits reject non-integers before transport", async () => {
+  let requests = 0;
+  const client = new LoFiClient(credentials, async () => {
+    requests++;
+    throw new Error("unexpected transport");
+  });
+  for (const limit of [0, 0.5, 25.5, 201, Number.NaN, Infinity])
+    await assert.rejects(
+      client.syncPage(initial, 1000, limit),
+      /invalid_sync_window/,
+    );
+  assert.equal(requests, 0);
+});
+
 test("LoFi pulls without mutations and resumes separate opaque cursors after restart", async () => {
   const requests: Record<string, unknown>[] = [];
   const fetcher = fake(async (input, init) => {

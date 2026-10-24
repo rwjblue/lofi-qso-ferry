@@ -133,6 +133,13 @@ export async function contactPriority(
     .first<{ priority: VendorPriority }>();
   return row?.priority ?? "background";
 }
+// The baseline gets more records per existing background request, never more
+// requests. Bounds cover retained bytes and work before one atomic checkpoint.
+const BASELINE_PAGE_LIMIT = 100;
+const BASELINE_RECORD_BYTES = 1024 * 1024;
+const BASELINE_CHECKPOINT_STATEMENTS = 1800;
+const BASELINE_PREPARE_MS = 60_000;
+
 export interface PollResult {
   pages: number;
   records: number;
@@ -311,6 +318,14 @@ export async function pollSource(
       stream === "sync" && state.mode === "forward" && policy?.phase === "ready"
         ? "live"
         : "background";
+    const boundedBaseline =
+      stream === "sync" &&
+      policy?.phase === "backfill" &&
+      state.mode === "backfill";
+    const checkBaselineDeadline = () => {
+      if (boundedBaseline && Date.now() - startedAt >= BASELINE_PREPARE_MS)
+        throw new LoFiError("source_page_deadline_exceeded");
+    };
     session = await sourceSession(
       store,
       connection,
@@ -318,177 +333,221 @@ export async function pollSource(
       priority,
       vendorNow,
     );
-    let page: SyncPage;
-    // Includes any admission/authentication delay, never the later commit time.
-    const requestStartedAt = now + Math.max(0, Date.now() - startedAt);
-    try {
-      page = await session.client.syncPage(
-        state,
-        now,
-        priority === "live" ? 100 : 25,
-      );
-    } catch (error) {
-      await recoverSourceGap(
+    checkBaselineDeadline();
+    const client = session.client;
+    const preparePage = async (limit: number) => {
+      let page: SyncPage;
+      // Includes any admission/authentication delay, never the later commit time.
+      const requestStartedAt = now + Math.max(0, Date.now() - startedAt);
+      try {
+        page = await client.syncPage(state, now, limit);
+      } catch (error) {
+        await recoverSourceGap(
+          store,
+          connection,
+          error,
+          now + Math.max(0, Date.now() - startedAt),
+          stream,
+          lease,
+        );
+        throw error;
+      }
+      checkBaselineDeadline();
+      if (boundedBaseline) {
+        if (page.operations.length > limit || page.qsos.length > limit)
+          throw new LoFiError("source_page_record_limit");
+        // The transport already rejects responses above 2 MiB. This tighter
+        // plaintext bound limits encrypted D1 values and total checkpoint bytes.
+        const encoder = new TextEncoder();
+        let bytes = 0;
+        for (const raw of [...page.operations, ...page.qsos]) {
+          bytes += encoder.encode(JSON.stringify(raw)).byteLength;
+          if (bytes > BASELINE_RECORD_BYTES)
+            throw new LoFiError("source_page_byte_limit");
+        }
+      }
+      const checkpointGuard = sourceGuard(store, connection);
+      const work: D1PreparedStatement[] = [checkpointGuard.sql];
+      const groups = [
+        ["operation", page.operations],
+        ["qso", page.qsos],
+      ] as const;
+      const replayDestination =
+        stream === "repair"
+          ? null
+          : stream.startsWith("rescan:")
+            ? stream.slice(7)
+            : undefined;
+      const metadata = await pageMetadata(
         store,
         connection,
-        error,
-        now + Math.max(0, Date.now() - startedAt),
-        stream,
-        lease,
+        groups,
+        replayDestination,
       );
-      throw error;
-    }
-    const checkpointGuard = sourceGuard(store, connection);
-    const work: D1PreparedStatement[] = [checkpointGuard.sql];
-    const groups = [
-      ["operation", page.operations],
-      ["qso", page.qsos],
-    ] as const;
-    const replayDestination =
-      stream === "repair"
-        ? null
-        : stream.startsWith("rescan:")
-          ? stream.slice(7)
-          : undefined;
-    const metadata = await pageMetadata(
-      store,
-      connection,
-      groups,
-      replayDestination,
-    );
-    for (const [kind, rows] of groups)
-      for (const raw of rows) {
-        if (kind === "qso")
+      for (const [kind, rows] of groups)
+        for (const raw of rows) {
+          checkBaselineDeadline();
+          if (kind === "qso")
+            work.push(
+              recordBirth(
+                store,
+                connection.tenant,
+                connection.id,
+                String(raw.uuid),
+                stream,
+                policy?.phase !== "ready" ||
+                  isSourceDeleted(raw) ||
+                  isEventRecord(raw)
+                  ? "backfill"
+                  : state.mode,
+                (cursor?.generation ?? 0) + 1,
+                now,
+              ),
+            );
           work.push(
-            recordBirth(
+            ...(await sourceStatements(
               store,
-              connection.tenant,
-              connection.id,
-              String(raw.uuid),
-              stream,
-              policy?.phase !== "ready" ||
-                isSourceDeleted(raw) ||
-                isEventRecord(raw)
-                ? "backfill"
-                : state.mode,
-              (cursor?.generation ?? 0) + 1,
+              connection,
+              kind,
+              raw,
+              metadata,
               now,
-            ),
+              undefined,
+              priority,
+              replayDestination,
+              policy?.epoch,
+              stream === "sync" ? requestStartedAt : undefined,
+            )),
           );
-        work.push(
-          ...(await sourceStatements(
-            store,
-            connection,
-            kind,
-            raw,
-            metadata,
-            now,
-            undefined,
-            priority,
-            replayDestination,
-            policy?.epoch,
-            stream === "sync" ? requestStartedAt : undefined,
-          )),
-        );
-      }
-    work.push(
-      store.statement(
-        "UPDATE connections SET last_poll_at=?,label=CASE WHEN ?='sync' AND ? THEN ? ELSE label END,config=CASE WHEN ?='sync' THEN json_set(json_remove(config,'$.lastError'),'$.lastSuccessfulPollAt',?,'$.accountEmail',CASE WHEN ? THEN ? ELSE json_extract(config,'$.accountEmail') END) ELSE config END WHERE tenant=? AND id=? AND status='active'",
-        now,
-        stream,
-        Number(page.accountEmail !== undefined),
-        lofiAccountLabel(page.accountEmail),
-        stream,
-        now,
-        Number(page.accountEmail !== undefined),
-        page.accountEmail ?? null,
-        connection.tenant,
-        connection.id,
-      ),
-    );
-    if (stream === "sync" && policy) {
-      if (policy.phase === "quarantine")
-        work.push(
-          ...(await quarantinePolicyAbsences(store, connection, policy, now)),
-        );
-      const nextPhase =
-        policy.phase === "backfill" && page.complete
-          ? "drain"
-          : policy.phase === "drain" && page.complete
-            ? "quarantine"
-            : policy.phase;
+        }
       work.push(
         store.statement(
-          "UPDATE source_read_policies SET phase=?,completed_sync_generation=NULL,completed_at=NULL WHERE tenant=? AND source=? AND epoch=? AND phase=? AND phase!='ready'",
-          nextPhase,
+          "UPDATE connections SET last_poll_at=?,label=CASE WHEN ?='sync' AND ? THEN ? ELSE label END,config=CASE WHEN ?='sync' THEN json_set(json_remove(config,'$.lastError'),'$.lastSuccessfulPollAt',?,'$.accountEmail',CASE WHEN ? THEN ? ELSE json_extract(config,'$.accountEmail') END) ELSE config END WHERE tenant=? AND id=? AND status='active'",
+          now,
+          stream,
+          Number(page.accountEmail !== undefined),
+          lofiAccountLabel(page.accountEmail),
+          stream,
+          now,
+          Number(page.accountEmail !== undefined),
+          page.accountEmail ?? null,
           connection.tenant,
           connection.id,
-          policy.epoch,
-          policy.phase,
         ),
       );
-      if (
-        policy.phase === "quarantine" &&
-        state.mode === "forward" &&
-        page.complete
-      )
+      if (stream === "sync" && policy) {
+        if (policy.phase === "quarantine")
+          work.push(
+            ...(await quarantinePolicyAbsences(store, connection, policy, now)),
+          );
+        const nextPhase =
+          policy.phase === "backfill" && page.complete
+            ? "drain"
+            : policy.phase === "drain" && page.complete
+              ? "quarantine"
+              : policy.phase;
         work.push(
           store.statement(
-            "UPDATE source_read_policies SET phase='ready',completed_sync_generation=?,completed_at=? WHERE tenant=? AND source=? AND epoch=? AND phase='quarantine' AND NOT EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=source_read_policies.tenant AND w.source=source_read_policies.source AND w.policy_seen_epoch IS NOT source_read_policies.epoch AND w.state!='missing_from_inventory')",
-            (cursor?.generation ?? 0) + 1,
-            now,
+            "UPDATE source_read_policies SET phase=?,completed_sync_generation=NULL,completed_at=NULL WHERE tenant=? AND source=? AND epoch=? AND phase=? AND phase!='ready'",
+            nextPhase,
             connection.tenant,
             connection.id,
             policy.epoch,
+            policy.phase,
           ),
         );
+        if (
+          policy.phase === "quarantine" &&
+          state.mode === "forward" &&
+          page.complete
+        )
+          work.push(
+            store.statement(
+              "UPDATE source_read_policies SET phase='ready',completed_sync_generation=?,completed_at=? WHERE tenant=? AND source=? AND epoch=? AND phase='quarantine' AND NOT EXISTS(SELECT 1 FROM source_work w WHERE w.tenant=source_read_policies.tenant AND w.source=source_read_policies.source AND w.policy_seen_epoch IS NOT source_read_policies.epoch AND w.state!='missing_from_inventory')",
+              (cursor?.generation ?? 0) + 1,
+              now,
+              connection.tenant,
+              connection.id,
+              policy.epoch,
+            ),
+          );
+        work.push(
+          store.statement(
+            "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) VALUES(?,?,'context',json_object('complete',json(CASE WHEN ? AND EXISTS(SELECT 1 FROM source_read_policies WHERE tenant=? AND source=? AND epoch=? AND phase='ready') THEN 'true' ELSE 'false' END),'syncComplete',json(CASE WHEN ? AND EXISTS(SELECT 1 FROM source_read_policies WHERE tenant=? AND source=? AND epoch=? AND phase='ready') THEN 'true' ELSE 'false' END),'coverage','client-contract-only'),1,?) ON CONFLICT(tenant,connection,stream) DO UPDATE SET cursor=excluded.cursor,generation=generation+1,updated_at=excluded.updated_at",
+            connection.tenant,
+            connection.id,
+            Number(page.complete),
+            connection.tenant,
+            connection.id,
+            policy.epoch,
+            Number(page.complete),
+            connection.tenant,
+            connection.id,
+            policy.epoch,
+            now,
+          ),
+        );
+      } else {
+        work.push(
+          store.statement(
+            "UPDATE cursors SET generation=generation+1,updated_at=? WHERE tenant=? AND connection=? AND stream='context'",
+            now,
+            connection.tenant,
+            connection.id,
+          ),
+        );
+      }
       work.push(
         store.statement(
-          "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) VALUES(?,?,'context',json_object('complete',json(CASE WHEN ? AND EXISTS(SELECT 1 FROM source_read_policies WHERE tenant=? AND source=? AND epoch=? AND phase='ready') THEN 'true' ELSE 'false' END),'syncComplete',json(CASE WHEN ? AND EXISTS(SELECT 1 FROM source_read_policies WHERE tenant=? AND source=? AND epoch=? AND phase='ready') THEN 'true' ELSE 'false' END),'coverage','client-contract-only'),1,?) ON CONFLICT(tenant,connection,stream) DO UPDATE SET cursor=excluded.cursor,generation=generation+1,updated_at=excluded.updated_at",
-          connection.tenant,
-          connection.id,
-          Number(page.complete),
-          connection.tenant,
-          connection.id,
-          policy.epoch,
-          Number(page.complete),
-          connection.tenant,
-          connection.id,
-          policy.epoch,
-          now,
+          "DELETE FROM source_write_guards WHERE id=?",
+          checkpointGuard.id,
         ),
       );
-    } else {
-      work.push(
-        store.statement(
-          "UPDATE cursors SET generation=generation+1,updated_at=? WHERE tenant=? AND connection=? AND stream='context'",
-          now,
-          connection.tenant,
-          connection.id,
-        ),
+      // A terminal continuation may complete older work; it is not a fresh drain
+      // started after a positive-presence collection. Only this actual fresh,
+      // complete forward request gets a marker, never a reused cursor timestamp.
+      const nextCursor = { ...page.next };
+      delete nextCursor.completeReadStartedAt;
+      if (
+        stream === "sync" &&
+        state.mode === "forward" &&
+        !state.operations.cursor &&
+        !state.qsos.cursor &&
+        page.complete
+      )
+        nextCursor.completeReadStartedAt = requestStartedAt;
+      // Errors/no-request returns leave the last COMMITTED marker unchanged. That
+      // older request cannot qualify a later collection and its age is not renewed.
+      checkBaselineDeadline();
+      if (boundedBaseline && work.length + 3 > BASELINE_CHECKPOINT_STATEMENTS)
+        throw new LoFiError("source_page_statement_limit");
+      return { page, nextCursor, work };
+    };
+    let prepared: Awaited<ReturnType<typeof preparePage>>;
+    try {
+      prepared = await preparePage(
+        boundedBaseline ? BASELINE_PAGE_LIMIT : priority === "live" ? 100 : 25,
       );
+    } catch (error) {
+      // No page data or cursor has committed here. Only deterministic capacity
+      // failures may retry the identical cursor once at the old page size.
+      // Leave 30 seconds for the smaller read/preparation and 30 for its batch.
+      if (
+        !boundedBaseline ||
+        !(error instanceof LoFiError) ||
+        ![
+          "response_too_large",
+          "source_page_record_limit",
+          "source_page_byte_limit",
+          "source_page_statement_limit",
+        ].includes(error.code) ||
+        Date.now() - startedAt >= BASELINE_PREPARE_MS - 30_000
+      )
+        throw error;
+      prepared = await preparePage(25);
     }
-    work.push(
-      store.statement(
-        "DELETE FROM source_write_guards WHERE id=?",
-        checkpointGuard.id,
-      ),
-    );
-    // A terminal continuation may complete older work; it is not a fresh drain
-    // started after a positive-presence collection. Only this actual fresh,
-    // complete forward request gets a marker, never a reused cursor timestamp.
-    const nextCursor = { ...page.next };
-    delete nextCursor.completeReadStartedAt;
-    if (
-      stream === "sync" &&
-      state.mode === "forward" &&
-      !state.operations.cursor &&
-      !state.qsos.cursor &&
-      page.complete
-    )
-      nextCursor.completeReadStartedAt = requestStartedAt;
-    // Errors/no-request returns leave the last COMMITTED marker unchanged. That
-    // older request cannot qualify a later collection and its age is not renewed.
+    const { page, nextCursor, work } = prepared;
+    checkBaselineDeadline();
     await store.checkpoint(
       lease,
       connection.id,

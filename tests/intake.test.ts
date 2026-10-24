@@ -1995,7 +1995,7 @@ test("historical pages stay small while forward arrivals and edits retain live p
     await contactPriority(store, source, rescanned.uuid),
     "background",
   );
-  assert.deepEqual(limits, [25, 100, 100, 25]);
+  assert.deepEqual(limits, [100, 100, 100, 25]);
   assert.equal(
     (await work(state, rescanned.uuid))?.policy_seen_epoch,
     null,

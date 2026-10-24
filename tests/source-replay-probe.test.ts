@@ -522,6 +522,18 @@ test("duplicate targets and changed base versions, flags or account never establ
       const result = await probeOperationReplay(h.options);
       assert.equal(result.status, "discrepancy");
       assert.equal(result.baseOperationDifferences, 1);
+      assert.equal(
+        result.baseFlagDifferences,
+        Number("deleted" in change || "purged" in change),
+      );
+      assert.equal(
+        result.baseApplicationRevisionDifferences,
+        Number("updatedAtMillis" in change),
+      );
+      assert.equal(
+        result.baseServerStampDifferences,
+        Number("syncedAtMillis" in change),
+      );
       assert.equal(result.repeatedBaseDifferences, 1);
       assert.equal(result.sourceBoundaryVerified, false);
     });
@@ -554,6 +566,9 @@ test("unknown base revisions cannot mask known flag changes or become complete f
       const result = await probeOperationReplay(h.options);
       assert.equal(result.unknownBaseVersions, 2);
       assert.equal(result.baseOperationDifferences, deleted ? 2 : 0);
+      assert.equal(result.baseFlagDifferences, deleted ? 2 : 0);
+      assert.equal(result.baseApplicationRevisionDifferences, 0);
+      assert.equal(result.baseServerStampDifferences, 0);
       assert.equal(result.status, deleted ? "discrepancy" : "incomplete");
     });
   await t.test("missing independent base server stamp", async () => {
@@ -561,8 +576,47 @@ test("unknown base revisions cannot mask known flag changes or become complete f
     expected.operation.syncedAtMillis = null;
     const result = await probeOperationReplay(baseFixture(expected).options);
     assert.equal(result.unknownBaseVersions, 2);
+    assert.equal(result.baseServerStampDifferences, 0);
     assert.equal(result.status, "incomplete");
   });
+});
+
+test("stable repeated base differences identify the field class without revealing values or weakening status", async (t) => {
+  for (const allFields of [false, true])
+    await t.test(`all fields=${allFields}`, async () => {
+      const h = baseFixture();
+      h.options.fetcher = async (input) =>
+        String(input).endsWith("/v1/sync")
+          ? sync([
+              baseRecord({
+                syncedAtMillis: 96,
+                ...(allFields
+                  ? { deleted: true, purged: true, updatedAtMillis: 81 }
+                  : {}),
+              }),
+            ])
+          : page([record()]);
+      const result = await probeOperationReplay(h.options);
+      assert.equal(result.baseOperationObservations, 2);
+      assert.equal(result.serverBaseOperationObserved, true);
+      assert.equal(result.completedPasses, 2);
+      assert.equal(result.changedMembers, 0);
+      assert.equal(result.baseOperationDifferences, 2);
+      assert.equal(result.baseFlagDifferences, allFields ? 2 : 0);
+      assert.equal(
+        result.baseApplicationRevisionDifferences,
+        allFields ? 2 : 0,
+      );
+      assert.equal(result.baseServerStampDifferences, 2);
+      assert.equal(result.repeatedBaseDifferences, 0);
+      assert.equal(result.unknownBaseVersions, 0);
+      assert.equal(result.status, "discrepancy");
+      assert.equal(result.sourceBoundaryVerified, false);
+      assert.equal(result.unknownHistoricalPurgesExcluded, false);
+      assert(!JSON.stringify(result).includes("op1"));
+      assert(!JSON.stringify(result).includes("syncedAtMillis"));
+      assert(!JSON.stringify(result).includes("updatedAtMillis"));
+    });
 });
 
 test("bracketing retains stream, request and time bounds without partial base success", async (t) => {

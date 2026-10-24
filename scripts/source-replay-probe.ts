@@ -297,6 +297,9 @@ export async function probeOperationReplay(options: {
     independentSnapshotStable: false,
     baseOperationObservations: 0,
     baseOperationDifferences: 0,
+    baseFlagDifferences: 0,
+    baseApplicationRevisionDifferences: 0,
+    baseServerStampDifferences: 0,
     unknownBaseVersions: 0,
     repeatedBaseDifferences: 0,
     unrelatedBaseRows: 0,
@@ -515,15 +518,20 @@ export async function probeOperationReplay(options: {
         before.operation.syncedAtMillis === null
       )
         report.unknownBaseVersions++;
-      if (
+      const flagsDiffer =
         base.deleted !== before.operation.deleted ||
-        base.purged !== before.operation.purged ||
-        (base.updatedAtMillis !== null &&
-          before.operation.updatedAtMillis !== null &&
-          base.updatedAtMillis !== before.operation.updatedAtMillis) ||
-        (before.operation.syncedAtMillis !== null &&
-          base.syncedAtMillis !== before.operation.syncedAtMillis)
-      )
+        base.purged !== before.operation.purged;
+      const revisionDiffers =
+        base.updatedAtMillis !== null &&
+        before.operation.updatedAtMillis !== null &&
+        base.updatedAtMillis !== before.operation.updatedAtMillis;
+      const serverStampDiffers =
+        before.operation.syncedAtMillis !== null &&
+        base.syncedAtMillis !== before.operation.syncedAtMillis;
+      report.baseFlagDifferences += Number(flagsDiffer);
+      report.baseApplicationRevisionDifferences += Number(revisionDiffers);
+      report.baseServerStampDifferences += Number(serverStampDiffers);
+      if (flagsDiffer || revisionDiffers || serverStampDiffers)
         report.baseOperationDifferences++;
     };
     if (options.observeBaseOperation === true) await observeBase();

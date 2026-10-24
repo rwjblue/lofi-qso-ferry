@@ -19,7 +19,7 @@ import {
   previewStatus,
   vendorName,
 } from "./browser-dashboard.ts";
-import { lofiAccountLabel, LOFI_CLIENT_NAME } from "./lofi-identity.ts";
+import { LOFI_CLIENT_NAME, lofiAccountLabel } from "./lofi-identity.ts";
 import type { ReviewResponse } from "./review-types.ts";
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -158,6 +158,7 @@ interface Dashboard {
   admin: boolean;
   quietMinutes: number;
   exportsEnabled: boolean;
+  exportMode: "source_boundary" | "qrz_fresh_insert" | null;
   defaultTemplate?: NarrativeTemplate;
   destinationTemplates?: (NarrativeTemplate & { destination: string })[];
   counts: Record<string, number>;
@@ -781,9 +782,12 @@ async function load() {
   if (request !== dashboardLoad) return;
   element("account").textContent = data.email;
   element("admin-link").hidden = !data.admin;
-  element("export-banner").textContent = data.exportsEnabled
-    ? "Automatic delivery is enabled. Existing history is adopted before any eligible backfill."
-    : "Read-only rollout: production exports are disabled. Connections and history can be reviewed safely.";
+  element("export-banner").textContent =
+    data.exportMode === "qrz_fresh_insert"
+      ? "QRZ first inserts are enabled for the authorized scope after current source verification. Corrections, LoTW exports and source-boundary cutovers remain disabled."
+      : data.exportsEnabled
+        ? "Automatic delivery is enabled. Existing history is adopted before any eligible backfill."
+        : "Read-only rollout: production exports are disabled. Connections and history can be reviewed safely.";
   if (entering) window.scrollTo({ top: 0 });
   const counts = data.counts;
   const metrics = element("delivery-metrics");

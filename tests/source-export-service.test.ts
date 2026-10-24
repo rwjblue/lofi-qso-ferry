@@ -13,6 +13,7 @@ async function fixture(
     operations: SourceRecord[],
   ) => void,
   baselineAgeMinutes = 40,
+  initialState = "adopted_existing",
 ) {
   const h = await schedulerFixture();
   t.after(() => h.mf.dispose());
@@ -118,7 +119,7 @@ async function fixture(
         destination: "destination",
       })
     )?.state,
-    "adopted_existing",
+    initialState,
   );
   const edit = () => {
     h.qso.freq = 14075;
@@ -708,6 +709,79 @@ test("an individually request-limited singleton yields its next queue turn to a 
       .statement(
         "SELECT count(*) AS n FROM source_export_proofs WHERE qso='q1'",
       )
+      .first<number>("n"),
+    0,
+  );
+});
+
+test("fresh QRZ first-insert mode proves and inserts an unmapped contact with the boundary closed", async (t) => {
+  const h = await fixture(
+    t,
+    (state) => {
+      state.qrzRecords.length = 0;
+    },
+    40,
+    "inventory_pending",
+  );
+  h.enable();
+  h.env.SOURCE_BOUNDARY_VERIFIED = "false";
+  h.env.QRZ_FRESH_INSERTS_ENABLED = "true";
+  h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination","lotw"]';
+  await h.store
+    .statement("UPDATE connections SET status='active' WHERE id='lotw'")
+    .run();
+  const result = await tick(h.env, h.fetcher);
+  assert.equal(result.errors, 0);
+  assert.equal(h.calls.qrzWrites, 1);
+  assert.equal(h.calls.lotwUploads, 0);
+  assert.equal(await h.count("attempts"), 1);
+  assert.equal(await h.count("source_export_proofs"), 1);
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) AS n FROM source_cutovers")
+      .first<number>("n"),
+    0,
+  );
+  const attempt = await h.store
+    .statement(
+      "SELECT a.destination,p.authorization_mode FROM attempts a JOIN attempt_source_export_proofs p ON p.tenant=a.tenant AND p.attempt=a.id",
+    )
+    .first<{ destination: string; authorization_mode: string }>();
+  assert.deepEqual(attempt, {
+    destination: "destination",
+    authorization_mode: "qrz_fresh_insert",
+  });
+  assert.equal(h.env.SOURCE_BOUNDARY_VERIFIED, "false");
+});
+
+test("fresh QRZ mode stays closed by default and never collects correction proofs", async (t) => {
+  const h = await fixture(t);
+  await h.observeDueEdit();
+  h.enable();
+  h.env.SOURCE_BOUNDARY_VERIFIED = "false";
+  for (const flag of ["false", "true"]) {
+    h.env.QRZ_FRESH_INSERTS_ENABLED = flag;
+    await h.store
+      .statement("UPDATE reconciliation_work SET next_due_at=0,selected_at=0")
+      .run();
+    await h.store
+      .statement("UPDATE source_work SET processed_at=0 WHERE kind='qso'")
+      .run();
+    const before = h.calls.sourceSync;
+    const result = await tick(h.env, h.fetcher);
+    assert.equal(result.errors, 0);
+    assert.equal(
+      h.calls.sourceSync - before,
+      1,
+      "only ordinary canonical polling runs",
+    );
+    assert.equal(await h.count("source_export_proofs"), 0);
+    assert.equal(await h.count("attempts"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+  }
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) AS n FROM source_cutovers")
       .first<number>("n"),
     0,
   );

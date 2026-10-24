@@ -5,6 +5,7 @@ import type { DeliveryGates } from "./delivery.ts";
 import {
   cancelStalePreparedSourceProof,
   contactReconciliationAdif,
+  deliveryMode,
   dispatchAttempt,
   prepareDue,
   qrzNeighborhoodFallback,
@@ -72,6 +73,7 @@ import {
   loadCurrentSourcePresenceScope,
   loadSourceExportSnapshots,
   purgeExpiredSourceExportProofs,
+  qrzFreshInsertCurrent,
   type SourceExportSnapshot,
 } from "./source-export-proofs.ts";
 import type { SourcePresenceScope } from "./source-presence-store.ts";
@@ -148,18 +150,37 @@ export function deliveryGates(env: Env): DeliveryGates {
     liveWriteAuthorized:
       String(env.LIVE_WRITE_AUTHORIZATION) === "I_AUTHORIZE_LIVE_VENDOR_WRITES",
     sourceBoundaryVerified: String(env.SOURCE_BOUNDARY_VERIFIED) === "true",
+    qrzFreshInsertsEnabled: String(env.QRZ_FRESH_INSERTS_ENABLED) === "true",
   };
 }
 export function exportsEffective(gates: DeliveryGates): boolean {
   return (
-    gates.exportsEnabled &&
-    gates.liveWriteAuthorized &&
-    gates.sourceBoundaryVerified &&
+    deliveryMode(gates, "qrz") !== null &&
     (gates.allowedQsoIds === null || (gates.allowedQsoIds?.length ?? 0) > 0) &&
     (gates.allowedDestinationIds === null ||
       (gates.allowedDestinationIds?.length ?? 0) > 0)
   );
 }
+/** Public status reports the enabled mode without claiming source completeness. */
+export function exportAuthorizationMode(gates: DeliveryGates) {
+  return exportsEffective(gates) ? deliveryMode(gates, "qrz") : null;
+}
+export function routeDeliveryMode(
+  gates: DeliveryGates,
+  qso: string,
+  destination: Pick<Connection, "id" | "kind">,
+) {
+  if (
+    !exportsEffective(gates) ||
+    (destination.kind !== "qrz" && destination.kind !== "lotw") ||
+    (gates.allowedQsoIds !== null && !gates.allowedQsoIds?.includes(qso)) ||
+    (gates.allowedDestinationIds !== null &&
+      !gates.allowedDestinationIds?.includes(destination.id))
+  )
+    return null;
+  return deliveryMode(gates, destination.kind);
+}
+
 export function routeMatches(
   destination: Connection,
   contact: Contact,
@@ -282,10 +303,8 @@ async function reconcileContact(
   if (
     inventory.state === "ready" &&
     remote.length === 0 &&
-    exportsEffective(gates) &&
-    (!gates.allowedQsoIds || gates.allowedQsoIds.includes(key.qso)) &&
-    (!gates.allowedDestinationIds ||
-      gates.allowedDestinationIds.includes(destination.id))
+    routeDeliveryMode(gates, key.qso, destination) !== null &&
+    (gates.sourceBoundaryVerified || (await qrzFreshInsertCurrent(store, key)))
   ) {
     let raw: {
       apiKey?: string;
@@ -361,7 +380,11 @@ async function reconcileContact(
     };
   if (
     outcome.state === "missing_current_identity" &&
-    !gates.sourceBoundaryVerified
+    !gates.sourceBoundaryVerified &&
+    !(
+      routeDeliveryMode(gates, key.qso, destination) === "qrz_fresh_insert" &&
+      (await qrzFreshInsertCurrent(store, key))
+    )
   )
     outcome = {
       ...outcome,
@@ -664,7 +687,12 @@ async function reconcileReadOnlyBatch(
                 };
               if (
                 outcome.state === "missing_current_identity" &&
-                !gates.sourceBoundaryVerified
+                !gates.sourceBoundaryVerified &&
+                !(
+                  routeDeliveryMode(gates, key.qso, route.destination) ===
+                    "qrz_fresh_insert" &&
+                  (await qrzFreshInsertCurrent(store, key))
+                )
               )
                 outcome = {
                   ...outcome,
@@ -827,6 +855,7 @@ export async function tick(
     store,
     JSON.stringify({
       sourceBoundaryVerified: gates.sourceBoundaryVerified,
+      qrzFreshInsertsEnabled: gates.qrzFreshInsertsEnabled === true,
       exportsEffective: exportsEffective(gates),
       allowedQsoIds: gates.allowedQsoIds,
       allowedDestinationIds: gates.allowedDestinationIds,
@@ -927,6 +956,7 @@ export async function tick(
          JOIN ledger l ON l.tenant=?2 AND l.source=?3 AND l.qso=json_extract(candidate.value,'$.qso') AND l.destination=json_extract(candidate.value,'$.destination') AND l.generation=json_extract(candidate.value,'$.generation')
          JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination AND d.status='active'
          WHERE l.due_at<=?4 AND l.state IN('missing_current_identity','changed','live_new') AND l.provenance!='adoption_conflict'
+          AND (?5=1 OR EXISTS(SELECT 1 FROM qrz_fresh_insert_eligible f WHERE f.tenant=l.tenant AND f.source=l.source AND f.qso=l.qso AND f.destination=l.destination))
           AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND s.state NOT IN('delivered','observed','rejected','cancelled') AND (s.state!='prepared' OR EXISTS(SELECT 1 FROM attempt_source_export_proofs_current pin WHERE pin.tenant=s.tenant AND pin.attempt=s.attempt))) ORDER BY CAST(candidate.key AS INTEGER)`,
             JSON.stringify(
               routes.map(({ contact, destination }) => ({
@@ -938,6 +968,7 @@ export async function tick(
             source.tenant,
             source.id,
             at,
+            gates.sourceBoundaryVerified ? 1 : 0,
           )
           .all<{ qso: string; destination: string; generation: string }>()
       ).results;
@@ -1092,6 +1123,12 @@ export async function tick(
           if (expired() || attemptSlots[priority] <= 0) return;
           if (!eligible.has(JSON.stringify([item.contact.id, destination.id])))
             continue;
+          const authorizationMode = routeDeliveryMode(
+            gates,
+            item.contact.id,
+            destination,
+          );
+          if (authorizationMode === null) continue;
           const key = {
             tenant: source.tenant,
             source: source.id,
@@ -1106,6 +1143,7 @@ export async function tick(
                 proofId: item.proofId,
                 scope,
                 reconciliationVersion,
+                authorizationMode,
               },
             });
             if (prepared.state === "blocked")
@@ -1336,12 +1374,7 @@ export async function tick(
               // Read-only adoption must retain its actual history diagnosis.
               // Closed rollout gates are global status, not a contact failure.
               if (!exportsEffective(gates)) continue;
-              if (
-                (!gates.allowedQsoIds ||
-                  gates.allowedQsoIds.includes(contact.id)) &&
-                (!gates.allowedDestinationIds ||
-                  gates.allowedDestinationIds.includes(destination.id))
-              )
+              if (routeDeliveryMode(gates, contact.id, destination) !== null)
                 exportRoutes.push({ contact, destination });
             } catch (error) {
               diagnostics.record(

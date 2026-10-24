@@ -520,7 +520,11 @@ function renderOverview(data: AdminOverview) {
   );
   element("export-state").replaceChildren(
     pill(
-      data.gates.effective ? "Enabled" : "Disabled",
+      data.gates.exportMode === "qrz_fresh_insert"
+        ? "QRZ first inserts"
+        : data.gates.effective
+          ? "Enabled"
+          : "Disabled",
       false,
       !data.gates.effective,
     ),
@@ -533,6 +537,7 @@ function renderOverview(data: AdminOverview) {
     ["Rollout checks passed", data.gates.rolloutChecksPassed],
     ["Live writes authorized", data.gates.liveWriteAuthorized],
     ["Source boundary verified", data.gates.sourceBoundaryVerified],
+    ["QRZ first inserts enabled", data.gates.qrzFreshInsertsEnabled],
     [
       `Contact scope: ${data.gates.rolloutScope}`,
       data.gates.rolloutScopeConfigured,

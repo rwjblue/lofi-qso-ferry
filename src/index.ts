@@ -1,13 +1,17 @@
-import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
 import { adminRoute } from "./admin.ts";
 import { isAdmin } from "./admin-access.ts";
+import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
 import { connectionRoute } from "./connections.ts";
 import { lofiAccountLabel } from "./lofi-identity.ts";
 import { lotwVerification } from "./lotw-verification.ts";
 import { reviewRoute } from "./review.ts";
-import { boundedJson, keyring } from "./security.ts";
-import { deliveryGates, exportsEffective } from "./service.ts";
 import { runScheduledTick } from "./scheduler-history.ts";
+import { boundedJson, keyring } from "./security.ts";
+import {
+  deliveryGates,
+  exportAuthorizationMode,
+  exportsEffective,
+} from "./service.ts";
 import {
   defaultTemplate,
   destinationTemplates,
@@ -49,6 +53,9 @@ export default {
           Response.json({
             status: "ok",
             exportsEnabled: exportsEffective(deliveryGates(env)),
+            exportMode: exportAuthorizationMode(deliveryGates(env)),
+            sourceBoundaryVerified:
+              String(env.SOURCE_BOUNDARY_VERIFIED) === "true",
           }),
         );
       if (request.method === "GET" && url.pathname === "/join") {
@@ -211,6 +218,7 @@ export default {
             passkeys,
             sessions,
             exportsEnabled: exportsEffective(gates),
+            exportMode: exportAuthorizationMode(gates),
             potaExample: POTA_TEMPLATE,
             defaultTemplate: await defaultTemplate(store, identity.tenant),
             destinationTemplates: await destinationTemplates(

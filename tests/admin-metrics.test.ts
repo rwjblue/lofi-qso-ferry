@@ -55,6 +55,8 @@ test("empty overview reports unknown scheduler health and all gates independentl
       rolloutChecksPassed: false,
       liveWriteAuthorized: false,
       sourceBoundaryVerified: false,
+      qrzFreshInsertsEnabled: false,
+      exportMode: null,
       rolloutScopeConfigured: false,
       rolloutScope: "none",
       destinationScopeConfigured: false,
@@ -78,6 +80,12 @@ test("empty overview reports unknown scheduler health and all gates independentl
     assert(!JSON.stringify(enabled).includes("private-destination-id"));
     assert(!JSON.stringify(enabled).includes("private-qso-id"));
     assert(!JSON.stringify(enabled).includes("I_AUTHORIZE_LIVE_VENDOR_WRITES"));
+    h.env.SOURCE_BOUNDARY_VERIFIED = "false";
+    h.env.QRZ_FRESH_INSERTS_ENABLED = "true";
+    const firstInserts = await getAdminOverview(h.env, now);
+    assert.equal(firstInserts.gates.effective, true);
+    assert.equal(firstInserts.gates.exportMode, "qrz_fresh_insert");
+    assert.equal(firstInserts.gates.sourceBoundaryVerified, false);
     h.env.ROLLOUT_QSO_IDS_JSON = "broken-json-secret";
     const invalid = await getAdminOverview(h.env, now);
     assert.equal(invalid.gates.configurationValid, false);
@@ -224,7 +232,12 @@ test("backlog separates retained contacts, quiet candidates, unresolved attempts
       )
       .run();
 
-    await applyMigration(h.db, "0030_source_export_guards.sql");
+    for (const file of (
+      await readdir(new URL("../migrations/", import.meta.url))
+    )
+      .filter((name) => name.endsWith(".sql") && name >= "0030")
+      .sort())
+      await applyMigration(h.db, file);
     const view = await getAdminOverview(h.env, now);
     assert.deepEqual(view.backlog.source, [
       {

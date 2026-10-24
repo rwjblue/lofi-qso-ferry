@@ -24,6 +24,15 @@ test("real Worker assets serve the admin page without a canonical redirect loop"
       script: bundle.outputFiles[0].text,
       compatibilityDate: "2026-10-22",
       compatibilityFlags: ["nodejs_compat"],
+      bindings: {
+        EXPORTS_ENABLED: "true",
+        ROLLOUT_CHECKS_PASSED: "true",
+        LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
+        SOURCE_BOUNDARY_VERIFIED: "false",
+        QRZ_FRESH_INSERTS_ENABLED: "true",
+        ROLLOUT_QSO_IDS_JSON: '["qso"]',
+        ROLLOUT_DESTINATION_IDS_JSON: '["destination"]',
+      },
       assets: {
         directory: "public",
         binding: "ASSETS",
@@ -43,7 +52,15 @@ test("real Worker assets serve the admin page without a canonical redirect loop"
   assert.equal(page.status, 200, await page.clone().text());
   assert.match(page.headers.get("Content-Type") ?? "", /text\/html/);
   assert.equal(await page.text(), html);
-  const responses = [page];
+  const health = await mf.dispatchFetch(`${origin}/health`);
+  assert.equal(health.status, 200);
+  assert.deepEqual(await health.json(), {
+    status: "ok",
+    exportsEnabled: true,
+    exportMode: "qrz_fresh_insert",
+    sourceBoundaryVerified: false,
+  });
+  const responses = [page, health];
   for (const path of ["/admin.html", "/admin/"]) {
     const redirect = await mf.dispatchFetch(`${origin}${path}`, {
       redirect: "manual",

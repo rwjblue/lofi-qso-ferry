@@ -143,7 +143,12 @@ test("workload distinguishes actionable inventory, gate/quiet/in-flight holds an
       .prepare("UPDATE source_work SET expires_at=? WHERE id='expired'")
       .bind(now)
       .run();
-    await applyMigration(h.db, "0030_source_export_guards.sql");
+    for (const file of (
+      await readdir(new URL("../migrations/", import.meta.url))
+    )
+      .filter((name) => name.endsWith(".sql") && name >= "0030")
+      .sort())
+      await applyMigration(h.db, file);
     const closed = await getAdminWorkload(h.env, now);
     assert.deepEqual(
       closed.source.map(({ oldestRetainedAt: _age, ...row }) => row),
@@ -254,7 +259,12 @@ test("current source verification holds remain distinct from ready work and pres
       await h.ledger(id, state, dueAt, reason);
     }
     await h.attempt("flight-proof", "flight");
-    await applyMigration(h.db, "0030_source_export_guards.sql");
+    for (const file of (
+      await readdir(new URL("../migrations/", import.meta.url))
+    )
+      .filter((name) => name.endsWith(".sql") && name >= "0030")
+      .sort())
+      await applyMigration(h.db, file);
     const count = (
       view: Awaited<ReturnType<typeof getAdminWorkload>>,
       reason: string,
@@ -485,7 +495,12 @@ test("successful destination-contact versions deduplicate terminal events, exclu
         )
         .bind(id, state, at)
         .run();
-    await applyMigration(h.db, "0030_source_export_guards.sql");
+    for (const file of (
+      await readdir(new URL("../migrations/", import.meta.url))
+    )
+      .filter((name) => name.endsWith(".sql") && name >= "0030")
+      .sort())
+      await applyMigration(h.db, file);
     const view = await getAdminWorkload(h.env, now);
     assert.equal(view.deliveries.total, 3);
     assert.equal(view.deliveries.qrz, 2);
@@ -546,4 +561,65 @@ test("trend keeps missing and legacy samples unknown and reports stale partial c
   } finally {
     await h.mf.dispose();
   }
+});
+
+test("first-insert workload mode does not advertise LoTW or QRZ corrections as ready", async (t) => {
+  const h = await setup();
+  t.after(() => h.mf.dispose());
+  await h.store
+    .statement(
+      "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at) VALUES('a','lotw','lotw','lotw','lotw','active','v1',0)",
+    )
+    .run();
+  await (
+    await h.store.putPrivate("a", "lotw", "v1", "credential", {
+      secret: "synthetic",
+    })
+  ).run();
+  for (const id of ["fresh", "correction", "lotw-only"])
+    await h.addSource(id, "waiting");
+  await h.ledger("fresh", "missing_current_identity");
+  await h.ledger("correction", "changed");
+  await h.ledger(
+    "lotw-only",
+    "missing_current_identity",
+    now - 1,
+    null,
+    "lotw",
+  );
+  await h.ledger("fresh", "retained_old_route", now - 1, null, "lotw");
+  await h.ledger("correction", "retained_old_route", now - 1, null, "lotw");
+  await h.ledger("lotw-only", "retained_old_route");
+  Object.assign(h.env, {
+    EXPORTS_ENABLED: "true",
+    ROLLOUT_CHECKS_PASSED: "true",
+    LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
+    SOURCE_BOUNDARY_VERIFIED: "false",
+    QRZ_FRESH_INSERTS_ENABLED: "true",
+    ROLLOUT_QSO_IDS_JSON: '["*"]',
+    ROLLOUT_DESTINATION_IDS_JSON: '["*"]',
+  });
+  const view = await getAdminWorkload(h.env, now);
+  assert.equal(
+    view.source.find((row) => row.priority === "background")?.ready,
+    1,
+  );
+  assert.equal(
+    view.heldReasons
+      .filter((row) => row.reason === "source_boundary")
+      .reduce((sum, row) => sum + row.count, 0),
+    2,
+  );
+  h.env.QRZ_FRESH_INSERTS_ENABLED = "false";
+  const closed = await getAdminWorkload(h.env, now);
+  assert.equal(
+    closed.source.find((row) => row.priority === "background")?.ready,
+    0,
+  );
+  assert.equal(
+    closed.heldReasons
+      .filter((row) => row.reason === "exports_disabled")
+      .reduce((sum, row) => sum + row.count, 0),
+    3,
+  );
 });

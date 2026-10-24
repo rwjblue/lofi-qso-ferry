@@ -148,6 +148,8 @@ export interface AdminOverview {
     rolloutChecksPassed: boolean;
     liveWriteAuthorized: boolean;
     sourceBoundaryVerified: boolean;
+    qrzFreshInsertsEnabled: boolean;
+    exportMode: "source_boundary" | "qrz_fresh_insert" | null;
     rolloutScopeConfigured: boolean;
     rolloutScope: "none" | "limited" | "all";
     destinationScopeConfigured: boolean;

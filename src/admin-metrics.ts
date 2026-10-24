@@ -4,15 +4,19 @@ import type {
   AdminPriority,
   AdminSchedulerRun,
 } from "./admin-types.ts";
-import { lofiAccountLabel } from "./lofi-identity.ts";
-import { deliveryGates, exportsEffective } from "./service.ts";
-import { VENDOR_POLICIES } from "./vendor-requests.ts";
 import {
   getAdminWorkload,
   sourceWorkSummary,
   workCounts,
   workloadSourceStatement,
 } from "./admin-workload.ts";
+import { lofiAccountLabel } from "./lofi-identity.ts";
+import {
+  deliveryGates,
+  exportAuthorizationMode,
+  exportsEffective,
+} from "./service.ts";
+import { VENDOR_POLICIES } from "./vendor-requests.ts";
 
 export type { AdminOverview } from "./admin-types.ts";
 
@@ -138,6 +142,7 @@ function gatesSummary(env: Env): AdminOverview["gates"] {
     liveWriteAuthorized:
       String(env.LIVE_WRITE_AUTHORIZATION) === "I_AUTHORIZE_LIVE_VENDOR_WRITES",
     sourceBoundaryVerified: String(env.SOURCE_BOUNDARY_VERIFIED) === "true",
+    qrzFreshInsertsEnabled: String(env.QRZ_FRESH_INSERTS_ENABLED) === "true",
   };
   try {
     const gates = deliveryGates(env);
@@ -159,6 +164,7 @@ function gatesSummary(env: Env): AdminOverview["gates"] {
             ? "limited"
             : "none",
       effective: exportsEffective(gates),
+      exportMode: exportAuthorizationMode(gates),
       configurationValid: true,
     };
   } catch {
@@ -169,6 +175,7 @@ function gatesSummary(env: Env): AdminOverview["gates"] {
       destinationScopeConfigured: false,
       destinationScope: "none",
       effective: false,
+      exportMode: null,
       configurationValid: false,
     };
   }

@@ -1,6 +1,48 @@
 # Implementation progress
 
-Current checkpoint, 2026-10-23 22:42 UTC: signed revision
+Current checkpoint, 2026-10-24 00:00 UTC: signed revision
+`32e25b0ebc4d2ef5716bc3e60e166561a5b0931a` is deployed as Worker
+`076adec3-eeb7-4dc9-bcd8-f6b04ce75318` at 100% traffic. The release adds fixed,
+redacted QRZ read diagnostics and a guarded fifteen-minute retry delay for
+ambiguous empty selections. Incomplete reads remain incomplete; no absence or
+export permission is inferred. Read-only source replay and exact-contact trial
+audits now provide reproducible evidence without changing delivery state.
+All **675 tests** and required checks pass locally and in
+[release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40041632962).
+
+Independent 00:01:17 UTC checks confirm all five gates closed, healthy service,
+matching assets and twenty-three migrations through `0024`. The database has
+380 LoTW claims, zero uncovered mappings, and zero attempts, cutovers, legacy
+holds or temporary guards. No migration, source mutation or vendor write was
+performed by this release. The 00:00 scheduled invocation started before the
+deployment and is not evidence for the new retry behavior.
+
+The first new run, 00:05:43–00:07:13 UTC, processed 265 contact turns and 244
+classifications, with zero adoptions, 21 affected-route errors and no deferrals.
+Four fixed ambiguous-empty diagnostic events replaced generic QRZ failures.
+At 00:06:18 UTC, all four pending QRZ partitions had bounded retry holds, with
+zero invalid or excessive holds. The run still reached its 90-second deadline;
+89.336 seconds were database wall time. This verifies the retry mechanism, not
+completed reconciliation or sustained capacity. The settled 00:07:15 UTC audit
+retained zero attempts, cutovers, uncovered mappings, legacy holds and guards.
+
+The independent HaLo comparison found all 218 operations and 4,269 QSO/event
+UUIDs in Ferry, without shared membership/deletion/event disagreement. Thirteen
+additional Ferry contacts remain unexplained. Bounded live replay matched two
+ordinary tombstones and, separately, ten members including four events. These
+samples do not prove purge/forward delivery, base-operation freshness or retention.
+The sampled new contact passed current metadata and ownership checks but remained
+ineligible for a first insert on both routes. Its six-character grid was preserved;
+supported 4/6/8-character grids remain specific to each contact.
+
+Next: resolve QRZ absence evidence, complete the source evidence and review an
+eligible exact-contact trial. The protected local key backup decrypted current
+credentials; off-device storage is unconfirmed. A second passkey is recommended,
+not an owner-pilot export gate: manual operator account recovery is possible.
+See the [rollout checklist](docs/rollout-checklist.md). Exports remain disabled;
+sustained large-scale capacity and live vendor acceptance remain unproved.
+
+Previous checkpoint, 2026-10-23 22:42 UTC: signed revision
 `a8b592bead90a22e4e7fe36f005e390727002df9` is deployed as Worker
 `fd752a85-83e5-4afd-810c-1f4a2c4e3633` at 100% traffic. Migration `0024` repairs and
 prevents identity gaps when an older scheduled invocation finishes after a new
@@ -26,8 +68,8 @@ At 22:47:21.247 UTC, 378 LoTW claims cover every mapped identity; attempts,
 cutovers, temporary guards and legacy holds remain zero.
 
 Both destination rescans are complete. Source replay/deletion/retention proof,
-the two deleted-operation holds, encryption-key backup confirmation and
-exact-contact first-write review remain the next work; see the
+the two deleted-operation holds and exact-contact first-write review were the
+next work. Key-backup access has since been verified; see the
 [rollout checklist](docs/rollout-checklist.md). A larger capacity claim still needs
 its separate workload acceptance evidence.
 
@@ -49,9 +91,9 @@ No real QRZ mutation or LoTW upload was performed.
 Both destination rescans completed by the 22:19 UTC audit. Current payloads and
 retained birth evidence are locally consistent; two contacts tied to deleted
 operations remain held. Server replay, tombstone and retention guarantees remain
-unproved, so `SOURCE_BOUNDARY_VERIFIED` stays false. The account has one active
-passkey; backup sign-in access and secure secret-manager backup remain rollout
-prerequisites. The [personal checklist](docs/rollout-checklist.md) records the exact
+unproved, so `SOURCE_BOUNDARY_VERIFIED` stays false. The account had one active
+passkey. The recovery prerequisites recorded at that checkpoint are superseded
+by the current owner-pilot guidance above. The [personal checklist](docs/rollout-checklist.md) records the exact
 contact/destination packet required before any live-write authorization.
 
 Previous checkpoint, 2026-10-23 21:29 UTC: signed revision
@@ -227,7 +269,7 @@ and the Worker build pass locally. Deadline/failure and lost-lease regressions
 pass; canonical freshness polling and all export gates remain unchanged.
 - Batched intake/checkpoints and shared context reads reduce local D1 calls from **32→7** for an operation plus 25 contacts, **33→9** for a 25-contact operation reread, **56→7** for a 25-contact replay, and **102→5** for projecting 20 contacts sharing operation/event context. Full projection, tenant boundaries and atomic checkpoint rollback remain tested.
 - Durable indexed work scheduling selects 100 contacts with **200 rows read** at both 4,000 and 200,000 contacts: **7.68 ms** and **7.63 ms** locally. With nearly all background rows held, the same selection takes **5.95/6.22 ms**, again reading 200 rows. Reproduce with `mise run benchmark-reconciliation`. These measure local selection only, not full reconciliation throughput.
-- Successful stable review outcomes wait **24 hours**; incomplete inventory/loading outcomes retry after **five minutes**. Relevant source, context, routing, credential and policy changes invalidate checks. Retention extensions and routine credential rewraps preserve holds. Inventory completion does not currently wake dependent contacts directly; eliminating repeated dependency checks requires shared inventory jobs and durable dependent membership.
+- Successful stable review outcomes wait **24 hours**; incomplete inventory/loading reconciliation checks retry after **five minutes**. The latest release adds a separate **fifteen-minute** shared read cooldown for ambiguous-empty QRZ partitions. Relevant source, context, routing, credential and policy changes invalidate checks. Retention extensions and routine credential rewraps preserve holds. Inventory completion does not currently wake dependent contacts directly; eliminating repeated dependency checks requires shared inventory jobs and durable dependent membership.
 - Shared history uses encrypted **four-hour** partitions covering up to a week, QRZ base/modification catch-up pages and LoTW splitting when a date range is too large. Retention is bounded to **2 MiB per partition**, **128 MiB per source/destination** and **2,048 partitions per source/destination**. Incomplete, expired or revoked evidence cannot establish coverage. Cached absence retains a hold and never substitutes for the fresh targeted check required before exporting.
 - A local scheduler fixture classifies **20 contacts into 40 stable destination holds using three history requests** (two QRZ, one LoTW). The following tick processes zero contacts and makes zero additional history reads. Both ticks produce zero attempts or vendor writes. This verifies reuse and repeat suppression on that fixture; it does not demonstrate a 200,000-contact drain rate.
 - Background selection uses **20-contact batches**, live selection remains **one contact** to reserve write capacity, and the scheduler yields at its **90-second or 850-D1-call soft budget**. Stage durations, D1 RPC/SQL-statement counts, destination classifications and inventory fetch/cache activity are retained in scheduler telemetry. In-flight work may finish after a soft threshold.
@@ -283,9 +325,9 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 - The follow-up keeps canonical source sync first, processes a retained background contact before historical rescan/reread work, and prefers contacts with available base operation context over known context holds. Complete context, routing, history, source-proof and export checks remain enforced. A pre-deployment read-only selection experiment found available base context for only two of the first ten contacts under the old ordering versus all ten under the new ordering; it wrote zero rows. This does not establish complete event coverage for every selected contact.
 - Follow-up `634517d0` passed **377 tests**, formatting, lint, types and build locally and in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/39965786804). Concurrent upstream documentation revision `854259b` was integrated and preserved. The first observed production run confirms contact processing and specific readback outcomes; sustained draining and complete history acceptance remain outstanding.
 
-## Current production deployment (21:29 UTC)
+## Previous production deployment (2026-10-23 21:29 UTC)
 
-- Latest deployment: revision `cec488febcad419ff55a4aa677619a1aef61fcd5`, Worker `3c1f615e-bf2d-403f-9d54-1aed519da582`, created at `2026-10-23T21:29:17.720637Z` and confirmed at 100% traffic. Host/RP remains `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, with five-minute cron. Independent version readback confirms all gates closed and health `status=ok`, `exportsEnabled=false`; root HTML and both browser bundles match the local build. See [deployment evidence](docs/deployment.md).
+- Deployment at that checkpoint: revision `cec488febcad419ff55a4aa677619a1aef61fcd5`, Worker `3c1f615e-bf2d-403f-9d54-1aed519da582`, created at `2026-10-23T21:29:17.720637Z` and confirmed at 100% traffic. Host/RP remains `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, with five-minute cron. Independent version readback confirms all gates closed and health `status=ok`, `exportsEnabled=false`; root HTML and both browser bundles match the local build. See [deployment evidence](docs/deployment.md).
 - Dedicated D1 `ferry-production` has all twenty-one migrations independently verified at 21:29:44 UTC. The initial throughput deployment applied migrations 0017–0020; independent background admission adds 0021 and bounded context lookups add 0022. Attempts, cutovers and temporary inventory/adoption guard rows remain zero. No application secrets changed.
 - Every export gate is closed: `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, empty `LIVE_WRITE_AUTHORIZATION` and `ROLLOUT_QSO_IDS_JSON=[]`. There is no LoTW root-policy binding or root updater; LoTW validates certificate authority during upload processing.
 - The saved LoTW connection is active with unrevoked serial status. Existing encrypted credentials do not need reimport because local trust flags were removed. Successful preflight and login are not signed-upload acceptance evidence.
@@ -319,7 +361,7 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 
 1. Obtain independent source replay/tombstone/retention proof. The 22:19 UTC audit confirms both destination rescans complete, consistent retained births and current payloads, plus two contacts attached to deleted operations. Those contacts stay held; zero pending operation rereads is not evidence they can export.
 2. Diagnose the persistent QRZ read rejections and review the exact trial contacts and every routed destination, including fractional timestamps, full station grids, certificates, identity claims and fresh remote checks. Historical minute-only time, lower grid precision, location mismatch and routing holds require explicit evidence; cron does not approve them.
-3. Confirm the existing encryption-key backup and prepare the exact first-write packet in the [rollout checklist](docs/rollout-checklist.md). A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account. The live account still has one active key.
+3. Prepare the exact first-write packet in the [rollout checklist](docs/rollout-checklist.md). The protected local encryption-key backup decrypted current credentials; off-device storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account. The live account still has one active key.
 4. After those prerequisites, obtain explicit authorization for the named UUIDs, QRZ book and LoTW account. Verify QRZ receipt/readback and LoTW observed acceptance, then close the gates and review before broader scope.
 
 All five gates remain closed. Unrelated historical exceptions may remain isolated during an explicitly scoped trial; broad automatic coverage needs its own review. Replacement and old-identity cleanup remain disabled until separately proven. Continue resource/cost, restore/revocation, browser/passkey and full workload acceptance before expansion. Staging remains undeployed. See [roadmap](ROADMAP.md), [deployment](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md).

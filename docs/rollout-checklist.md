@@ -6,23 +6,24 @@ boundary evidence and exact contact review; finishing the 200,000-contact capaci
 plan is a separate expansion milestone. No real logbook entry has been inserted,
 replaced, deleted or uploaded during this implementation work.
 
-## Current evidence (2026-10-23)
+## Current evidence (2026-10-24 UTC)
 
 The owner has enrolled and linked LoFi, QRZ and LoTW. Signed source
-`a8b592bead90a22e4e7fe36f005e390727002df9` deployed read-only as Worker
-`fd752a85-83e5-4afd-810c-1f4a2c4e3633` at 22:42 UTC. All **606 tests** and required
-checks passed locally; [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40034841991) also passed.
-Live checks at 22:43 UTC confirmed twenty-three migrations, healthy service,
-matching assets and all five gates closed. There are 370 LoTW identity claims
-with zero uncovered mappings; attempts, cutovers and legacy holds remain zero.
-The settled 22:47 UTC audit found 378 claims and still zero uncovered mappings
-after eight more adoptions. The run retained 70 QRZ rejected-read route failures
-and four budget-deferred routes; diagnose these and require successful fresh reads
-for the selected trial contacts. This is not a cleared backlog.
-Migration `0024` also closes the old-Worker deployment overlap found after the
-initial identity migration. See [deployment evidence](deployment.md).
+`32e25b0ebc4d2ef5716bc3e60e166561a5b0931a` deployed read-only as Worker
+`076adec3-eeb7-4dc9-bcd8-f6b04ce75318` at 00:00 UTC. All **675 tests** and required
+checks passed locally; [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40041632962) also passed.
+Live checks at 00:01 UTC confirmed twenty-three migrations, healthy service,
+matching assets and all five gates closed. There are 380 LoTW identity claims
+with zero uncovered mappings; attempts, cutovers, legacy holds and temporary
+guards remain zero. The release adds a guarded fifteen-minute retry delay for
+ambiguous QRZ empty selections, independent source replay comparison and a
+read-only exact-contact trial audit. These safeguards do not establish QRZ
+absence or clear the backlog. The first new run recorded four bounded QRZ
+partition holds, 265 contact turns and zero adoptions. The settled 00:07 UTC
+audit retained zero attempts, cutovers and uncovered mappings. See
+[deployment evidence](deployment.md).
 
-The read-only D1 snapshot at **21:53:13 UTC** contains zero export attempts and
+The earlier read-only D1 snapshot at **2026-10-23 21:53:13 UTC** contains zero export attempts and
 zero cutovers. The five completed scheduler runs from 21:30 through 21:50 processed
 117, 140, 160, 125 and 119 contact turns. Four stopped at the deadline and one at
 the database budget; each reported 20–23 errors and one deferral. These are
@@ -76,15 +77,16 @@ recovery. Late uploads, historical edits, segment changes and deletion must be
 covered by the supported contract or a deliberately scoped experiment.
 
 Keep `SOURCE_BOUNDARY_VERIFIED=false` until that evidence supports the real source
-connection. The 22:19 UTC audit confirms both destination rescans complete and no missing births or unavailable current payloads. Two contacts still reference deleted operations. Keep those contacts held. The source gate is global and applies even to an exact-UUID trial.
+connection. The 2026-10-23 22:19 UTC audit confirms both destination rescans complete and no missing births or unavailable current payloads. Two contacts still reference deleted operations. Keep those contacts held. The source gate is global and applies even to an exact-UUID trial.
 A naturally whole-second contact does not waive it. Never alter a source timestamp
 merely to bypass a safety check.
 
 The later [independent comparison and live replay](evidence-lofi.md#observed-local-and-live-comparisons)
 found every local HaLo UUID in Ferry and matched two ordinary tombstones across
-two complete operation reads. Thirteen additional Ferry contacts are absent from
+two complete operation reads. A separate repeated operation probe matched ten
+members, including four events. Thirteen additional Ferry contacts are absent from
 the local database and its QSO backups; their cause is unresolved. Purged records,
-event replay, forward-only changes, cursor aging and server retention still need
+forward event/contact changes, base-operation freshness, cursor aging and server retention still need
 evidence. No deletion or source repair was inferred from the local difference.
 
 ## First-export trial packet
@@ -96,7 +98,7 @@ The [read-only trial audit](../scripts/export-trial-audit.ts) accepts one explic
 contact, current revision/generation and normal projected destination identities.
 It checks source/context/credential freshness, quiet period, ledger bindings,
 unresolved attempts and identity ownership using a SELECT. It always reports
-`writesAuthorized: false`; it neither signs nor stages a delivery. In the 23:34 UTC
+`writesAuthorized: false`; it neither signs nor stages a delivery. In the 2026-10-23 23:34 UTC
 live sample, both routes passed the current metadata and ownership checks but
 neither had an eligible first-insert classification. That contact remains held.
 Its six-character source grid and fractional timestamp were preserved; the audit

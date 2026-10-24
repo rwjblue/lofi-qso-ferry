@@ -1,6 +1,33 @@
 # Capacity plan
 
-Status: source-context index and QRZ decoding fixes deployed read-only at
+Status: signed revision `32e25b0ebc4d2ef5716bc3e60e166561a5b0931a` deployed
+read-only at 2026-10-24 00:00 UTC as Worker
+`076adec3-eeb7-4dc9-bcd8-f6b04ce75318`, at 100% traffic. All **675 tests** and
+required checks passed locally and in
+[release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40041632962).
+Independent 00:01 UTC verification confirms healthy service, matching assets,
+all five gates closed and twenty-three migrations through `0024`. Attempts,
+cutovers, temporary guards and uncovered identity mappings remain zero.
+
+The release adds a fifteen-minute shared QRZ partition retry delay for the exact
+ambiguous empty-selection response, reducing repeated vendor reads while retaining
+incomplete evidence. It does not establish absence or complete reconciliation.
+Read-only diagnostics and source/trial audits improve the evidence available for
+the owner pilot; they do not prove the growth workload below. No vendor budget
+or concurrency limit was raised. Sustained capacity remains unverified.
+
+The first new run, 00:05:43–00:07:13 UTC, processed 265 contact turns and 244
+classifications, with zero adoptions, 21 affected-route errors and no deferrals.
+Four fixed ambiguous-empty QRZ diagnostic events were recorded. The 00:06:18 UTC
+snapshot found four pending partitions with bounded retry holds and no invalid
+or excessive hold. The run used 737 D1 RPCs / 5,624 statements and stopped at
+the deadline after 90.488 seconds. D1 wall time was 89.336 seconds; metadata for
+5,448 statements reported 2.126 seconds of SQL, 1,698,263 rows read and 7,426
+rows written. This verifies the retry mechanism, not unique completion throughput
+or a cleared backlog; database round trips and scan attribution still need work.
+At 00:07:15 UTC, attempts, cutovers, uncovered mappings and guards remained zero.
+
+Historical source-context index and QRZ decoding release deployed read-only at
 21:29:18.881251 UTC on 2026-10-23, signed revision
 `cec488febcad419ff55a4aa677619a1aef61fcd5`, Worker
 `3c1f615e-bf2d-403f-9d54-1aed519da582`, at 100% traffic. All 553 tests and required
@@ -265,10 +292,12 @@ vendor allowances to reach the target.
 
 ### 2. Wake eligible work and schedule accounts fairly
 
-Incomplete inventory and loading holds already retry after **five minutes**;
-stable completed review outcomes wait **24 hours**. A targeted completion wakeup
-alone therefore removes at most the five-minute inventory retry timer, not a
-day-long dependency delay. Cron timing, admission and vendor budgets can add
+Incomplete inventory and loading reconciliation checks normally retry after
+**five minutes**; an ambiguous-empty QRZ partition now shares a separate
+**fifteen-minute** read cooldown. Stable completed review outcomes wait
+**24 hours**. A targeted completion wakeup removes the reconciliation timer
+only after the dependency succeeds; it must respect an active partition cooldown.
+Cron timing, admission and vendor budgets can add
 further delay. Avoiding repeated dependency checks requires parking contacts
 against a shared inventory leader/job and waking only its dependents when the
 required evidence completes. Persist that dependency without plaintext contact

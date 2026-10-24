@@ -60,6 +60,15 @@ those contacts exportable. Reproduce the diagnostic locally with
 in `tests/qrz.test.ts`, `tests/failure-diagnostics.test.ts` and
 `tests/history-inventory.test.ts`.
 
+The runtime change deployed read-only as Worker
+`076adec3-eeb7-4dc9-bcd8-f6b04ce75318` at 2026-10-24 00:00 UTC. The first new
+scheduled run recorded four `qrz_ambiguous_empty_selection` diagnostic events
+covering 21 failed routes. At 00:06:18 UTC, all four pending QRZ history partitions
+held bounded retry metadata, with zero holds on complete/invalid-phase partitions
+or holds exceeding fifteen minutes/cache expiry. The settled 00:07:15 UTC audit
+confirmed zero export attempts. No coverage or adoption was inferred from these
+failures; the sample verifies deployed cooldown persistence, not QRZ absence.
+
 ## ADIF and template profile
 
 [ADIF 3.1.6](https://adif.org/316/ADIF_316.htm) defines ordinary ADI string fields as ASCII; international string fields require ADX. Ferry's ADI serializer rejects non-ASCII data rather than transliterating, dropping it or claiming QRZ UTF-8 support. Final normalized lengths include both CR and LF. NOTES preserves line breaks as CRLF; COMMENT/QSLMSG collapse whitespace. Literal `<EOR>`, `&`, `+`, `=` and `%` inside field values survive local framing and form encoding. Parsing preserves four- versus six-digit times.

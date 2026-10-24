@@ -1,22 +1,22 @@
 # Read-only production deployment
 
-Verified 2026-10-23 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
+Verified 2026-10-24 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
 
 | Resource                 | Current value                                                                                                   |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                           |
 | Worker                   | `lofi-qso-ferry`, environment `production`                                                                      |
-| Deployed source revision | `a8b592bead90a22e4e7fe36f005e390727002df9`                                                                      |
-| Worker version           | `fd752a85-83e5-4afd-810c-1f4a2c4e3633`, created `2026-10-23T22:42:48.420426Z`                                   |
-| Deployment               | `b427bc00-c6f1-43ab-9bcc-b0731560c77d`, `2026-10-23T22:42:49.451478Z`, 100% of traffic                          |
+| Deployed source revision | `32e25b0ebc4d2ef5716bc3e60e166561a5b0931a`                                                                      |
+| Worker version           | `076adec3-eeb7-4dc9-bcd8-f6b04ce75318`, created `2026-10-24T00:00:54.853485Z`                                   |
+| Deployment               | `b36c626b-6385-4ed3-8c36-ad6ba79719f7`, `2026-10-24T00:00:56.727949Z`, 100% of traffic                          |
 | Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                                   |
 | Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                                |
-| Migrations               | All 23 migrations through `0024_identity_mapping_overlap`; independently verified at `2026-10-23T22:43:14.131Z` |
+| Migrations               | All 23 migrations through `0024_identity_mapping_overlap`; independently verified at `2026-10-24T00:01:17.348Z` |
 | Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                               |
 | Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                            |
 | Schedule                 | `*/5 * * * *`                                                                                                   |
 | Alternate origins        | workers.dev and version previews disabled                                                                       |
-| Artifact                 | 1,798.63 KiB raw / 347.74 KiB gzip; reported startup 23 ms                                                      |
+| Artifact                 | 1,800.85 KiB raw / 348.25 KiB gzip; reported startup 29 ms                                                      |
 
 The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
 
@@ -40,11 +40,46 @@ ROLLOUT_QSO_IDS_JSON=[]
 - Session endpoint returns unauthenticated state with `signupAllowed=false`. The public landing shows an invite-only notice and passkey sign-in; the signup form is hidden. A live uninvited signup probe returned 403 before proof creation or sending.
 - Following the invitation link stays at `/join`, serves the app without the asset-canonicalization redirect, reveals invited enrollment and focuses its email field. Both confirmation inputs expose six-digit numeric/one-time-code attributes.
 - Remote settings independently confirm every closed gate, exact origin/RP, dedicated D1 and sender allowlist. Production local-mailbox and alternate workers.dev endpoints return 404. Email-content previews remain disabled, and no secrets were rotated.
-- The current context-index and QRZ-decoding follow-up passes **553 tests**, formatting, lint, both TypeScript checks and the Worker build locally. [Release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40025951354) passed all 553 tests and required checks. The preceding diagnostic release passed all 548 tests and required checks in CI. Prior release-specific CI results and browser/Worker evidence remain in the dated follow-up sections below; they do not substitute for this release's production measurement.
+- The current readiness release passes **675 tests**, formatting, lint, both TypeScript checks and the Worker build locally and in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40041632962). Earlier release-specific CI results and browser/Worker evidence remain in the dated sections below; they do not substitute for current production measurements.
 - Read-only remote D1 probes verified that the invite task must use query results, rather than bulk-file import summaries, to establish an exact email/deadline grant. Existing OAuth includes Email Sending write access. No real invitation grant/send was performed; CLI sends still require recipient-specific delivery confirmation.
 - The initial deployment delivered one real verification message to the owner's inbox through the same native provider path; only fixed delivery metadata was inspected. That smoke test enrolled no production account and initially observed zero account/connection/ledger/attempt rows. These are historical counts, not a claim about subsequent personal use. New branded mail was rendered/tested locally; email-client/device autofill remains unverified.
 
 The reported startup is deployment evidence, not per-request billed CPU or peak memory. No representative monthly workload/cost has been measured. Physical and synced passkey behavior remains for the owner to verify at this permanent origin. See [rollout acceptance](rollout-checklist.md) for the remaining vendor checks.
+
+## QRZ retry and readiness evidence (2026-10-24)
+
+Signed source `32e25b0ebc4d2ef5716bc3e60e166561a5b0931a` deployed at 00:00 UTC
+with all gates closed. All **675 tests** and required checks passed locally and
+in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40041632962).
+The guarded deployment required no migration. Independent checks at 00:01:17 UTC
+confirmed the exact Worker at 100% traffic, healthy service, matching assets and
+all twenty-three migrations through `0024`. There were 380 LoTW identity claims,
+zero uncovered mappings, and zero attempts, cutovers, legacy holds or temporary
+guards. Secrets were preserved; no source mutation or vendor write occurred.
+
+The runtime now identifies the exact ambiguous-empty QRZ response and stores a
+fifteen-minute partition retry delay without advancing coverage. Bounded read-only
+diagnostic, independent source replay and exact-contact trial audit tools were
+also added. The [source evidence](evidence-lofi.md#observed-local-and-live-comparisons)
+records the independent membership comparison, thirteen unexplained additional
+Ferry contacts, ordinary tombstone replay and a separate event replay sample.
+The sampled trial contact remains first-insert-ineligible on both routes.
+Per-contact 4/6/8-character grids remain unchanged by the audits.
+
+The 00:00:43 scheduled invocation began before this deployment; its results
+belong to the previous Worker and do not verify the new retry behavior.
+The first new run, 00:05:43.050–00:07:13.538 UTC, processed 265 contact turns and
+244 destination classifications, with zero adoptions, 21 affected-route errors
+and no deferrals. Its four diagnostic events were all
+`qrz_ambiguous_empty_selection`; these counters are not physical request counts.
+At 00:06:18.955 UTC, four pending QRZ partitions had retry holds, with zero
+invalid-complete or excessive holds. The settled 00:07:15.222 UTC audit retained
+380 LoTW claims and zero attempts, cutovers, uncovered mappings, legacy holds
+or temporary guards. The run reached its deadline in 90.488 seconds, including
+89.336 seconds of D1 wall time. These observations verify deployed retry behavior,
+not completed reconciliation or sustained throughput.
+Bundle size is 1,800.85 KiB raw / 348.25 KiB gzip with 29 ms reported startup;
+these are not signing CPU, peak memory or sustained-capacity measurements.
 
 ## Identity ownership across deployments (2026-10-23)
 
@@ -121,9 +156,9 @@ Independent `KEK_V1`, `AUTH_SECRET` and `EMAIL_CODE_SECRET` are installed as Wor
 
 ## Owner's next step
 
-The owner has enrolled and connected LoFi, QRZ and LoTW. Keep exports disabled while the repaired scheduler reconciles history and operation reads catch up; review the resulting exceptions before the scoped live checks in the [roadmap](../ROADMAP.md).
+The owner has enrolled and connected LoFi, QRZ and LoTW. Keep exports disabled while QRZ absence evidence, source replay/retention evidence and an eligible exact-contact trial are reviewed. Actionable operation rereads and destination rescans are complete; the two contacts tied to deleted operations remain held. Follow the [roadmap](../ROADMAP.md).
 
-Existing users sign in with their passkey. To enroll someone new, run `mise run invite -- person@example.com`; they follow `/join`, confirm the exact invited address and create a passkey. Add an independent backup passkey, then connect only the services you use. Settings and account-default templates need no connections. LoTW connection import requires the personal P12 and its export password, if set. Ferry checks the certificate/private key, dates, serial status and optional website login, then leaves certificate-authority validation to LoTW during upload processing. See [certificate checks](lotw-certificates.md); there is no root configuration or updater. Keep all vendor exports disabled throughout this review; deployment authorization does not grant live-write authorization.
+Existing users sign in with their passkey. To enroll someone new, run `mise run invite -- person@example.com`; they follow `/join`, confirm the exact invited address and create a passkey. An independent backup passkey is recommended; manual operator recovery is available for the owner pilot. Connect only the services you use. Settings and account-default templates need no connections. LoTW connection import requires the personal P12 and its export password, if set. Ferry checks the certificate/private key, dates, serial status and optional website login, then leaves certificate-authority validation to LoTW during upload processing. See [certificate checks](lotw-certificates.md); there is no root configuration or updater. Keep all vendor exports disabled throughout this review; deployment authorization does not grant live-write authorization.
 
 ## Connection passkey freshness fix
 

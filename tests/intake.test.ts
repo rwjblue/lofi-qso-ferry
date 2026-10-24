@@ -107,6 +107,9 @@ async function setup() {
       "0025_source_read_policy.sql",
       "0026_source_read_guards.sql",
       "0027_source_presence.sql",
+      "0028_source_export_proofs.sql",
+      "0033_source_historical_index.sql",
+      "0034_historical_associations.sql",
     ])
       await applyMigration(state.db, file);
   } catch (error) {
@@ -815,8 +818,9 @@ test("page intake RPC counts stay bounded for polling, replay and operation rere
   );
   await finishBaseline(store, source, now);
   t.diagnostic(`polling 26 records: ${measured.calls.length} database calls`);
-  assert.equal(measured.calls.length, 8);
-  assert.equal(measured.calls.filter((c) => c.method === "batch").length, 2);
+  // The first page also initializes its stable encrypted tenant index key.
+  assert.equal(measured.calls.length, 11);
+  assert.equal(measured.calls.filter((c) => c.method === "batch").length, 3);
   assert.equal(
     measured.calls.filter((c) => c.sql?.includes("AS replay_resolved")).length,
     1,
@@ -829,7 +833,7 @@ test("page intake RPC counts stay bounded for polling, replay and operation rere
     now + 1,
   );
   t.diagnostic(`rereading 25 records: ${measured.calls.length} database calls`);
-  assert.equal(measured.calls.length, 10);
+  assert.equal(measured.calls.length, 11);
   await store
     .statement(
       "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,baseline_hash,state,due_at,updated_at) SELECT tenant,source,id,'destination','g','h','h','adopted_existing',0,0 FROM source_work WHERE kind='qso'",
@@ -847,7 +851,7 @@ test("page intake RPC counts stay bounded for polling, replay and operation rere
   t.diagnostic(
     `replaying 25 resolved records: ${measured.calls.length} database calls`,
   );
-  assert.equal(measured.calls.length, 7);
+  assert.equal(measured.calls.length, 8);
   assert.equal(
     (
       await store
@@ -957,14 +961,14 @@ test("full forward pages prefetch bounded metadata without splitting the atomic 
     now + 1,
   );
   assert.equal(result.records, 200);
-  assert.equal(measured.calls.length, 9);
+  assert.equal(measured.calls.length, 10);
   assert.equal(
     measured.calls.filter((c) => c.sql?.includes("AS replay_resolved")).length,
     2,
   );
   const checkpoints = measured.calls.filter((c) => c.method === "batch");
   assert.equal(checkpoints.length, 1);
-  assert.equal(checkpoints[0].statements, 1508);
+  assert.equal(checkpoints[0].statements, 1708);
   t.diagnostic(
     `full forward page: ${measured.calls.length} database calls, ${checkpoints[0].statements} statements in one atomic checkpoint`,
   );

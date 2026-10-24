@@ -19,6 +19,11 @@ import {
   sha256,
 } from "./security.ts";
 import { openSourceCredentials } from "./source-credentials.ts";
+import {
+  type SourceHistoricalIndexKey,
+  sourceHistoricalIndexKey,
+  sourceHistoricalPublication,
+} from "./source-historical-index.ts";
 import { recordSourcePresence } from "./source-presence-store.ts";
 import {
   ensureSourceReadPolicy,
@@ -63,8 +68,15 @@ type SourceVersion = Pick<
   | "operation_id"
   | "is_event"
   | "policy_seen_epoch"
->;
+  | "private_id"
+> & {
+  body_version: string | null;
+  body_expires_at: number | null;
+  body_revoked_at: number | null;
+  historical_published: number;
+};
 interface PageMetadata {
+  historicalKey: SourceHistoricalIndexKey;
   records: Map<string, SourceVersion>;
   resolved: Set<string>;
 }
@@ -80,18 +92,22 @@ async function pageMetadata(
   const keys = groups.flatMap(([kind, records]) =>
     records.map((raw) => [kind, String(raw.uuid)]),
   );
-  const metadata: PageMetadata = { records: new Map(), resolved: new Set() };
+  const metadata: PageMetadata = {
+    records: new Map(),
+    resolved: new Set(),
+    historicalKey: await sourceHistoricalIndexKey(store, connection.tenant),
+  };
   // JSON bindings avoid D1's parameter ceiling; chunking bounds each read even
   // when a source unexpectedly returns more than the requested page size.
   for (let offset = 0; offset < keys.length; offset += 100) {
     const rows = (
       await store
         .statement(
-          `SELECT w.id,w.kind,w.synced_at,w.revision,w.expires_at,w.priority,w.operation_id,w.is_event,w.policy_seen_epoch,${
+          `SELECT w.id,w.kind,w.synced_at,w.revision,w.expires_at,w.priority,w.operation_id,w.is_event,w.policy_seen_epoch,w.private_id,p.source_proof_version AS body_version,p.expires_at AS body_expires_at,p.revoked_at AS body_revoked_at,EXISTS(SELECT 1 FROM source_historical_index i WHERE i.tenant=w.tenant AND i.source=w.source AND i.qso=w.id AND i.dirty=0) AS historical_published,${
             replayDestination === undefined
               ? "0"
               : "w.kind='qso' AND EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=w.tenant AND l.source=w.source AND l.qso=w.id AND (?4 IS NULL OR l.destination=?4)) AND NOT EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=w.tenant AND l.source=w.source AND l.qso=w.id AND (?4 IS NULL OR l.destination=?4) AND (l.state NOT IN('adopted_existing','delivered','observed','source_deleted') OR l.source_hash IS NOT l.baseline_hash)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=w.tenant AND a.source=w.source AND a.qso=w.id AND (?4 IS NULL OR a.destination=?4) AND s.state NOT IN('delivered','observed','rejected','cancelled'))"
-          } AS replay_resolved FROM source_work w WHERE w.tenant=?1 AND w.source=?2 AND (w.kind,w.id) IN(SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(?3))`,
+          } AS replay_resolved FROM source_work w LEFT JOIN private_data p ON p.tenant=w.tenant AND p.connection=w.source AND p.id=w.private_id AND p.kind='source' WHERE w.tenant=?1 AND w.source=?2 AND (w.kind,w.id) IN(SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(?3))`,
           connection.tenant,
           connection.id,
           JSON.stringify(keys.slice(offset, offset + 100)),
@@ -1394,7 +1410,21 @@ async function sourceStatements(
         ),
       );
   };
-  const seen = (current = true) => {
+  const publish = async (privateId: string, bodyVersion: string | null) => {
+    if (kind === "qso" && !isEventRecord(raw) && !isSourceDeleted(raw))
+      statements.push(
+        ...(await sourceHistoricalPublication(
+          store,
+          connection.tenant,
+          connection.id,
+          raw,
+          { revision, syncedAt, privateId, bodyVersion },
+          metadata.historicalKey,
+          now,
+        )),
+      );
+  };
+  const seen = async (current = true) => {
     if (epoch)
       statements.push(
         store.statement(
@@ -1420,14 +1450,31 @@ async function sourceStatements(
           syncedAt,
         ),
       );
-    if (current) presence();
+    if (current) {
+      presence();
+      if (previous) await publish(previous.private_id, previous.body_version);
+    }
     statements.push(
       store.statement("DELETE FROM source_write_guards WHERE id=?", guard.id),
     );
     return statements;
   };
   if (previous && previous.synced_at > syncedAt) return seen(false);
+  // Pre-index archived rows have no recoverable weak key. A normal replay of
+  // their raw record restores the body once through the usual guarded path;
+  // already-published archives retain the cheap resolved replay shortcut.
+  const recoverHistoricalKey =
+    kind === "qso" &&
+    !isEventRecord(raw) &&
+    !isSourceDeleted(raw) &&
+    previous &&
+    !previous.historical_published &&
+    (!previous.body_version ||
+      previous.expires_at <= now ||
+      previous.body_revoked_at !== null ||
+      (previous.body_expires_at !== null && previous.body_expires_at <= now));
   if (
+    !recoverHistoricalKey &&
     replayDestination !== undefined &&
     kind === "qso" &&
     !isEventRecord(raw) &&
@@ -1436,7 +1483,12 @@ async function sourceStatements(
   ) {
     return seen();
   }
-  if (previous && previous.revision === revision && previous.expires_at > now) {
+  if (
+    !recoverHistoricalKey &&
+    previous &&
+    previous.revision === revision &&
+    previous.expires_at > now
+  ) {
     if (syncedAt > previous.synced_at) {
       statements.push(
         store.statement(
@@ -1541,6 +1593,7 @@ async function sourceStatements(
     );
   }
   presence();
+  await publish(privateId, null);
   statements.push(
     store.statement("DELETE FROM source_write_guards WHERE id=?", guard.id),
   );
@@ -1552,6 +1605,11 @@ async function sourceStatements(
     kind,
     synced_at: syncedAt,
     revision,
+    private_id: privateId,
+    body_version: null,
+    body_expires_at: expires,
+    body_revoked_at: null,
+    historical_published: kind === "qso" && !event && !deleted ? 1 : 0,
     expires_at: expires,
     priority,
     operation_id: op,

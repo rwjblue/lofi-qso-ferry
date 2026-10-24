@@ -23,6 +23,8 @@ export interface SyncState {
   accountId?: string;
   readerPolicy?: "all-clients-v1";
   policyEpoch?: string;
+  /** Canonical intake observation only; never carried into the next read proof. */
+  completeReadStartedAt?: number;
 }
 
 export interface SyncPage {

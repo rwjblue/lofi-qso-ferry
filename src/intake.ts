@@ -1,10 +1,5 @@
 import { recordBirth } from "./cutover.ts";
-import type {
-  LoFiCredentials,
-  SourceRecord,
-  SyncPage,
-  SyncState,
-} from "./lofi.ts";
+import type { SourceRecord, SyncPage, SyncState } from "./lofi.ts";
 import { LoFiClient, LoFiError } from "./lofi.ts";
 import { lofiAccountLabel } from "./lofi-identity.ts";
 import type { Contact } from "./projection.ts";
@@ -21,9 +16,9 @@ import {
   type Envelope,
   open,
   randomToken,
-  seal,
   sha256,
 } from "./security.ts";
+import { openSourceCredentials } from "./source-credentials.ts";
 import { recordSourcePresence } from "./source-presence-store.ts";
 import {
   ensureSourceReadPolicy,
@@ -154,32 +149,9 @@ async function sourceSession(
   priority: VendorPriority,
   vendorNow: number | null,
 ) {
-  if (!connection.credential_version || connection.status !== "active")
-    throw new Error("source_connection_unavailable");
-  const identity = {
-    tenant: connection.tenant,
-    connection: connection.id,
-    id: connection.credential_version,
-    kind: "credential",
-    purpose: "storage",
-  };
-  const saved = await store
-    .statement(
-      "SELECT envelope FROM private_data WHERE tenant=? AND connection=? AND id=? AND kind='credential' AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)",
-      connection.tenant,
-      connection.id,
-      connection.credential_version,
-      Date.now(),
-    )
-    .first<{ envelope: string }>();
-  if (!saved) throw new Error("source_connection_unavailable");
-  const credentials = await open<LoFiCredentials>(
-    JSON.parse(saved.envelope) as Envelope,
-    identity,
-    store.keys,
-  );
+  const session = await openSourceCredentials(store, connection);
   const client = new LoFiClient(
-    credentials,
+    session.credentials,
     vendorFetch(store, "lofi", fetcher, {
       priority,
       ...(vendorNow === null ? {} : { now: vendorNow }),
@@ -188,23 +160,7 @@ async function sourceSession(
   return {
     client,
     async persistRenewal() {
-      const renewed = client.credentialsSnapshot();
-      if (!renewed.token || renewed.token === credentials.token) return;
-      const envelope = await seal(renewed, identity, store.keys);
-      // Refresh only the session bearer for this same identity. A concurrent
-      // renewal, credential replacement or revocation wins over this request.
-      await store
-        .statement(
-          "UPDATE private_data SET envelope=? WHERE tenant=? AND connection=? AND id=? AND kind='credential' AND envelope=? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?) AND EXISTS(SELECT 1 FROM connections c WHERE c.tenant=private_data.tenant AND c.id=private_data.connection AND c.kind='lofi' AND c.status='active' AND c.credential_version=private_data.id AND c.remote_identity=?)",
-          JSON.stringify(envelope),
-          connection.tenant,
-          connection.id,
-          connection.credential_version,
-          saved.envelope,
-          Date.now(),
-          connection.remote_identity,
-        )
-        .run();
+      await session.persistRenewal(client.credentialsSnapshot());
     },
   };
 }
@@ -518,14 +474,29 @@ export async function pollSource(
         checkpointGuard.id,
       ),
     );
+    // A terminal continuation may complete older work; it is not a fresh drain
+    // started after a positive-presence collection. Only this actual fresh,
+    // complete forward request gets a marker, never a reused cursor timestamp.
+    const nextCursor = { ...page.next };
+    delete nextCursor.completeReadStartedAt;
+    if (
+      stream === "sync" &&
+      state.mode === "forward" &&
+      !state.operations.cursor &&
+      !state.qsos.cursor &&
+      page.complete
+    )
+      nextCursor.completeReadStartedAt = requestStartedAt;
+    // Errors/no-request returns leave the last COMMITTED marker unchanged. That
+    // older request cannot qualify a later collection and its age is not renewed.
     await store.checkpoint(
       lease,
       connection.id,
       stream,
       cursor?.generation ?? 0,
       stream === "sync"
-        ? page.next
-        : { ...page.next, rescanComplete: page.complete },
+        ? nextCursor
+        : { ...nextCursor, rescanComplete: page.complete },
       work,
       now + Math.max(0, Date.now() - startedAt),
     );
@@ -1353,7 +1324,12 @@ async function sourceStatements(
         recordSourcePresence(
           store,
           connection,
-          { kind, id, revision, syncedAtMillis: syncedAt },
+          {
+            kind,
+            id,
+            revision,
+            syncedAtMillis: syncedAt,
+          },
           policyEpoch,
           positiveObservedAt,
         ),

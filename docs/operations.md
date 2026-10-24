@@ -6,13 +6,52 @@ All checked-in environments disable exports. Local tests and synthetic signature
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
+Current signed release `5a427a3009d817066a744a005f46bb30c1c14095` passed
+[CI 40127593520](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40127593520)
+with all **1,610 tests** and required checks at **2026-10-24 20:24:10 UTC**. It
+deployed at **20:27:06.855761 UTC** as Worker
+`1e3a63b8-eceb-47dc-86d5-b4c64dd79a48`, deployment
+`9abe3b85-f5c4-4250-9d26-45d9b53bd332`, at sole 100% traffic. Independent
+**20:27:28.292 UTC** verification confirmed all eight controls closed, active KEK
+version 1, healthy HTTPS and matching assets; **36 migrations through 0037** are
+installed. The ownership foundation, mandatory write bridge, raw historical
+association consumer and shared source reads are now deployed. The initial
+**20:27:46.782 UTC** backup shows 3,833 unhashed ownership rows and 9,981 pending
+inputs, with zero held inputs or copied evidence. The first bounded bootstrap
+run is recorded below; deployment does not establish completed coverage or export
+authority.
+
+That **39,123,981-byte / 36-migration** backup passed isolated restore, credential
+and comparison-key decryption, integrity/FKs and twice quarantine of all
+bridge/raw/source/inventory/receipt evidence. It retains 3,327 claims, 2,549 QRZ
+owners/markers, 4,141 index rows, 4,500 source rows and 2,465 legitimate archives;
+attempts, cutovers, proofs, pins, transient guards and raw references are zero.
+At **20:28:34.534 UTC**, the refreshed 20:25 PRE-to-POST comparison preserved every
+claim/owner/marker field, including creation time, with zero missing, changed or
+added rows. This was an isolated read-only comparison, not a production restore.
+
+The first new cron ran **20:30:43.485–20:32:18.599 UTC**, stopping at the deadline
+after **95.114 seconds**: 22 contact turns, 21 classifications, four adoptions,
+zero attempt turns/deferrals and one LoTW-history-unavailable error. It used
+359 D1 RPCs / 2,878 SQL statements, 85.250 seconds of D1 wall time and 1.868 seconds
+of reported SQL time, with 12 inventory fetches and 13 cache hits. Ownership
+maintenance made ten passes, examined 1,000 inputs, covered zero and hashed 1,000
+owners in a 20.832-second phase. At **20:31:23.628 UTC**, during the run, all 19
+aggregate checks passed with matching policy v5: 2,833 owners remained unhashed,
+8,981 inputs pending and 1,000 claim inputs held, with no copied evidence or raw
+references. Claims awaiting exact identity copies stay held normally. Coverage
+is unfinished; do not clear holds or reset the registry. This bootstrap sample
+proves neither steady-state capacity nor resolution of the unavailable report;
+the precise HTTP cause is unknown and the partition remains held for bounded
+retry. The 20:27 backup predates this progress.
+
 Production uses the native Cloudflare `EMAIL` binding restricted to `signup@ferry.n1rwj.com`, with that address in `MAIL_FROM`. Sending domain `ferry.n1rwj.com` (`e69af8ef82a140b38eeaef98d417ef30`) is enabled and its `preview_enabled=false` setting was read back. Cloudflare and Google DNS-over-HTTPS both resolved its bounce MX/SPF, DKIM and DMARC records; the parent domain's Fastmail MX records remain unchanged. One verification message was delivered to the owner’s Fastmail inbox through the live signup form. The initial smoke test created no account. Hosted enrollment is now invite only; existing users retain their passkeys and sessions.
 
 Independent `KEK_V1`, `AUTH_SECRET` and `EMAIL_CODE_SECRET` secrets have been provisioned. Their protected local backup is `~/.config/lofi-qso-ferry/production.secrets.json` (file mode `0600`, directory `0700`); 1Password CLI was signed out, so that backup remains necessary until secure secret-manager storage is completed. Never print its contents or commit it. Preserve these keys when resuming deployment rather than generating replacements.
 
 The 23:26 UTC read-only readiness audit found one active account with one active passkey. An independent backup key is recommended but is not a hard export requirement for the owner-operated pilot. An operator with database access can recover the account by associating a newly verified passkey public credential with the existing tenant; Ferry has no automated recovery command or email reset. Any manual recovery needs identity verification, a valid WebAuthn registration ceremony, review of tenant ownership, revocation of lost keys/sessions and an audit record. Database access cannot reconstruct a lost private passkey or replace missing encryption keys. The protected local application-secret backup exists with file mode `0600` and directory mode `0700`; secure secret-manager storage remains unconfirmed. See the [personal rollout checklist](rollout-checklist.md) for the exact first-write packet and the distinction between automatic inventory work and manual exception review.
 
-The checked-in production configuration keeps `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, `QRZ_FRESH_INSERTS_ENABLED=false`, `LOTW_FRESH_INSERTS_ENABLED=false`, `LIVE_WRITE_AUTHORIZATION` empty, `ROLLOUT_QSO_IDS_JSON=[]` and `ROLLOUT_DESTINATION_IDS_JSON=[]`. The deployed `12f636b3` release independently verifies all eight controls closed, including `LOTW_FRESH_INSERTS_ENABLED`. Production `workers.dev` and preview URLs are disabled. The staging placeholder is intentionally undeployed.
+The checked-in production configuration keeps `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, `QRZ_FRESH_INSERTS_ENABLED=false`, `LOTW_FRESH_INSERTS_ENABLED=false`, `LIVE_WRITE_AUTHORIZATION` empty, `ROLLOUT_QSO_IDS_JSON=[]` and `ROLLOUT_DESTINATION_IDS_JSON=[]`. The independent 20:27:28.292 UTC verification of `5a427a30` confirms all eight controls closed, including `LOTW_FRESH_INSERTS_ENABLED`. Production `workers.dev` and preview URLs are disabled. The staging placeholder is intentionally undeployed.
 
 ## Prepare a disabled deployment
 
@@ -179,7 +218,7 @@ npx wrangler d1 execute ferry-production --env production --remote --command "SE
 
 Require all live rows to use the active version; an unreadable envelope blocks that row and needs its original KEK. Exercise interrupted rotation, decrypt/readback and a restored backup before retiring an old KEK. A missing KEK is data loss, not permission to relink or resend. Keep old keys available for retained backups and any unexpired local-only mailbox envelopes until their documented retention expires.
 
-The pending `0035`–`0037` LoTW ownership/history work also keeps permanent
+The deployed `0035`–`0037` LoTW ownership/history migrations keep permanent
 encrypted evidence in `lotw_ownership_evidence` and
 `lotw_historical_associations`. These envelopes are outside the current
 `private_data` rewrap job and are immutable. Retain every KEK they reference until
@@ -187,10 +226,14 @@ a bounded compare-and-set rewrap path for those tables is implemented. Missing k
 hold ownership coverage; they never release a prior owner. Recovery snapshots
 must preserve all ownership/history tables, immutable attempt pins, ledger
 references and the shared tenant historical index key. The foundation, guarded
-write bridge and historical consumer are implemented locally and remain
-undeployed. Keep every export control closed through migration, recovery
-verification and release validation; historical recognition does not authorize
-uploading or replacing a record.
+write bridge and historical consumer are deployed in 5a427a30; their migration
+does not authorize envelope rewrap, key retirement or vendor writes. Pending or
+held ownership inputs are unfinished coverage, not permission to discard a prior
+owner. Raw historical records retain their original precision and a separate
+ledger reference, with permanent LoTW write blocks; they are not exact upload
+receipts. Keep every export control closed through recovery verification and
+release validation. Historical recognition does not authorize uploading or
+replacing a record.
 
 Certificate renewal imports a new verified credential version on the same logical route. In-flight signed artifacts keep their certificate/configuration version; renewal must not regenerate an uncertain artifact. Revalidate the matching key, date authorization, current validity and revocation/supersession. Import rejects unsuitable keys and excessive work. Signing requires fresh unrevoked serial status; LoTW validates certificate authority when processing the upload. Successful preflight checks do not verify upload acceptance.
 

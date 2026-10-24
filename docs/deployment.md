@@ -2,55 +2,117 @@
 
 Verified 2026-10-24 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
 
-Signed revision `c4f51de821d7d5867a19b1710fc188659b9d3771` deployed at
-**2026-10-24 17:28:57.761108 UTC**, Worker `7666c159-2a0b-463b-a08b-69295d8653a6`
-at 100% traffic. All **1,488 tests** and required release checks passed in
-[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40114936899).
-Independent checks at **17:29:39.187 UTC**, reconfirmed at **17:33:39.140 UTC**,
-verified all **eight export controls closed**, active KEK version 1, healthy HTTPS
-and matching assets. All 33 migrations through `0034` are unchanged.
+Signed revision `5a427a3009d817066a744a005f46bb30c1c14095` deployed at
+**2026-10-24 20:27:06.855761 UTC**, Worker `1e3a63b8-eceb-47dc-86d5-b4c64dd79a48`
+at 100% traffic. All **1,610 tests** and required release checks passed in
+[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40127593520) at
+**20:24:10 UTC**; all 11 release commit signatures validated. Independent
+**20:27:28.292 UTC** verification confirmed all **eight export controls closed**,
+active KEK version 1, healthy HTTPS and matching assets. All **36 migrations
+through `0037`** are installed.
 
-QRZ reconciliation now uses the **±30-minute historical association path** with
-an opaque source comparison index, current bidirectional uniqueness, permanent
-book-scoped LOGID ownership and atomic source/inventory guards. Minute-only times
-remain intervals. All new QRZ historical adoptions, including exact-time matches,
-are association-only; source edits and reconnects cannot authorize vendor writes.
-Valid nested 2/4/6/8-character grids preserve original precision. Exact Ferry
-receipt verification is unchanged. Broader LoTW adoption remains separate work.
+The release adds the mandatory LoTW ownership write bridge, permanent encrypted
+raw historical references and the guarded **±30-minute LoTW association path**.
+Comparison uses current forward/reverse uniqueness and retained ownership across
+inactive, signing-only and reconnected destinations. Minute-only times and valid
+nested grid precision remain unchanged. Raw historical references are separate
+from exact receipt identities and `ledger.remote_id`; they permanently block
+uploads for that source contact across every LoTW destination. Exact Ferry
+receipt recovery remains separate. QRZ retains its book-scoped LOGID ownership
+and association-only write blocks.
 
-The follow-up reduces index lookup from three RPCs to two with unchanged SQL and
-guards, adds LoTW neighboring-date coverage, corrects QRZ retained-split date
-paths, and exposes durable write blocks in metadata audits. Source-index coverage,
-guarded QRZ associations and the current-schema backup are verified below.
-Remaining work includes broader LoTW classification/ownership, review of actual
-conflicts, and fresh exact source/vendor evidence.
-Exports remain disabled; no first-write trial is authorized by this release.
+Shared source comparisons and bounded ownership maintenance are deployed, along
+with partition-local history retry delays. The new-schema postdeployment backup
+and exact prior-ownership preservation are verified. The first scheduler run
+completed, but ownership bootstrap remains unfinished and one error is under
+investigation.
+Remaining work includes actual exception review, fresh exact source/vendor
+proofs for a scoped trial, first-write acceptance and sustained capacity.
+Exports remain disabled; this release authorizes no first-write trial.
 
-| Resource                 | Current value                                                                                     |
-| ------------------------ | ------------------------------------------------------------------------------------------------- |
-| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                             |
-| Worker                   | `lofi-qso-ferry`, environment `production`                                                        |
-| Deployed source revision | `c4f51de821d7d5867a19b1710fc188659b9d3771`                                                        |
-| Worker version           | `7666c159-2a0b-463b-a08b-69295d8653a6`, created `2026-10-24T17:28:55.896048Z`                     |
-| Deployment               | `05e67989-f6bb-4a41-9ea9-d8c1a53d5a30`, `2026-10-24T17:28:57.761108Z`, 100% of traffic            |
-| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                     |
-| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                  |
-| Migrations               | All 33 migrations through `0034_historical_associations`; independently verified after deployment |
-| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                 |
-| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled              |
-| Schedule                 | `*/5 * * * *`                                                                                     |
-| Alternate origins        | workers.dev and version previews disabled                                                         |
-| Artifact                 | 1,993.49 KiB raw / 389.92 KiB gzip; reported startup 26 ms                                        |
+| Resource                 | Current value                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------ |
+| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                  |
+| Worker                   | `lofi-qso-ferry`, environment `production`                                                             |
+| Deployed source revision | `5a427a3009d817066a744a005f46bb30c1c14095`                                                             |
+| Worker version           | `1e3a63b8-eceb-47dc-86d5-b4c64dd79a48`, created `2026-10-24T20:27:05.902686Z`                          |
+| Deployment               | `9abe3b85-f5c4-4250-9d26-45d9b53bd332`, `2026-10-24T20:27:06.855761Z`, 100% of traffic                 |
+| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                          |
+| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                       |
+| Migrations               | All 36 migrations through `0037_lotw_historical_associations`; independently verified after deployment |
+| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                      |
+| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                   |
+| Schedule                 | `*/5 * * * *`                                                                                          |
+| Alternate origins        | workers.dev and version previews disabled                                                              |
+| Artifact                 | 2,093.87 KiB raw / 407.82 KiB gzip; reported startup 32 ms                                             |
 
 The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
+
+## LoTW ownership and historical association release (5a427a30)
+
+The sole deployment is `9abe3b85-f5c4-4250-9d26-45d9b53bd332`, at 100% traffic,
+with the exact signed source, Worker version and eight closed controls verified
+independently at **20:27:28.292 UTC**. Applying `0035`–`0037` advances production
+from 33 to 36 migrations. The bundle is 2,093.87 KiB raw / 407.82 KiB gzip, with
+reported startup of 32 ms.
+
+The protected predeployment backup completed at **20:25:52.291 UTC** and contains
+**33,029,891 bytes**, all 33 then-installed migrations, 2,549 QRZ owners/markers,
+3,327 exact claims, 4,141 comparison-index rows and all 4,500 source rows. Its
+2,465 missing ordinary bodies are legitimate resolved archives. All three current
+credentials and the initialized comparison key decrypted; integrity, foreign-key
+and twice-quarantine checks passed, with zero attempts, proofs or pins. The final
+**20:26:17.941 UTC** isolated rehearsal applied `0035`–`0037`, preserved all 12
+checked original tables and all five ownership/history registries, and retained
+their encryption and ownership boundaries through repeated quarantine. No
+production restore or vendor mutation occurred.
+
+The protected POST backup completed at **20:27:46.782 UTC**: **39,123,981 bytes**,
+all 36 migrations, 2,549 QRZ owners and markers, 3,327 exact claims, 4,141 index
+rows and all 4,500 source rows, including 2,465 legitimate archives. Isolated
+restore decrypted all three credentials and the tenant comparison key, passed
+integrity/FK checks, and preserved the ownership bridge, raw-reference schema,
+source, inventory and receipt evidence through twice quarantine. Attempts,
+cutovers, proofs, pins, temporary guards and raw historical references were zero.
+The new registry had **3,833 unhashed owners and 9,981 pending inputs**, with zero
+held inputs or copied evidence: this is unfinished bootstrap, not authority.
+Because new exact/raw evidence tables were empty, this snapshot does not verify
+recovery of populated new ciphertext.
+
+The **20:28:34.534 UTC** isolated PRE→POST comparison retained all **3,327 claims,
+2,549 owners and 2,549 markers**, including every field and creation timestamp,
+with zero missing, changed or added rows. No production restore or vendor write
+occurred.
+
+The first completed scheduler run, **20:30:43.485–20:32:18.599 UTC**, processed
+22 contact turns, 21 classifications and four adoptions, with zero attempt turns,
+one error and zero deferrals. It stopped at the deadline after **95.114 seconds**:
+359 D1 RPCs / 2,878 SQL statements, 85.250 seconds D1 wall time and 1.868 seconds
+reported SQL time, with 12 inventory fetches and 13 hits. Its ownership phase
+took **20.832 seconds**: ten bounded passes examined 1,000 inputs, covered none
+and hashed 1,000 owners. Fixed-category readback identifies one
+`history_read:lotw:lotw_unavailable` event affecting one route. That path rejects
+non-success or untrusted reports without establishing absence; the exact HTTP
+cause was not retained. Coverage remains incomplete and bounded partition retry
+applies.
+
+The **20:31:23.628 UTC** aggregate, captured during that run, passed all **19
+checks** with matching policy v5 active. It recorded **2,833 unhashed owners,
+8,981 pending inputs and 1,000 held claim inputs**. None of the 3,327 retained
+identity inputs or 3,327 mapping inputs had been copied yet; new evidence, raw
+references and attempts remained zero. These results verify bounded maintenance
+starting, not completed coverage, a speedup, sustained capacity or export
+authority. Retain every KEK referenced by permanent exact/raw ownership evidence
+until a separate rewrap path is implemented. Fresh same-contact source/vendor
+proof, exception review and first-write acceptance remain open.
 
 ## Fixed history-scope diagnostics release (c4f51de8)
 
 This release distinguishes missing identity, missing station, wrong station and
 out-of-partition date failures using fixed categories. The validation predicates,
 retained evidence, matching and export permissions are unchanged; invalid reports
-still fail closed. No migration or vendor mutation occurred. The partition-local
-retry patch and LoTW ownership foundation are separate, undeployed work.
+still fail closed. No migration or vendor mutation occurred. At that checkpoint, the partition-local
+retry patch and LoTW ownership foundation were separate, undeployed work.
 
 The first completed cron, **17:30:42.737–17:31:25.276 UTC**, processed 100 contact
 turns, 110 classifications and 72 adoptions, with zero errors, deferrals or attempt
@@ -71,9 +133,9 @@ reported eight remote-competitor holds and one location-detail hold.
 The aggregate helper's expected-version labels are not attestation; the independent
 17:33:39.140 UTC receipt establishes the deployed Worker and closed controls.
 
-The **17:04:57 UTC** backup and exact ownership-preservation checks below remain
-the latest verified recovery receipt. The schema remains at 33 migrations; those
-backup counts are not a claim to include later adoptions. Exports remain disabled.
+The dated **17:04:57 UTC** backup and exact ownership-preservation checks below
+cover that earlier 33-migration snapshot; their counts do not include later
+adoptions. The current release and recovery status are recorded above.
 
 ## Lookup and coverage release verification (9aeab582)
 

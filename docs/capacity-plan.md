@@ -1,17 +1,62 @@
 # Capacity plan
 
-The QRZ historical association integration, lookup/coverage follow-up and fixed
-scope diagnostics are deployed in `c4f51de8`, with all **1,488 tests** and required
-checks passing. All eight export controls remain closed. Production index coverage completed for
-4,141 ordinary contacts on the earlier `6ff685a7` release; the dated adoption and
-initialized-key backup/restore receipts are retained below. The deployed lookup
-fixture costs **158 cohort / 262 whole-tick D1 RPCs**, versus 178/282 before that
-lookup change and the earlier 65 cohort RPCs. The undeployed broader LoTW consumer
-has separate [initial-recognition and idle measurements](#integrated-lotw-historical-recognition--local-release-candidate).
-Further reduction remains necessary; these fixtures are not a capacity claim. See
-the [deployed integration and measurements](#historical-comparison-index-integration--deployed).
+The broader LoTW historical association consumer, mandatory ownership write bridge,
+bounded ownership maintenance and shared source-comparison reads are deployed in
+signed `5a427a3009d817066a744a005f46bb30c1c14095`. All **1,610 tests** and required
+checks passed; all eight export controls remain closed. The local cached 40-route
+fixture measures **118 cohort / 222 whole-tick D1 RPCs / 1,123 SQL statements**;
+the minute-precision fixture measures **124 / 312 / 1,379**. These are local
+same-work measurements, not production speedup or capacity claims. See the
+[initial-recognition and idle measurements](#integrated-lotw-historical-recognition--local-measurements).
 
-## Current diagnostic release and bounded run — c4f51de8
+## Current read-only release — 5a427a30
+
+[Release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40127593520)
+passed at **2026-10-24 20:24:10 UTC**. Deployment at **20:27:06.855761 UTC**
+installed Worker `1e3a63b8-eceb-47dc-86d5-b4c64dd79a48`, deployment
+`9abe3b85-f5c4-4250-9d26-45d9b53bd332`, at sole 100% traffic. Independent
+**20:27:28.292 UTC** checks confirmed eight closed controls, active KEK version 1,
+healthy HTTPS and matching assets. All **36 migrations through 0037** are applied.
+
+The initial **20:27:46.782 UTC** production backup records **3,833 unhashed LoTW
+owners / 9,981 pending inputs / zero held inputs or copied evidence**. This is
+unfinished bootstrap before the first 20:30 cron. The existing 4,141-row source
+index does not establish complete LoTW ownership coverage.
+
+The **39,123,981-byte / 36-migration** backup passed isolated restore, three
+credential and tenant-key decryptions, integrity/FKs and repeated quarantine,
+including every bridge/raw/source/inventory/receipt table. It retains 2,549 QRZ
+owners/markers, 3,327 claims, 4,141 index rows, 4,500 source rows and 2,465 legitimate
+archives; attempts, cutovers, proofs, pins, transient guards and raw references
+are zero. At **20:28:34.534 UTC**, the exact comparison against the refreshed
+20:25 PRE snapshot preserved all 3,327 claims and all 2,549 owners/markers,
+including creation time, with zero additions, missing or changed rows. No
+production restore occurred. Historical association grants no upload authority;
+sustained throughput and active 200,000-contact capacity remain unproven.
+
+| First completed 5a cron, 20:30:43.485–20:32:18.599 UTC |                   Observation |
+| ------------------------------------------------------ | ----------------------------: |
+| Contact turns / classifications / adoptions            |                   22 / 21 / 4 |
+| Errors / deferrals / attempt turns                     |                     1 / 0 / 0 |
+| Elapsed / D1 wall / reported SQL time                  | 95.114 s / 85.250 s / 1.868 s |
+| D1 RPCs / SQL statements                               |                   359 / 2,878 |
+| Inventory fetches / cache hits                         |                       12 / 13 |
+| Ownership passes / examined inputs / covered inputs    |                10 / 1,000 / 0 |
+| Owners hashed / ownership phase                        |              1,000 / 20.832 s |
+| Stop reason                                            |                    `deadline` |
+
+The **20:31:23.628 UTC** snapshot, taken during that run, passed all **19**
+aggregate checks with matching policy v5. It showed 2,833 unhashed owners,
+8,981 pending inputs and 1,000 held claim inputs, with no copied evidence or raw
+references. Claims encountered before their exact identity copies remain held;
+this is unfinished coverage, not absence or a new upload permission. The run's
+single error is `history_read:lotw:lotw_unavailable`; coverage remains incomplete
+and the exact HTTP cause is unknown. These are bounded bootstrap observations,
+not a steady-state comparison or production speedup.
+Measure ownership initialization, first recognition and resolved idle work
+separately; the 20:27 backup predates this progress.
+
+## Previous diagnostic release and bounded run — c4f51de8
 
 Signed `c4f51de8` deployed at **2026-10-24 17:28:57.761108 UTC**, after
 [full release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40114936899).
@@ -39,13 +84,12 @@ backup of this same release contains 33 migrations and passes isolated restore,
 credential/key decryption and repeated quarantine. It retains 3,327 LoTW claims
 and 1,061 QRZ owners/markers; the dated 17:04 receipt remains separate evidence.
 
-The bounded LoTW ownership-evidence foundation, guarded write bridge and broader
-adoption integration are implemented locally and remain **undeployed**. Their
-copied immutable envelopes require original KEKs until guarded rewrap exists.
-The partition-local read-retry patch passes 81 focused retry/history/failure cases
-and retains only prior valid pages, without advancing coverage after failures.
-It is not part of c4f or these run metrics.
-These changes do not establish active 200,000-contact coverage or export authority.
+The ownership-evidence foundation, guarded write bridge, broader adoption and
+partition-local read retry were not part of c4f or these run metrics. They are now
+included in 5a427a30. Copied immutable envelopes still require their original KEKs
+until guarded rewrap exists. The retry implementation retains only prior valid
+pages, without advancing coverage after failures. Neither the historical runs nor
+these changes establish active 200,000-contact coverage or export authority.
 
 The later **19:43:59 UTC** read-only snapshot has 2,132 QRZ associations, 775
 ambiguous, 437 mismatched and 489 pending routes; 754 ambiguous labels lack a
@@ -55,7 +99,7 @@ classifications / 24 adoptions, taking 94.746 seconds and 323 RPCs / 1,343 SQL.
 Its 93.807 seconds of D1 wall time includes only 2.385 seconds of reported SQL
 execution; the remainder is not a measured query CPU cost. The 19:43 release
 readback reconfirms c4f and all eight controls closed. This ongoing progress
-does not measure the undeployed shared-read implementation.
+does not measure the shared-read implementation deployed later in 5a427a30.
 
 ### Ownership bootstrap cost — isolated current-data rehearsal
 
@@ -72,20 +116,21 @@ calls** and **34,649 member statements**. Its 4.123-second SQLite runtime exclud
 remote RPC latency and is not Worker capacity evidence. Repeating one such pass
 per five-minute tick would require 135 ticks for this unchanged snapshot.
 
-The reviewed, separately **undeployed** batching patch completes the identical
+The reviewed batching implementation, now deployed in 5a427a30, completes the identical
 snapshot in the same 135 passes with **925 calls / 24,602 member statements**,
 zero held inputs and unchanged protected tables. Its native-D1 30-contact fixture
 falls from **188 to 11 RPCs** and 248 to 188 statements. All 25 owned/Store cases,
 types and scoped formatting pass. This preserves 100-owner/100-input and 4 MiB
 bounds, version/ciphertext/key checks, missing-evidence holds and atomic two-query
 publication; native batches contain at most 100 statements. Failed or unknown
-acknowledgements propagate without an in-call retry. Scheduled bootstrap and its
-production cost remain unverified. Do not use a synchronous full-tenant scan or
-raise vendor budgets to hide this cost.
+acknowledgements propagate without an in-call retry. The first scheduled bootstrap
+sample is recorded above; completion and sustained production cost remain
+unverified. Do not use a synchronous full-tenant scan or raise vendor budgets to
+hide this cost.
 
-### Integrated LoTW historical recognition — local release candidate
+### Integrated LoTW historical recognition — local measurements
 
-Before source-read batching, the undeployed consumer's native-D1 fixture
+Before source-read batching, the consumer's native-D1 fixture
 processes 20 minute-time contacts across QRZ and LoTW, producing **40 read-only
 associations** (20 per vendor),
 zero attempts/uploads and no fabricated exact LoTW remote IDs or outbound claims.
@@ -133,9 +178,10 @@ hits and zero attempts/uploads. The final repeat also passes. This is a local
 same-work reduction; sustained throughput and 200,000-contact import capacity
 remain unproven. See the implemented batch design and acceptance evidence below.
 
-The integrated local check passes **all 1,610 tests**, formatting, lint, both
-TypeScript projects and the Worker build. Signed push remains held by the
-1Password signer; release CI and a verified disabled deployment remain pending.
+The integrated local check and release CI pass **all 1,610 tests**, formatting,
+lint, both TypeScript projects and the Worker build. The signed implementation is
+deployed with all eight controls closed; production throughput remains to be
+measured independently of these local fixtures.
 
 A separate native-D1 regression checks the actual exact-ownership finish/account
 UPDATE used by stage and mapping winners. Its indexed pending/held predicate reads
@@ -1119,9 +1165,10 @@ comparison with the original `737eeca3` experiment above. Paused synthetic fille
 does not establish 200,000 active-source coverage, import/backfill or end-to-end
 reconciliation capacity. No production or vendor calls were made.
 
-### Batched source comparisons — implemented locally
+### Batched source comparisons — deployed, local measurements
 
-The local `75cd3350` commit implements `historicalSourceCandidatesBatch` in
+The implementation introduced in `75cd3350` and deployed in `5a427a30` provides
+`historicalSourceCandidatesBatch` in
 `historical-source-candidates.ts`, supported by a batched index lookup in
 `source-historical-index.ts`. It accepts one tenant and at most **20 route
 requests**, returns results in input order, and keeps the singleton API as a
@@ -1174,14 +1221,14 @@ bounds; caller-input immutability; and key, source activation, body, credential,
 policy or context races. Eight new candidate cases, 21 existing singleton cases,
 seven index cases and the focused service cases pass. Native service tests also
 cover failure/deadline isolation and a 135-row union that safely completes through
-two smaller censuses without truncation. The full 1,610-case local check passes;
-release CI remains required. Measure first recognition separately from resolved idle
-scheduling and ownership bootstrap;
+two smaller censuses without truncation. The full 1,610-case local and release CI
+checks pass. Measure first recognition separately from resolved idle scheduling
+and ownership bootstrap;
 none establishes active 200,000-contact capacity.
 
 ### Comparison-key backup and rotation
 
-The latest **17:04:57 UTC** postdeployment backup contains **33,946,884 bytes** and
+The dated **17:04:57 UTC** postdeployment backup contains **33,946,884 bytes** and
 33 migrations. Isolated restore decrypted the initialized comparison key and all
 three current credentials, verified the HMAC key ID, and passed integrity/FK and
 twice-quarantine checks. All 4,141 index rows, 462 owners/markers and 453 legitimate

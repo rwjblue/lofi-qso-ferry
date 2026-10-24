@@ -4,11 +4,12 @@ The QRZ historical association integration, lookup/coverage follow-up and fixed
 scope diagnostics are deployed in `c4f51de8`, with all **1,488 tests** and required
 checks passing. All eight export controls remain closed. Production index coverage completed for
 4,141 ordinary contacts on the earlier `6ff685a7` release; the dated adoption and
-initialized-key backup/restore receipts are retained below. The current
-20-contact fixture costs **158 cohort / 262 whole-tick D1 RPCs**, versus 178/282
-before the lookup change and the earlier 65 cohort RPCs. Further reduction remains
-necessary; these fixtures are not a capacity claim. See the
-[deployed integration and measurements](#historical-comparison-index-integration--deployed).
+initialized-key backup/restore receipts are retained below. The deployed lookup
+fixture costs **158 cohort / 262 whole-tick D1 RPCs**, versus 178/282 before that
+lookup change and the earlier 65 cohort RPCs. The undeployed broader LoTW consumer
+has separate [initial-recognition and idle measurements](#integrated-lotw-historical-recognition--local-release-candidate).
+Further reduction remains necessary; these fixtures are not a capacity claim. See
+the [deployed integration and measurements](#historical-comparison-index-integration--deployed).
 
 ## Current diagnostic release and bounded run — c4f51de8
 
@@ -33,17 +34,28 @@ causal speedup, resolution of prior failures or sustained capacity. At
 **17:33:38 UTC**, all 13 aggregate checks passed: 797 QRZ associations with complete
 owners/markers/write blocks, 4,141 clean index rows, 3,327 covered LoTW exact claims,
 778 legitimate archives and 3,722 retained bodies with no unexplained gaps. Attempts,
-cutovers, proofs and pins were zero. The latest verified 33-migration backup is
-still the dated 17:04:57 UTC receipt below; no later backup is implied.
+cutovers, proofs and pins were zero. The later **17:51:44.635 UTC** protected
+backup of this same release contains 33 migrations and passes isolated restore,
+credential/key decryption and repeated quarantine. It retains 3,327 LoTW claims
+and 1,061 QRZ owners/markers; the dated 17:04 receipt remains separate evidence.
 
-Two separate changes remain **undeployed**: the bounded LoTW ownership-evidence
-foundation (20 focused foundation/store cases plus four selected delivery/recovery
-cases) still needs its exact-receipt write bridge and adoption integration; its
+The bounded LoTW ownership-evidence foundation, guarded write bridge and broader
+adoption integration are implemented locally and remain **undeployed**. Their
 copied immutable envelopes require original KEKs until guarded rewrap exists.
 The partition-local read-retry patch passes 81 focused retry/history/failure cases
 and retains only prior valid pages, without advancing coverage after failures.
 It is not part of c4f or these run metrics.
-Neither change establishes active 200,000-contact coverage or export authority.
+These changes do not establish active 200,000-contact coverage or export authority.
+
+The later **19:43:59 UTC** read-only snapshot has 2,132 QRZ associations, 775
+ambiguous, 437 mismatched and 489 pending routes; 754 ambiguous labels lack a
+current-generation memo. All six sampled completed runs report zero errors,
+deferrals and attempt turns. The latest run makes 40 contact turns / 33
+classifications / 24 adoptions, taking 94.746 seconds and 323 RPCs / 1,343 SQL.
+Its 93.807 seconds of D1 wall time includes only 2.385 seconds of reported SQL
+execution; the remainder is not a measured query CPU cost. The 19:43 release
+readback reconfirms c4f and all eight controls closed. This ongoing progress
+does not measure the undeployed shared-read implementation.
 
 ### Ownership bootstrap cost — isolated current-data rehearsal
 
@@ -70,6 +82,66 @@ publication; native batches contain at most 100 statements. Failed or unknown
 acknowledgements propagate without an in-call retry. Scheduled bootstrap and its
 production cost remain unverified. Do not use a synchronous full-tenant scan or
 raise vendor budgets to hide this cost.
+
+### Integrated LoTW historical recognition — local release candidate
+
+Before source-read batching, the undeployed consumer's native-D1 fixture
+processes 20 minute-time contacts across QRZ and LoTW, producing **40 read-only
+associations** (20 per vendor),
+zero attempts/uploads and no fabricated exact LoTW remote IDs or outbound claims.
+These are local implementation measurements, not production capacity:
+
+| Phase                                              | Contact turns / classifications / associations | Cohort RPCs | Whole-tick RPCs / SQL |
+| -------------------------------------------------- | ---------------------------------------------: | ----------: | --------------------: |
+| Initial recognition before shared source reads     |                                   20 / 40 / 40 |         315 |           503 / 1,628 |
+| Initial recognition with shared source reads       |                                   20 / 40 / 40 |         124 |           312 / 1,379 |
+| After all routes resolve and source bodies archive |                                      0 / 0 / 0 |           0 |             144 / 168 |
+
+The first run makes three inventory fetches and shares at least 38 cache hits;
+it is not the entirely pre-cached mixed-week fixture. The idle run has no cache
+hits because no reconciliation work is selected. Its 144 RPCs remain scheduler
+and maintenance cost, not zero-cost operation.
+
+The minute fixture's former ceiling was 190 cohort RPCs for 20 completed QRZ
+associations while LoTW remained held: **9.5 RPCs per association was a budget**.
+The pre-batching measured ratio is **315 / 40 = 7.875**, and the integrated batched
+run measures **124 / 40 = 3.1**. Both complete the same 40 associations with three
+inventory fetches and at least 38 cache hits. The older 190-call ceiling alone
+does not establish a same-work speedup. Separately, the pre-cached mixed-week fixture
+already completed 40 associations at 158 cohort / 262 tick RPCs / 1,176 SQL. Its
+existing **220-cohort-RPC ceiling remains a same-work acceptance guard** for the
+new consumer, independent of the minute fixture's normalization.
+
+Before shared reads, reverse-source comparison runs separately for each positive
+route.
+A successful comparison costs five RPCs / eight SQL statements without an
+operation, or six / nine with the complete operation/event closure. This fixture's
+one operation contact and 19 operationless contacts therefore account for about
+**202 of 315 cohort RPCs** across both vendors. Raw LoTW publication already uses
+one ownership lookup per at-most-eight-member adoption chunk. Bounded ownership
+bootstrap is separate from this repeated source-read cost.
+
+The shared-read implementation now passes that **unchanged 220-call limit**:
+
+| Cached 40-route fixture                     | Cohort RPCs | Whole-tick RPCs | SQL statements |
+| ------------------------------------------- | ----------: | --------------: | -------------: |
+| Guarded consumer before shared source reads |         309 |             413 |          1,372 |
+| Same consumer with shared source reads      |         118 |             222 |          1,123 |
+
+Both runs complete the same 40 associations with zero inventory fetches, 40 cache
+hits and zero attempts/uploads. The final repeat also passes. This is a local
+same-work reduction; sustained throughput and 200,000-contact import capacity
+remain unproven. See the implemented batch design and acceptance evidence below.
+
+The integrated local check passes **all 1,610 tests**, formatting, lint, both
+TypeScript projects and the Worker build. Signed push remains held by the
+1Password signer; release CI and a verified disabled deployment remain pending.
+
+A separate native-D1 regression checks the actual exact-ownership finish/account
+UPDATE used by stage and mapping winners. Its indexed pending/held predicate reads
+**18 → 19 rows** after adding 4,000 unrelated covered obligations, and a late
+unplanned pending input rolls back the mapping batch. Both focused cases pass;
+this removes a tenant-wide accounting scan without changing winner or hold rules.
 
 ### Previous lookup and coverage release — 9aeab582
 
@@ -1047,17 +1119,65 @@ comparison with the original `737eeca3` experiment above. Paused synthetic fille
 does not establish 200,000 active-source coverage, import/backfill or end-to-end
 reconciliation capacity. No production or vendor calls were made.
 
-### Next reductions in comparison cost
+### Batched source comparisons — implemented locally
 
-After the deployed one-RPC reduction is measured in production, a larger bounded
-reverse-comparison batch can
-share tenant key/coverage reads, source headers, and exact body incarnations
-across at most 20 routes. Each route must retain its own candidate set,
-128-candidate/256-dependency/4 MiB limits and commit guard; unavailable or unknown
-competitors must remain holds. Shared operation/event projection must use the
-same source context and body versions. Test singleton/batch parity, overflow,
-archived competitors, source activation, key/body/context changes and stale
-adoption races before claiming a throughput improvement.
+The local `75cd3350` commit implements `historicalSourceCandidatesBatch` in
+`historical-source-candidates.ts`, supported by a batched index lookup in
+`source-historical-index.ts`. It accepts one tenant and at most **20 route
+requests**, returns results in input order, and keeps the singleton API as a
+one-item wrapper. Service first gathers pure forward matches, then compares
+bounded groups before adoption. This is not a general Store cache or reusable
+authorization result. QRZ and LoTW still receive independent comparisons even
+when their source reads overlap.
+
+Its bounded phases are:
+1. Capture and validate all request, destination and remote-record primitives
+   before awaiting. Load one stable tenant key and covered index snapshot.
+2. Derive and deduplicate weak call/minute bucket queries. Use a native read batch
+   for keyed candidate SELECTs (each with its 129th-row overflow sentinel) and the
+   unchanged captured-index guard. The index admits at most 512 distinct metadata
+   rows and 1 MiB of metadata across the group. Never truncate candidates to
+   permit a match.
+3. Load union QSO metadata, all active source headers and exact destination
+   snapshots together. Load every relevant base operation and retained live event,
+   including events that do not change the effective projection.
+4. Admit the **whole batch**, not each route, under 128 distinct candidate QSOs,
+   256 distinct dependencies and **4 MiB total ciphertext**. Fetch, decrypt and
+   project each unique body once. Global overflow returns `cohort_bound` before
+   publication; service sequentially splits only that result, down to singleton
+   if needed, with at most 39 calls for an original 20-route group and admission
+   before every call. Intrinsic overflow, incomplete evidence and database errors
+   never trigger splitting. Process larger route sets sequentially and release
+   envelope/decoded caches between calls,
+   rather than accumulating 40 separate 4 MiB allowances.
+5. Compare each request independently against its complete relevant candidate set,
+   then check all proposed unique results in one native read batch. Each result
+   retains its own index/header, body-incarnation, operation-closure, destination
+   and current-retention commit guard. Adoption still adds the independent
+   inventory and selected source/reconciliation/context guards. A shared snapshot
+   change invalidates results; sharing reads never supplies authority.
+
+Unknown and unavailable archived competitors remain in the appropriate request's
+candidate set. They cannot disappear because another route projected successfully.
+Only the existing proven-noncontact exception may exclude a test operation.
+
+The 20-route / ten-shared-body native fixture measures **five source-comparison
+RPCs / 36 SQL / 1,736 rows read**. The index layer separately measures two RPCs
+for 20 requests over three distinct windows. Complete operation closure adds a
+bounded read phase. The full cached 40-route service result is the measured
+118/222/1,123 table above; no vendor or service budget was increased.
+
+Focused acceptance passes singleton/batch parity for both vendors and differing UTC
+midnight windows; independent route/mode outcomes; complete shared event closure;
+localized unavailable/unknown competitors; global byte/dependency/candidate
+bounds; caller-input immutability; and key, source activation, body, credential,
+policy or context races. Eight new candidate cases, 21 existing singleton cases,
+seven index cases and the focused service cases pass. Native service tests also
+cover failure/deadline isolation and a 135-row union that safely completes through
+two smaller censuses without truncation. The full 1,610-case local check passes;
+release CI remains required. Measure first recognition separately from resolved idle
+scheduling and ownership bootstrap;
+none establishes active 200,000-contact capacity.
 
 ### Comparison-key backup and rotation
 

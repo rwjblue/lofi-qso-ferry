@@ -22,12 +22,29 @@ aggregate checks passed: 797 QRZ mappings had complete owners/markers/write bloc
 legitimate archives and 3,722 bodies had no unexplained gaps; attempts, cutovers,
 proofs and pins were zero. This bounded sample neither resolves earlier failures
 nor establishes a diagnostic-change speedup, sustained capacity or write acceptance.
-The latest recovery receipt remains the dated 17:04:57 UTC backup below. See the
+The later **17:51:44.635 UTC** protected backup of the same c4f release contains
+33 migrations, 3,327 LoTW claims and 1,061 QRZ owners/markers. Isolated restore,
+all three credential decryptions, tenant-key verification and repeated quarantine
+pass. The dated 17:04:57 UTC receipt below remains separate evidence. See the
 [current release receipt](deployment.md#fixed-history-scope-diagnostics-release-c4f51de8).
 
-Keep exports disabled. The retry patch and LoTW ownership foundation are not deployed;
-broader LoTW adoption, fresh trial evidence and explicit future authorization remain
-separate requirements.
+Keep exports disabled. The retry patch, LoTW ownership foundation, guarded write
+bridge and broader historical adoption are implemented locally and are not
+deployed. Historical references retain original remote precision and permanently
+block LoTW uploads for their source contact; they are not exact delivery receipts.
+Full local validation passes all 1,610 tests and required checks. Signed push,
+release CI, migration/recovery verification and a disabled deployment still
+precede new production reconciliation evidence. Fresh trial
+evidence and explicit future authorization remain separate requirements.
+
+Independent **19:43 UTC** readback reconfirms c4f, healthy matching assets and all
+eight controls closed. A separate aggregate database read has 2,132 QRZ
+associations, 775 ambiguous, 437 mismatched and 489 pending routes, with a clean
+4,141-row index and zero attempts/cutovers. Of those ambiguous labels, 754 lack a
+current-generation memo; 21 have post-index checks, which still do not establish
+current projection or exact policy provenance. The last six sampled runs have no
+errors, deferrals or attempts. Reconciliation continues; these counts are not a
+completed manual-exception queue or permission to export.
 
 ### Previous lookup and coverage release (9aeab582)
 
@@ -488,12 +505,12 @@ enforced separation from the global cutover/no-query effects described above,
 then current evidence for the exact scope. The proposed order remains QRZ first,
 followed by LoTW. Keep private contact details out of repository documentation.
 
-The latest protected backup, from **17:04:57 UTC on 2026-10-24**, contains all 33
-migrations, 4,141 index rows, 3,327 exact claims and 462 QRZ owners/markers.
-All 453 legitimate archives were verified; 4,047 source bodies remain retained.
+The latest protected backup, completed **17:51:44.635 UTC on 2026-10-24**, contains
+all 33 migrations, 4,141 index rows, 3,327 exact claims and 1,061 QRZ owners/markers.
 Isolated restore, integrity/FK checks, three credential decryptions, initialized
 comparison-key decryption/HMAC verification and twice quarantine passed. The
-prior 16:07 ownership sets were retained exactly. No production restore occurred.
+existing claims and historical ownership survived quarantine. No production
+restore occurred.
 Preserve this current-schema snapshot and its required KEKs; refresh it before
 external changes if needed to capture subsequent adoptions.
 The dated snapshots below remain historical recovery evidence.

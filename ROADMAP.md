@@ -44,6 +44,21 @@ and 22 adoptions, with zero errors, deferrals or attempts, in 91.812 seconds.
 This is continued read-only reconciliation, not completed exception review or
 sustained capacity. No release after c4f has been deployed.
 
+A **19:43:07.376 UTC** independent release check reconfirms the same sole c4f
+Worker, active KEK version 1, matching assets, healthy HTTPS and all eight closed
+controls. The local changes below have not changed production.
+
+The separate **19:43:59.512 UTC** read-only database snapshot has 2,132 QRZ
+associations and 2,132 owners, with **775 ambiguous / 437 mismatched / 489
+pending** routes. Of the ambiguous labels, 754 lack a current-generation memo;
+the other 21 have post-index checks (18 remote competitors and three location
+holds). The same memo/provenance limitations above still apply. The index remains
+clean at 4,141 rows, migrations remain 33, and attempts/cutovers/stage guards remain
+zero. All six sampled completed crons have zero errors and deferrals; the latest
+made 40 contact turns, 33 classifications and 24 adoptions in 94.746 seconds,
+using 323 D1 RPCs / 1,343 statements. Waiting continues to resolve old labels;
+these samples do not finish reconciliation, exception review or capacity proof.
+
 ### Next implementation — ownership foundation and bounded retries
 
 Migration `0035` and an observation-only LoTW registry preserve encrypted exact
@@ -86,15 +101,53 @@ mode groups, the inclusive time limit, midnight, portable station namespaces and
 late cross-source competition. A separate pure broader LoTW classifier passes
 seven cases while preserving raw precision, modes and nested grid values. This
 validated foundation is not consumed by deployed reconciliation and grants no
-ownership or write authority. Consumer wiring, raw historical references and
-ownership checks at staging, dispatch and mapping remain under implementation.
+ownership or write authority. The local consumer and write-bridge implementation
+is described below.
 
-Next, bind immutable LoTW attempt identities to renewable current ownership
-checks at staging, dispatch and new mapping. Exact self-writes and multi-contact
-cohorts must remain safe; preserve actual submitted/uncertain receipt recovery.
-Only then wire broader LoTW association into reconciliation. Full exception
-review, first-write acceptance and sustained capacity remain open. Exports stay
-disabled.
+Three additional local commits now implement the ownership write bridge, raw
+historical evidence and the LoTW reconciliation consumer. Historical matches use
+the inclusive 30-minute policy, compatible valid grid subsets, reverse-source
+uniqueness and guarded permanent ownership. Original minute timestamps and grids
+remain encrypted as reported; a historical reference never becomes an exact
+delivery receipt. All LoTW routes remain blocked from uploading that historical
+owner, including after source/configuration changes. Real submitted or uncertain
+receipt facts remain recoverable when a new mapping must stay held.
+
+The focused native suites cover atomic stage/adoption cohorts, unknown
+acknowledgements, partial mapping conflicts, policy upgrades, source/inventory
+races and retained references. These service cases now pass in the full
+integrated run. An **18:57:20 UTC** isolated rehearsal
+applied `0035`–`0037` to the protected current production snapshot: all 12 checked
+original tables were unchanged, integrity/FK checks passed, and two restore
+quarantines preserved all five ownership/history registries. These are local
+results; production still has 33 migrations and exports remain disabled.
+
+The expanded consumer also exposes a real bootstrap cost regression: the fully
+cached 40-route mixed-week case makes **309 cohort / 413 whole-tick RPCs** and
+1,372 SQL statements, exceeding its unchanged 220-RPC limit. Explicit source
+comparison batching now passes that same fixture at **118 cohort / 222 whole-tick
+RPCs and 1,123 SQL**, retaining the original 220-cohort-RPC limit, 40 adoptions, zero
+inventory fetches and 40 cache hits. Shared reads retain independent comparison
+guards; bounded cohort overflow splits without truncating candidates. The
+separate pre-batching minute-time fixture completes all 40 associations in 315
+cohort RPCs; the integrated batched run completes the same 40 in **124 cohort /
+312 whole-tick RPCs and 1,379 SQL**. It still makes three inventory fetches and
+at least 38 cache hits. Its settled pass does no reconciliation, while routine
+scheduler/maintenance work remains 144 RPCs / 168 SQL.
+The full integrated local check now passes **all 1,610 tests**, formatting, lint,
+both TypeScript projects and the Worker build. The older fixture failures are
+repaired without relaxing runtime guards or the cached cohort's 220-RPC limit.
+Signed push is waiting for the 1Password signer. Release CI, a refreshed
+release-bound backup/rehearsal and disabled deployment remain required. Full
+exception review, first-write acceptance and sustained capacity remain open.
+
+The draft recovery packet passes **61 offline cases**: 45 backup/comparison
+cases and 16 native-D1 aggregate cases. It verifies original raw encryption and
+HMAC bindings, retained old keys, exact ledger references, permanent LoTW upload
+blocks and repeated quarantine under all 36 migrations. Unfinished ownership
+coverage stays visible and grants no authority. These helpers require fresh
+copies pinned to the final signed revision and an independently verified Worker
+before live use; no production migration or vendor write occurred.
 
 ### Comparison and coverage follow-up — deployed read-only
 

@@ -1,6 +1,16 @@
 # LoFi adapter evidence
 
-Checked 2026-10-22. No live account, permission, inventory, or mutation request was made. Fixture results establish Ferry behavior, not server compatibility or production coverage.
+Initial adapter review: 2026-10-22, before live requests. The dated observations
+below record subsequent read-only vendor evidence; fixture results alone do not
+establish server compatibility or production coverage.
+
+Current checkpoint, 2026-10-24 06:43 UTC: the production all-client baseline,
+forward drain and quarantine handoff completed at **06:35:44.881 UTC**. The policy
+is `ready`, with all 218 operations and 4,282 QSO-stream rows (4,500 retained rows)
+witnessed in the current epoch and zero unseen retained rows. There are 4,130
+contacts eligible for reconciliation processing, not authorized exports. The live
+selected-contact proof diagnostic still fails at `proof_cohort_count` after
+collection and final drain; all seven export controls remain closed.
 
 The protocol references are [Sidecar's browser registration and operation reads](https://github.com/rwjblue/qso-sidecar/blob/c502cecd068a6a4330afd94458e5636fa17f3a51/src/lofi.rs), [HaLo's transport](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/extensions/sync/ham2k-lofi/src/index.ts), and [its sync engine](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/packages/halo_core/lib/src/sync/sync_engine.dart). These are client implementation evidence; public server retention and replay guarantees were not found.
 
@@ -10,7 +20,7 @@ The protocol references are [Sidecar's browser registration and operation reads]
 
 A read-only metadata check on 2026-10-23 verified that `current_account.email` is available and matches `account.email` in a sync response for the same account UUID. The sync window began at the check time and returned zero operations and zero contacts. The existing bearer was used without renewal, permission requests, account changes or source mutations; only boolean/count diagnostics were retained. Ferry displays this confirmed email with its registered client name and hides the historical first-connection account name.
 
-Read intake uses `POST /v1/sync` with only `meta.inboundSync` and `meta.sync`; no operations, QSOs, or claims are uploaded. Backfill windows carry `syncedUntilMillis`, `anyClient: true`; forward windows carry `syncedSinceMillis`, `anyClient: false`, following the inspected client. Operation and QSO cursors/watermarks are independent. `next_cursor`/`nextCursor` remain opaque. Forward and backward cursor state are never reused across directions.
+Read intake uses `POST /v1/sync` with only `meta.inboundSync` and `meta.sync`; no operations, QSOs, or claims are uploaded. Backfill windows carry `syncedUntilMillis`; forward windows carry `syncedSinceMillis`. The deployed versioned `all-clients-v1` policy sends `anyClient: true` in both directions. Untagged legacy forward requests retain the earlier `anyClient: false` behavior, but cannot establish current policy membership. Operation and QSO cursors/watermarks are independent. `next_cursor`/`nextCursor` remain opaque. Forward and backward cursor state are never reused across directions.
 
 Only the server-authored `syncedAtMillis` advances watermarks. Cursor pages retain a one-millisecond overlap in their fallback watermark so equal-timestamp rows can be replayed. Missing record UUIDs or timestamps fail the whole page. Explicit `records_left`/`recordsLeft: 0` establishes page completion; a short page does not. Empty cooldown pages with more history preserve their cursor. Repeated nonterminal cursors and server pagination errors require reconciliation. HTML, malformed records, redirects, unexpected account IDs, and oversized responses cannot establish coverage.
 
@@ -206,8 +216,9 @@ fences remain dormant for sources with no policy row, so main exports must requi
 current ready policy membership explicitly. The first scheduled run activated one
 all-client policy at 03:30:43.295 UTC. The 03:31:37.477 snapshot showed backfill
 with 25 operations and 25 QSOs in the current epoch, no ready policy and zero
-eligible exports; baseline completion and handoff remain unobserved. Fresh-positive
-collection, witness storage, completed-drain markers, immutable proofs, indexed
+eligible exports; baseline completion and handoff were not yet observed at that
+time. The later completed handoff is recorded at the top of this document.
+Fresh-positive collection, witness storage, completed-drain markers, immutable proofs, indexed
 observation anchors and shared cohort coordination are signed and pushed through
 `e16f987441fc`, with exact-key lookup correction `3d7b0cac782a`. All 1,098 tests
 pass and the foundation deployed read-only at 04:13 UTC with migrations
@@ -239,9 +250,9 @@ bounded progress rules do not establish an upstream snapshot or general capacity
 
 At 04:51:11 UTC, the current epoch contained 218 operations and 1,425 QSO-stream
 records, still in backfill with no ready source, eligible export, attempt, cutover
-or temporary guard. Production handoff and fresh evidence for the selected trial
-contacts remain prerequisites. The 04:25 UTC protected backup passed an isolated
-restore with all 28 existing migrations plus pending `0030`, integrity and
+or temporary guard. Those historical counts preceded the completed handoff;
+fresh proof and vendor evidence for the selected trial contacts remain prerequisites.
+The 04:25 UTC protected backup passed an isolated restore with all 28 existing migrations plus pending `0030`, integrity and
 foreign-key checks, three current credential decryptions and repeated quarantine;
 380 identity claims and zero attempts/cutovers were preserved. No production
 restore or vendor mutation occurred. Neither this backup nor the diagnostic reads
@@ -369,14 +380,41 @@ current per-contact proofs and excludes source-wide cutovers, no-query inference
 LoTW, replacement and corrections while the global source gate remains closed.
 All seven production controls are verified closed. These observations are not
 a global retention guarantee, and neither the probes nor the new mode's deployment
-authorizes a vendor write. Baseline completion and fresh exact contact evidence
-remain outstanding.
+authorizes a vendor write. Baseline completion is now observed; successful current
+proof minting and fresh exact-contact vendor evidence remain outstanding.
 
+The 06:09 UTC release added bounded 100-record canonical baseline pages under
+the unchanged shared request budget. Production completed backfill, a forward
+drain and quarantine at 06:35:44.881 UTC. All 4,500 retained rows were witnessed
+in the current epoch, with zero unseen rows; the ready policy permits ordinary
+reconciliation of 4,130 eligible contacts. This establishes that observed
+baseline/handoff, not historical purge exclusion or export authority.
 
-The 06:09 UTC release adds bounded 100-record canonical baseline pages. Its first
-scheduled tick continued the saved opaque cursor across two checkpoints and added
-100 current-epoch QSO-stream members, with no errors or export attempts. At
-06:13:06 UTC, all 218 operations and 2,950 of 4,282 retained QSO-stream records
-were current members. The policy remains in backfill with no ready source. This
-is progress toward a fresh inventory, not completed drain/quarantine handoff,
-historical purge exclusion or export authority.
+The 06:35:43–06:36:10 scheduler run resumed reconciliation with 62 contact turns
+and 60 destination classifications in 27.187 seconds, then stopped at the
+`database_budget` limit with four errors and 50 deferrals. The run created no
+export attempt or cutover. These are processing counts, not completed deliveries
+or sustained capacity acceptance.
+
+At 06:43:26 UTC, a protected selected-contact diagnostic made one live collection
+read and one final canonical drain, without bearer renewal, for four required
+dependencies including two events. The source checkpoint and local ledger
+observation completed, but the atomic proof batch failed with
+`SQLITE_CONSTRAINT_CHECK` / `proof_cohort_count`; the coordinator returned
+`proof_unavailable` with zero ready contacts. The failure remains under diagnosis,
+not evidence that any guard should be relaxed. Both independent gate attestations
+confirmed all seven controls closed; attempts, stage guards and cutovers were
+zero before and after. No upstream source or destination mutation occurred.
+No fresh QRZ neighborhood result is available at this checkpoint. A successful
+current proof and fresh destination evidence remain required before any separately
+authorized write; no source-boundary authority was granted.
+
+The 06:49:44 diagnostic again failed the atomic mint count guard. A SELECT-only
+post-rollback evaluation of the exact proposed proof against the installed
+current-proof view passed all 21 conditions, including dependency versions and
+ledger/reconciliation versions. That later observation does not prove the failed
+transaction saw the same conditions; the outer lease/filter checks and transaction
+timing remain under investigation. The 06:50:20 QRZ-only diagnostic stopped in
+its SQL validation before any QRZ request. It supplied no absence evidence and
+made no database mutation; seven controls remained closed and attempts, stage
+guards and cutovers stayed zero.

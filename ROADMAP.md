@@ -8,8 +8,8 @@ The separate, default-disabled QRZ first-insert capability is deployed. It retai
 mandatory source proofs while excluding source-wide cutovers, no-query inference,
 LoTW, replacement and corrections. It remains disabled. The policy-aware review
 audit and bounded 100-record baseline pages are deployed in `02e3dc89b99a`.
-The first production tick continued the saved cursor without errors; full source
-handoff, sustained capacity and current QRZ absence evidence remain outstanding.
+Production baseline/handoff completed at 06:35:44.881 UTC. The live source-proof
+mint failure, fresh QRZ evidence and sustained capacity remain outstanding.
 
 Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
 at 06:09:06 UTC as Worker `da7b7b70-6b7e-4cab-b9f6-f4b88f38390d`, at 100% traffic.
@@ -18,14 +18,37 @@ Independent 06:09:17–18 checks confirm healthy service, matching hashes for al
 three assets and all seven export controls closed. Health reports no active
 export mode and `sourceBoundaryVerified:false`. All 30 migrations through `0031`
 are applied. The 380 LoTW identity claims have no uncovered mappings; attempts,
-cutovers, proofs, pins and temporary guards remain zero. All 4,500 source bodies
-have incarnations, and 2,155 positive observations have no future or partial metadata.
-At 06:13:06, the all-client policy remains in backfill with 218 operations and
-2,950 QSO-stream records in the current epoch, zero ready sources and zero eligible
-source members. The first larger-page tick advanced the saved cursor twice and
-added 100 QSO-stream members in 2.977 seconds, without errors or vendor writes.
-The 398 structurally eligible QRZ routes are not ready exports: source completion,
-fresh proofs, current QRZ checks and explicit future authorization remain required.
+cutovers, proofs, pins and temporary guards were zero at release verification.
+All 4,500 source bodies had incarnations, and 2,155 positive observations had no
+future or partial metadata.
+The production baseline, forward drain and quarantine handoff completed at
+**06:35:44.881 UTC**. The policy is `ready`: all 218 operations and 4,282 QSO-stream
+records—4,500 retained rows—are members of the current epoch, with zero unseen
+retained rows. The 4,130 eligible contacts are eligible for reconciliation
+processing, not authorized exports.
+
+The 06:35:43–06:36:10 run resumed normal reconciliation: 62 contact turns and
+60 destination classifications in 27.187 seconds, with four errors and 50
+deferrals before the `database_budget` stop. It made 871 D1 calls containing
+2,179 statements; database wall time was 24.125 seconds. These are processing
+turns and classifications, not unique completed contacts or sustained capacity.
+
+The protected 06:43:26 source-proof diagnostic completed one live collection read
+and one final canonical drain for a four-dependency contact, then failed the
+atomic proof-mint guard with `proof_cohort_count` (`proof_unavailable`). No current
+proof was produced. Diagnose that predicate failure before treating the source
+path as ready for an export. All seven controls were independently verified
+closed before and after; attempts, stage guards and cutovers remained zero.
+The diagnostic made normal guarded local intake/observation writes but no upstream
+source or destination mutation. No fresh QRZ neighborhood-probe result is available
+at this checkpoint; current QRZ evidence and later explicit write authorization
+remain required.
+
+The initial larger-page runs preserved the saved cursor and existing request
+limits. Their variable page counts and D1 latency are recorded in the
+[capacity measurements](docs/capacity-plan.md#bounded-100-record-baseline-follow-up-deployed-0609-utc).
+Baseline completion does not establish sustained capacity, global purge retention
+or permission to create cutovers.
 
 At 04:51:11 UTC, current membership covered 218 operations and 1,425 QSO-stream
 records, still in backfill with zero ready sources or eligible exports. QRZ had
@@ -58,7 +81,12 @@ Timestamp/grid precision, routing and source-validity holds still require review
 
 Core feature paths, owner enrollment and service linking are implemented. The next milestone is a safe one- or two-user export trial; the full large-scale capacity plan follows separately. Production remains read-only. Linking credentials and waiting for cron do not establish export readiness. See the [personal acceptance checklist](docs/rollout-checklist.md) for exact prerequisites and the first-write packet.
 Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-character LoTW signing and the aggregate source audit are implemented, tested and deployed. Claims protect adoption, preparation and dispatch across cancellation, uncertainty, source edits and payload expiry. Historical precision holds and live vendor acceptance remain separate.
-1. **Observe deployed source proofs and the source handoff.** At
+1. **Fix and verify deployed source-proof minting.** The production baseline,
+   drain and quarantine handoff is complete, with all 4,500 retained rows witnessed
+   and 4,130 contacts eligible for reconciliation. The 06:43 diagnostic collected
+   fresh dependencies and completed its final drain, but the atomic mint failed
+   with `proof_cohort_count`; preserve that guard while diagnosing the mismatch.
+   No proof or export authority resulted. At
    02:41:09 UTC, two complete 4,500-record all-client inventories matched each
    other and Ferry exactly. HaLo's stable differences remain 13 additional
    server contacts, 3,247 server stamps and 180 unknown versions. At 02:42:27,
@@ -89,7 +117,7 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    It cannot grant source-wide cutovers, no-query inference, LoTW, replacements or
    corrections. Keep `SOURCE_BOUNDARY_VERIFIED=false`; universal UUID, tombstone
    and purge guarantees remain unproved. This completes the permission split,
-   not source completeness or live vendor acceptance.
+   not successful live proof minting or vendor acceptance.
 3. **Observe integrated QRZ coverage and review an eligible cohort.** History
    fallback and fresh pre-write collision checks are implemented and deployed.
    History requires two matching complete bounded covers; cached metadata only
@@ -223,9 +251,10 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 - [x] Coalesce destination-relevant changes per contact. Set the default quiet period to 30 minutes and poll every five minutes; expose a 20–60-minute setting.
 - [x] Preserve temporary source/context data only where necessary for delayed delivery or reread limitations. An operation edit can trigger a bounded reread; a template edit cannot.
 - [x] Batch source-page metadata/checkpoint access and share operation/event ciphertext reads within a bounded contact batch; validate atomic rollback and complete projection locally.
-- [x] Implement immutable short-lived source proofs, mandatory staging/dispatch pins and post-admission validation. The release is deployed with 1,131 tests passing; production baseline handoff and scoped live acceptance remain separate.
+- [x] Implement immutable short-lived source proofs, mandatory staging/dispatch pins and post-admission validation. The release is deployed with 1,131 tests passing. Production baseline/handoff is complete; live proof minting still fails `proof_cohort_count`, and scoped vendor acceptance remains outstanding.
 - [x] Separate default-off QRZ first-insert authority from global source-boundary effects, with immutable mode pins, structural history guards and final exact-request validation. Deployed with all seven controls closed; live acceptance remains outstanding.
-- [ ] Verify larger LoFi source pages in production and reduce redundant source passes where the source contract permits. Background source pages remain 25 records.
+- [x] Verify bounded 100-record canonical baseline pages in production, including saved-cursor continuation and completed baseline/drain/quarantine handoff. Noncanonical and handoff page sizes remain unchanged.
+- [ ] Measure sustained source throughput and reduce redundant passes where the source contract permits; baseline completion is not capacity acceptance.
 
 **Acceptance:** ongoing logging does not postpone earlier stable contacts. Offline arrivals and old-contact corrections work. Location/park changes at segment boundaries affect the correct contacts; changes to unsupported LoTW narrative fields create no LoTW work.
 

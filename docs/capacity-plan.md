@@ -542,6 +542,45 @@ temporary guards remain zero. This verifies real continuation but not a sustaine
 speedup: the run used two pages despite a four-request ceiling. Investigate that
 idle stop and measure further ticks before claiming throughput acceptance.
 
+The second larger-page tick, 06:15:44–06:16:07 UTC, committed four pages and
+410 raw records, adding 400 QSO-stream members under the unchanged shared request
+allowance. At 06:18:24, current membership reached 218 operations and 3,350
+QSO-stream records, with 932 QSO-stream rows still outside the epoch. The run had
+zero errors and one budget deferral; its 23.252 seconds included 21.925 seconds
+of D1 wall time across 141 calls and 2,226 statements (1,061 ms reported SQL time).
+No attempt, cutover or temporary guard remained. The first tick was not evidence
+of a fixed two-page cap; empty-incomplete responses can intentionally yield, but
+current aggregate telemetry cannot prove the specific cause of that first stop.
+Two runs do not establish sustained import capacity or completed source handoff.
+
+The next tick, 06:21:04–06:22:39, reached the soft deadline after three pages,
+310 raw records and 300 new QSO-stream members. It had no errors or deferrals.
+D1 RPC wall time was 86.520 seconds across 96 calls/1,670 statements; 877 ms of
+SQL timing was available for 1,625 statements. The 06:25:43–58 tick then returned
+to four pages/410 records and 400 new members in 15.419 seconds, with no errors
+and one budget deferral. At 06:26:33, 4,050 QSO-stream rows were current members
+and 232 remained. These runs show useful larger-page progress and substantial
+latency variation, not a fixed service rate.
+
+The 06:30:44–06:31:05 run committed four pages and 237 raw records, adding
+232 QSO-stream members and reaching quarantine. At 06:35:44.881 the normal
+forward drain and quarantine handoff reached `ready`, with all 218 operations
+and 4,282 QSO-stream rows in the current epoch and zero unseen retained rows.
+The same scheduler turn resumed reconciliation: 62 contact turns and 60
+destination classifications in 27.187 seconds, with four errors and 50 deferrals
+before the database budget stop. It made 871 D1 calls/2,179 statements and spent
+24.125 seconds in D1 wall time. This completes the baseline observation; it does
+not establish a sustained classification rate or export readiness.
+
+Next attribute D1 latency by operation (`batch`, `first`, `all`, `run`, `raw`),
+including aggregate count, wall time, maximum and fixed latency buckets, and time
+scheduler selection/admission/lease work. No SQL, parameters or identifiers are
+needed. The slow tick spent only 22.243 seconds in source polling; roughly 48.7
+seconds sat outside named stage timers. Statement counts are not network-call
+counts, and missing SQL metadata prevents labeling all RPC wall time as network
+latency. Simply enabling [Worker placement](https://developers.cloudflare.com/workers/configuration/placement/#review-limitations)
+does not accelerate the scheduled handler: placement applies to fetch handlers.
+
 At four full 100-row QSO pages per five minutes, the ideal single-stream floor
 would be 50 minutes for 4,000 rows or 41 hours 40 minutes for 200,000 (about 1.7
 days). These are arithmetic lower bounds, not measured service guarantees; events,

@@ -16,14 +16,37 @@ Independent 06:09:17–18 checks confirm healthy service, matching hashes for al
 three assets and all seven export controls closed. Health reports no active
 export mode and `sourceBoundaryVerified:false`. All 30 migrations through `0031`
 are applied. The 380 LoTW identity claims have no uncovered mappings; attempts,
-cutovers, proofs, pins and temporary guards remain zero. All 4,500 source bodies
-have incarnations, and 2,155 positive observations have no future or partial metadata.
-At 06:13:06, the all-client policy remains in backfill with 218 operations and
-2,950 QSO-stream records in the current epoch, zero ready sources and zero eligible
-source members. The first larger-page tick advanced the saved cursor twice and
-added 100 QSO-stream members in 2.977 seconds, without errors or vendor writes.
-The 398 structurally eligible QRZ routes are not ready exports: source completion,
-fresh proofs, current QRZ checks and explicit future authorization remain required.
+cutovers, proofs, pins and temporary guards were zero at release verification.
+All 4,500 source bodies had incarnations, and 2,155 positive observations had no
+future or partial metadata.
+The production baseline, forward drain and quarantine handoff completed at
+**06:35:44.881 UTC**. The policy is `ready`: all 218 operations and 4,282 QSO-stream
+records—4,500 retained rows—are members of the current epoch, with zero unseen
+retained rows. The 4,130 eligible contacts are eligible for reconciliation
+processing, not authorized exports.
+
+The 06:35:43–06:36:10 run resumed normal reconciliation: 62 contact turns and
+60 destination classifications in 27.187 seconds, with four errors and 50
+deferrals before the `database_budget` stop. It made 871 D1 calls containing
+2,179 statements; database wall time was 24.125 seconds. These are processing
+turns and classifications, not unique completed contacts or sustained capacity.
+
+The protected 06:43:26 source-proof diagnostic completed one live collection read
+and one final canonical drain for a four-dependency contact, then failed the
+atomic proof-mint guard with `proof_cohort_count` (`proof_unavailable`). No current
+proof was produced. Diagnose that predicate failure before treating the source
+path as ready for an export. All seven controls were independently verified
+closed before and after; attempts, stage guards and cutovers remained zero.
+The diagnostic made normal guarded local intake/observation writes but no upstream
+source or destination mutation. No fresh QRZ neighborhood-probe result is available
+at this checkpoint; current QRZ evidence and later explicit write authorization
+remain required.
+
+The initial larger-page runs preserved the saved cursor and existing request
+limits. Their variable page counts and D1 latency are recorded in the
+[capacity measurements](capacity-plan.md#bounded-100-record-baseline-follow-up-deployed-0609-utc).
+Baseline completion does not establish sustained capacity, global purge retention
+or permission to create cutovers.
 
 At 04:51:11 UTC, policy membership covered 218 operations and 1,425 QSO-stream
 records, still in backfill with no ready source or eligible export. QRZ had 36
@@ -54,14 +77,14 @@ Source review separately includes eight test contacts and one blocked contact.
 Waiting for cron advances available inventory and retry work; it does not approve
 ambiguous identities, lower-precision locations or missing routes.
 
-| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                          |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed. |
-| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                              |
-| Source boundary           | Two inventories and a bounded forward sample match Ferry. The deployed policy is still in backfill. Mandatory exact-dependency source proofs are deployed; production handoff and current trial evidence remain outstanding. These proofs do not establish global purge/replay guarantees.                           |
-| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                             |
-| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Historical lower-precision associations and live ARRL acceptance remain unproved.                                                                                                     |
-| First vendor writes       | The latest instruction to keep exports disabled supersedes the earlier one- or two-contact trial authorization. No write or actual trial may occur until the owner changes that instruction. The authority split is deployed. Exact scope, source completion, fresh evidence and backup remain required.             |
+| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                                             |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed.                    |
+| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                                                 |
+| Source boundary           | Two inventories and a bounded forward sample match Ferry. Production baseline/handoff is ready with all 4,500 retained rows witnessed. The live proof mint still fails `proof_cohort_count` after collection/drain; successful current proof and fresh vendor evidence remain required. Global purge/replay guarantees remain unproved. |
+| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                                                |
+| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Historical lower-precision associations and live ARRL acceptance remain unproved.                                                                                                                        |
+| First vendor writes       | The latest instruction to keep exports disabled supersedes the earlier one- or two-contact trial authorization. No write or actual trial may occur until the owner changes that instruction. The authority split is deployed. Exact scope, successful current source proof, fresh vendor evidence and backup remain required.           |
 
 ## Finish reconciliation and review exceptions
 
@@ -147,7 +170,8 @@ followed by signed delivery test fixture fixes in `ce238cdcfea72ed5cbc7b624ec6a7
 The [first CI run](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40055506398)
 was cancelled after a leaked `workerd` process; [replacement CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40057488314)
 passed, and `ce238cdcfea7` deployed at 03:28:48 UTC with all six gates closed.
-Observe production baseline/drain/quarantine completion after activation.
+Production baseline/drain/quarantine completion was observed at 06:35:44.881 UTC;
+the live proof-mint failure described above remains unresolved.
 The transitional policy fences are dormant where no policy row exists; main
 exports must require current ready policy membership for each exporting source.
 Fresh-positive collection, canonical witness storage, completed-drain markers,

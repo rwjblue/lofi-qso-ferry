@@ -2,6 +2,12 @@
 
 Verified 2026-10-24 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
 
+Current readiness: the source baseline/drain/quarantine handoff completed at
+06:35:44.881 UTC, covering all 4,500 retained rows with zero unseen members. The
+06:43 live source-proof diagnostic still failed at the atomic `proof_cohort_count`
+guard after collection and final drain. All seven controls remain closed; no
+export attempt, stage guard or cutover was created. Fresh QRZ evidence is pending.
+
 | Resource                 | Current value                                                                                                     |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------- |
 | Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                             |
@@ -57,14 +63,31 @@ Independent 06:09:17–18 checks confirm healthy service, matching hashes for al
 three assets and all seven export controls closed. Health reports no active
 export mode and `sourceBoundaryVerified:false`. All 30 migrations through `0031`
 are applied. The 380 LoTW identity claims have no uncovered mappings; attempts,
-cutovers, proofs, pins and temporary guards remain zero. All 4,500 source bodies
-have incarnations, and 2,155 positive observations have no future or partial metadata.
-At 06:13:06, the all-client policy remains in backfill with 218 operations and
-2,950 QSO-stream records in the current epoch, zero ready sources and zero eligible
-source members. The first larger-page tick advanced the saved cursor twice and
-added 100 QSO-stream members in 2.977 seconds, without errors or vendor writes.
-The 398 structurally eligible QRZ routes are not ready exports: source completion,
-fresh proofs, current QRZ checks and explicit future authorization remain required.
+cutovers, proofs, pins and temporary guards were zero at release verification.
+All 4,500 source bodies had incarnations, and 2,155 positive observations had no
+future or partial metadata.
+The production baseline, forward drain and quarantine handoff completed at
+**06:35:44.881 UTC**. The policy is `ready`: all 218 operations and 4,282 QSO-stream
+records—4,500 retained rows—are members of the current epoch, with zero unseen
+retained rows. The 4,130 eligible contacts are eligible for reconciliation
+processing, not authorized exports.
+
+The 06:35:43–06:36:10 run resumed normal reconciliation: 62 contact turns and
+60 destination classifications in 27.187 seconds, with four errors and 50
+deferrals before the `database_budget` stop. It made 871 D1 calls containing
+2,179 statements; database wall time was 24.125 seconds. These are processing
+turns and classifications, not unique completed contacts or sustained capacity.
+
+The protected 06:43:26 source-proof diagnostic completed one live collection read
+and one final canonical drain for a four-dependency contact, then failed the
+atomic proof-mint guard with `proof_cohort_count` (`proof_unavailable`). No current
+proof was produced. Diagnose that predicate failure before treating the source
+path as ready for an export. All seven controls were independently verified
+closed before and after; attempts, stage guards and cutovers remained zero.
+The diagnostic made normal guarded local intake/observation writes but no upstream
+source or destination mutation. No fresh QRZ neighborhood-probe result is available
+at this checkpoint; current QRZ evidence and later explicit write authorization
+remain required.
 
 Canonical all-client backfill now requests up to 100 records per stream with
 strict response, preparation and atomic checkpoint bounds. A deterministic size
@@ -78,9 +101,15 @@ No new migration was required.
 The first scheduled run, 06:10:43–46 UTC, processed two pages and 105 raw records,
 with 84 D1 calls, 631 statements, 2.671 seconds of database wall time and 447 ms
 reported SQL time. It stopped idle without errors or budget deferrals. This
-confirms saved-cursor continuation, not four-page sustained throughput; the early
-stop remains under investigation. Source handoff and fresh exact QRZ checks are
-still required. No attempt or cutover was created.
+confirmed saved-cursor continuation, not four-page sustained throughput. The
+subsequent source handoff is recorded above; fresh source-proof minting and exact
+QRZ checks remain required. No attempt or cutover was created.
+
+The initial larger-page runs preserved the saved cursor and existing request
+limits. Their variable page counts and D1 latency are recorded in the
+[capacity measurements](capacity-plan.md#bounded-100-record-baseline-follow-up-deployed-0609-utc).
+Baseline completion does not establish sustained capacity, global purge retention
+or permission to create cutovers.
 
 ## Independent QRZ first-insert authority (2026-10-24, 05:40 UTC)
 

@@ -73,6 +73,36 @@ async function setup() {
   return { ...h, source, key, page };
 }
 const verified = { sourceBoundaryVerified: true };
+test("destination rollout scope cannot establish cutovers for other routes", async (t) => {
+  const h = await setup();
+  t.after(() => h.mf.dispose());
+  await h.page("backfill", ["old"]);
+  for (const allowedDestinationIds of [[], ["different-book"]])
+    assert.equal(
+      await establishCutovers(
+        h.store,
+        h.source,
+        { ...verified, allowedDestinationIds },
+        FIXTURE_NOW + 1,
+      ),
+      0,
+    );
+  assert.equal(
+    (await h.store
+      .statement("SELECT count(*) n FROM source_cutovers")
+      .first<{ n: number }>())!.n,
+    0,
+  );
+  assert.equal(
+    await establishCutovers(
+      h.store,
+      h.source,
+      { ...verified, allowedDestinationIds: ["destination"] },
+      FIXTURE_NOW + 2,
+    ),
+    1,
+  );
+});
 test("history remains unverified without query access and the unverified default creates no cutover", async () => {
   const h = await setup();
   try {

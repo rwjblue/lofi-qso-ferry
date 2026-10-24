@@ -12,6 +12,7 @@ const expected = {
   SOURCE_BOUNDARY_VERIFIED: 'false',
   LIVE_WRITE_AUTHORIZATION: '',
   ROLLOUT_QSO_IDS_JSON: '[]',
+  ROLLOUT_DESTINATION_IDS_JSON: '[]',
 };
 for (const [key, value] of Object.entries(expected)) {
   if (production.vars[key] !== value) throw new Error(`Refusing read-only deployment: ${key} must equal ${JSON.stringify(value)}`);

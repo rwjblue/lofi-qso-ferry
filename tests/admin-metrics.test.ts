@@ -42,6 +42,8 @@ test("empty overview reports unknown scheduler health and all gates independentl
       sourceBoundaryVerified: false,
       rolloutScopeConfigured: false,
       rolloutScope: "none",
+      destinationScopeConfigured: false,
+      destinationScope: "none",
       effective: false,
       configurationValid: true,
     });
@@ -50,9 +52,15 @@ test("empty overview reports unknown scheduler health and all gates independentl
     h.env.LIVE_WRITE_AUTHORIZATION = "I_AUTHORIZE_LIVE_VENDOR_WRITES";
     h.env.SOURCE_BOUNDARY_VERIFIED = "true";
     h.env.ROLLOUT_QSO_IDS_JSON = '["private-qso-id"]';
+    const noDestination = await getAdminOverview(h.env, now);
+    assert.equal(noDestination.gates.effective, false);
+    assert.equal(noDestination.gates.destinationScope, "none");
+    h.env.ROLLOUT_DESTINATION_IDS_JSON = '["private-destination-id"]';
     const enabled = await getAdminOverview(h.env, now);
     assert.equal(enabled.gates.effective, true);
     assert.equal(enabled.gates.rolloutScope, "limited");
+    assert.equal(enabled.gates.destinationScope, "limited");
+    assert(!JSON.stringify(enabled).includes("private-destination-id"));
     assert(!JSON.stringify(enabled).includes("private-qso-id"));
     assert(!JSON.stringify(enabled).includes("I_AUTHORIZE_LIVE_VENDOR_WRITES"));
     h.env.ROLLOUT_QSO_IDS_JSON = "broken-json-secret";

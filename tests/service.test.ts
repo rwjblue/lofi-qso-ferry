@@ -573,6 +573,7 @@ test("read-only rollout never signs or submits a due correction", async () => {
   try {
     await tick(h.env, h.fetcher, FIXTURE_NOW);
     h.env.ROLLOUT_QSO_IDS_JSON = '["q1"]';
+    h.env.ROLLOUT_DESTINATION_IDS_JSON = '["*"]';
     h.operation.grid = "FN32BB";
     h.operation.syncedAtMillis = 200;
     h.changes.operations.push(h.operation);
@@ -639,6 +640,7 @@ test("no-query LoTW permits only a durably new forward UUID after cutover, inclu
     );
     h.enable();
     h.env.ROLLOUT_QSO_IDS_JSON = '["q1","q2"]';
+    h.env.ROLLOUT_DESTINATION_IDS_JSON = '["*"]';
     await tick(h.env, h.fetcher, FIXTURE_NOW + 5 * 60000); // establish immutable cutoff before arrival
     const offline = {
       ...h.qso,
@@ -953,6 +955,7 @@ test("live delivery progresses within bounded vendor and database turns", async 
       .run();
     h.enable();
     h.env.ROLLOUT_QSO_IDS_JSON = '["*"]';
+    h.env.ROLLOUT_DESTINATION_IDS_JSON = '["*"]';
     for (let i = 1; i <= 10; i++)
       h.changes.qsos.push({
         ...h.qso,
@@ -1069,6 +1072,7 @@ test("saved historical uploads progress before inventory can exhaust the next ba
   try {
     h.enable();
     h.env.ROLLOUT_QSO_IDS_JSON = '["*"]';
+    h.env.ROLLOUT_DESTINATION_IDS_JSON = '["*"]';
     await h.store
       .statement(
         "UPDATE connections SET status='disabled' WHERE id='destination'",

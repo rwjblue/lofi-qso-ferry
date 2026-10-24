@@ -484,6 +484,7 @@ async function setup() {
     .statement(
       "UPDATE connections SET config=? WHERE kind='qrz'",
       JSON.stringify({
+        bookId: "synthetic-book",
         stationCallsign: "N0TEST/P",
         startDate: "2020-01-01",
         endDate: "2030-01-01",
@@ -1557,6 +1558,199 @@ test("rollout allowlist bounds first preparation and dispatch to the selected so
     assert.equal(h.mutations.length, 1);
   } finally {
     await h.mf.dispose();
+  }
+});
+
+test("destination rollout allowlist fences preparation and dispatch while leaving connections active", async () => {
+  const h = await setup();
+  try {
+    let calls = 0;
+    const fetcher: typeof fetch = async (input, init) => {
+      calls++;
+      return h.fetcher(input, init);
+    };
+    for (const allowedDestinationIds of [[], ["lotw-only"]]) {
+      assert.equal(
+        (
+          await prepareDue(
+            h.store,
+            h.key,
+            h.item,
+            {
+              ...gates,
+              allowedDestinationIds,
+            },
+            { fetcher, now },
+          )
+        ).reason,
+        "destination_outside_rollout_scope",
+      );
+    }
+    assert.equal(calls, 0);
+    const ready = await prepareDue(
+      h.store,
+      h.key,
+      h.item,
+      {
+        ...gates,
+        allowedDestinationIds: [h.key.destination],
+      },
+      { fetcher, now },
+    );
+    assert(ready.attemptId);
+    const preparedCalls = calls;
+    for (const allowedDestinationIds of [[], ["lotw-only"]]) {
+      assert.equal(
+        (
+          await dispatchAttempt(
+            h.store,
+            "a",
+            ready.attemptId,
+            {
+              ...gates,
+              allowedDestinationIds,
+            },
+            { fetcher, now: now + 1 },
+          )
+        ).reason,
+        "destination_outside_rollout_scope",
+      );
+    }
+    assert.equal(calls, preparedCalls);
+    assert.equal(
+      (await h.store.connection("a", h.key.destination))?.status,
+      "active",
+    );
+    assert.equal(
+      (
+        await h.store
+          .statement(
+            "SELECT state FROM attempt_state WHERE attempt=?",
+            ready.attemptId,
+          )
+          .first<{ state: string }>()
+      )?.state,
+      "prepared",
+    );
+    assert.equal(
+      (
+        await dispatchAttempt(
+          h.store,
+          "a",
+          ready.attemptId,
+          {
+            ...gates,
+            allowedDestinationIds: [h.key.destination],
+          },
+          { fetcher, now: now + 2 },
+        )
+      ).state,
+      "delivered",
+    );
+    assert.equal(h.mutations.length, 1);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("QRZ preparation and final dispatch independently verify a positive covering fallback", async (t) => {
+  for (const scenario of [
+    "deliver",
+    "collision",
+    "scope changed",
+    "scope changed before write",
+  ] as const) {
+    await t.test(scenario, async () => {
+      const h = await setup();
+      try {
+        let covers = 0;
+        let statuses = 0;
+        let targeted = 0;
+        const connection = h.store.connection.bind(h.store);
+        h.store.connection = async (tenant, id) => {
+          if (
+            scenario === "scope changed before write" &&
+            covers === 2 &&
+            id === "destination"
+          )
+            await h.store
+              .statement(
+                "UPDATE connections SET config=json_set(config,'$.bookId','changed-after-read') WHERE tenant='a' AND id='destination'",
+              )
+              .run();
+          return connection(tenant, id);
+        };
+        const fetcher: typeof fetch = async (input, init) => {
+          const body = new URLSearchParams(String(init?.body));
+          if (body.get("ACTION") === "STATUS") {
+            statuses++;
+            return new Response(
+              new URLSearchParams({
+                RESULT: "OK",
+                BOOKID: "synthetic-book",
+                CALLSIGN: "N0TEST/P",
+                START_DATE: "2020-01-01",
+                END_DATE: "2030-01-01",
+              }).toString(),
+            );
+          }
+          if (body.get("ACTION") === "FETCH") {
+            if (body.get("OPTION")?.includes("CALL:")) {
+              targeted++;
+              return new Response("RESULT=FAIL&COUNT=0");
+            }
+            covers++;
+            if (scenario === "scope changed" && covers === 2) {
+              await h.store
+                .statement(
+                  "UPDATE connections SET config=json_set(config,'$.bookId','changed-book') WHERE tenant='a' AND id='destination'",
+                )
+                .run();
+            }
+            const remote = {
+              ...contactAdif(h.item),
+              APP_QRZLOG_LOGID: "900",
+              CALL:
+                scenario === "collision" && covers === 2
+                  ? h.item.call
+                  : "K1OTHER",
+            };
+            return new Response(
+              new URLSearchParams({
+                RESULT: "OK",
+                COUNT: "1",
+                ADIF: serializeAdifRecord(remote),
+              }).toString(),
+            );
+          }
+          return h.fetcher(input, init);
+        };
+        const ready = await prepareDue(h.store, h.key, h.item, gates, {
+          now,
+          fetcher,
+        });
+        assert.equal(ready.state, "prepared");
+        assert(ready.attemptId);
+        assert.equal(covers, 1);
+        const result = await dispatchAttempt(
+          h.store,
+          "a",
+          ready.attemptId,
+          gates,
+          { now: now + 1, fetcher },
+        );
+        assert.equal(
+          result.state,
+          scenario === "deliver" ? "delivered" : "rejected",
+        );
+        assert.equal(h.mutations.length, scenario === "deliver" ? 1 : 0);
+        assert.equal(covers, 2);
+        assert.equal(statuses, 2);
+        assert.equal(targeted, 2);
+      } finally {
+        await h.mf.dispose();
+      }
+    });
   }
 });
 test("prepared narrative context exposes HaLo contact aliases and frozen operation dates", async () => {

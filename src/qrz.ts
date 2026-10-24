@@ -1,5 +1,8 @@
 import { type AdifRecord, parseAdif, serializeAdifRecord } from "./adif.ts";
-import { canonical } from "./security.ts";
+import {
+  type QrzCoveringProgress,
+  validateQrzCoveringPage,
+} from "./qrz-covering.ts";
 import { VendorDeferredError } from "./vendor-requests.ts";
 export const QRZ_ENDPOINT = "https://logbook.qrz.com/api";
 export class QrzError extends Error {
@@ -171,6 +174,16 @@ export interface QrzOptions {
   writesEnabled?: boolean;
   replacementContractVerified?: boolean;
   beforeWrite?: () => Promise<boolean>;
+  /** Only current, caller-fenced book scope may recover ambiguous FETCH results. */
+  neighborhoodFallback?: {
+    book: QrzBook;
+    selectCover: (
+      record: AdifRecord,
+      target: [string, string],
+    ) => Promise<[string, string] | null>;
+    isCurrent: () => Promise<boolean>;
+    now?: () => number;
+  };
 }
 export interface QrzFetchOptions {
   afterLogId?: number;
@@ -300,15 +313,15 @@ export class QrzClient {
       );
     return data;
   }
-  async status(): Promise<QrzResponse> {
-    const result = await this.request("STATUS");
+  async status(signal?: AbortSignal): Promise<QrzResponse> {
+    const result = await this.request("STATUS", {}, signal);
     if (result.RESULT !== "OK")
       throw new QrzError("rejected", "QRZ status was rejected");
     return result;
   }
   /** STATUS field names are vendor-dependent. Missing identity evidence blocks linking. */
-  async verifyBook(expected: QrzBook): Promise<QrzBook> {
-    const status = await this.status();
+  async verifyBook(expected: QrzBook, signal?: AbortSignal): Promise<QrzBook> {
+    const status = await this.status(signal);
     const data = {
       ...status,
       ...Object.fromEntries(new URLSearchParams(status.DATA ?? "")),
@@ -504,15 +517,14 @@ export class QrzClient {
       return at;
     };
     const records: AdifRecord[] = [];
-    let retainedBytes = 0;
-    let anchor: { id: number; record: string } | undefined;
+    let progress: QrzCoveringProgress | undefined;
     for (let pages = 1; pages <= 4; pages++) {
       check();
       let page: QrzPage;
       try {
         page = await this.fetchPage({
           between: cover,
-          afterLogId: anchor?.id ?? 0,
+          afterLogId: progress?.anchor?.id ?? 0,
           max: 250,
           signal: deadline,
         });
@@ -522,76 +534,148 @@ export class QrzClient {
         throw error;
       }
       check();
-      if (!Number.isSafeInteger(page.count))
-        throw new QrzError("protocol", "Invalid QRZ covering read count");
-      if (!page.records.length)
-        throw new QrzError(
-          "protocol",
-          "QRZ covering read has no positive anchor",
-        );
-      let previousId = -1;
-      for (const record of page.records) {
-        const id = Number(record.APP_QRZLOG_LOGID);
-        if (id <= previousId)
-          throw new QrzError("protocol", "QRZ covering read order changed");
-        previousId = id;
-        adifInstant(record);
-        if (
-          ["CALL", "BAND", "MODE"].some(
-            (field) => !/^[A-Za-z0-9/.-]+$/.test(record[field] ?? ""),
-          ) ||
-          record.STATION_CALLSIGN?.toUpperCase() !==
-            options.stationCallsign.toUpperCase() ||
-          record.QSO_DATE < cover[0].replaceAll("-", "") ||
-          record.QSO_DATE > cover[1].replaceAll("-", "")
-        )
-          throw new QrzError("protocol", "QRZ covering read scope mismatch");
-      }
-      if (
-        anchor &&
-        (Number(page.records[0].APP_QRZLOG_LOGID) !== anchor.id ||
-          canonical(page.records[0]) !== anchor.record)
-      )
-        throw new QrzError("protocol", "QRZ covering read anchor changed");
-      for (const record of page.records.slice(anchor ? 1 : 0)) {
-        retainedBytes += new TextEncoder().encode(canonical(record)).length;
-        if (retainedBytes > 2 * 1024 * 1024)
-          throw new QrzError(
-            "blocked",
-            "QRZ covering read retained record bound reached",
-          );
-        records.push(record);
-      }
+      const validated = await validateQrzCoveringPage(
+        page,
+        cover,
+        options.stationCallsign,
+        progress,
+      );
+      progress = validated.progress;
+      records.push(...validated.records);
       const completedAt = check();
-      if (page.records.length < 250)
+      if (validated.complete)
         return { target, cover, records, pages, startedAt, completedAt };
-      const last = page.records[page.records.length - 1];
-      const highest = Number(last.APP_QRZLOG_LOGID);
-      if (anchor && highest <= anchor.id)
-        throw new QrzError(
-          "protocol",
-          "QRZ covering read cursor did not advance",
-        );
-      anchor = { id: highest, record: canonical(last) };
     }
     throw new QrzError("blocked", "QRZ covering read page limit reached");
   }
+  /**
+   * Fresh collision read: at most four targeted FETCHs, then (only for the
+   * documented ambiguous-empty shape) STATUS and four covering FETCHs. Both
+   * scans share one 60-second deadline and return no partial evidence.
+   */
   async findNeighborhood(record: AdifRecord): Promise<AdifRecord[]> {
     const at = adifInstant(record);
     const radius = 30 * 60000 + 59000;
     const date = (ms: number) => new Date(ms).toISOString().slice(0, 10);
-    const found: AdifRecord[] = [];
-    for await (const page of this.inventory({
-      call: record.CALL,
-      band: record.BAND,
-      between: [date(at - radius), date(at + radius)],
-    }))
-      found.push(
-        ...page.records.filter(
-          (other) => Math.abs(adifInstant(other) - at) <= radius,
-        ),
+    const target: [string, string] = [date(at - radius), date(at + radius)];
+    const fallback = this.options.neighborhoodFallback;
+    const now = fallback?.now ?? Date.now;
+    const startedAt = now();
+    if (!Number.isSafeInteger(startedAt))
+      throw new QrzError("protocol", "Invalid QRZ neighborhood clock");
+    const deadlineAt = startedAt + 60_000;
+    const deadline = AbortSignal.timeout(60_000);
+    const check = async () => {
+      const current = now();
+      if (!Number.isSafeInteger(current) || current < startedAt)
+        throw new QrzError("protocol", "QRZ neighborhood clock changed");
+      if (current >= deadlineAt || deadline.aborted)
+        throw new QrzError("blocked", "QRZ neighborhood deadline reached");
+      if (fallback && !(await fallback.isCurrent()))
+        throw new QrzError("blocked", "QRZ neighborhood scope changed");
+      if (now() >= deadlineAt || deadline.aborted)
+        throw new QrzError("blocked", "QRZ neighborhood deadline reached");
+    };
+    const matching = (other: AdifRecord) =>
+      other.CALL?.toUpperCase() === record.CALL?.toUpperCase() &&
+      other.BAND?.toUpperCase() === record.BAND?.toUpperCase() &&
+      Math.abs(adifInstant(other) - at) <= radius;
+    let found: AdifRecord[] = [];
+    let afterLogId = 0;
+    let bytes = 0;
+    try {
+      for (let pages = 0; pages < 4; pages++) {
+        await check();
+        const page = await this.fetchPage({
+          call: record.CALL,
+          band: record.BAND,
+          between: target,
+          afterLogId,
+          max: 250,
+          signal: deadline,
+        });
+        await check();
+        if (!Number.isSafeInteger(page.count))
+          throw new QrzError("protocol", "Invalid QRZ neighborhood count");
+        if (page.records.length) {
+          // Targeted pagination advances beyond the prior page; the covering
+          // validator is reused for scope/identity/order, without an overlap.
+          const validated = await validateQrzCoveringPage(
+            page,
+            target,
+            record.STATION_CALLSIGN,
+          );
+          bytes += validated.progress.bytes;
+          if (bytes > 2 * 1024 * 1024)
+            throw new QrzError(
+              "blocked",
+              "QRZ neighborhood retained record bound reached",
+            );
+          if (
+            page.records.some(
+              (other) =>
+                other.CALL.toUpperCase() !== record.CALL.toUpperCase() ||
+                other.BAND.toUpperCase() !== record.BAND.toUpperCase(),
+            )
+          )
+            throw new QrzError("protocol", "QRZ neighborhood filter mismatch");
+        }
+        found.push(...page.records.filter(matching));
+        if (page.nextAfterLogId === null) {
+          await check();
+          return found;
+        }
+        if (page.nextAfterLogId <= afterLogId)
+          throw new QrzError(
+            "protocol",
+            "QRZ neighborhood cursor did not advance",
+          );
+        afterLogId = page.nextAfterLogId;
+      }
+      throw new QrzError("blocked", "QRZ neighborhood page limit reached");
+    } catch (error) {
+      if (
+        !(error instanceof QrzError) ||
+        error.kind !== "rejected" ||
+        error.detail !== "ambiguous_empty_selection" ||
+        !fallback
+      )
+        throw error;
+    }
+    // A rejected targeted read supplies no coverage, including earlier pages.
+    found = [];
+    await check();
+    const book = fallback.book;
+    if (
+      !book.bookId ||
+      book.stationCallsign.toUpperCase() !==
+        record.STATION_CALLSIGN?.toUpperCase() ||
+      target[0] < validDate(book.startDate) ||
+      target[1] > validDate(book.endDate)
+    )
+      throw new QrzError(
+        "blocked",
+        "QRZ neighborhood is outside the verified book",
       );
-    return found;
+    const cover = await fallback.selectCover(record, target);
+    await check();
+    if (!cover || cover[0] < book.startDate || cover[1] > book.endDate)
+      throw new QrzError(
+        "blocked",
+        "QRZ neighborhood covering range unavailable",
+      );
+    await this.verifyBook(book, deadline);
+    await check();
+    const observed = await this.readCoveringRange({
+      target,
+      cover,
+      stationCallsign: book.stationCallsign,
+      now,
+      deadlineAt,
+      shouldContinue: () => !deadline.aborted,
+    });
+    await check();
+    return observed.records.filter(matching);
   }
   async insert(
     record: AdifRecord,

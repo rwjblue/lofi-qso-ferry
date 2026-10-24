@@ -53,15 +53,16 @@ const contextReasons = [
 const quoted = (values: string[]) =>
   values.map((value) => `'${value}'`).join(",");
 
-function gateParameters(env: Env): [number, string] {
+function gateParameters(env: Env): [number, string, string] {
   try {
     const gates = deliveryGates(env);
     return [
       exportsEffective(gates) ? 1 : 0,
       JSON.stringify(gates.allowedQsoIds),
+      JSON.stringify(gates.allowedDestinationIds),
     ];
   } catch {
-    return [0, "[]"];
+    return [0, "[]", "[]"];
   }
 }
 
@@ -75,7 +76,7 @@ interface SourceGroup {
 
 /** No payload decryption: known metadata holds are conservative, not send permission. */
 export function workloadSourceStatement(env: Env, now: number) {
-  const [enabled, scope] = gateParameters(env);
+  const [enabled, scope, destinations] = gateParameters(env);
   return env.DB.prepare(`
     WITH destination_work AS (
       SELECT l.tenant,l.source,l.qso,
@@ -97,6 +98,7 @@ export function workloadSourceStatement(env: Env, now: number) {
           WHEN l.state IN('missing_current_identity','changed','live_new') THEN CASE
             WHEN ?2=0 THEN 'exports_disabled'
             WHEN ?3!='null' AND NOT EXISTS(SELECT 1 FROM json_each(?3) WHERE value=l.qso) THEN 'rollout_scope'
+            WHEN ?4!='null' AND NOT EXISTS(SELECT 1 FROM json_each(?4) WHERE value=l.destination) THEN 'rollout_scope'
             WHEN l.due_at>?1 THEN 'quiet'
             WHEN l.reason IN('mapped_qrz_record_missing','qrz_replacement_contract_unverified','qrz_collision_ambiguous',
               'qrz_changed_identity_collision','qrz_fresh_absence_check_found_candidate','lotw_subsecond_precision_unverified',
@@ -162,7 +164,7 @@ export function workloadSourceStatement(env: Env, now: number) {
         WHEN state='blocked' AND work_reason NOT IN(${quoted(contextReasons)}) THEN 'blocked' ELSE 'held' END AS classification,
       work_reason AS reason,COUNT(*) AS count,MIN(retained_at) AS oldestRetainedAt
     FROM source_rows GROUP BY effective_priority,classification,work_reason
-  `).bind(now, enabled, scope);
+  `).bind(now, enabled, scope, destinations);
 }
 
 export function sourceWorkSummary(groups: SourceGroup[]) {

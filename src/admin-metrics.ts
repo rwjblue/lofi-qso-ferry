@@ -143,11 +143,21 @@ function gatesSummary(env: Env): AdminOverview["gates"] {
     const gates = deliveryGates(env);
     const configured =
       gates.allowedQsoIds === null || (gates.allowedQsoIds?.length ?? 0) > 0;
+    const destinationsConfigured =
+      gates.allowedDestinationIds === null ||
+      (gates.allowedDestinationIds?.length ?? 0) > 0;
     return {
       ...base,
       rolloutScopeConfigured: configured,
       rolloutScope:
         gates.allowedQsoIds === null ? "all" : configured ? "limited" : "none",
+      destinationScopeConfigured: destinationsConfigured,
+      destinationScope:
+        gates.allowedDestinationIds === null
+          ? "all"
+          : destinationsConfigured
+            ? "limited"
+            : "none",
       effective: exportsEffective(gates),
       configurationValid: true,
     };
@@ -156,6 +166,8 @@ function gatesSummary(env: Env): AdminOverview["gates"] {
       ...base,
       rolloutScopeConfigured: false,
       rolloutScope: "none",
+      destinationScopeConfigured: false,
+      destinationScope: "none",
       effective: false,
       configurationValid: false,
     };

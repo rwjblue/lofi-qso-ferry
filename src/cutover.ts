@@ -65,7 +65,10 @@ interface Destination {
 export async function establishCutovers(
   store: Store,
   source: Connection,
-  gates: Pick<DeliveryGates, "sourceBoundaryVerified">,
+  gates: Pick<
+    DeliveryGates,
+    "sourceBoundaryVerified" | "allowedDestinationIds"
+  >,
   now = Date.now(),
 ): Promise<number> {
   if (!gates.sourceBoundaryVerified || source.kind !== "lofi") return 0;
@@ -119,6 +122,11 @@ export async function establishCutovers(
   ).results;
   let established = 0;
   for (const destination of destinations) {
+    if (
+      gates.allowedDestinationIds &&
+      !gates.allowedDestinationIds.includes(destination.id)
+    )
+      continue;
     const rescan = await store
       .statement(
         "SELECT cursor,generation,updated_at FROM cursors WHERE tenant=? AND connection=? AND stream=?",

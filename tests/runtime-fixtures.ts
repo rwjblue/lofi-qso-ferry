@@ -56,6 +56,7 @@ export function fixtureEnvironment(db: D1Database): Env {
     ROLLOUT_CHECKS_PASSED: "false",
     SOURCE_BOUNDARY_VERIFIED: "false",
     ROLLOUT_QSO_IDS_JSON: "[]",
+    ROLLOUT_DESTINATION_IDS_JSON: "[]",
     KEK_V1: keys.keys["1"],
     AUTH_SECRET: "synthetic-auth-secret-32-characters",
     RESEND_API_KEY: "",
@@ -403,6 +404,7 @@ export async function schedulerFixture() {
       env.LIVE_WRITE_AUTHORIZATION = "I_AUTHORIZE_LIVE_VENDOR_WRITES";
       env.SOURCE_BOUNDARY_VERIFIED = "true";
       env.ROLLOUT_QSO_IDS_JSON = '["q1"]';
+      env.ROLLOUT_DESTINATION_IDS_JSON = '["*"]';
     };
     return {
       ...state,

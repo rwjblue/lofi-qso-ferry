@@ -158,6 +158,7 @@ test("workload distinguishes actionable inventory, gate/quiet/in-flight holds an
       LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
       SOURCE_BOUNDARY_VERIFIED: "true",
       ROLLOUT_QSO_IDS_JSON: '["*"]',
+      ROLLOUT_DESTINATION_IDS_JSON: '["*"]',
     });
     const open = await getAdminWorkload(h.env, now);
     assert.equal(open.source[0]?.ready, 1);
@@ -168,6 +169,7 @@ test("workload distinguishes actionable inventory, gate/quiet/in-flight holds an
     );
     assert(!open.heldReasons.some((row) => row.reason === "exports_disabled"));
     h.env.ROLLOUT_QSO_IDS_JSON = '["new"]';
+    h.env.ROLLOUT_DESTINATION_IDS_JSON = '["*"]';
     const scoped = await getAdminWorkload(h.env, now);
     assert.equal(
       scoped.heldReasons
@@ -175,6 +177,16 @@ test("workload distinguishes actionable inventory, gate/quiet/in-flight holds an
         .reduce((n, row) => n + row.count, 0),
       3,
     );
+    h.env.ROLLOUT_QSO_IDS_JSON = '["*"]';
+    h.env.ROLLOUT_DESTINATION_IDS_JSON = '["another-destination"]';
+    const destinationScoped = await getAdminWorkload(h.env, now);
+    assert.equal(
+      destinationScoped.heldReasons
+        .filter((row) => row.reason === "rollout_scope")
+        .reduce((n, row) => n + row.count, 0),
+      3,
+    );
+    assert.equal(destinationScoped.source[0]?.ready, 0);
     await h.db
       .prepare(
         "UPDATE cursors SET cursor='{\"complete\":false}' WHERE stream='context'",
@@ -201,6 +213,7 @@ test("identity review holds remain visible with open gates and after route or re
       LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
       SOURCE_BOUNDARY_VERIFIED: "true",
       ROLLOUT_QSO_IDS_JSON: '["*"]',
+      ROLLOUT_DESTINATION_IDS_JSON: '["*"]',
     });
     for (const reason of [
       "subsecond_export_requires_identity_claim",

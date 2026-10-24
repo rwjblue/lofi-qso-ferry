@@ -537,6 +537,10 @@ function renderOverview(data: AdminOverview) {
       `Contact scope: ${data.gates.rolloutScope}`,
       data.gates.rolloutScopeConfigured,
     ],
+    [
+      `Destination scope: ${data.gates.destinationScope}`,
+      data.gates.destinationScopeConfigured,
+    ],
     ["Configuration valid", data.gates.configurationValid],
   ] as const) {
     const row = node("div", "", "admin-gate");

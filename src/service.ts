@@ -7,6 +7,7 @@ import {
   contactReconciliationAdif,
   dispatchAttempt,
   prepareDue,
+  qrzNeighborhoodFallback,
   reconcileAttempt,
   refreshConfirmations,
 } from "./delivery.ts";
@@ -67,12 +68,21 @@ import {
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
 export function deliveryGates(env: Env): DeliveryGates {
-  const scope: unknown = JSON.parse(env.ROLLOUT_QSO_IDS_JSON || "[]");
-  if (!Array.isArray(scope) || scope.some((v) => typeof v !== "string"))
-    throw new Error("Invalid rollout scope");
+  const scope = (value: string | undefined): string[] | null => {
+    const parsed: unknown = JSON.parse(value || "[]");
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some((v) => typeof v !== "string" || !v || v.length > 256) ||
+      (parsed.includes("*") && parsed.length !== 1)
+    )
+      throw new Error("Invalid rollout scope");
+    return parsed.length === 1 && parsed[0] === "*"
+      ? null
+      : (parsed as string[]);
+  };
   return {
-    allowedQsoIds:
-      scope.length === 1 && scope[0] === "*" ? null : (scope as string[]),
+    allowedQsoIds: scope(env.ROLLOUT_QSO_IDS_JSON),
+    allowedDestinationIds: scope(env.ROLLOUT_DESTINATION_IDS_JSON),
     exportsEnabled:
       String(env.EXPORTS_ENABLED) === "true" &&
       String(env.ROLLOUT_CHECKS_PASSED) === "true",
@@ -86,7 +96,9 @@ export function exportsEffective(gates: DeliveryGates): boolean {
     gates.exportsEnabled &&
     gates.liveWriteAuthorized &&
     gates.sourceBoundaryVerified &&
-    (gates.allowedQsoIds === null || (gates.allowedQsoIds?.length ?? 0) > 0)
+    (gates.allowedQsoIds === null || (gates.allowedQsoIds?.length ?? 0) > 0) &&
+    (gates.allowedDestinationIds === null ||
+      (gates.allowedDestinationIds?.length ?? 0) > 0)
   );
 }
 export function routeMatches(
@@ -211,7 +223,10 @@ async function reconcileContact(
   if (
     inventory.state === "ready" &&
     remote.length === 0 &&
-    exportsEffective(gates)
+    exportsEffective(gates) &&
+    (!gates.allowedQsoIds || gates.allowedQsoIds.includes(key.qso)) &&
+    (!gates.allowedDestinationIds ||
+      gates.allowedDestinationIds.includes(destination.id))
   ) {
     let raw: {
       apiKey?: string;
@@ -234,6 +249,12 @@ async function reconcileContact(
     if (destination.kind === "qrz" && raw?.apiKey) {
       remote = await new QrzClient(raw.apiKey, {
         fetch: vendorFetch(store, "qrz", fetcher, { priority, now: vendorNow }),
+        neighborhoodFallback: qrzNeighborhoodFallback(
+          store,
+          source,
+          destination,
+          vendorNow,
+        ),
       }).findNeighborhood(record);
       readAccess = true;
       freshCheckComplete = true;
@@ -749,6 +770,7 @@ export async function tick(
       sourceBoundaryVerified: gates.sourceBoundaryVerified,
       exportsEffective: exportsEffective(gates),
       allowedQsoIds: gates.allowedQsoIds,
+      allowedDestinationIds: gates.allowedDestinationIds,
     }),
   );
   await pruneHistoryInventory(store, now);

@@ -3,6 +3,7 @@ import {
   normalizeAdifValue,
   serializeAdifRecord,
 } from "./adif.ts";
+import { historyCoveringRange } from "./history-inventory.ts";
 import {
   availableIdentityClaim,
   claimedAttemptCurrent,
@@ -15,6 +16,7 @@ import {
   mergeQrzCorrection,
   QrzClient,
   QrzError,
+  type QrzOptions,
   sameQrzIdentity,
 } from "./qrz.ts";
 import {
@@ -53,6 +55,7 @@ export interface DeliveryGates {
   liveWriteAuthorized: boolean;
   sourceBoundaryVerified: boolean;
   allowedQsoIds?: string[] | null;
+  allowedDestinationIds?: string[] | null;
 }
 export interface DeliveryDependencies {
   fetcher?: typeof fetch;
@@ -88,6 +91,7 @@ interface LotwCredential {
   query?: { username: string; password: string };
 }
 interface QrzConfig {
+  bookId?: string;
   stationCallsign: string;
   startDate: string;
   endDate: string;
@@ -399,15 +403,70 @@ export function templateContext(
     },
   };
 }
+/** Read authorization only; it cannot replace the final immutable-attempt fence. */
+export function qrzNeighborhoodFallback(
+  store: Store,
+  source: Connection | null | undefined,
+  destination: Connection,
+  fixedNow?: number,
+): NonNullable<QrzOptions["neighborhoodFallback"]> {
+  const config = JSON.parse(destination.config) as QrzConfig;
+  const currentTime = () => fixedNow ?? Date.now();
+  return {
+    book: {
+      bookId: config.bookId ?? "",
+      stationCallsign: config.stationCallsign,
+      startDate: config.startDate,
+      endDate: config.endDate,
+    },
+    now: currentTime,
+    selectCover: async (record, target) =>
+      source
+        ? historyCoveringRange(
+            store,
+            { source, destination, record },
+            target,
+            currentTime(),
+          )
+        : null,
+    isCurrent: async () => {
+      if (!source || source.tenant !== destination.tenant) return false;
+      const at = currentTime();
+      return Boolean(
+        await store
+          .statement(
+            "SELECT 1 n FROM accounts a JOIN connections s ON s.tenant=a.id JOIN connections d ON d.tenant=a.id JOIN private_data sp ON sp.tenant=s.tenant AND sp.connection=s.id AND sp.id=s.credential_version AND sp.kind='credential' JOIN private_data dp ON dp.tenant=d.tenant AND dp.connection=d.id AND dp.id=d.credential_version AND dp.kind='credential' WHERE a.id=? AND a.status='active' AND s.id=? AND s.kind='lofi' AND s.status='active' AND s.remote_identity=? AND sp.revoked_at IS NULL AND (sp.expires_at IS NULL OR sp.expires_at>?) AND d.id=? AND d.kind='qrz' AND d.status='active' AND d.remote_identity=? AND d.credential_version=? AND d.config=? AND dp.revoked_at IS NULL AND (dp.expires_at IS NULL OR dp.expires_at>?)",
+            destination.tenant,
+            source.id,
+            source.remote_identity,
+            at,
+            destination.id,
+            destination.remote_identity,
+            destination.credential_version,
+            destination.config,
+            at,
+          )
+          .first(),
+      );
+    },
+  };
+}
 function qrzClient(
   store: Store,
   credential: QrzCredential,
   config: QrzConfig,
   gates: DeliveryGates,
   deps: DeliveryDependencies,
+  scope: { source: Connection | null; destination: Connection },
   beforeWrite?: () => Promise<boolean>,
 ): QrzClient {
   if (!credential.apiKey) throw new Error("QRZ credential is unavailable");
+  const neighborhoodFallback = qrzNeighborhoodFallback(
+    store,
+    scope.source,
+    scope.destination,
+    deps.now,
+  );
   return new QrzClient(credential.apiKey, {
     fetch: vendorFetch(store, "qrz", deps.fetcher, {
       priority: deps.priority,
@@ -415,7 +474,10 @@ function qrzClient(
     }),
     writesEnabled: enabled(gates),
     replacementContractVerified: config.replacementContractVerified === true,
-    beforeWrite,
+    beforeWrite: async () =>
+      (await neighborhoodFallback.isCurrent()) &&
+      (beforeWrite ? await beforeWrite() : true),
+    neighborhoodFallback,
   });
 }
 function routedQrz(config: QrzConfig, contact: Contact): boolean {
@@ -483,6 +545,11 @@ export async function prepareDue(
     return { state: "blocked", reason: "test_operation_not_exported" };
   if (gates.allowedQsoIds && !gates.allowedQsoIds.includes(key.qso))
     return { state: "blocked", reason: "qso_outside_rollout_scope" };
+  if (
+    gates.allowedDestinationIds &&
+    !gates.allowedDestinationIds.includes(key.destination)
+  )
+    return { state: "blocked", reason: "destination_outside_rollout_scope" };
   const row = await store.ledger(key);
   if (row?.provenance === "adoption_conflict")
     return { state: "blocked", reason: "remote_identity_claim_conflict" };
@@ -581,7 +648,10 @@ export async function prepareDue(
     );
     if (!credential)
       return { state: "blocked", reason: "credential_unavailable" };
-    const client = qrzClient(store, credential, config, gates, deps);
+    const client = qrzClient(store, credential, config, gates, deps, {
+      source,
+      destination: connection,
+    });
     let record = structured;
     if (row.narrative !== "remote_preserved") {
       const version = await activeTemplate(store, key, row.template_version);
@@ -1011,6 +1081,11 @@ export async function dispatchAttempt(
     return { state: "blocked", reason: "qso_outside_rollout_scope" };
   if (!data)
     return { state: "blocked", reason: "attempt_or_connection_unavailable" };
+  if (
+    gates.allowedDestinationIds &&
+    !gates.allowedDestinationIds.includes(data.attempt.destination)
+  )
+    return { state: "blocked", reason: "destination_outside_rollout_scope" };
   const key = { tenant, ...data.attempt };
   if (
     isTestCallsign(
@@ -1117,6 +1192,10 @@ export async function dispatchAttempt(
         JSON.parse(data.connection.config) as QrzConfig,
         gates,
         deps,
+        {
+          source: await store.connection(tenant, data.attempt.source),
+          destination: data.connection,
+        },
         async () => {
           const current = await store.connection(
             tenant,
@@ -1140,6 +1219,8 @@ export async function dispatchAttempt(
             enabled(gates) &&
             current?.status === "active" &&
             current.credential_version === data.attempt.credential_version &&
+            current.remote_identity === data.connection.remote_identity &&
+            current.config === data.connection.config &&
             activeSource?.status === "active" &&
             Boolean(liveLease) &&
             (await claimedAttemptCurrent(
@@ -1458,6 +1539,10 @@ export async function reconcileAttempt(
           sourceBoundaryVerified: false,
         },
         deps,
+        {
+          source: await store.connection(tenant, data.attempt.source),
+          destination: data.connection,
+        },
       );
       const result = reconcileQrzAttempt(
         data.payload.record,

@@ -48,6 +48,7 @@ async function setup() {
     ROLLOUT_CHECKS_PASSED: "false",
     SOURCE_BOUNDARY_VERIFIED: "false",
     ROLLOUT_QSO_IDS_JSON: "[]",
+    ROLLOUT_DESTINATION_IDS_JSON: "[]",
     LIVE_WRITE_AUTHORIZATION: "",
   } as Env;
   return { db, mf, env };

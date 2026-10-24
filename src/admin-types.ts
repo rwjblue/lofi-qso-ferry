@@ -150,6 +150,8 @@ export interface AdminOverview {
     sourceBoundaryVerified: boolean;
     rolloutScopeConfigured: boolean;
     rolloutScope: "none" | "limited" | "all";
+    destinationScopeConfigured: boolean;
+    destinationScope: "none" | "limited" | "all";
     effective: boolean;
     configurationValid: boolean;
   };

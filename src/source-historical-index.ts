@@ -122,20 +122,31 @@ async function importIndexSecret(
   );
   return { key, keyId: await sign(key, ["key-id", tenant]) };
 }
+export class SourceHistoricalIndexKeyUnavailableError extends Error {
+  constructor() {
+    super("source_historical_key_unavailable");
+    this.name = "SourceHistoricalIndexKeyUnavailableError";
+  }
+}
 async function decodeKey(
   store: Store,
   tenant: string,
   state: Pick<State, "key_id" | "key_envelope">,
 ) {
-  if (!state.key_envelope) throw new Error("source_historical_key_unavailable");
-  const envelope = JSON.parse(state.key_envelope) as Envelope;
-  const key = await importIndexSecret(
-    await open<unknown>(envelope, keyIdentity(tenant), store.keys),
-    tenant,
-  );
-  if (key.keyId !== state.key_id)
-    throw new Error("source_historical_key_mismatch");
-  return { ...key, envelope };
+  // Only envelope/crypto failures are deferrable. Database operations remain
+  // outside this boundary so missing schema or failed CAS is never concealed.
+  try {
+    if (!state.key_envelope) throw new Error("missing");
+    const envelope = JSON.parse(state.key_envelope) as Envelope;
+    const key = await importIndexSecret(
+      await open<unknown>(envelope, keyIdentity(tenant), store.keys),
+      tenant,
+    );
+    if (key.keyId !== state.key_id) throw new Error("mismatch");
+    return { ...key, envelope };
+  } catch {
+    throw new SourceHistoricalIndexKeyUnavailableError();
+  }
 }
 /** Stable tenant secret: KEK rotation rewraps it without changing archived buckets.
  * Initialization is CAS; a losing worker reloads the winner, never publishes its key.

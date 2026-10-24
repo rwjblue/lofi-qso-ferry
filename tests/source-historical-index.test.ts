@@ -9,6 +9,7 @@ import {
   backfillSourceHistoricalIndex,
   ensureSourceHistoricalIndex,
   lookupSourceHistoricalIndex,
+  SourceHistoricalIndexKeyUnavailableError,
   sourceHistoricalIndexGuard,
   sourceHistoricalIndexKey,
   sourceHistoricalPublication,
@@ -761,4 +762,173 @@ test("normal repair recovers an unindexed purged body once, then preserves the r
     0,
   );
   assert.equal((await lookup(store)).rows[0].qso, "legacy-resolved");
+});
+
+test("unreadable historical key defers indexing while canonical source checkpoints still commit", async (t) => {
+  const h = await fixture(t);
+  await backfillSourceHistoricalIndex(h.store, "a"); // Stable index secret wrapped by KEK1.
+  const current = new Store(h.db, {
+    active: "2",
+    keys: { "2": keys.keys["2"] },
+  });
+  await current
+    .statement(
+      "UPDATE connections SET config=?,remote_identity='source',credential_version='current-credential' WHERE tenant='a' AND id='source'",
+      JSON.stringify({ accountId: "source" }),
+    )
+    .run();
+  await (
+    await current.putPrivate(
+      "a",
+      "source",
+      "current-credential",
+      "credential",
+      { key: "browser:fixture", secret: "fixture", token: "fixture" },
+    )
+  ).run();
+  const source = (await current.connection("a", "source"))!;
+  await assert.rejects(
+    () => sourceHistoricalIndexKey(current, "a"),
+    (error) => {
+      assert.ok(error instanceof SourceHistoricalIndexKeyUnavailableError);
+      assert.equal(error.message, "source_historical_key_unavailable");
+      assert.equal(error.cause, undefined);
+      return true;
+    },
+  );
+  const raw = qso("new-current"),
+    now = Date.now();
+  const result = await pollSource(
+    current,
+    source,
+    async () =>
+      new Response(
+        JSON.stringify({
+          account: { uuid: "source" },
+          operations: [],
+          qsos: [raw],
+          meta: { operations: { records_left: 0 }, qsos: { records_left: 0 } },
+        }),
+      ),
+    now,
+    "sync",
+    now - 300000,
+  );
+  assert.equal(result.records, 1);
+  const work = await current
+    .statement(
+      "SELECT private_id,synced_at FROM source_work WHERE id='new-current'",
+    )
+    .first<{ private_id: string; synced_at: number }>();
+  assert.equal(work?.synced_at, 100);
+  assert.deepEqual(
+    await current.private("a", "source", work!.private_id, "source"),
+    raw,
+  );
+  assert.equal(
+    await current
+      .statement(
+        "SELECT generation FROM cursors WHERE tenant='a' AND connection='source' AND stream='sync'",
+      )
+      .first<number>("generation"),
+    2, // Policy activation, then the actual canonical page checkpoint.
+  );
+  assert.equal(
+    await current
+      .statement(
+        "SELECT dirty FROM source_historical_index WHERE qso='new-current'",
+      )
+      .first<number>("dirty"),
+    1,
+  );
+  assert.equal((await lookup(current)).reason, "index_key_unavailable");
+  for (const table of ["attempts", "ledger"])
+    assert.equal(
+      await current
+        .statement(`SELECT count(*) n FROM ${table}`)
+        .first<number>("n"),
+      0,
+    );
+  const restored = new Store(h.db, { ...keys, active: "2" });
+  assert.equal(
+    (await backfillSourceHistoricalIndex(restored, "a")).published,
+    1,
+  );
+  assert.equal((await lookup(current)).rows[0].qso, "new-current"); // Successful rewrap makes KEK2-only lookup usable.
+});
+
+test("historical index schema errors remain fatal to intake and cannot publish a checkpoint", async (t) => {
+  const { store } = await fixture(t);
+  await store
+    .statement(
+      "UPDATE connections SET config=?,remote_identity='source',credential_version='current-credential' WHERE tenant='a' AND id='source'",
+      JSON.stringify({ accountId: "source" }),
+    )
+    .run();
+  await (
+    await store.putPrivate("a", "source", "current-credential", "credential", {
+      key: "browser:fixture",
+      secret: "fixture",
+      token: "fixture",
+    })
+  ).run();
+  const source = (await store.connection("a", "source"))!;
+  const schemaFailure = new Error(
+    "D1_ERROR: no such table: source_historical_state",
+  );
+  const broken = new Proxy(store, {
+    get(target, property, receiver) {
+      if (property === "statement")
+        return (sql: string, ...params: (string | number | null)[]) => {
+          if (sql.startsWith("SELECT key_id,key_envelope")) throw schemaFailure;
+          return target.statement(sql, ...params);
+        };
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const raw = qso("must-not-commit"),
+    now = Date.now();
+  await assert.rejects(
+    () =>
+      pollSource(
+        broken,
+        source,
+        async () =>
+          new Response(
+            JSON.stringify({
+              account: { uuid: "source" },
+              operations: [],
+              qsos: [raw],
+              meta: {
+                operations: { records_left: 0 },
+                qsos: { records_left: 0 },
+              },
+            }),
+          ),
+        now,
+        "repair",
+        now - 300000,
+      ),
+    (error) => error === schemaFailure,
+  );
+  assert.equal(
+    await store
+      .statement(
+        "SELECT count(*) n FROM source_work WHERE id='must-not-commit'",
+      )
+      .first<number>("n"),
+    0,
+  );
+  assert.equal(
+    await store
+      .statement("SELECT count(*) n FROM cursors WHERE stream='repair'")
+      .first<number>("n"),
+    0,
+  );
+  assert.equal(
+    await store
+      .statement("SELECT count(*) n FROM source_historical_index")
+      .first<number>("n"),
+    0,
+  );
 });

@@ -21,6 +21,7 @@ import {
 import { openSourceCredentials } from "./source-credentials.ts";
 import {
   type SourceHistoricalIndexKey,
+  SourceHistoricalIndexKeyUnavailableError,
   sourceHistoricalIndexKey,
   sourceHistoricalPublication,
 } from "./source-historical-index.ts";
@@ -76,7 +77,7 @@ type SourceVersion = Pick<
   historical_published: number;
 };
 interface PageMetadata {
-  historicalKey: SourceHistoricalIndexKey;
+  historicalKey: SourceHistoricalIndexKey | null;
   records: Map<string, SourceVersion>;
   resolved: Set<string>;
 }
@@ -92,10 +93,20 @@ async function pageMetadata(
   const keys = groups.flatMap(([kind, records]) =>
     records.map((raw) => [kind, String(raw.uuid)]),
   );
+  let historicalKey: SourceHistoricalIndexKey | null;
+  try {
+    historicalKey = await sourceHistoricalIndexKey(store, connection.tenant);
+  } catch (error) {
+    if (!(error instanceof SourceHistoricalIndexKeyUnavailableError))
+      throw error;
+    // Keep canonical intake independent of historical comparison. Database
+    // triggers leave changed/new index rows dirty until the key is recoverable.
+    historicalKey = null;
+  }
   const metadata: PageMetadata = {
     records: new Map(),
     resolved: new Set(),
-    historicalKey: await sourceHistoricalIndexKey(store, connection.tenant),
+    historicalKey,
   };
   // JSON bindings avoid D1's parameter ceiling; chunking bounds each read even
   // when a source unexpectedly returns more than the requested page size.
@@ -1411,7 +1422,12 @@ async function sourceStatements(
       );
   };
   const publish = async (privateId: string, bodyVersion: string | null) => {
-    if (kind === "qso" && !isEventRecord(raw) && !isSourceDeleted(raw))
+    if (
+      metadata.historicalKey &&
+      kind === "qso" &&
+      !isEventRecord(raw) &&
+      !isSourceDeleted(raw)
+    )
       statements.push(
         ...(await sourceHistoricalPublication(
           store,
@@ -1464,6 +1480,7 @@ async function sourceStatements(
   // their raw record restores the body once through the usual guarded path;
   // already-published archives retain the cheap resolved replay shortcut.
   const recoverHistoricalKey =
+    metadata.historicalKey &&
     kind === "qso" &&
     !isEventRecord(raw) &&
     !isSourceDeleted(raw) &&
@@ -1609,7 +1626,8 @@ async function sourceStatements(
     body_version: null,
     body_expires_at: expires,
     body_revoked_at: null,
-    historical_published: kind === "qso" && !event && !deleted ? 1 : 0,
+    historical_published:
+      metadata.historicalKey && kind === "qso" && !event && !deleted ? 1 : 0,
     expires_at: expires,
     priority,
     operation_id: op,

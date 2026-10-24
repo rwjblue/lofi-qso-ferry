@@ -1,5 +1,14 @@
 # Implementation progress
 
+## Inventory failure diagnostics — implemented, deployment pending
+
+Four fixed categories now distinguish missing identity/station, wrong station
+and out-of-partition date. The validation order and whole-page rejection remain
+unchanged. Independent review, all 68 history/diagnostic tests, types, lint and
+format checks pass; full release CI and deployment remain pending. The deployed
+`9aeab582` release below still emits the generic scope category. Broader LoTW
+ownership/classifier work remains separate; all export controls stay closed.
+
 ## Comparison and coverage follow-up — deployed read-only
 
 Four signed commits through `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed

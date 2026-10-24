@@ -81,6 +81,22 @@ test("known protocol, report, retention and D1 guard errors have fixed codes", (
       "history_scope_mismatch",
     ],
     [
+      new Error("History response is missing required identity fields"),
+      "history_identity_missing",
+    ],
+    [
+      new Error("History response is missing station callsign"),
+      "history_station_missing",
+    ],
+    [
+      new Error("History response station does not match partition"),
+      "history_station_mismatch",
+    ],
+    [
+      new Error("History response date is outside partition"),
+      "history_date_outside_partition",
+    ],
+    [
       new Error("History partition exceeds retained evidence bound"),
       "history_partition_bound",
     ],

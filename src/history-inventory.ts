@@ -669,16 +669,20 @@ function compact(
 ): AdifRecord[] {
   return records.map((record) => {
     adifInstant(record);
+    if (!record.CALL || !record.BAND || !(record.MODE || record.APP_LOTW_MODE))
+      throw new Error("History response is missing required identity fields");
+    if (!record.STATION_CALLSIGN)
+      throw new Error("History response is missing station callsign");
     if (
-      !record.CALL ||
-      !record.BAND ||
-      !(record.MODE || record.APP_LOTW_MODE) ||
-      record.STATION_CALLSIGN?.toUpperCase() !==
-        input.record.STATION_CALLSIGN.toUpperCase() ||
+      record.STATION_CALLSIGN.toUpperCase() !==
+      input.record.STATION_CALLSIGN.toUpperCase()
+    )
+      throw new Error("History response station does not match partition");
+    if (
       record.QSO_DATE < adifDate(range.startDate) ||
       record.QSO_DATE > adifDate(range.endDate)
     )
-      throw new Error("History response does not match partition scope");
+      throw new Error("History response date is outside partition");
     const selected = Object.fromEntries(
       Object.entries(record).filter(([field]) => FIELDS.has(field)),
     );

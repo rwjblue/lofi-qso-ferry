@@ -4,6 +4,16 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-24 UTC)
 
+### Inventory failure diagnostics — implemented, deployment pending
+
+Split the generic partition-scope failure into fixed missing-identity,
+missing-station, wrong-station and out-of-partition-date categories. Validation
+order, whole-page rejection, retained evidence and matching decisions are
+unchanged. Independent review, all 68 history/diagnostic tests, types, lint and
+format checks pass; full release CI and deployment remain pending. This improves
+diagnosis of the recent held reads; it does not establish their cause or authorize
+exports.
+
 ### Comparison and coverage follow-up — deployed read-only
 
 Four signed commits through `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed

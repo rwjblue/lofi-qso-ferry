@@ -74,6 +74,19 @@ const internalMessages = new Map([
     "history_credentials_unavailable",
   ],
   ["History response does not match partition scope", "history_scope_mismatch"],
+  [
+    "History response is missing required identity fields",
+    "history_identity_missing",
+  ],
+  ["History response is missing station callsign", "history_station_missing"],
+  [
+    "History response station does not match partition",
+    "history_station_mismatch",
+  ],
+  [
+    "History response date is outside partition",
+    "history_date_outside_partition",
+  ],
   ["History field exceeds retained evidence bound", "history_field_bound"],
   ["History record exceeds retained evidence bound", "history_record_bound"],
   [

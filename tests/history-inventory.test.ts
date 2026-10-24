@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { type AdifRecord, serializeAdifRecord } from "../src/adif.ts";
 import { measuredDatabase } from "../src/database-metrics.ts";
+import { createFailureDiagnostics } from "../src/failure-diagnostics.ts";
 import {
   HISTORY_INVENTORY_TTL,
   type HistoryInventoryInput,
@@ -2112,6 +2113,160 @@ test("a fatal parallel save guard drains started peers and stops queued cold adv
     releaseBoth();
     releaseSlow();
     if (running) await running.catch(() => undefined);
+    await h.mf.dispose();
+  }
+});
+
+test("QRZ partition rejection distinguishes fixed scope failures without retaining rejected pages", async () => {
+  const h = await fixture();
+  const cases: [Partial<AdifRecord>, string][] = [
+    [{ CALL: "" }, "history_identity_missing"],
+    [{ BAND: "" }, "history_identity_missing"],
+    [{ MODE: "" }, "history_identity_missing"],
+    [{ STATION_CALLSIGN: "" }, "history_station_missing"],
+    [{ STATION_CALLSIGN: "private-wrong-station" }, "history_station_mismatch"],
+    [{ QSO_DATE: "20261001" }, "history_date_outside_partition"],
+    [{ QSO_DATE: "20261101" }, "history_date_outside_partition"],
+    [{ TIME_ON: "" }, "adif_time_missing"],
+    [{ QSO_DATE: "20260230" }, "adif_time_invalid"],
+    [
+      { TIME_ON: "250001", STATION_CALLSIGN: "private-wrong-station" },
+      "adif_time_invalid",
+    ],
+  ];
+  try {
+    for (const [changes, code] of cases) {
+      const diagnostics = createFailureDiagnostics();
+      await assert.rejects(
+        historyCandidates(h.store, h.input, {
+          now: h.now,
+          vendorNow: h.now,
+          fetcher: async () =>
+            qrzResponse([
+              { ...record, APP_QRZLOG_LOGID: "1" },
+              {
+                ...record,
+                APP_QRZLOG_LOGID: "2",
+                COMMENT: "private-record-sentinel",
+                ...changes,
+              },
+            ]),
+        }),
+        (error: unknown) => {
+          diagnostics.record(error, "history_read", "qrz");
+          assert(error instanceof Error);
+          assert.doesNotMatch(error.message, /private|N0TEST|W1AW|2026/);
+          return true;
+        },
+      );
+      assert.deepEqual(
+        { ...diagnostics.counts },
+        {
+          [`history_read:qrz:${code}`]: { events: 1, affected: 1 },
+        },
+      );
+      assert.doesNotMatch(
+        JSON.stringify(diagnostics.counts),
+        /private|N0TEST|W1AW|2026/,
+      );
+      const rows = await h.store
+        .statement(`SELECT
+        (SELECT COUNT(*) FROM history_inventory_pages) pages,
+        (SELECT COUNT(*) FROM private_data WHERE kind='history_inventory') bodies,
+        (SELECT COUNT(*) FROM partitions WHERE state='complete') complete,
+        (SELECT COUNT(*) FROM ledger WHERE remote_id IS NOT NULL) mapped`)
+        .first();
+      assert.deepEqual(rows, { pages: 0, bodies: 0, complete: 0, mapped: 0 });
+      const retained = await h.store
+        .statement("SELECT evidence FROM partitions")
+        .first<{ evidence: string }>();
+      const manifest = JSON.parse(retained!.evidence);
+      assert.equal(manifest.phase, "base");
+      assert.equal(manifest.cursor, 0);
+      assert.equal(manifest.pageCount, 0);
+      assert.equal(manifest.recordCount, 0);
+    }
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("shared QRZ scope rejection remains a single failed read with no partial cohort evidence", async () => {
+  const h = await fixture();
+  try {
+    await h.store.observe({ ...h.key, qso: "q2" }, "g2", "next", 30, false);
+    let fetches = 0;
+    const results = await historyCandidatesBatch(
+      h.store,
+      [h.input, { ...h.input, qso: "q2", generation: "g2" }],
+      {
+        now: h.now,
+        vendorNow: h.now,
+        fetcher: async () => {
+          fetches++;
+          return qrzResponse([
+            { ...record, APP_QRZLOG_LOGID: "1" },
+            {
+              ...record,
+              APP_QRZLOG_LOGID: "2",
+              STATION_CALLSIGN: "private-wrong-station",
+            },
+          ]);
+        },
+      },
+    );
+    assert.equal(fetches, 1);
+    const diagnostics = createFailureDiagnostics();
+    for (const result of results) {
+      assert.equal(result.state, "pending");
+      assert.deepEqual(result.records, []);
+      assert.equal(result.fence, undefined);
+      assert.equal(result.freshCheckComplete, false);
+      diagnostics.record(result.failure, "history_read", "qrz");
+    }
+    assert.deepEqual(
+      { ...diagnostics.counts },
+      {
+        "history_read:qrz:history_station_mismatch": { events: 1, affected: 2 },
+      },
+    );
+    assert.equal(
+      (await h.store
+        .statement("SELECT COUNT(*) n FROM history_inventory_pages")
+        .first())!.n,
+      0,
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("fixed scope diagnostics preserve lowercase station and minute precision acceptance", async () => {
+  const h = await fixture();
+  try {
+    const options = {
+      now: h.now,
+      vendorNow: h.now,
+      fetcher: async () =>
+        qrzResponse([
+          {
+            ...record,
+            STATION_CALLSIGN: record.STATION_CALLSIGN.toLowerCase(),
+            TIME_ON: "1200",
+            APP_QRZLOG_LOGID: "1",
+          },
+        ]),
+    };
+    assert.equal(
+      (await historyCandidates(h.store, h.input, options)).state,
+      "pending",
+    );
+    const result = await historyCandidates(h.store, h.input, options);
+    assert.equal(result.state, "ready");
+    assert.equal(result.records.length, 1);
+    assert.equal(result.records[0].TIME_ON, "1200");
+    assert.equal(result.freshCheckComplete, false);
+  } finally {
     await h.mf.dispose();
   }
 });

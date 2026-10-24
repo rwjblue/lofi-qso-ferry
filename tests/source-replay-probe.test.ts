@@ -6,7 +6,9 @@ import {
   haloOperationManifestQuery,
   type OperationManifest,
   probeOperationReplay,
+  type RetainedOperationSuspects,
 } from "../scripts/source-replay-probe.ts";
+import { LoFiClient } from "../src/lofi.ts";
 
 const NOW = 1_800_000_000_000;
 const credentials = {
@@ -81,6 +83,42 @@ function fixture(expected = manifest()) {
     },
   };
 }
+const baseRecord = (overrides = {}) => ({
+  uuid: "op1",
+  updatedAtMillis: 80,
+  syncedAtMillis: 95,
+  ...overrides,
+});
+const sync = (operations = [baseRecord()], overrides = {}) =>
+  Response.json({
+    account: { uuid: "account1" },
+    operations,
+    qsos: [],
+    meta: { operations: { records_left: 0 }, qsos: { records_left: 0 } },
+    ...overrides,
+  });
+function baseFixture(expected = manifest()) {
+  const h = fixture(expected);
+  h.options.fetcher = async (input, init) => {
+    h.calls.push({ url: String(input), init });
+    return String(input).endsWith("/v1/sync") ? sync() : page([record()]);
+  };
+  return { ...h, options: { ...h.options, observeBaseOperation: true } };
+}
+const suspects = (rows = [record("suspect1")]): RetainedOperationSuspects => ({
+  origin: "retained-ferry-metadata",
+  capturedAt: NOW,
+  operationId: "op1",
+  members: rows.map((row) => ({
+    uuid: row.uuid,
+    operation: row.operation,
+    isEvent: row.band === "event",
+    deleted: false,
+    purged: false,
+    updatedAtMillis: row.updatedAtMillis,
+    syncedAtMillis: row.syncedAtMillis,
+  })),
+});
 
 test("independent SQLite manifest includes event and deletion rows without returning payloads", () => {
   const db = new DatabaseSync(":memory:");
@@ -362,6 +400,13 @@ test("unknown revisions and hostile callback errors are reported without fabrica
   const result = await probeOperationReplay(fixture(expected).options);
   assert.equal(result.unknownVersions, 1);
   assert.equal(result.status, "incomplete");
+  const missingServerStamp = manifest();
+  missingServerStamp.members[0].syncedAtMillis = null;
+  const unstamped = await probeOperationReplay(
+    fixture(missingServerStamp).options,
+  );
+  assert.equal(unstamped.unknownVersions, 1);
+  assert.equal(unstamped.status, "incomplete");
   const h = fixture();
   h.options.fetcher = async () => {
     throw new Error(
@@ -372,4 +417,385 @@ test("unknown revisions and hostile callback errors are reported without fabrica
   assert.equal(failed.stopReason, "vendor_unavailable");
   assert(!JSON.stringify(failed).includes("private"));
   assert(!JSON.stringify(failed).includes("q1"));
+});
+
+test("opt-in base observations bracket complete members using only exact bounded read-only sync windows", async () => {
+  const h = baseFixture();
+  const result = await probeOperationReplay(h.options);
+  assert.equal(result.status, "observed_match");
+  assert.equal(result.readAttempts, 4);
+  assert.equal(result.completedPasses, 2);
+  assert.equal(result.baseOperationObservations, 2);
+  assert.equal(result.baseOperationDifferences, 0);
+  assert.equal(result.repeatedBaseDifferences, 0);
+  assert.equal(result.serverBaseOperationObserved, true);
+  assert.equal(result.sourceBoundaryVerified, false);
+  assert.equal(result.unknownHistoricalPurgesExcluded, false);
+  assert.deepEqual(
+    h.calls.map(({ url, init }) => [new URL(url).pathname, init?.method]),
+    [
+      ["/v1/sync", "POST"],
+      ["/v1/operations/op1/qsos", "GET"],
+      ["/v1/operations/op1/qsos", "GET"],
+      ["/v1/sync", "POST"],
+    ],
+  );
+  for (const index of [0, 3]) {
+    assert.equal(h.calls[index].init?.redirect, "manual");
+    assert.deepEqual(JSON.parse(String(h.calls[index].init?.body)), {
+      meta: {
+        inboundSync: true,
+        lastSyncAccountUUID: "account1",
+        sync: {
+          operations: { syncedUntilMillis: NOW, limit: 25, anyClient: true },
+          qsos: { syncedUntilMillis: 0, limit: 25, anyClient: true },
+        },
+      },
+    });
+  }
+  assert(!JSON.stringify(result).includes("op1"));
+  assert(!JSON.stringify(result).includes("private-"));
+});
+
+test("unrelated base rows cannot stand in for the target, and missing targets never imply deletion", async (t) => {
+  for (const complete of [true, false])
+    await t.test(`target omitted, complete=${complete}`, async () => {
+      const h = baseFixture();
+      h.options.fetcher = async () =>
+        sync([baseRecord({ uuid: "unrelated" })], {
+          meta: {
+            operations: {
+              records_left: complete ? 0 : 1,
+              ...(complete ? {} : { next_cursor: "opaque-not-reported" }),
+            },
+            qsos: { records_left: 0 },
+          },
+        });
+      const result = await probeOperationReplay(h.options);
+      assert.equal(result.status, "incomplete");
+      assert.equal(result.stopReason, "base_operation_not_observed");
+      assert.equal(result.readAttempts, 1);
+      assert.equal(result.baseOperationObservations, 0);
+      assert.equal(result.unrelatedBaseRows, 1);
+      assert.equal(result.serverBaseOperationObserved, false);
+      assert.equal(result.missingMembers, 0);
+      assert(!JSON.stringify(result).includes("opaque"));
+    });
+  await t.test(
+    "unrelated neighbor is counted but target is compared",
+    async () => {
+      const h = baseFixture();
+      h.options.fetcher = async (input) =>
+        String(input).endsWith("/v1/sync")
+          ? sync([baseRecord({ uuid: "unrelated" }), baseRecord()])
+          : page([record()]);
+      const result = await probeOperationReplay(h.options);
+      assert.equal(result.status, "observed_match");
+      assert.equal(result.unrelatedBaseRows, 2);
+      assert.equal(result.baseOperationObservations, 2);
+    },
+  );
+});
+
+test("duplicate targets and changed base versions, flags or account never establish stable base evidence", async (t) => {
+  await t.test("duplicate target even with matching metadata", async () => {
+    const h = baseFixture();
+    h.options.fetcher = async () => sync([baseRecord(), baseRecord()]);
+    const result = await probeOperationReplay(h.options);
+    assert.equal(result.status, "discrepancy");
+    assert.equal(result.stopReason, "duplicate_base_operation");
+    assert.equal(result.serverBaseOperationObserved, false);
+  });
+  for (const change of [
+    { updatedAtMillis: 81 },
+    { syncedAtMillis: 96 },
+    { deleted: true },
+    { purged: true },
+  ])
+    await t.test(`final base ${Object.keys(change)[0]}`, async () => {
+      const h = baseFixture();
+      let bases = 0;
+      h.options.fetcher = async (input) =>
+        String(input).endsWith("/v1/sync")
+          ? sync([baseRecord(++bases === 2 ? change : {})])
+          : page([record()]);
+      const result = await probeOperationReplay(h.options);
+      assert.equal(result.status, "discrepancy");
+      assert.equal(result.baseOperationDifferences, 1);
+      assert.equal(result.repeatedBaseDifferences, 1);
+      assert.equal(result.sourceBoundaryVerified, false);
+    });
+  await t.test("final sync account changes", async () => {
+    const h = baseFixture();
+    let bases = 0;
+    h.options.fetcher = async (input) =>
+      String(input).endsWith("/v1/sync")
+        ? sync(undefined, {
+            account: { uuid: ++bases === 2 ? "other" : "account1" },
+          })
+        : page([record()]);
+    const result = await probeOperationReplay(h.options);
+    assert.equal(result.stopReason, "account_changed");
+    assert.equal(result.serverBaseOperationObserved, false);
+    assert.equal(result.baseOperationObservations, 1);
+  });
+});
+
+test("unknown base revisions cannot mask known flag changes or become complete freshness evidence", async (t) => {
+  for (const deleted of [false, true])
+    await t.test(`unknown base, deleted=${deleted}`, async () => {
+      const expected = manifest();
+      expected.operation.updatedAtMillis = null;
+      const h = baseFixture(expected);
+      h.options.fetcher = async (input) =>
+        String(input).endsWith("/v1/sync")
+          ? sync([baseRecord({ deleted })])
+          : page([record()]);
+      const result = await probeOperationReplay(h.options);
+      assert.equal(result.unknownBaseVersions, 2);
+      assert.equal(result.baseOperationDifferences, deleted ? 2 : 0);
+      assert.equal(result.status, deleted ? "discrepancy" : "incomplete");
+    });
+  await t.test("missing independent base server stamp", async () => {
+    const expected = manifest();
+    expected.operation.syncedAtMillis = null;
+    const result = await probeOperationReplay(baseFixture(expected).options);
+    assert.equal(result.unknownBaseVersions, 2);
+    assert.equal(result.status, "incomplete");
+  });
+});
+
+test("bracketing retains stream, request and time bounds without partial base success", async (t) => {
+  for (const stream of ["operations", "qsos"] as const)
+    await t.test(`${stream} row cap`, async () => {
+      const h = baseFixture();
+      h.options.fetcher = async () =>
+        sync(undefined, {
+          [stream]: Array.from({ length: 26 }, (_, i) =>
+            stream === "operations"
+              ? baseRecord({ uuid: `op${i}` })
+              : record(`q${i}`),
+          ),
+        });
+      const result = await probeOperationReplay(h.options);
+      assert.equal(result.stopReason, "page_size_exceeded");
+      assert.equal(result.status, "incomplete");
+      assert.equal(result.readAttempts, 1);
+      assert.equal(result.serverBaseOperationObserved, false);
+    });
+  await t.test(
+    "member continuation consumes the final request slot",
+    async () => {
+      const h = baseFixture(manifest([record(), record("q2")]));
+      let reads = 0;
+      h.options.fetcher = async () => {
+        reads++;
+        if (reads === 1) return sync();
+        if (reads === 2) return page([record()], 1, 101);
+        if (reads === 3) return page([record("q2")]);
+        return page([record(), record("q2")]);
+      };
+      const result = await probeOperationReplay(h.options);
+      assert.equal(result.stopReason, "read_cap");
+      assert.equal(result.completedPasses, 2);
+      assert.equal(result.serverBaseOperationObserved, false);
+      assert.equal(reads, 4);
+    },
+  );
+  await t.test("expired final window", async () => {
+    const h = baseFixture();
+    let bases = 0;
+    h.options.fetcher = async (input) => {
+      if (!String(input).endsWith("/v1/sync")) return page([record()]);
+      if (++bases === 2) h.setTime(NOW + 120_000);
+      return sync();
+    };
+    const result = await probeOperationReplay(h.options);
+    assert.equal(result.stopReason, "time_cap");
+    assert.equal(result.serverBaseOperationObserved, false);
+  });
+});
+
+test("base sync cannot renew credentials or dispatch altered write-shaped windows", async (t) => {
+  await t.test("401 blocks renewal", async () => {
+    const h = baseFixture();
+    let calls = 0;
+    h.options.fetcher = async () => {
+      calls++;
+      return new Response("", { status: 401 });
+    };
+    const result = await probeOperationReplay(h.options);
+    assert.equal(result.stopReason, "authentication_required");
+    assert.equal(calls, 1);
+  });
+  await t.test(
+    "client body drift is rejected before transport",
+    async (context) => {
+      const original = LoFiClient.prototype.syncPage;
+      context.mock.method(
+        LoFiClient.prototype,
+        "syncPage",
+        function (
+          this: LoFiClient,
+          state: Parameters<LoFiClient["syncPage"]>[0],
+          now: number,
+          limit: number,
+        ) {
+          return original.call(this, { ...state, mode: "forward" }, now, limit);
+        },
+      );
+      const h = baseFixture();
+      let calls = 0;
+      h.options.fetcher = async () => {
+        calls++;
+        return sync();
+      };
+      const result = await probeOperationReplay(h.options);
+      assert.equal(result.stopReason, "transport_denied");
+      assert.equal(calls, 0);
+    },
+  );
+  await t.test(
+    "source arrays are denied even on the expected sync endpoint",
+    async (context) => {
+      context.mock.method(
+        LoFiClient.prototype,
+        "syncPage",
+        async function (this: LoFiClient) {
+          const { fetcher } = this as unknown as { fetcher: typeof fetch };
+          await fetcher("https://lofi.ham2k.net/v1/sync", {
+            method: "POST",
+            redirect: "manual",
+            body: JSON.stringify({
+              operations: [{ uuid: "op1", deleted: true }],
+              qsos: [],
+              meta: { inboundSync: true },
+            }),
+          });
+          throw new Error("unexpected transport acceptance");
+        },
+      );
+      const h = baseFixture();
+      let calls = 0;
+      h.options.fetcher = async () => {
+        calls++;
+        return sync();
+      };
+      const result = await probeOperationReplay(h.options);
+      assert.equal(result.stopReason, "transport_denied");
+      assert.equal(calls, 0);
+    },
+  );
+});
+
+test("thirteen Ferry-only suspects stay separate from an empty independent manifest in GET-only mode", async () => {
+  const rows = Array.from({ length: 13 }, (_, i) => record(`suspect${i}`));
+  const h = fixture(manifest([]));
+  let calls = 0;
+  let retainedLoads = 0;
+  h.options.fetcher = async (input, init) => {
+    h.calls.push({ url: String(input), init });
+    return ++calls === 1 ? account() : page(rows);
+  };
+  const result = await probeOperationReplay({
+    ...h.options,
+    loadRetainedSuspects: async () => {
+      retainedLoads++;
+      return suspects(rows);
+    },
+  });
+  assert.equal(result.status, "discrepancy");
+  assert.equal(result.expectedMembers, 0);
+  assert.equal(result.unexpectedMembers, 13);
+  assert.equal(result.retainedSuspects, 13);
+  assert.equal(result.retainedSuspectsObserved, 13);
+  assert.equal(result.retainedSuspectsAbsent, 0);
+  assert.equal(result.retainedSnapshotStable, true);
+  assert.equal(retainedLoads, 2);
+  assert.equal(result.readAttempts, 3);
+  assert(h.calls.every(({ init }) => init?.method === "GET"));
+  assert.equal(result.serverBaseOperationObserved, false);
+  assert.equal(result.sourceBoundaryVerified, false);
+  assert(!JSON.stringify(result).includes("suspect0"));
+});
+
+test("suspect absence, changes, instability and unknown versions remain distinct from deletion claims", async (t) => {
+  for (const kind of ["absent", "changed", "unstable", "unknown"] as const)
+    await t.test(kind, async () => {
+      const h = fixture(manifest([]));
+      const retained = suspects();
+      if (kind === "unknown") retained.members[0].updatedAtMillis = null;
+      let calls = 0;
+      h.options.fetcher = async () => {
+        if (++calls === 1) return account();
+        return page(
+          kind === "absent" || (kind === "unstable" && calls === 3)
+            ? []
+            : [record("suspect1", kind === "changed" ? { deleted: true } : {})],
+        );
+      };
+      const result = await probeOperationReplay({
+        ...h.options,
+        loadRetainedSuspects: async () => structuredClone(retained),
+      });
+      assert.equal(result.retainedSuspectsObserved, 0);
+      assert.equal(result.retainedSuspectsAbsent, Number(kind === "absent"));
+      assert.equal(result.retainedSuspectsChanged, Number(kind === "changed"));
+      assert.equal(
+        result.retainedSuspectsUnstable,
+        Number(kind === "unstable"),
+      );
+      assert.equal(
+        result.retainedSuspectsUnknownVersions,
+        Number(kind === "unknown"),
+      );
+      assert.equal(result.sourceBoundaryVerified, false);
+      assert.equal(result.unknownHistoricalPurgesExcluded, false);
+      assert.equal(result.status, "discrepancy");
+    });
+});
+
+test("retained evidence rejects wrong origins, scope, overlap, oversized, expired and changing snapshots", async (t) => {
+  for (const kind of [
+    "origin",
+    "scope",
+    "overlap",
+    "oversized",
+    "expired",
+    "changed",
+  ] as const)
+    await t.test(kind, async () => {
+      const h = fixture();
+      const retained = suspects();
+      if (kind === "origin")
+        (retained as { origin: string }).origin = "independent-local-database";
+      if (kind === "scope") retained.operationId = "other";
+      if (kind === "overlap") retained.members[0].uuid = "q1";
+      if (kind === "oversized")
+        retained.members = suspects(
+          Array.from({ length: 14 }, (_, i) => record(`s${i}`)),
+        ).members;
+      if (kind === "expired") retained.capturedAt = NOW - 300_001;
+      let loads = 0;
+      const result = await probeOperationReplay({
+        ...h.options,
+        loadRetainedSuspects: async () => {
+          const copy = structuredClone(retained);
+          if (++loads === 2 && kind === "changed")
+            copy.members[0].updatedAtMillis = 91;
+          return copy;
+        },
+      });
+      assert.equal(
+        result.stopReason,
+        kind === "changed"
+          ? "retained_manifest_changed"
+          : kind === "expired"
+            ? "retained_manifest_expired"
+            : "retained_manifest_invalid",
+      );
+      assert.equal(result.retainedSnapshotStable, false);
+      assert.equal(result.retainedSuspectsObserved, 0);
+      assert.equal(result.readAttempts, kind === "changed" ? 3 : 0);
+    });
 });

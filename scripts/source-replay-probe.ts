@@ -1,14 +1,16 @@
 import {
   LoFiClient,
-  LoFiError,
   type LoFiCredentials,
+  LoFiError,
   type OperationQsosState,
   type SourceRecord,
+  type SyncPage,
 } from "../src/lofi.ts";
 import { isEventRecord } from "../src/projection.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
 
 const MAX_MEMBERS = 100;
+const MAX_RETAINED_SUSPECTS = 13;
 const MAX_READS = 4;
 const PAGE_SIZE = 25;
 const MAX_DURATION = 120_000;
@@ -32,6 +34,12 @@ export interface OperationManifest {
   capturedAt: number;
   operation: ManifestRecord;
   members: (ManifestRecord & { operation: string; isEvent: boolean })[];
+}
+export interface RetainedOperationSuspects {
+  origin: "retained-ferry-metadata";
+  capturedAt: number;
+  operationId: string;
+  members: Omit<OperationManifest["members"][number], "synced">[];
 }
 
 /** One SQLite snapshot, including events and tombstones; never run on Ferry D1. */
@@ -162,6 +170,11 @@ type Stop =
   | "conflicting_duplicate"
   | "member_cap"
   | "page_size_exceeded"
+  | "base_operation_not_observed"
+  | "duplicate_base_operation"
+  | "retained_manifest_invalid"
+  | "retained_manifest_changed"
+  | "retained_manifest_expired"
   | "transport_denied";
 class ProbeStop extends Error {
   constructor(readonly code: Stop) {
@@ -177,21 +190,21 @@ interface Metadata {
   updatedAtMillis: number | null;
   syncedAtMillis: number;
 }
+function flag(value: unknown): boolean {
+  if (
+    value === undefined ||
+    value === null ||
+    value === false ||
+    value === 0 ||
+    value === "0" ||
+    value === "false"
+  )
+    return false;
+  if (value === true || value === 1 || value === "1" || value === "true")
+    return true;
+  throw new ProbeStop("protocol_error");
+}
 function metadata(raw: SourceRecord, operation: string): Metadata {
-  const flag = (value: unknown) => {
-    if (
-      value === undefined ||
-      value === null ||
-      value === false ||
-      value === 0 ||
-      value === "0" ||
-      value === "false"
-    )
-      return false;
-    if (value === true || value === 1 || value === "1" || value === "true")
-      return true;
-    throw new ProbeStop("protocol_error");
-  };
   if (
     !validId(raw.uuid) ||
     raw.operation !== operation ||
@@ -219,17 +232,37 @@ const recordKey = (row: Metadata) =>
     row.updatedAtMillis,
     row.syncedAtMillis,
   ]);
+const baseKey = (row: Omit<ManifestRecord, "synced">) =>
+  JSON.stringify([
+    row.uuid,
+    row.deleted,
+    row.purged,
+    row.updatedAtMillis,
+    row.syncedAtMillis,
+  ]);
+const retainedKey = (value: RetainedOperationSuspects) =>
+  JSON.stringify(
+    [...value.members]
+      .sort((a, b) => a.uuid.localeCompare(b.uuid))
+      .map((row) => [baseKey(row), row.operation, row.isEvent]),
+  );
 
 /**
  * Bounded observation only. The injected fetcher must already enforce the shared
  * vendor budget. No filesystem, credentials loading, database writes or renewal.
- * loadManifest must read the independent local database again on its second call.
+ * Both manifest callbacks must reread their own source on their second call.
+ * The optional base observations are bounded metadata evidence, not a snapshot,
+ * full-body comparison, forward-delivery proof or source-boundary authorization.
  */
 export async function probeOperationReplay(options: {
   credentials: LoFiCredentials;
   accountId: string;
   operationId: string;
   loadManifest: () => Promise<OperationManifest>;
+  /** Opt-in: two exact read-only sync windows bracket the member passes. */
+  observeBaseOperation?: boolean;
+  /** Separate evidence, never added to the independent expected membership. */
+  loadRetainedSuspects?: () => Promise<RetainedOperationSuspects>;
   fetcher: typeof fetch;
   now?: () => number;
 }) {
@@ -238,7 +271,7 @@ export async function probeOperationReplay(options: {
   const report = {
     evidence: "observed-operation-replay" as const,
     sourceBoundaryVerified: false as const,
-    serverBaseOperationObserved: false as const,
+    serverBaseOperationObserved: false,
     unknownHistoricalPurgesExcluded: false as const,
     status: "incomplete" as
       | "incomplete"
@@ -262,6 +295,19 @@ export async function probeOperationReplay(options: {
     tiedServerStamps: 0,
     repeatedReadDifferences: 0,
     independentSnapshotStable: false,
+    baseOperationObservations: 0,
+    baseOperationDifferences: 0,
+    unknownBaseVersions: 0,
+    repeatedBaseDifferences: 0,
+    unrelatedBaseRows: 0,
+    incidentalSyncMembers: 0,
+    retainedSuspects: 0,
+    retainedSuspectsObserved: 0,
+    retainedSuspectsAbsent: 0,
+    retainedSuspectsChanged: 0,
+    retainedSuspectsUnstable: 0,
+    retainedSuspectsUnknownVersions: 0,
+    retainedSnapshotStable: false,
   };
   const checkTime = () => {
     if (clock() - started >= MAX_DURATION) throw new ProbeStop("time_cap");
@@ -282,6 +328,54 @@ export async function probeOperationReplay(options: {
     if ([manifest.operation, ...manifest.members].some((row) => !row.synced))
       throw new ProbeStop("manifest_unsynced");
   };
+  const checkRetained = (
+    value: RetainedOperationSuspects,
+    independent: OperationManifest,
+  ) => {
+    if (
+      value?.origin !== "retained-ferry-metadata" ||
+      value.operationId !== options.operationId ||
+      !stamp(value.capturedAt) ||
+      value.capturedAt === null ||
+      !Array.isArray(value.members) ||
+      value.members.length < 1 ||
+      value.members.length > MAX_RETAINED_SUSPECTS
+    )
+      throw new ProbeStop("retained_manifest_invalid");
+    const seen = new Set<string>();
+    for (const row of value.members) {
+      if (
+        !row ||
+        !validId(row.uuid) ||
+        row.operation !== options.operationId ||
+        seen.has(row.uuid) ||
+        independent.members.some((member) => member.uuid === row.uuid) ||
+        !stamp(row.updatedAtMillis) ||
+        !stamp(row.syncedAtMillis) ||
+        [row.isEvent, row.deleted, row.purged].some(
+          (flag) => typeof flag !== "boolean",
+        )
+      )
+        throw new ProbeStop("retained_manifest_invalid");
+      seen.add(row.uuid);
+    }
+    if (
+      value.capturedAt > clock() ||
+      clock() - value.capturedAt > MAX_MANIFEST_AGE
+    )
+      throw new ProbeStop("retained_manifest_expired");
+  };
+  const loadRetained = async (independent: OperationManifest) => {
+    if (!options.loadRetainedSuspects) return undefined;
+    let value: RetainedOperationSuspects;
+    try {
+      value = structuredClone(await options.loadRetainedSuspects());
+    } catch {
+      throw new ProbeStop("retained_manifest_invalid");
+    }
+    checkRetained(value, independent);
+    return value;
+  };
   try {
     if (!validId(options.operationId) || !validId(options.accountId))
       throw new ProbeStop("manifest_invalid");
@@ -294,10 +388,13 @@ export async function probeOperationReplay(options: {
       throw new ProbeStop("manifest_invalid");
     }
     checkManifest(before);
+    const retained = await loadRetained(before);
+    report.retainedSuspects = retained?.members.length ?? 0;
     report.expectedMembers = before.members.length;
     report.expectedEvents = before.members.filter((row) => row.isEvent).length;
     report.expectedDeleted = before.members.filter((row) => row.deleted).length;
     report.expectedPurged = before.members.filter((row) => row.purged).length;
+    let allowedSyncBody: string | undefined;
     const guardedFetch: typeof fetch = async (input, init) => {
       checkTime();
       const url = new URL(String(input));
@@ -308,20 +405,28 @@ export async function probeOperationReplay(options: {
         url.username ||
         url.password ||
         url.hash ||
-        init?.method !== "GET" ||
-        init.body !== undefined ||
-        init.redirect !== "manual" ||
-        (url.pathname !== "/v1/accounts" &&
-          url.pathname !== `/v1/operations/${options.operationId}/qsos`)
+        init?.redirect !== "manual"
       )
         throw new ProbeStop("transport_denied");
-      if (
-        url.pathname === "/v1/accounts"
+      if (url.pathname === "/v1/sync") {
+        if (
+          options.observeBaseOperation !== true ||
+          allowedSyncBody === undefined ||
+          init.method !== "POST" ||
+          init.body !== allowedSyncBody ||
+          url.search !== ""
+        )
+          throw new ProbeStop("transport_denied");
+      } else if (
+        init.method !== "GET" ||
+        init.body !== undefined ||
+        (url.pathname === "/v1/accounts"
           ? url.search !== ""
-          : url.searchParams.get("limit") !== String(PAGE_SIZE) ||
+          : url.pathname !== `/v1/operations/${options.operationId}/qsos` ||
+            url.searchParams.get("limit") !== String(PAGE_SIZE) ||
             [...url.searchParams.keys()].some(
               (key) => !["limit", "syncedUntilMillis"].includes(key),
-            )
+            ))
       )
         throw new ProbeStop("transport_denied");
       if (report.readAttempts >= MAX_READS) throw new ProbeStop("read_cap");
@@ -339,7 +444,90 @@ export async function probeOperationReplay(options: {
       return response;
     };
     const client = () => new LoFiClient(options.credentials, guardedFetch);
-    if ((await client().accounts()).uuid !== options.accountId)
+    const baseObservations: Omit<ManifestRecord, "synced">[] = [];
+    const observeBase = async () => {
+      checkTime();
+      checkManifest(before);
+      const until = clock();
+      allowedSyncBody = JSON.stringify({
+        meta: {
+          inboundSync: true,
+          lastSyncAccountUUID: options.accountId,
+          sync: {
+            operations: {
+              syncedUntilMillis: until,
+              limit: PAGE_SIZE,
+              anyClient: true,
+            },
+            qsos: {
+              syncedUntilMillis: 0,
+              limit: PAGE_SIZE,
+              anyClient: true,
+            },
+          },
+        },
+      });
+      let page: SyncPage;
+      try {
+        page = await client().syncPage(
+          {
+            mode: "backfill",
+            accountId: options.accountId,
+            operations: { watermark: until },
+            qsos: { watermark: 0 },
+          },
+          until,
+          PAGE_SIZE,
+        );
+      } finally {
+        allowedSyncBody = undefined;
+      }
+      if (page.operations.length > PAGE_SIZE || page.qsos.length > PAGE_SIZE)
+        throw new ProbeStop("page_size_exceeded");
+      report.incidentalSyncMembers += page.qsos.length;
+      const matches = page.operations.filter(
+        (row) => row.uuid === options.operationId,
+      );
+      report.unrelatedBaseRows += page.operations.length - matches.length;
+      if (matches.length > 1) throw new ProbeStop("duplicate_base_operation");
+      if (matches.length === 0)
+        throw new ProbeStop("base_operation_not_observed");
+      const raw = matches[0];
+      if (
+        !stamp(raw.updatedAtMillis ?? null) ||
+        !stamp(raw.syncedAtMillis) ||
+        raw.syncedAtMillis === null ||
+        raw.syncedAtMillis > until
+      )
+        throw new ProbeStop("protocol_error");
+      const base = {
+        uuid: options.operationId,
+        deleted: flag(raw.deleted),
+        purged: flag(raw.purged),
+        updatedAtMillis: (raw.updatedAtMillis as number | undefined) ?? null,
+        syncedAtMillis: raw.syncedAtMillis,
+      };
+      baseObservations.push(base);
+      report.baseOperationObservations++;
+      if (
+        base.updatedAtMillis === null ||
+        before.operation.updatedAtMillis === null ||
+        before.operation.syncedAtMillis === null
+      )
+        report.unknownBaseVersions++;
+      if (
+        base.deleted !== before.operation.deleted ||
+        base.purged !== before.operation.purged ||
+        (base.updatedAtMillis !== null &&
+          before.operation.updatedAtMillis !== null &&
+          base.updatedAtMillis !== before.operation.updatedAtMillis) ||
+        (before.operation.syncedAtMillis !== null &&
+          base.syncedAtMillis !== before.operation.syncedAtMillis)
+      )
+        report.baseOperationDifferences++;
+    };
+    if (options.observeBaseOperation === true) await observeBase();
+    else if ((await client().accounts()).uuid !== options.accountId)
       throw new ProbeStop("account_changed");
     const passes: Map<string, Metadata>[] = [];
     for (let pass = 0; pass < 2; pass++) {
@@ -374,6 +562,12 @@ export async function probeOperationReplay(options: {
       passes.push(found);
       report.completedPasses++;
     }
+    if (options.observeBaseOperation === true) {
+      await observeBase();
+      report.serverBaseOperationObserved = true;
+      if (baseKey(baseObservations[0]) !== baseKey(baseObservations[1]))
+        report.repeatedBaseDifferences++;
+    }
     let after: OperationManifest;
     try {
       after = await options.loadManifest();
@@ -386,6 +580,19 @@ export async function probeOperationReplay(options: {
     if (manifestKey(before) !== manifestKey(after))
       throw new ProbeStop("manifest_changed");
     report.independentSnapshotStable = true;
+    if (retained) {
+      const retainedAfter = await loadRetained(after);
+      checkTime();
+      checkManifest(before);
+      checkManifest(after);
+      checkRetained(retained, before);
+      if (
+        !retainedAfter ||
+        retainedKey(retained) !== retainedKey(retainedAfter)
+      )
+        throw new ProbeStop("retained_manifest_changed");
+      report.retainedSnapshotStable = true;
+    }
     const first = passes[0];
     const second = passes[1];
     const ids = new Set([...first.keys(), ...second.keys()]);
@@ -405,7 +612,11 @@ export async function probeOperationReplay(options: {
         report.unexpectedMembers++;
         continue;
       }
-      if (known.updatedAtMillis === null || row.updatedAtMillis === null)
+      if (
+        known.updatedAtMillis === null ||
+        known.syncedAtMillis === null ||
+        row.updatedAtMillis === null
+      )
         report.unknownVersions++;
       if (
         known.isEvent !== row.isEvent ||
@@ -421,14 +632,47 @@ export async function probeOperationReplay(options: {
     }
     for (const id of expected.keys())
       if (!second.has(id)) report.missingMembers++;
+    for (const known of retained?.members ?? []) {
+      const earlier = first.get(known.uuid);
+      const later = second.get(known.uuid);
+      if (!earlier && !later) report.retainedSuspectsAbsent++;
+      else if (!earlier || !later || recordKey(earlier) !== recordKey(later))
+        report.retainedSuspectsUnstable++;
+      else if (
+        known.isEvent !== later.isEvent ||
+        known.deleted !== later.deleted ||
+        known.purged !== later.purged ||
+        (known.updatedAtMillis !== null &&
+          later.updatedAtMillis !== null &&
+          known.updatedAtMillis !== later.updatedAtMillis) ||
+        (known.syncedAtMillis !== null &&
+          known.syncedAtMillis !== later.syncedAtMillis)
+      )
+        report.retainedSuspectsChanged++;
+      else if (
+        known.updatedAtMillis === null ||
+        known.syncedAtMillis === null ||
+        later.updatedAtMillis === null
+      )
+        report.retainedSuspectsUnknownVersions++;
+      else report.retainedSuspectsObserved++;
+    }
     report.status =
       report.missingMembers +
         report.unexpectedMembers +
         report.changedMembers +
-        report.repeatedReadDifferences >
+        report.repeatedReadDifferences +
+        report.baseOperationDifferences +
+        report.repeatedBaseDifferences +
+        report.retainedSuspectsAbsent +
+        report.retainedSuspectsChanged +
+        report.retainedSuspectsUnstable >
       0
         ? "discrepancy"
-        : report.unknownVersions > 0
+        : report.unknownVersions +
+              report.unknownBaseVersions +
+              report.retainedSuspectsUnknownVersions >
+            0
           ? "incomplete"
           : "observed_match";
   } catch (error) {
@@ -455,9 +699,15 @@ export async function probeOperationReplay(options: {
       "empty_incomplete_page",
       "member_cap",
       "page_size_exceeded",
+      "base_operation_not_observed",
     ].includes(reason)
       ? "incomplete"
-      : ["conflicting_duplicate", "manifest_changed"].includes(reason)
+      : [
+            "conflicting_duplicate",
+            "manifest_changed",
+            "duplicate_base_operation",
+            "retained_manifest_changed",
+          ].includes(reason)
         ? "discrepancy"
         : "unavailable";
   }

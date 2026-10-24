@@ -433,6 +433,17 @@ test("QRZ trial candidate follows the narrow first-insert view without implying 
     assert(metadataOnly.routes.every((route) => route.metadataChecksPass));
     assert.equal(metadataOnly.sourceExportProofVerified, false);
     assert.equal(metadataOnly.requiresCurrentSourceExportProof, true);
+    await h.store
+      .statement("UPDATE ledger SET state='inventory_pending'")
+      .run();
+    const pending = await h.audit();
+    assert.equal(pending.routes[0].counts.first_insert_candidate, 1);
+    assert.equal(pending.routes[0].metadataChecksPass, true);
+    assert.equal(pending.routes[1].counts.first_insert_candidate, 0);
+    assert.equal(pending.routes[1].metadataChecksPass, false);
+    assert.equal(pending.freshVendorChecksComplete, false);
+    assert.equal(pending.sourceExportProofVerified, false);
+    assert.equal(pending.writesAuthorized, false);
     assert.equal(
       await h.store
         .statement("SELECT count(*) n FROM source_export_proofs")

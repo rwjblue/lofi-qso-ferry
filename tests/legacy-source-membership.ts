@@ -5,7 +5,115 @@
  * is covered by source-export-guards.test.ts and delivery-source-proof.test.ts.
  */
 import type { DestinationIdentityClaim } from "../src/identity-claims.ts";
-import type { Lease, Store } from "../src/store.ts";
+import { canonical, randomToken, sha256 } from "../src/security.ts";
+import type { Lease, LedgerKey, Store } from "../src/store.ts";
+
+/** Original stage transaction for the isolated pre-0030 migration fixtures.
+ * Current Store.stage also requires immutable ownership evidence. This helper
+ * must never run against the current source-proof/ownership schema.
+ */
+export async function legacyStageAttempt(
+  store: Store,
+  key: LedgerKey,
+  generation: string,
+  payload: unknown,
+  credentialVersion: string,
+  expectedTemplate: string | null,
+  now: number,
+  identity: { claim: DestinationIdentityClaim; sourceVersion: number },
+) {
+  if (
+    await store
+      .statement(
+        "SELECT 1 FROM sqlite_schema WHERE name='source_export_proofs_current'",
+      )
+      .first()
+  )
+    throw new Error("legacy stage requires the isolated pre-0030 schema");
+  const id = randomToken();
+  const encrypted = await store.putPrivate(
+    key.tenant,
+    key.destination,
+    id,
+    "outbox",
+    payload,
+    now + 7 * 86400_000,
+  );
+  await store.db.batch([
+    store.statement(
+      "INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version,identity_vendor,identity_hash,identity_source_version,identity_lotw_owner_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      id,
+      key.tenant,
+      key.source,
+      key.qso,
+      key.destination,
+      generation,
+      expectedTemplate,
+      now,
+      credentialVersion,
+      identity.claim.vendor,
+      identity.claim.hash,
+      identity.sourceVersion,
+      identity.claim.vendor === "lotw"
+        ? `identity:${await sha256(canonical([key.source, key.qso]))}:${identity.claim.hash}`
+        : null,
+    ),
+    encrypted,
+    store.statement(
+      "INSERT INTO attempts SELECT ?,?,?,?,?,?,?,?,?,?,?,source_hash FROM ledger WHERE tenant=? AND source=? AND qso=? AND destination=?",
+      key.tenant,
+      id,
+      key.source,
+      key.qso,
+      key.destination,
+      generation,
+      id,
+      await sha256(canonical(payload)),
+      expectedTemplate,
+      credentialVersion,
+      now,
+      key.tenant,
+      key.source,
+      key.qso,
+      key.destination,
+    ),
+    store.statement(
+      "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at,priority) VALUES(?,?,'prepared',?,?,'live')",
+      key.tenant,
+      id,
+      now,
+      now,
+    ),
+    store.statement(
+      "INSERT INTO attempt_identity_claims(tenant,attempt,destination,vendor,identity_hash,source,qso,source_version) VALUES(?,?,?,?,?,?,?,?)",
+      key.tenant,
+      id,
+      key.destination,
+      identity.claim.vendor,
+      identity.claim.hash,
+      key.source,
+      key.qso,
+      identity.sourceVersion,
+    ),
+    store.statement(
+      "INSERT INTO attempt_events(tenant,attempt,state,at) VALUES(?,?,'prepared',?)",
+      key.tenant,
+      id,
+      now,
+    ),
+    store.statement(
+      "UPDATE ledger SET narrative=CASE WHEN narrative='unbound' AND ? IS NOT NULL THEN 'template_bound' ELSE narrative END,template_version=? WHERE tenant=? AND source=? AND qso=? AND destination=?",
+      expectedTemplate,
+      expectedTemplate,
+      key.tenant,
+      key.source,
+      key.qso,
+      key.destination,
+    ),
+    store.statement("DELETE FROM stage_guards WHERE id=?", id),
+  ]);
+  return id;
+}
 
 export async function legacyClaimedAttemptCurrent(
   store: Store,

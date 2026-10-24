@@ -9,7 +9,10 @@ import {
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
 import { ensureSourceReadPolicy } from "../src/source-read-policy.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
-import { legacyClaimedAttemptCurrent as claimedAttemptCurrent } from "./legacy-source-membership.ts";
+import {
+  legacyClaimedAttemptCurrent as claimedAttemptCurrent,
+  legacyStageAttempt,
+} from "./legacy-source-membership.ts";
 
 // Historical 0026 transition: intentionally retain its no-policy behavior and
 // old-Worker final check. Migration0030 removes that exception unconditionally;
@@ -131,6 +134,17 @@ async function fixture(
         "SELECT version FROM reconciliation_work WHERE tenant='a' AND source='source' AND qso='q1'",
       )
       .first<number>("version");
+    if (vendor === "lotw" && identity)
+      return legacyStageAttempt(
+        h.store,
+        key,
+        "g1",
+        { record },
+        "v1",
+        template,
+        NOW + 2,
+        { claim, sourceVersion: sourceVersion! },
+      );
     return h.store.stage(
       key,
       "g1",

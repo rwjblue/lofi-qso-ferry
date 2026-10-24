@@ -2,7 +2,17 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import test, { type TestContext } from "node:test";
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
-import { canonical } from "../src/security.ts";
+import { backfillLotwOwnership } from "../src/lotw-ownership.ts";
+import {
+  prepareLotwOwnershipBatch,
+  renewAttemptLotwOwnership,
+} from "../src/lotw-ownership-bridge.ts";
+import {
+  adoptHistory,
+  canonicalLotwIdentity,
+  classifyHistory,
+} from "../src/reconcile.ts";
+import { canonical, randomToken, sha256 } from "../src/security.ts";
 import {
   attemptSourceExportAuthorizationMode,
   attemptSourceExportProofCurrent,
@@ -14,6 +24,14 @@ import { applyMigration, database, seed } from "./helpers.ts";
 import { mintFixtureSourceProofs } from "./source-proof-fixtures.ts";
 
 const migration = "0032_lotw_fresh_insert_authorization.sql";
+const record = {
+  STATION_CALLSIGN: "W1AW",
+  CALL: "K1ABC",
+  QSO_DATE: "20261022",
+  TIME_ON: "120001",
+  BAND: "20M",
+  MODE: "FT8",
+};
 async function fixture(
   t: TestContext,
   historicalAttempt = false,
@@ -39,6 +57,27 @@ async function fixture(
         "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,due_at,updated_at) VALUES('a','source','q1','destination','old-generation','old-source',0,0)",
       )
       .run();
+    // Genuine pre-0030 identity evidence lets current registry backfill explain
+    // this old cancelled attempt without manufacturing current coverage.
+    const oldClaim = await destinationIdentityClaim("lotw", record);
+    await h.store
+      .statement(
+        "INSERT INTO destination_identity_claims(tenant,destination,vendor,identity_hash,source,qso,created_at) VALUES('a','destination','lotw',?,'source','q1',0)",
+        oldClaim.hash,
+      )
+      .run();
+    await (
+      await h.store.lotwIdentityStatement(
+        key,
+        {
+          remoteId: oldClaim.hash,
+          identity: canonicalLotwIdentity(record),
+        },
+        "uncertain",
+        1,
+        { sql: "1", params: [] },
+      )
+    ).run();
     await h.store
       .statement(
         "INSERT INTO attempts SELECT tenant,'old',source,qso,destination,generation,'old-payload','old-hash',NULL,'v1',0,source_hash FROM ledger WHERE tenant='a'",
@@ -47,6 +86,12 @@ async function fixture(
     await h.store
       .statement(
         "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','old','cancelled',0,0)",
+      )
+      .run();
+    await h.store
+      .statement(
+        "INSERT INTO attempt_identity_claims(tenant,attempt,destination,vendor,identity_hash,source,qso,source_version) VALUES('a','old','destination','lotw',?,'source','q1',NULL)",
+        oldClaim.hash,
       )
       .run();
   }
@@ -115,24 +160,92 @@ async function fixture(
       "UPDATE ledger SET state='missing_current_identity',due_at=0 WHERE tenant='a' AND source='source' AND qso='q1'",
     )
     .run();
-  const record = {
-    STATION_CALLSIGN: "W1AW",
-    CALL: "K1ABC",
-    QSO_DATE: "20261022",
-    TIME_ON: "120001",
-    BAND: "20M",
-    MODE: "FT8",
-  };
   const claim = await destinationIdentityClaim("lotw", record);
+  const payload = {
+    kind: "lotw",
+    station: { callsign: record.STATION_CALLSIGN, dxcc: 291 },
+    contact: {
+      id: snapshot.contact.id,
+      generation: snapshot.contact.generation,
+      call: record.CALL,
+      date: "2026-10-22",
+      time: "12:00:01Z",
+      band: record.BAND,
+      mode: record.MODE,
+    },
+  };
   const fresh: SourceExportAuthorization = {
     ...evidence.authorizations[0],
     authorizationMode: "lotw_fresh_insert",
   };
-  const stage = (proof = fresh) =>
-    h.store.stage(
+  const maintain = async () => {
+    if (beforeMigration) return;
+    for (let pass = 0; pass < 10; pass++) {
+      const result = await backfillLotwOwnership(h.store, "a", { limit: 100 });
+      if (!(result.advanced || result.covered || result.ownersHashed)) break;
+    }
+  };
+  const stage = async (proof = fresh) => {
+    if (beforeMigration) {
+      // Reproduce the original guarded transaction in the actual pre-0036
+      // schema; newer Store.stage correctly requires the ownership bridge.
+      const id = randomToken(),
+        now = Date.now();
+      await h.db.batch([
+        h.store.statement(
+          "INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version,identity_vendor,identity_hash,identity_source_version,identity_lotw_owner_id,source_export_proof_id,source_export_scope,source_export_reconciliation_version,authorization_mode) VALUES(?,'a','source','q1','destination',?,NULL,?,'v1','lotw',?,?,?,?,?,?,?)",
+          id,
+          snapshot.contact.generation,
+          now,
+          claim.hash,
+          snapshot.contact.reconciliationVersion!,
+          `identity:${await sha256(canonical([key.source, key.qso]))}:${claim.hash}`,
+          proof.proofId,
+          canonical(proof.scope),
+          proof.reconciliationVersion,
+          proof.authorizationMode ?? "source_boundary",
+        ),
+        await h.store.putPrivate(
+          "a",
+          "destination",
+          id,
+          "outbox",
+          payload,
+          now + 7 * 86400_000,
+        ),
+        h.store.statement(
+          "INSERT INTO attempts SELECT tenant,?,source,qso,destination,generation,?,?,NULL,'v1',?,source_hash FROM ledger WHERE tenant='a' AND source='source' AND qso='q1' AND destination='destination'",
+          id,
+          id,
+          await sha256(canonical(payload)),
+          now,
+        ),
+        h.store.statement(
+          "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a',?,'prepared',?,?)",
+          id,
+          now,
+          now,
+        ),
+        h.store.statement(
+          "INSERT INTO attempt_identity_claims(tenant,attempt,destination,vendor,identity_hash,source,qso,source_version) VALUES('a',?,'destination','lotw',?,'source','q1',?)",
+          id,
+          claim.hash,
+          snapshot.contact.reconciliationVersion!,
+        ),
+        h.store.statement(
+          "INSERT INTO attempt_events(tenant,attempt,state,at) VALUES('a',?,'prepared',?)",
+          id,
+          now,
+        ),
+        h.store.statement("DELETE FROM stage_guards WHERE id=?", id),
+      ]);
+      return id;
+    }
+    await maintain();
+    return h.store.stage(
       key,
       snapshot.contact.generation,
-      { kind: "lotw", record },
+      payload,
       "v1",
       template,
       Date.now(),
@@ -142,18 +255,65 @@ async function fixture(
       { claim, sourceVersion: snapshot.contact.reconciliationVersion },
       proof,
     );
-  const insertGuard = (id: string, proof: SourceExportAuthorization = fresh) =>
-    h.store.statement(
-      "INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version,source_export_proof_id,source_export_scope,source_export_reconciliation_version,authorization_mode) VALUES(?,'a','source','q1','destination',?,?,?,'v1',?,?,?,?)",
-      id,
-      snapshot.contact.generation,
-      template,
-      Date.now(),
-      proof.proofId,
-      canonical(proof.scope),
-      proof.reconciliationVersion,
-      proof.authorizationMode ?? "source_boundary",
-    );
+  };
+  const insertGuard = (
+    id: string,
+    proof: SourceExportAuthorization = fresh,
+  ) => ({
+    async run() {
+      const now = Date.now();
+      const statement = h.store.statement(
+        "INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version,source_export_proof_id,source_export_scope,source_export_reconciliation_version,authorization_mode,identity_vendor,identity_hash,identity_source_version,identity_lotw_owner_id) VALUES(?,'a','source','q1','destination',?,?,?,'v1',?,?,?,?,'lotw',?,?,?)",
+        id,
+        snapshot.contact.generation,
+        template,
+        now,
+        proof.proofId,
+        canonical(proof.scope),
+        proof.reconciliationVersion,
+        proof.authorizationMode ?? "source_boundary",
+        claim.hash,
+        proof.reconciliationVersion,
+        `identity:${await sha256(canonical([key.source, key.qso]))}:${claim.hash}`,
+      );
+      if (beforeMigration) return statement.run();
+      await maintain();
+      const ledger = await h.store.ledger(key);
+      assert.ok(ledger);
+      const hash = await sha256(canonical(payload));
+      const ownership = await prepareLotwOwnershipBatch(
+        h.store,
+        "stage",
+        [
+          {
+            ...key,
+            attempt: id,
+            generation: snapshot.contact.generation,
+            sourceHash: ledger.source_hash,
+            payloadHash: hash,
+            artifactHash: hash,
+            credentialVersion: "v1",
+            sourceVersion: proof.reconciliationVersion,
+            sourceProofId: proof.proofId,
+            identity: {
+              remoteId: claim.hash,
+              identity: canonicalLotwIdentity(record),
+            },
+          },
+        ],
+        now,
+      );
+      try {
+        return await h.db.batch([
+          ...ownership.begin,
+          statement,
+          ...ownership.finish,
+        ]);
+      } finally {
+        await ownership.release();
+      }
+    },
+  });
   const claimAttempt = async (id: string) => {
     const lease = (await h.store.claim(
       "a",
@@ -162,13 +322,30 @@ async function fixture(
       120000,
     ))!;
     assert.ok(lease);
-    return {
-      lease,
-      claimed: await h.store.claimAttempt("a", id, lease, Date.now(), {
-        remoteId: claim.hash,
-        identity: record,
-      }),
-    };
+    const ownership = await renewAttemptLotwOwnership(
+      h.store,
+      "a",
+      id,
+      payload,
+    );
+    try {
+      return {
+        lease,
+        claimed: await h.store.claimAttempt(
+          "a",
+          id,
+          lease,
+          Date.now(),
+          {
+            remoteId: claim.hash,
+            identity: canonicalLotwIdentity(record),
+          },
+          { payload, lease: ownership.lease },
+        ),
+      };
+    } finally {
+      await h.store.release(ownership.lease);
+    }
   };
   return {
     ...h,
@@ -180,6 +357,7 @@ async function fixture(
     claimAttempt,
     record,
     claim,
+    maintain,
   };
 }
 
@@ -340,15 +518,32 @@ test("fresh structural guards reject mappings, accepted hashes, corrections and 
     )
     .run();
   assert.equal(await lotwFreshInsertCurrent(h.store, h.key), false);
-  await assert.rejects(h.stage(), /LoTW fresh insert unavailable/);
+  await assert.rejects(
+    h.stage(),
+    /LoTW fresh insert unavailable|invalid LoTW ownership plan/,
+  );
   await h.store
     .statement(
       "UPDATE connections SET kind='lotw' WHERE tenant='a' AND id='destination'",
     )
     .run();
-  await h.store
-    .statement("UPDATE ledger SET remote_id=? WHERE tenant='a'", h.claim.hash)
-    .run();
+  await h.maintain();
+  const generation = h.evidence.snapshots[0].contact.generation;
+  const mappedRecord = { ...h.record, MY_GRIDSQUARE: "FN31AA" };
+  const mapped = classifyHistory(mappedRecord, [mappedRecord], {
+    destination: "lotw",
+    capturedGeneration: generation,
+    currentGeneration: generation,
+    readAccess: true,
+    inventoryComplete: true,
+    catchupComplete: true,
+    freshCheckComplete: true,
+  });
+  assert.equal(mapped.state, "adopted_existing");
+  assert.equal(
+    (await adoptHistory(h.store, h.key, generation, mapped)).applied,
+    true,
+  );
   assert.equal(await lotwFreshInsertCurrent(h.store, h.key), false);
   await assert.rejects(h.stage(), /LoTW fresh insert unavailable/);
   assert.equal(
@@ -398,18 +593,28 @@ test("prior accepted, uncertain, unknown and missing attempt state remains an ex
             state,
           )
           .run(),
-        /source export proof unavailable/,
+        /source export proof unavailable|LoTW ownership unavailable/,
       );
     } else {
+      // Restore an unpinned old attempt through the real quarantine state, then
+      // vary its retained outcome. New prepared/dispatching rows stay forbidden.
       await h.store
         .statement(
-          "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','old',?,0,0)",
+          "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','old','reconciliation_required',0,0)",
+        )
+        .run();
+      await h.store
+        .statement(
+          "UPDATE attempt_state SET state=? WHERE tenant='a' AND attempt='old'",
           state,
         )
         .run();
       assert.equal(await lotwFreshInsertCurrent(h.store, h.key), false, state);
     }
-    await assert.rejects(h.stage(), /LoTW fresh insert unavailable/);
+    await assert.rejects(
+      h.stage(),
+      /LoTW fresh insert unavailable|LoTW ownership unavailable/,
+    );
   }
   await h.store
     .statement(
@@ -427,7 +632,10 @@ test("prior accepted, uncertain, unknown and missing attempt state remains an ex
     false,
     "cancelling state cannot erase earlier uncertainty",
   );
-  await assert.rejects(h.stage(), /LoTW fresh insert unavailable/);
+  await assert.rejects(
+    h.stage(),
+    /LoTW fresh insert unavailable|LoTW ownership unavailable/,
+  );
 });
 
 test("only explicit known-unsent history permits another fresh insert", async (t) => {
@@ -540,7 +748,7 @@ test("mapped or uncertain prior evidence appearing after preparation blocks disp
         id,
       )
       .run(),
-    /source export proof unavailable|lease lost/,
+    /source export proof unavailable|lease lost|LoTW ownership unavailable/,
   );
   assert.equal(
     await h.store
@@ -613,7 +821,7 @@ test("the current-attempt exception never resets an uncertain or accepted mutati
         id,
       )
       .run(),
-    /LoTW fresh insert unavailable|source export proof unavailable/,
+    /LoTW fresh insert unavailable|source export proof unavailable|LoTW ownership unavailable/,
   );
   // Even an incorrect mutable-state reset cannot erase immutable uncertainty.
   await h.store
@@ -625,7 +833,7 @@ test("the current-attempt exception never resets an uncertain or accepted mutati
   assert.equal(await attemptSourceExportProofCurrent(h.store, "a", id), false);
   await assert.rejects(
     h.store.claimAttempt("a", id, lease),
-    /source export proof unavailable/,
+    /source export proof unavailable|LoTW ownership unavailable/,
   );
   await h.store
     .statement("DELETE FROM attempt_state WHERE tenant='a' AND attempt=?", id)
@@ -640,7 +848,7 @@ test("the current-attempt exception never resets an uncertain or accepted mutati
           state,
         )
         .run(),
-      /LoTW fresh insert unavailable|source export proof unavailable/,
+      /LoTW fresh insert unavailable|source export proof unavailable|LoTW ownership unavailable/,
     );
   assert.equal(
     await attemptSourceExportAuthorizationMode(h.store, "a", id),
@@ -841,7 +1049,10 @@ test("populated upgrade preserves every old pin, guard, foreign key and original
 });
 
 test("rebuilt mode constraints reject unknown modes and old callers retain boundary default", async (t) => {
-  const h = await fixture(t);
+  // Isolate the actual 0032 table rebuild/default contract from later bridge
+  // admission rules, which intentionally reject copied unplanned guard rows.
+  const h = await fixture(t, false, true);
+  await applyMigration(h.db, migration);
   await h.insertGuard("old-shape", h.evidence.authorizations[0]).run();
   const columns = (
     await h.store

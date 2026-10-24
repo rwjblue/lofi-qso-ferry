@@ -289,7 +289,12 @@ test("fresh structural guards reject mappings, accepted hashes, corrections and 
     )
     .run();
   assert.equal(await qrzFreshInsertCurrent(h.store, h.key), false);
-  await assert.rejects(h.stage(), /QRZ fresh insert unavailable/);
+  // Either current vendor guard may reject first; the explicit eligibility
+  // check above still proves that this LoTW route cannot use QRZ fresh mode.
+  await assert.rejects(
+    h.stage(),
+    /QRZ fresh insert unavailable|LoTW ownership unavailable/,
+  );
   await h.store
     .statement(
       "UPDATE connections SET kind='qrz' WHERE tenant='a' AND id='destination'",

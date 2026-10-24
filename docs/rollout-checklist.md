@@ -409,8 +409,13 @@ LoTW associations; unresolved identity, location and route conflicts remain held
   checks pass; pending/held coverage still grants no authority.
 - [ ] Finish reconciliation and review actual exceptions; do not label every
   stale or unprocessed hold a manual exception.
-- [ ] Refresh exact source/vendor evidence for the separate scoped trial packet;
-  keep exports disabled until the owner changes that instruction.
+- [x] Exercise exact deployed-source proof creation and same-contact fresh QRZ
+  absence checks in one cloud invocation. At 21:10:12.733 UTC, two source reads,
+  one proof batch and three QRZ reads pass with the same proof current afterward.
+  No attempt, staging, signature or export occurs; all eight controls stay closed.
+- [ ] Remint exact source/vendor evidence on the then-deployed release immediately
+  before a separately authorized scoped trial. Keep exports disabled until the
+  owner changes that instruction; finite preview evidence is not write acceptance.
 - [ ] Establish first-write acceptance and sustained capacity separately.
 
 ### Verify the deployed lookup and coverage follow-up
@@ -582,7 +587,16 @@ enforced separation from the global cutover/no-query effects described above,
 then current evidence for the exact scope. The proposed order remains QRZ first,
 followed by LoTW. Keep private contact details out of repository documentation.
 
-The latest completed recovery receipt is the **20:50:59.570 UTC** backup of
+The latest completed recovery receipt is the **21:13:06.917 UTC** postdiagnostic
+backup of `5a427a30`: **41,584,787 bytes**, all 36 migrations, **3,294 populated
+exact ownership records**, one immutable source proof and its exact retention
+row. All decryptions, original AAD/key/HMAC/ownership bindings, integrity/FKs and
+two isolated quarantines pass. Attempts, cutovers, pins and transient guards are
+zero; no production restore or vendor mutation occurs. Coverage remains unfinished
+(1,981 pending / 3,360 held inputs), and raw historical references remain empty.
+This verifies recovery of populated proof state as well as copied exact evidence.
+
+The earlier **20:50:59.570 UTC** backup of
 `5a427a30`: 38,728,270 bytes, all 36 migrations, 4,145 index rows, 4,507 source
 rows, 3,327 exact claims and 2,635 QRZ owners/markers. Isolated restore,
 integrity/FKs, three credential decryptions, comparison-key verification and

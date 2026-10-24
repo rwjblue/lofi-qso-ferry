@@ -78,6 +78,51 @@ not force a contact into eligibility. Bootstrap coverage, actual exception
 review, fresh source/vendor proofs, scoped first-write acceptance and sustained
 capacity remain open. Exports remain disabled.
 
+The stale-context diagnostic admission issue is resolved without changing final
+eligibility. A separate SELECT-only planner preserves the failed preliminary
+audit and binds the current source versions and routes. One cloud invocation
+then held at `candidate_binding_changed` before any vendor request. A cron ran
+between selection and execution; the exact differing field was not diagnosed.
+A fresh plan for that **same contact** succeeded at
+**21:10:12.733 UTC** using the exact `5a427a30` modules in one Cloudflare preview:
+two normal source reads, one native proof batch, and three QRZ reads with verified
+book identity and a complete empty neighborhood. The same proof remained current
+afterward with **296,013 ms** left. The inner composition took 4.617 seconds,
+110 D1 RPCs / 136 SQL, with two dependencies and no events. These metrics exclude
+preview startup, the separate nonce lease and host verification. The preview was disposed; independent
+before/after checks preserve the sole production Worker and all eight closed
+controls. This verifies a finite current-release read path, not scheduled proof
+execution, global completeness, capacity or a QSO upload.
+
+The **21:05:40.508 UTC** backup independently validates **2,640 populated exact
+ownership records**, preserving 3,327 claims and 2,653 QRZ owners/markers through
+isolated restore and repeated quarantine. Coverage remains unfinished: 3,981
+pending inputs and 3,360 held inputs, with zero unhashed owners. At
+**21:06:53.328 UTC**, QRZ has 226 ambiguous / 512 mismatched / 447 pending routes.
+Only five ambiguous rows have a memo for the same ledger generation; memo timing
+does not establish current canonical projection or finished exception review.
+
+The **21:13:06.917 UTC** postdiagnostic backup verifies **3,294 encrypted exact
+ownership records** plus the new immutable proof and its matching retention row
+through isolated restore and two quarantines. Attempts, cutovers and pins remain
+zero. There are still 1,981 pending inputs and 3,360 held inputs; copying most
+identities does not establish complete ownership coverage. Raw references remain
+empty. No production restore or vendor mutation occurred.
+
+### Signed follow-ups awaiting release checks
+
+`59c320afac37c36858b51b87d5153ec51500799e` prioritizes identity copies for owners
+hashed in the same bounded pass. The identical-snapshot rehearsal reduces adapter
+RPCs **925→773** while preserving complete coverage and every prior protected
+row. Its full isolated check passes **1,613 tests** and all required checks.
+`f2c41cb3a929ae3d3545e235894027b84fbf09fb` conservatively honors authoritative
+LoFi `status: "deleted"`; 57 projection/collector tests and three focused native
+intake cases pass. Both changes are signed and pushed; integrated types and build
+pass. [Combined release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40132320522)
+is still running. Neither follow-up is deployed; production remains `5a427a30`
+with exports disabled. Fresh exact evidence is required again before any later
+authorized first-write trial.
+
 ### Previous production — inventory diagnostics (c4f51de8)
 
 Signed revision `c4f51de821d7d5867a19b1710fc188659b9d3771` deployed at
@@ -585,28 +630,17 @@ Core feature paths, owner enrollment and service linking are implemented. The ne
 Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-character LoTW signing and the aggregate source audit are implemented, tested and deployed. Claims protect adoption, preparation and dispatch across cancellation, uncertainty, source edits and payload expiry. Historical precision holds and live vendor acceptance remain separate.
 
 The [QRZ association rollout](docs/bootstrap.md#historical-association-and-vendor-matching) first deployed in `6ff685a7`; the latest release retains all 2,549 QRZ owners and association markers exactly. The guarded LoTW ±30-minute consumer, cross-boundary retained coverage paths and ownership bridge are now deployed in `5a427a30`. Its registry bootstrap still needs production coverage verification before historical association can rely on it. Remaining holds need normal reconciliation and review before they can be classified as manual exceptions. Neither historical association nor source-index coverage establishes absence, universal upstream completeness or export permission.
-1. **Repeat per-contact source verification on the deployed release.** The production baseline,
-   forward drain and quarantine handoff are complete: all 4,500 retained rows
-   were witnessed, with 4,130 contacts eligible for reconciliation. The immutable
-   proof mint succeeded for one contact at 08:12:53 under its original atomic
-   guard. The reviewed timestamp-expansion and clock-admission fixes are deployed.
-   Repeat collection/drain on that release; a completed disabled cron does not
-   validate proof creation or delivery. A 09:05 cloud Worker diagnostic reproduced the atomic proof
-   rejection after successful collection/drain; later predicates all passed.
-   The bounded admission fix is deployed and previously passed a 09:20 cloud
-   comparison: one proof batch succeeded with all original times and guards.
-   That sample needed one clock read and no wait; controlled tests separately
-   verify catch-up under lag. Distinguish this comparison
-   from scheduled production validation. The diagnostic follows normal context
-   refresh order, while retaining strict current eligibility and proof checks
-   before QRZ. Its earlier zero-candidate precheck was too restrictive; that
-   result did not establish a new runtime defect. See the
-   [dated source evidence](docs/evidence-lofi.md).
-   The existing scheduled path skips proof creation while exports are disabled;
-   simply waiting for another cron run cannot validate it. The bounded cloud
-   comparison kept gates closed and does not establish scheduling or capacity.
+1. **Current-release per-contact source verification is exercised; refresh it
+   before a future trial.** At 21:10:12.733 UTC, the exact `5a427a30` coordinator
+   collected two positive dependencies, completed its final drain and minted one
+   immutable proof in a Cloudflare preview. Strict eligibility and the same proof
+   remained current after QRZ reads. No diagnostic clock patch, timestamp renewal or atomic
+   guard relaxation was used. This is finite preview evidence, not scheduled
+   production or capacity evidence. The disabled scheduler intentionally skips
+   proof creation, so waiting for cron cannot validate that branch. Remint exact
+   evidence on the then-deployed release before any separately authorized write.
    Full-account purge, retention and replay guarantees remain unproved; keep
-   `SOURCE_BOUNDARY_VERIFIED=false`.
+   `SOURCE_BOUNDARY_VERIFIED=false`. See [source evidence](docs/evidence-lofi.md).
 2. **Authority separation implemented and deployed.** The independent
    `QRZ_FRESH_INSERTS_ENABLED` mode is off by default and limited to a first INSERT.
    It pins its authorization mode immutably and rechecks exact scope, current
@@ -615,12 +649,12 @@ The [QRZ association rollout](docs/bootstrap.md#historical-association-and-vendo
    corrections. Keep `SOURCE_BOUNDARY_VERIFIED=false`; universal UUID, tombstone
    and purge guarantees remain unproved. This completes the permission split,
    not vendor write acceptance or general source-boundary authority.
-3. **Preserve and refresh the joint QRZ evidence.** The 09:20 cloud comparison
-   completed source collection/drain/mint, followed by protected host targeted,
-   book-verification and covering reads for the same contact. Its exact proof remained current after
-   the empty neighborhood check, with 271,806 ms remaining. This verifies one
-   bounded read path, with no events in its two-dependency closure. Refresh the exact contact's evidence
-   before any future authorized write. The deployed QRZ integration can resolve
+3. **Preserve and refresh the joint QRZ evidence.** The 21:10 current-release
+   comparison completes collection, drain, mint and three targeted/book/covering
+   QRZ reads in the same Worker invocation. Its exact proof remains current after
+   the complete empty neighborhood check, with 296,013 ms remaining. Its two
+   dependencies contain no events. Refresh the exact contact's evidence before
+   any future authorized write. The deployed QRZ integration can resolve
    minute-only history only with complete current coverage and unique ownership;
    competing associations and incompatible/unknown locations remain held.
    Valid nested QRZ/LoTW grids now use guarded historical association.

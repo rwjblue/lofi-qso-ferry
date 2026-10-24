@@ -2,6 +2,36 @@
 
 Initial implementation review: 2026-10-22, using documentation and synthetic fixtures. Subsequent read-only observations are dated below. No QRZ writes were performed; production exports remain disabled.
 
+## Current-release same-contact cloud check — 2026-10-24 21:10 UTC
+
+The exact signed `5a427a30` runtime, deployed as Worker
+`1e3a63b8-eceb-47dc-86d5-b4c64dd79a48`, completed source proof creation and QRZ
+absence verification in **one temporary Cloudflare preview invocation**. The
+separate preliminary planner admitted stale ledger context only as a refresh
+hint; the unchanged normal coordinator refreshed it and strict post-proof
+selection passed. An earlier invocation held on changed binding before any
+vendor request. The successful invocation used a fresh binding for the same
+contact, without substituting another contact or weakening the checks.
+
+Two ordinary LoFi reads covered two positive dependencies and the final canonical
+drain; one native atomic batch minted the proof at **21:10:09.659 UTC**. Three QRZ
+reads used the normal targeted FETCH, verified-book STATUS and covering FETCH
+fallback, returning a complete neighborhood with zero records. The **same proof**
+was current after all reads at **21:10:12.733 UTC**, with **296,013 ms** remaining.
+The inner helper used 110 D1 RPCs / 136 SQL in 4.617 seconds, excluding preview
+startup, the separate nonce lease and host verification. There were no events in
+this dependency closure. Normal budgets, leases, original timestamps and atomic
+guards remained in effect; the original independent receipt was never renewed
+inside the Worker.
+
+The preview was disposed. Independent checks at **21:10:05.144** and
+**21:10:14.213 UTC** retain the sole production Worker, matching assets, active
+KEK version 1 and all eight closed controls. Attempts, cutovers, staging guards
+and source-proof pins remain zero. No QSO was staged, signed or exported. This is
+finite cloud observation of the deployed modules, not execution by the deployed
+scheduler, universal source completeness, vendor write acceptance or permission
+to export. Exact evidence must be obtained again before a later authorized trial.
+
 The problem is that QRZ replacement is a duplicate operation with possible confirmation loss, while adopted history must retain its narrative. The adapter uses conservative readback, a fixed HTTPS form-POST endpoint and an identifiable User-Agent; it does not invent an update-by-LOGID request. A bounded interpreted Liquid subset supplies forward-only narrative rendering.
 
 ## Primary contracts and remaining live checks

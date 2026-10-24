@@ -4,6 +4,22 @@ Initial adapter review: 2026-10-22, before live requests. The dated observations
 below record subsequent read-only vendor evidence; fixture results alone do not
 establish server compatibility or production coverage.
 
+Latest current-release check, **2026-10-24 21:10:12.733 UTC**: exact signed
+`5a427a30` coordinator modules completed two source reads, final canonical drain
+and one successful native proof batch in a single Cloudflare preview invocation.
+Two positive dependencies and no events were required. Three subsequent QRZ
+reads confirmed a complete empty neighborhood, and the same proof remained
+current afterward with 296,013 ms left. The inner helper took 4.617 seconds,
+110 D1 RPCs / 136 SQL, excluding preview startup, nonce admission and host checks.
+Its preliminary stale-context audit was not promoted to readiness;
+normal observation refreshed context before strict eligibility and proof checks.
+No diagnostic clock barrier, timestamp renewal, source-policy change or atomic
+guard relaxation was used. The preview was disposed, all eight production
+controls stayed closed, and no attempt, stage, signature or QSO upload occurred.
+This is finite cloud execution of the deployed modules, not the disabled
+production scheduler, global source-boundary verification or sustained capacity.
+See [the current QRZ observation](evidence-qrz.md#current-release-same-contact-cloud-check--2026-10-24-2110-utc).
+
 Current checkpoint, 2026-10-24 09:21 UTC: the production all-client baseline,
 forward drain and quarantine handoff completed at **06:35:44.881 UTC**. The policy
 is `ready`, with all 218 operations and 4,282 QSO-stream rows (4,500 retained rows)

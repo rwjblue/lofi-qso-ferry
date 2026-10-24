@@ -73,8 +73,10 @@ Both runs finish with 9,981 covered inputs, 3,327 cryptographically validated
 exact copies, zero held inputs and unchanged protected tables. The actual
 selection query reads 19 rows with either zero or 200,000 unrelated covered
 inputs, using existing keyed indexes. This is a local bounded-query result,
-not a 200,000-contact bootstrap or Worker capacity result. Focused tests and
-independent review pass; the full release check and deployment remain pending.
+not a 200,000-contact bootstrap or Worker capacity result. Independent review and
+the full isolated check pass: **1,613 tests**, formatting, lint, both TypeScript
+projects and the Worker build. Signed `59c320af` is pushed; integrated release CI
+and deployment remain pending.
 
 ## Previous diagnostic release and bounded run — c4f51de8
 

@@ -556,7 +556,16 @@ test("ciphertext and dependency overflow hold before any partial projection", as
       "x".repeat(1_400_000),
     )
     .run();
-  await index(h.store);
+  // Each padded body still fits an index pass, while the complete reverse
+  // cohort exceeds its independent ciphertext bound. Never bypass dirty
+  // coverage merely to reach the reverse admission check.
+  for (let i = 0; i < 3; i++) {
+    const indexed = await backfillSourceHistoricalIndex(h.store, "a", {
+      limit: 1,
+    });
+    assert.equal(indexed.held, 0);
+    assert.equal(indexed.published, 1);
+  }
   const measured = measuredDatabase(h.db);
   const result = await historicalSourceCandidates(
     new Store(measured.database, h.store.keys),

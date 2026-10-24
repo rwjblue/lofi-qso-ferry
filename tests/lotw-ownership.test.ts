@@ -1066,3 +1066,195 @@ test("an unknown publication acknowledgement is thrown without a second native s
     1,
   );
 });
+
+test("newly hashed owners publish identities before their claim and mapping retry turns", async (t) => {
+  const h = await fixture(t);
+  for (let i = 0; i < 12; i++)
+    await identity(
+      h.store,
+      await owner(h.store, `priority-${String(i).padStart(2, "0")}`),
+      record({ TIME_ON: `1200${String(i).padStart(2, "0")}` }),
+    );
+  let examined = 0;
+  for (let pass = 0; pass < 3; pass++) {
+    const result = await backfillLotwOwnership(h.store, "a", { limit: 4 });
+    assert.equal(result.ownersHashed, 4);
+    assert.equal(result.examined, 4);
+    assert.equal(result.covered, 4);
+    examined += result.examined;
+    assert.equal(
+      await h.store
+        .statement(
+          "SELECT count(*) n FROM lotw_ownership_inputs WHERE status='held'",
+        )
+        .first("n"),
+      0,
+    );
+    assert.equal(
+      (await lookupLotwOwnership(h.store, "a", record())).reason,
+      "coverage_incomplete",
+    );
+  }
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) n FROM lotw_ownership_evidence")
+      .first("n"),
+    12,
+  );
+  for (let pass = 0; pass < 6; pass++) {
+    const result = await backfillLotwOwnership(h.store, "a", { limit: 4 });
+    assert.equal(result.covered, 4);
+    examined += result.examined;
+  }
+  assert.equal(
+    examined,
+    36,
+    "each real identity, claim and mapping examined exactly once",
+  );
+  assert.equal((await observed(h.store)).candidates.length, 12);
+});
+
+test("owner priority leaves historical pending times and permanently unknown inputs in the general queue", async (t) => {
+  const h = await fixture(t);
+  const saved = await identity(h.store, await owner(h.store), record(), false);
+  await backfill(h.store);
+  await h.store
+    .statement(
+      "UPDATE lotw_ownership_inputs SET status='pending',checked_at=17 WHERE tenant='a' AND kind='identity'",
+    )
+    .run();
+  await h.store
+    .statement(
+      "INSERT INTO lotw_ownership_inputs(tenant,kind,destination,reference,source,qso) VALUES('a','legacy','signing','missing-original-attempt','source','q1')",
+    )
+    .run();
+  const result = await backfillLotwOwnership(h.store, "a", { limit: 2 });
+  assert.equal(result.ownersHashed, 0);
+  assert.equal(result.examined, 2);
+  assert.equal(result.covered, 1);
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT status FROM lotw_ownership_inputs WHERE kind='identity' AND reference=?",
+        saved.id,
+      )
+      .first("status"),
+    "covered",
+  );
+  assert.equal(
+    await h.store
+      .statement("SELECT status FROM lotw_ownership_inputs WHERE kind='legacy'")
+      .first("status"),
+    "held",
+  );
+  assert.equal(
+    (await lookupLotwOwnership(h.store, "a", record())).reason,
+    "coverage_incomplete",
+  );
+  assert.equal(
+    (await backfillLotwOwnership(h.store, "a", { limit: 1 })).examined,
+    1,
+    "held legacy input keeps rotating; it is never excluded as unavailable",
+  );
+});
+
+test("ready-owner input selection caps metadata and seeks past 200000 unrelated covered inputs", async (t) => {
+  const h = await fixture(t);
+  const key = await owner(h.store, "measured-owner");
+  await identity(h.store, key);
+  let selection: { sql: string; params: unknown[] } | undefined;
+  const db = Object.create(h.db) as D1Database;
+  db.batch = h.db.batch.bind(h.db);
+  db.prepare = (sql) => {
+    const prepared = h.db.prepare(sql);
+    return new Proxy(prepared, {
+      get(target, property) {
+        if (property === "bind")
+          return (...params: unknown[]) => {
+            if (sql.includes("WITH owner_candidates AS MATERIALIZED"))
+              selection = { sql, params };
+            return target.bind(...params);
+          };
+        const value: unknown = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  const result = await backfillLotwOwnership(new Store(db, keys), "a", {
+    limit: 2,
+  });
+  assert.equal(result.covered, 2);
+  assert.ok(selection);
+  const captured = selection;
+  const query = () =>
+    h.store
+      .statement(
+        captured.sql,
+        ...(captured.params as (string | number | null)[]),
+      )
+      .all<{ kind: string; reference: string }>();
+  const before = await query();
+  const evidence = await h.store
+    .statement(
+      "SELECT id,exact_hash FROM lotw_ownership_evidence WHERE tenant='a'",
+    )
+    .first<{ id: string; exact_hash: string }>();
+  assert.ok(evidence);
+  // Synthetic index-only filler is never decrypted or used as submit/receipt
+  // evidence. The real candidate and its guarded publication above are unchanged.
+  await h.store
+    .statement(
+      `WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<200000) INSERT INTO lotw_ownership_inputs(tenant,kind,destination,reference,source,qso,exact_hash,status,evidence_id) SELECT 'a','mapping','signing',printf('unrelated-covered-%06d',x),'unrelated-source',printf('metadata-%06d',x),?,'covered',? FROM n`,
+      evidence.exact_hash,
+      evidence.id,
+    )
+    .run();
+  const after = await query();
+  assert.deepEqual(after.results, before.results);
+  assert.equal(
+    after.meta.rows_read,
+    before.meta.rows_read,
+    "covered population adds no input-selection scan",
+  );
+  assert.ok(
+    after.meta.rows_read < 40,
+    JSON.stringify({ rowsRead: after.meta.rows_read }),
+  );
+  const plan = (
+    await h.store
+      .statement(
+        `EXPLAIN QUERY PLAN ${captured.sql}`,
+        ...(captured.params as (string | number | null)[]),
+      )
+      .all<{ detail: string }>()
+  ).results;
+  assert.ok(
+    plan.some((row) =>
+      /SEARCH i USING INDEX sqlite_autoindex_lotw_ownership_inputs_1.*tenant=.*kind=.*destination=.*reference>.*reference</.test(
+        row.detail,
+      ),
+    ),
+  );
+  assert.ok(
+    plan.some((row) =>
+      /SEARCH i USING INDEX lotw_ownership_pending.*tenant=.*status=/.test(
+        row.detail,
+      ),
+    ),
+  );
+  const cappedEnd = plan.findIndex((row) =>
+    /SCAN owner_candidates/.test(row.detail),
+  );
+  assert.ok(cappedEnd > 0);
+  assert.ok(
+    !plan.slice(0, cappedEnd).some((row) => /TEMP B-TREE/.test(row.detail)),
+    "no sort before the priority metadata cap",
+  );
+  t.diagnostic(
+    JSON.stringify({
+      coveredFiller: 200000,
+      beforeRowsRead: before.meta.rows_read,
+      afterRowsRead: after.meta.rows_read,
+    }),
+  );
+});

@@ -423,17 +423,24 @@ export async function backfillLotwOwnership(
       )
       .all<Owner>()
   ).results;
+  const freshOwnerHashes: { destination: string; hash: string }[] = [];
   if (owners.length) {
-    const ownerStatements = await Promise.all(
-      owners.map(async (owner) =>
-        store.statement(
-          "UPDATE lotw_ownership_owners SET owner_hash=? WHERE tenant=? AND destination=? AND source=? AND qso=? AND owner_hash IS NULL",
-          await sha256(canonical([owner.source, owner.qso])),
-          tenant,
-          owner.destination,
-          owner.source,
-          owner.qso,
-        ),
+    freshOwnerHashes.push(
+      ...(await Promise.all(
+        owners.map(async (owner) => ({
+          destination: owner.destination,
+          hash: await sha256(canonical([owner.source, owner.qso])),
+        })),
+      )),
+    );
+    const ownerStatements = owners.map((owner, index) =>
+      store.statement(
+        "UPDATE lotw_ownership_owners SET owner_hash=? WHERE tenant=? AND destination=? AND source=? AND qso=? AND owner_hash IS NULL",
+        freshOwnerHashes[index].hash,
+        tenant,
+        owner.destination,
+        owner.source,
+        owner.qso,
       ),
     );
     if (!continuing()) return stopped();
@@ -441,15 +448,28 @@ export async function backfillLotwOwnership(
     ownersHashed = results.reduce((n, r) => n + Number(r.meta.changes > 0), 0);
   }
   if (!continuing()) return stopped();
+  // Prefer exact tuples whose bounded owner references were just hashed. The
+  // identity prefix uses the existing primary-key range (':' through char(59),
+  // its ASCII successor). Cap metadata before filtering or loading envelopes;
+  // every other input, including unknown/held rows, retains the original queue.
+  // This is scheduling only: owner, ciphertext, version and key checks below
+  // still determine publication, and all incomplete coverage remains a hold.
   const inputs = (
     await store
       .statement(
-        `WITH picked AS MATERIALIZED (
-    SELECT * FROM lotw_ownership_inputs WHERE tenant=? AND status IN('pending','held') ORDER BY status DESC,checked_at,kind,destination,reference LIMIT ?
+        `WITH owner_candidates AS MATERIALIZED (
+    SELECT i.* FROM json_each(?1) o CROSS JOIN lotw_ownership_inputs i WHERE i.tenant=?2 AND i.kind='identity' AND i.destination=json_extract(o.value,'$.destination') AND i.reference>='identity:'||json_extract(o.value,'$.hash')||':' AND i.reference<'identity:'||json_extract(o.value,'$.hash')||char(59) LIMIT ?3
+  ), ready_identities AS MATERIALIZED (
+    SELECT * FROM owner_candidates WHERE status IN('pending','held')
+  ), remaining AS MATERIALIZED (
+    SELECT i.* FROM lotw_ownership_inputs i WHERE i.tenant=?2 AND i.status IN('pending','held') AND NOT EXISTS(SELECT 1 FROM ready_identities f WHERE f.kind=i.kind AND f.destination=i.destination AND f.reference=i.reference) ORDER BY i.status DESC,i.checked_at,i.kind,i.destination,i.reference LIMIT (?3-(SELECT count(*) FROM ready_identities))
+  ), picked AS MATERIALIZED (
+    SELECT * FROM ready_identities UNION ALL SELECT * FROM remaining
   ), sized AS MATERIALIZED (
     SELECT i.*,p.expires_at,p.revoked_at,length(CAST(p.envelope AS BLOB)) AS bytes,SUM(COALESCE(length(CAST(p.envelope AS BLOB)),0)) OVER(ORDER BY i.kind,i.destination,i.reference) AS total_bytes
     FROM picked i LEFT JOIN private_data p ON i.kind='identity' AND p.tenant=i.tenant AND p.connection=i.destination AND p.id=i.reference AND p.kind='lotw_identity'
-  ) SELECT s.*,CASE WHEN s.total_bytes<=? THEN p.envelope END AS envelope,CASE WHEN s.total_bytes>? THEN 1 ELSE 0 END AS oversized FROM sized s LEFT JOIN private_data p ON s.kind='identity' AND p.tenant=s.tenant AND p.connection=s.destination AND p.id=s.reference AND p.kind='lotw_identity' ORDER BY CASE s.kind WHEN 'identity' THEN 0 ELSE 1 END,s.kind,s.destination,s.reference`,
+  ) SELECT s.*,CASE WHEN s.total_bytes<=?4 THEN p.envelope END AS envelope,CASE WHEN s.total_bytes>?5 THEN 1 ELSE 0 END AS oversized FROM sized s LEFT JOIN private_data p ON s.kind='identity' AND p.tenant=s.tenant AND p.connection=s.destination AND p.id=s.reference AND p.kind='lotw_identity' ORDER BY CASE s.kind WHEN 'identity' THEN 0 ELSE 1 END,s.kind,s.destination,s.reference`,
+        JSON.stringify(freshOwnerHashes),
         tenant,
         limit,
         MAX_BYTES,

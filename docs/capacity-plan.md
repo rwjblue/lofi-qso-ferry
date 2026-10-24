@@ -312,6 +312,55 @@ source proofs, durable ownership and uncertain-delivery protection. Revisit the
 application budget only with vendor evidence and measured resource headroom;
 raising it alone is not a throughput result. No budget was increased here.
 
+## QRZ first-insert request demand — exact-f2c local measurement
+
+At **2026-10-24 23:00:21.504 UTC**, a protected native-D1 experiment ran the normal
+`tick` path against fake vendors with exact `f2c41cb3` runtime and fixture parity.
+It reused the [source-proof scheduler fixture](../tests/source-export-service.test.ts),
+with QRZ-only exact contact/destination scopes, the normal quiet period, and
+unchanged default budgets and guards. Source-boundary and LoTW capabilities stayed
+false. Initial disabled-source/history setup is outside the measured turns.
+
+| Measured enabled turn | Contacts considered | Preparations / successful fake INSERTs | LoFi requests / accepted admissions | QRZ requests / accepted admissions | Whole-tick D1 RPCs / SQL |
+| --------------------- | ------------------: | -------------------------------------: | ----------------------------------: | ---------------------------------: | -----------------------: |
+| Singleton             |                   1 |                                  1 / 1 |                               3 / 3 |                              4 / 4 |                217 / 290 |
+| Small cohort          |                   3 |                                  2 / 2 |                               3 / 3 |                              9 / 9 |                307 / 435 |
+
+Each turn used two LoFi forward syncs with limit 100 (canonical poll and final
+drain), plus one backward collection with limit 25. The singleton used three
+fresh targeted QRZ FETCHes and one INSERT. The small cohort used seven targeted
+FETCHes and two INSERTs: the third contact received its history collision read
+but did not pass the ordinary two-attempt background admission. Both turns had
+zero errors or denied reservations. Inventory was already complete and cached,
+with one cache hit per contact and no inventory FETCH. No STATUS, covering FETCH,
+LOGID readback, renewal, operation reread or LoTW request occurred.
+
+All measured QRZ admissions were background priority, subject to both the shared
+**120 requests/five minutes** total and **24/five minutes** background allowance.
+The fake vendor returned unambiguous successful empty selections. The separate
+live-observed ambiguous-empty path needs targeted FETCH, STATUS and a complete
+positive covering FETCH for each neighborhood; with one covering page, the three
+current neighborhoods plus INSERT imply **10 requests/contact**. That is a static
+request model, not a measured ten-request tick. Generic FAIL is never absence.
+
+At 100 users × 100 new contacts/day, even the optimistic measured four-request
+path needs **40,000 requests/day**, or **138.889 per five minutes**. The current
+total allowance is **34,560/day**, an ideal ceiling of **8,640 contacts/day** before
+inventory, retries, recovery or other work. The ten-request fallback model needs
+100,000/day and has an ideal ceiling of 3,456 contacts/day. Background work has
+only 6,912 requests/day, or at most 1,728 four-request contacts/day. These are
+configured application-budget bounds, not upstream QRZ quotas or demonstrated
+sustained capacity. Source collection can be shared, so its three requests in
+these turns must not be extrapolated as a fixed per-contact cost.
+
+Normal clean-ACK delivery does not include exact post-ACK readback; requiring that
+adds a request. Local D1 timing does not measure production latency. This
+experiment made no production/vendor calls, changed no runtime or limit, and
+created no approval. Its protected aggregate receipt is
+`ferry-qrz-demand-f2c-xyqyje03/result.json`. The separately authorized
+[first live QRZ acceptance trial](qrz-pilot.md) remains the priority; the larger
+usage target is not a new prerequisite for that singleton trial.
+
 ## First scheduled run of `12f636b3`
 
 The first completed scheduled run after deployment ran from **08:01:51 to
@@ -537,11 +586,11 @@ Current vendor limits are application policy shared across all accounts, not
 verified vendor quotas. They reserve capacity for live work and enforce shared
 Retry-After cooldowns. They must not be raised merely to make a benchmark pass.
 
-| Vendor | Current total requests / five minutes | Consequence at 100 accounts                                                                                                                                                                                              |
-| ------ | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| LoFi   | 24, including at most 4 background    | Five-minute polling needs 100 requests. Equal polling takes at least about 21 minutes, or 25 minutes when all four background slots are used.                                                                            |
-| QRZ    | 120                                   | A new contact currently needs at least four calls through INSERT: classifier read, preparation read, dispatch read and INSERT. 40,000 calls/day exceeds the 34,560/day budget before maintenance or retries.             |
-| LoTW   | 40, including at most 8 background    | A new query-enabled contact currently needs at least six calls through observed receipt: classifier read, preparation read, two certificate checks, upload and readback. 60,000 calls/day exceeds the 11,520/day budget. |
+| Vendor | Current total requests / five minutes | Consequence at 100 accounts                                                                                                                                                                                                                                                                  |
+| ------ | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LoFi   | 24, including at most 4 background    | Five-minute polling needs 100 requests. Equal polling takes at least about 21 minutes, or 25 minutes when all four background slots are used.                                                                                                                                                |
+| QRZ    | 120, including at most 24 background  | The measured direct-empty first-insert path needs four calls: classifier read, preparation read, dispatch read and INSERT. 40,000 calls/day exceeds the 34,560/day total before maintenance or retries; see [request demand](#qrz-first-insert-request-demand--exact-f2c-local-measurement). |
+| LoTW   | 40, including at most 8 background    | A new query-enabled contact currently needs at least six calls through observed receipt: classifier read, preparation read, two certificate checks, upload and readback. 60,000 calls/day exceeds the 11,520/day budget.                                                                     |
 
 The LoTW signer already accepts multiple contacts, but the attempt lifecycle
 currently represents one contact. Combining signed input alone would bypass
@@ -1004,12 +1053,55 @@ may have occurred, retain the exact artifact and reconcile every member without
 blind resubmission. An upload receipt does not prove every member was observed.
 Share certificate validation only within its validated scope and dispatch turn.
 
-For QRZ, retain the final write-adjacent duplicate check and immutable write
-intent. Determine which earlier readbacks can be safely coalesced using the
-durable identity claims. Batch readback neighborhoods where responses prove complete
-coverage; do not treat cached absence as authority to write. Model required
-calls for sparse and bursty accounts before deciding whether vendor-approved
-budget changes are needed.
+#### Planned QRZ request reduction
+
+No part of this reduction is implemented. Preserve the final write-adjacent
+duplicate query, immutable attempt and all after-budget source-proof, credential,
+book, scope, lease, identity/ownership and exact request-body checks.
+1. **Reuse the immediate history observation during preparation.** Return a
+   short-lived in-memory empty observation from `service.reconcileContact` only
+   after its complete query and successful guarded classification. Carry it
+   through `prepareExportCohort` to the unmapped `qrz_fresh_insert` branch of
+   `delivery.prepareDue`. Bind tenant/source/QSO/destination, query identity/range,
+   contact semantics, credential/book/config and original read times. After the
+   coordinator's final drain, require the refreshed semantics to agree and the
+   normal source proof to be current. Expiry or changed bindings require the
+   existing fresh read or a hold; never refresh observation timestamps. Do not
+   persist/reuse it across invocations, corrections or unresolved attempts.
+   `dispatchAttempt` still performs its own new neighborhood query. The best
+   direct-empty path falls **4→3 requests/contact**, and the one-page fallback
+   path **10→7**. Three requests would consume 30,000/day at the target load,
+   leaving just 4,560/day for all other demand; this is an unmeasured design model.
+2. **Share earlier same-book planning coverage only when useful.** A bounded
+   group may share one fresh STATUS and complete positive cover when the same
+   valid range contains every target. Keep existing date/page/byte/deadline bounds
+   and independent filtering and commit guards for each contact. For N one-page
+   fallback candidates, retaining N initial targeted reads but sharing planning
+   STATUS/cover changes 7N requests to **5N+2**. Selecting a fresh planning cover
+   directly could reach **4N+2**; neither solves the fallback-heavy target alone.
+   Every serial INSERT retains a new final neighborhood and, when needed, its
+   own fresh STATUS/cover. Do not share final absence across writes. A separate
+   later cover-first strategy could avoid known-doomed targeted FETCHes, but
+   still needs fresh complete coverage per write and its own measurement.
+
+Acceptance requires native scheduler tests measuring the proposed 4→3 and 10→7
+fast paths without budget changes. A neighbor added after the reused observation
+must stop the final INSERT. Source changes during final drain, expired observations
+or proofs, and late credential/book/template/route/mapping/claim changes must hold
+or use the existing guarded read. Cross-contact/book reuse, prior-invocation tokens
+and incomplete scans must never authorize preparation. Shared-cover tests must
+include a neighbor relevant only to a later member, midnight coverage, changed
+page anchors, scope changes and overflow with no partial absence. Lost INSERT
+acknowledgements remain uncertain and cannot trigger replay or REPLACE.
+
+The [QRZ API guide](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html) does not
+provide an empty-specific FAIL guarantee, a transactional read/write snapshot
+fence or a numerical quota. Keep the existing ambiguous-empty fallback; MAX:0 or
+a failed targeted query is not a shortcut to absence. Any further protocol-based
+reduction needs scoped evidence for empty/count-only responses, pagination during
+changes, book/key reassignment and the API's duplicate/time/mode behavior. A final
+fresh query preserves today's protection but cannot exclude an external insertion
+between that query and INSERT. Do not claim atomic vendor concurrency protection.
 
 Acceptance: request demand fits the configured budgets with retry/maintenance
 headroom in both sparse and burst tests. Member cancellation, crash recovery,

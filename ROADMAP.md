@@ -20,6 +20,25 @@ The next decision is the restricted QRZ trial described in
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
 
+### Throughput follow-up — request demand
+
+The exact-`f2c41cb3` native scheduler experiment uses four QRZ requests for one
+successful fake INSERT with cached inventory. Three candidates produce two
+INSERTs and nine requests under the existing background admission. The
+live-observed ambiguous-empty response path instead has a ten-request/contact
+one-page model. These counts establish demand, not production completion rate.
+
+At 100 users × 100 new contacts/day, even four requests/contact exceeds the
+current total application budget before maintenance or retries. Background
+backfill has a smaller allowance. The next small optimization is to reuse the
+immediate history observation during preparation while retaining a new duplicate
+query before every INSERT. Then evaluate bounded earlier covering reads and
+LoTW batches, with per-contact ownership, proofs and uncertain-result recovery
+preserved. No quota increase or production capacity is claimed. The
+[capacity plan](docs/capacity-plan.md#qrz-first-insert-request-demand--exact-f2c-local-measurement)
+records measurements, request models and race-test acceptance criteria. This
+work does not delay the separately authorized singleton QRZ trial.
+
 ### Current production — ownership bootstrap and deletion status (f2c41cb3)
 
 Signed revision `f2c41cb3a929ae3d3545e235894027b84fbf09fb` deployed read-only at

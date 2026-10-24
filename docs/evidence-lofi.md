@@ -4,7 +4,38 @@ Initial adapter review: 2026-10-22, before live requests. The dated observations
 below record subsequent read-only vendor evidence; fixture results alone do not
 establish server compatibility or production coverage.
 
-Latest current-release check, **2026-10-24 21:10:12.733 UTC**: exact signed
+Latest current-release check, **2026-10-24 22:03:28.032 UTC**: exact signed
+`f2c41cb3a929ae3d3545e235894027b84fbf09fb` modules completed one positive collection
+and the mandatory final canonical drain, covering two dependencies and zero
+events, in one Cloudflare preview invocation. A native atomic batch minted one
+immutable proof at **22:03:22.388 UTC**. Normal observation refreshed the same
+contact's stale ledger context; strict current source, route and ownership
+checks passed before the QRZ phase. Three subsequent QRZ reads observed a complete
+empty neighborhood, and the **same proof** remained current with **293,053 ms**
+left. The inner composition used **109 D1 RPCs / 135 SQL statements** in
+**7.471 seconds**, excluding startup, nonce admission and host attestation.
+
+The original **22:03:17.856 UTC** receipt stayed unchanged, with no diagnostic
+clock barrier, timestamp renewal, policy relaxation or atomic-batch retry. An
+earlier known `cycle_busy` result made zero source or QRZ requests; a fresh plan
+for the same candidate preceded the success. The preview was disposed and
+independent attestation at **22:03:29.573 UTC** reconfirmed the same production
+Worker and all eight closed controls. No attempt, stage, pin, cutover, signature
+or vendor mutation occurred; normal guarded source/proof/lease/read-budget
+bookkeeping did occur. This verifies a finite current-release preview path,
+not scheduled-Worker execution, universal deletion delivery, capacity or write
+authority. Refresh exact evidence during any later separately authorized trial;
+`SOURCE_BOUNDARY_VERIFIED` remains false. See
+[the current QRZ observation](evidence-qrz.md#current-release-same-contact-cloud-check--2026-10-24-2203-utc).
+
+The **22:04:34.745 UTC** post-proof backup preserves the one immutable proof and
+its matching retention row through isolated restore and two quarantines. It
+verifies all 36 migrations, 3,327 populated exact ownership ciphertext records,
+three credentials and the tenant key, with integrity/FK checks. Attempts, both
+pin tables and cutovers remain zero. This recovery observation does not extend
+the proof's original lifetime or establish universal upstream completeness.
+
+Previous-release check, **2026-10-24 21:10:12.733 UTC**: exact signed
 `5a427a30` coordinator modules completed two source reads, final canonical drain
 and one successful native proof batch in a single Cloudflare preview invocation.
 Two positive dependencies and no events were required. Three subsequent QRZ
@@ -18,9 +49,9 @@ guard relaxation was used. The preview was disposed, all eight production
 controls stayed closed, and no attempt, stage, signature or QSO upload occurred.
 This is finite cloud execution of the deployed modules, not the disabled
 production scheduler, global source-boundary verification or sustained capacity.
-See [the current QRZ observation](evidence-qrz.md#current-release-same-contact-cloud-check--2026-10-24-2110-utc).
+See [the earlier QRZ observation](evidence-qrz.md#previous-release-same-contact-cloud-check--2026-10-24-2110-utc).
 
-Current checkpoint, 2026-10-24 09:21 UTC: the production all-client baseline,
+Earlier checkpoint, 2026-10-24 09:21 UTC: the production all-client baseline,
 forward drain and quarantine handoff completed at **06:35:44.881 UTC**. The policy
 is `ready`, with all 218 operations and 4,282 QSO-stream rows (4,500 retained rows)
 witnessed in the current epoch and zero unseen retained rows. There are 4,130

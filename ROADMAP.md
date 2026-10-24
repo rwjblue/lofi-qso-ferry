@@ -61,12 +61,60 @@ owners/markers, with zero prior rows changed or lost. Raw references remain
 empty, so populated raw-reference recovery is still open. Neither check restores
 production or grants export authority.
 
-The **21:10 UTC** same-contact cloud source-proof/QRZ observation below used
-`5a427a30`; its proof has expired and it is not a current f2c readiness packet.
-Remaining work includes populated raw-history recovery, actual exception review,
-fresh exact source/vendor proof on the current release, scheduled proof-path
-verification, scoped first-write acceptance and sustained capacity. All controls
-remain closed.
+A fresh exact-f2c same-contact packet succeeded at **22:03:28.032 UTC** in one
+Cloudflare preview: one positive collection plus mandatory final drain covered
+two dependencies and no events, one native batch minted a proof at
+**22:03:22.388 UTC**, and three QRZ targeted/book/covering reads observed a complete
+empty neighborhood. The **same proof** remained current with **293,053 ms** left.
+The inner composition used **109 D1 RPCs / 135 SQL statements** in **7.471 seconds**,
+excluding host startup, nonce admission and attestation. The original
+**22:03:17.856 UTC** receipt was never refreshed inside the Worker. The preview
+was disposed; independent **22:03:29.573 UTC** attestation reconfirmed the same
+Worker and all eight closed controls. Attempts, stages, pins, cutovers, signing
+and vendor mutations remained zero. This is finite preview evidence, not
+scheduled proof execution or write acceptance. The earlier 5a packet below
+retains its original scope and expired proof.
+
+The **21:53:13.701 UTC** pre-run recovery backup verifies 36 migrations, all
+3,327 exact ownership copies and 2,702 QRZ owners/markers, with three credential
+and tenant-key decryptions, integrity/FKs and two isolated quarantines.
+A local public-manifest size failure stopped before any live operation; its
+reviewed 128 KiB metadata-only correction preserves private and Worker limits.
+An initial actual preview returned known `cycle_busy` with zero source/QRZ
+requests before the successful same-candidate run.
+
+The **22:04:34.745 UTC** post-proof backup contains **42,608,702 bytes** and all
+36 migrations. All 3,327 exact ownership ciphertext records, three credentials
+and the tenant key pass validation, along with integrity/FKs and two isolated
+quarantines. One immutable proof and its matching retention row are preserved;
+attempts, both pin tables, cutovers and raw references remain zero. The snapshot
+has 2,766 QRZ owners/markers, 4,146 index rows and 9,981 covered ownership inputs
+with no pending, held or unhashed work. The separate **22:05:47.352 UTC**
+comparison against the **21:28 UTC baseline** preserves every original field of
+3,327 claims, 2,689 QRZ owners and markers, and 3,294 exact evidence records,
+with zero missing or changed rows. Additions are 77 QRZ owners/markers and 33
+exact copies. This comparison uses that earlier baseline, not the 21:53 pre-run
+snapshot; no production restore occurred.
+
+The protected offline **21:36:47.379 UTC snapshot** audit examined all 606 QRZ
+hold routes: **47 forward/reverse-unique positive candidates**, **539 current
+holds**, and **19 incomplete inventories plus one unavailable reverse body**.
+These are not committed associations or final ownership approval. Among 523
+forward-unique held pairs, 343 retained remote coordinate pairs lie outside
+their own grid; all 359 available source pairs lie inside both compatible grids,
+while 274 of those remote pairs lie outside their own. No remote point matches
+its own or a supported parent-grid center at recorded precision. The cause and
+vendor provenance remain unproved; user location-policy clarification is pending
+and contradictions remain held. See [QRZ evidence](docs/evidence-qrz.md).
+
+The remaining first-QRZ-write work is explicit owner authorization, a concrete
+single-attempt/stop/recovery procedure, fresh normal preparation evidence, and
+real acknowledgement plus exact readback acceptance. Follow the
+[restricted QRZ pilot guide](docs/qrz-pilot.md). **Keep exports disabled**
+is still the controlling instruction. Unrelated historical exceptions,
+currently empty raw-LoTW recovery and 200,000-contact capacity do not block that
+restricted future QRZ pilot. They remain separate follow-ups, along with
+scheduled proof-path validation and sustained capacity.
 
 ### Previous production — guarded LoTW historical association (5a427a30)
 
@@ -693,73 +741,52 @@ Timestamp/grid precision, routing and source-validity holds still require review
 Core feature paths, owner enrollment and service linking are implemented. The next milestone is a safe one- or two-user export trial; the full large-scale capacity plan follows separately. Production remains read-only. Linking credentials and waiting for cron do not establish export readiness. See the [personal acceptance checklist](docs/rollout-checklist.md) for exact prerequisites and the first-write packet.
 Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-character LoTW signing and the aggregate source audit are implemented, tested and deployed. Claims protect adoption, preparation and dispatch across cancellation, uncertainty, source edits and payload expiry. Historical precision holds and live vendor acceptance remain separate.
 
-The [QRZ association rollout](docs/bootstrap.md#historical-association-and-vendor-matching) first deployed in `6ff685a7`; the latest exact comparison preserves all 2,689 predeployment QRZ owners and association markers, plus 13 guarded additions. The guarded LoTW ±30-minute consumer, cross-boundary retained coverage paths and ownership bridge first deployed in `5a427a30`. The `f2c41cb3` checkpoint verifies complete coverage of all 9,981 registry inputs and recovery of all 3,327 exact evidence copies. Remaining holds need normal reconciliation and review before they can be classified as manual exceptions. Neither historical association nor source-index coverage establishes absence, universal upstream completeness or export permission.
-1. **Per-contact source verification was exercised on `5a427a30`; refresh it
-   before a future trial.** At 21:10:12.733 UTC, the exact `5a427a30` coordinator
-   collected two positive dependencies, completed its final drain and minted one
-   immutable proof in a Cloudflare preview. Strict eligibility and the same proof
-   remained current after QRZ reads. No diagnostic clock patch, timestamp renewal or atomic
-   guard relaxation was used. This is finite preview evidence, not scheduled
-   production or capacity evidence. The disabled scheduler intentionally skips
-   proof creation, so waiting for cron cannot validate that branch. Remint exact
-   evidence on the then-deployed release before any separately authorized write.
-   Full-account purge, retention and replay guarantees remain unproved; keep
-   `SOURCE_BOUNDARY_VERIFIED=false`. See [source evidence](docs/evidence-lofi.md).
-2. **Authority separation implemented and deployed.** The independent
-   `QRZ_FRESH_INSERTS_ENABLED` mode is off by default and limited to a first INSERT.
-   It pins its authorization mode immutably and rechecks exact scope, current
-   source proof, first-insert history and the final request after vendor admission.
+The [QRZ association rollout](docs/bootstrap.md#historical-association-and-vendor-matching) first deployed in `6ff685a7`; the 22:05:47.352 UTC comparison preserves all 2,689 QRZ owners and association markers from the 21:28 baseline, plus 77 guarded additions. The guarded LoTW ±30-minute consumer, cross-boundary retained coverage paths and ownership bridge first deployed in `5a427a30`. The `f2c41cb3` checkpoint verifies complete coverage of all 9,981 registry inputs and recovery of all 3,327 exact evidence copies. Remaining holds need normal reconciliation and review before they can be classified as manual exceptions. Neither historical association nor source-index coverage establishes absence, universal upstream completeness or export permission.
+1. **Current-release per-contact proof and QRZ absence were exercised read-only.**
+   At 22:03:28.032 UTC, exact f2c modules completed collection, final drain, mint
+   and targeted/book/covering QRZ reads in one Cloudflare preview. The same proof
+   remained current afterward, with 293,053 ms then left. This is finite preview
+   evidence; the disabled scheduler intentionally skips proof creation. A later
+   authorized write must obtain current evidence again through normal preparation
+   and dispatch. Universal purge/retention/replay guarantees remain unproved;
+   keep `SOURCE_BOUNDARY_VERIFIED=false`. See [source evidence](docs/evidence-lofi.md).
+2. **Authority separation is implemented and deployed.** The default-off
+   `QRZ_FRESH_INSERTS_ENABLED` mode pins authorization immutably and rechecks exact
+   scope, source proof, first-insert history and the request after vendor admission.
    It cannot grant source-wide cutovers, no-query inference, LoTW, replacements or
-   corrections. Keep `SOURCE_BOUNDARY_VERIFIED=false`; universal UUID, tombstone
-   and purge guarantees remain unproved. This completes the permission split,
-   not vendor write acceptance or general source-boundary authority.
-3. **Preserve and refresh the joint QRZ evidence.** The 21:10 `5a427a30`
-   comparison completes collection, drain, mint and three targeted/book/covering
-   QRZ reads in the same Worker invocation. Its exact proof remained current after
-   the complete empty neighborhood check, with 296,013 ms then remaining. It has
-   since expired normally. Its two
-   dependencies contain no events. Refresh the exact contact's evidence before
-   any future authorized write. The deployed QRZ integration can resolve
-   minute-only history only with complete current coverage and unique ownership;
-   competing associations and incompatible/unknown locations remain held.
-   Valid nested QRZ/LoTW grids now use guarded historical association.
-4. **Prepare a trial packet; do not execute it under the current instruction.**
-   The latest instruction to keep exports disabled supersedes the earlier one-
-   or two-contact trial authorization. No actual trial may run until the owner
-   changes that instruction and the remaining evidence checks pass.
-   The proposed sequence remains QRZ first, then LoTW. Both contact and destination allowlists must be
-   exact, so LoTW remains excluded during QRZ work. The latest protected backup
-   verified at 21:36:47.379 UTC retains all 36 migrations and validates all 3,327
-   populated exact evidence envelopes. Isolated restore, repeated quarantine and
-   the separate 21:37:57.619 UTC immutable comparison preserve all 3,327 claims,
-   2,689 prior QRZ owners/markers and 3,294 prior exact evidence rows unchanged,
-   with 13 guarded QRZ additions and 33 new exact copies.
-   Preserve these snapshots and refresh before later external changes if needed.
-   Earlier backups and restore rehearsals remain historical evidence in the
-   deployment history. Preserve each contact's
-   actual 4/6/8-character grid. No
-   external logbook entry has been changed. Record exact readback and deployed
-   signing evidence, close gates after the trial, and review before expansion.
-   Replacement and old-record deletion can remain disabled. A second passkey is
-   recommended, not an owner-pilot gate; manual operator recovery is documented.
-   The [unsigned LoTW preflight](docs/evidence-lotw.md) passed actual projected fields and stored
-   certificate/date compatibility for one retained contact. It remains held at
-   first-insert classification. A fresh scoped LoTW query at 09:20:55 returned
-   zero records with stable context, but established no signing or upload
-   acceptance. QRZ's mode excludes LoTW; the separate LoTW authority is now
-   deployed and disabled, while the global source-boundary gate stays closed. The
-   [LoTW implementation](docs/evidence-lotw.md#separate-lotw-first-insert-implementation)
-   now includes strict response-scope validation, a conservative three-day empty-
-   report check, separate immutable authorization, fresh dispatch checks and
-   default-off service wiring. Release validation and disabled deployment
-   are complete. The current one-day LoTW observation does not satisfy the three-
-   day policy; obtain fresh bounded evidence on the final release before any trial.
-5. **Expand automatic coverage and prove capacity.** Source policy and fresh
-   positive evidence must protect main exports, not only the trial. Then review
-   historical associations and broaden the scopes deliberately. Measure queue
-   age, cost, vendor fairness and complete import throughput before promising
-   100-account daily volume or 200,000-contact imports. The audit's 200-row pages
-   are not a runtime intake throughput measurement.
+   corrections. This completes the permission split, not write acceptance.
+3. **Complete the first QRZ INSERT packet only after a changed owner instruction.**
+   The latest instruction is **keep exports disabled**. A future trial needs one
+   exact contact and destination, a reviewed payload, a concrete one-mutation
+   execution/stop procedure and recovery owner, then real acknowledgement and
+   exact field/narrative readback. Preserve the expected payload privately:
+   successful acknowledgement currently resolves delivery and purges the outbox
+   without automatic exact post-acknowledgement readback. Unknown outcomes retain
+   their attempt/claim and require observation, never blind resubmission. Fresh
+   proof, scope, ownership and vendor checks remain mandatory during execution.
+   The 21:53:13.701 UTC backup verifies 36 migrations, 3,327 exact ownership copies,
+   2,702 QRZ owners/markers and isolated recovery. The 22:04:34.745 UTC post-proof
+   backup also preserves the new proof/retention pair and verifies 2,766 owners
+   and all 3,327 exact ciphertext records. Preserve both snapshots. Follow the
+   [restricted pilot packet](docs/qrz-pilot.md); no actual write trial is authorized.
+4. **Expand first INSERTs deliberately after acceptance.** The existing
+   `ROLLOUT_QSO_IDS_JSON=["*"]` capability with exact QRZ destination IDs can cover
+   one or two users, including older missing contacts that pass the same current
+   proof, absence and ownership rules. Keep the global boundary false and LoTW,
+   corrections, replacement and deletion off. Unrelated historical exceptions,
+   populated recovery for currently empty raw LoTW history and 200,000-contact
+   import capacity are not prerequisites for this restricted QRZ pilot. A second
+   passkey is recommended rather than required; manual operator recovery is
+   documented. LoTW separately needs its fresh three-day history evidence and
+   signing/upload/readback acceptance under its own disabled capability.
+5. **Resolve broader reconciliation and capacity work separately.** The snapshot
+   audit's 47 positive candidates have not passed final ownership/adoption guards;
+   539 current holds and 20 incomplete comparisons are not all established manual
+   exceptions. Location contradictions remain held while policy clarification is
+   pending. Verify populated raw-reference recovery when such records exist, and
+   measure queue age, cost, vendor fairness and sustained import throughput before
+   promising 100-account daily volume or 200,000-contact imports. Neither the
+   offline audit nor the single cloud proof observation establishes those rates.
 
 The new throughput implementation reduces the measured intake/context database calls from 32→7, 33→9, 56→7 and 102→5 across the four local fixtures. Indexed selection returns 100 contacts using 200 rows read at both 4,000 and 200,000 contacts (7.68/7.63 ms locally). These validate database work bounds, not an end-to-end service rate. Read-only background processing uses batches of 20. The deployed mandatory-proof path can select up to six live contacts for shared evidence while dispatch remains sequential; background preparation shares two attempt slots. A source cohort has at most four actual source requests including the final drain. Complete witnessed subsets can proceed, and prior budget holds receive a later singleton turn. An unsuccessful budget-limited singleton receives an exact-version ten-minute delay, yielding to neighbors on the ordinary five-minute schedule; a single dependency closure requiring more than three collection reads remains held. The scheduler still yields at a 90-second or 850-D1-call soft budget. See the [implementation status and measurements](docs/reconciliation-investigation.md#implementation-status).
 

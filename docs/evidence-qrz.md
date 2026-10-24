@@ -2,7 +2,117 @@
 
 Initial implementation review: 2026-10-22, using documentation and synthetic fixtures. Subsequent read-only observations are dated below. No QRZ writes were performed; production exports remain disabled.
 
-## Current-release same-contact cloud check — 2026-10-24 21:10 UTC
+## Current-release same-contact cloud check — 2026-10-24 22:03 UTC
+
+The exact signed `f2c41cb3a929ae3d3545e235894027b84fbf09fb` modules, matching
+production Worker `fc1f2a5b-13e0-4509-ba03-9c93856c6464` and all 36 migrations,
+completed source-proof creation and QRZ absence observation in **one temporary
+Cloudflare preview invocation**. The private handoff retained the same contact,
+source/operation versions and route. Normal coordinator observation refreshed
+stale ledger context; strict current eligibility, ownership exclusions and the
+immutable proof then passed before QRZ reads. No stored state was forced to
+make the contact eligible.
+
+One positive collection and one mandatory final canonical drain covered **two
+dependencies and zero events**. One native atomic batch minted the proof at
+**22:03:22.388 UTC**. Three QRZ reads—one targeted FETCH, verified-book STATUS,
+and a complete covering FETCH—observed **zero neighborhood records**. The
+**same proof** remained current at **22:03:28.032 UTC**, with **293,053 ms** left.
+The inner composition took **7.471 seconds**, **109 D1 RPCs / 135 SQL statements**;
+these counts exclude preview startup, the separate nonce lease and host
+attestation. The original **22:03:17.856 UTC** production receipt was reused
+unchanged inside the Worker. Normal request limits, source leases, clock
+admission, source timestamps and proof guards remained in force.
+
+The preview was disposed. Independent attestation at **22:03:29.573 UTC**
+reconfirmed the same sole production Worker and all **eight controls closed**.
+Attempts, stage guards, source-proof pins and cutovers remained zero, as did
+signatures and vendor mutations. Normal guarded source observation, proof,
+lease and read-budget bookkeeping did occur. The **21:53:13.701 UTC** pre-run
+backup contains 42,485,324 bytes and verifies all 36 migrations, three
+credentials, the tenant key, **3,327 exact ownership copies** and **2,702 QRZ
+owners/markers**, with integrity/FK checks and two isolated quarantines.
+
+The **22:04:34.745 UTC** post-proof backup contains **42,608,702 bytes** and all
+36 migrations. It verifies all 3,327 exact ownership ciphertext records, three
+credentials and the tenant key, integrity/FKs and two isolated quarantines.
+The new **one immutable proof and matching retention row** survive unchanged;
+attempts, both pin tables, cutovers and raw LoTW references remain zero. The
+snapshot has 2,766 QRZ owners/markers and complete ownership coverage with no
+pending, held or unhashed inputs. The separate **22:05:47.352 UTC** immutable
+comparison uses the **21:28 UTC baseline**: all original 3,327 claims, 2,689 QRZ
+owners and markers, and 3,294 exact evidence records are unchanged in every field,
+with zero missing rows. The post-proof snapshot adds 77 QRZ owners/markers and
+33 exact copies. This is isolated recovery and comparison to that earlier
+baseline, not a production restore or an all-row comparison to the 21:53 snapshot.
+
+The first host launch stopped because its public provenance manifest exceeded
+the default 64 KiB input limit, before any live attestation, preview, nonce,
+database or vendor call. A reviewed fix gives only that public manifest a
+128 KiB cap; private candidate/receipt and Worker limits are unchanged. The
+first actual preview then returned known `cycle_busy` at **22:02 UTC**, with
+zero source or QRZ requests. Once the ordinary source lease was available,
+a fresh explicit context plan retained the same candidate before the successful
+invocation. Neither stopped run supplied absence or proof evidence.
+
+This is finite cloud execution of the deployed modules, **not scheduled-Worker
+proof-path validation, universal source completeness or first-INSERT
+acceptance**. A later authorized write must obtain current evidence again
+through normal preparation and dispatch. The owner's instruction remains
+**keep exports disabled**; this read-only success grants no trial authority.
+
+## Snapshot historical exceptions — 2026-10-24 21:36 UTC
+
+A protected offline replay examined all **606** QRZ hold routes in the verified
+**21:36:47.379 UTC** f2c backup using the exact deployed classification code and
+retained source/history evidence. It found **47 forward- and reverse-unique
+positive candidates**, **539 current holds**, and **20 incomplete comparisons**:
+19 lacked complete inventory and one lacked a required reverse-source body.
+The 47 positives were not committed or checked for final ownership/adoption
+authority. These counts do not establish that every remaining route is a manual
+exception, nor do they describe a fresh vendor read.
+
+Of the current holds, **349** first failed latitude comparison despite compatible
+grids. Separate geometry analysis covers **523** forward-unique held pairs.
+All **359** available source-coordinate pairs are syntactically valid and inside
+both compatible grids. **343 of 523** retained remote-coordinate pairs lie
+outside their own grid, including **274 of the 359** pairs with source coordinates
+and compatible grids. No retained remote point matches its own or a supported
+parent-grid center, exactly or at its recorded precision. All observed coordinate
+components have three fractional-minute digits; comparisons use signed ADIF
+degrees plus minutes, not decimal degrees.
+
+This establishes inconsistent retained location evidence and does not support
+the own/parent-grid-center hypothesis in this snapshot. It does **not** establish
+GPS accuracy, how QRZ produced those fields, or the cause of the discrepancy.
+The user policy clarification is pending; contradictory fields remain held.
+No matching rule, stored association or export permission was changed.
+
+## First QRZ INSERT acceptance still required
+
+Use the [restricted QRZ pilot checklist](qrz-pilot.md) for the concrete packet
+and the separate authorization/acceptance boundary.
+
+The read-only packet has exercised the current source-proof and absence path.
+A first write still requires a changed owner instruction, a reviewed single-contact
+and single-destination execution/stop procedure, fresh evidence at preparation
+and dispatch, and actual acknowledgement plus exact field/narrative readback and
+recovery checks. A clean INSERT acknowledgement currently resolves delivery and
+purges its outbox without automatic exact post-acknowledgement readback; preserve
+the reviewed payload privately for that independent comparison. Unknown outcomes
+retain their durable attempt and claim; they never authorize blind retry.
+
+After separate acceptance and authorization, the existing first-insert capability
+can use `ROLLOUT_QSO_IDS_JSON=["*"]` with exact QRZ destination IDs for a small
+pilot. This includes older missing contacts that satisfy all current source,
+absence and ownership checks; it is not limited to newly arrived contacts.
+Keep `SOURCE_BOUNDARY_VERIFIED=false`, LoTW off, and corrections, replacement
+and deletion disabled. Unrelated historical exceptions, recovery of currently
+empty raw LoTW history and 200,000-contact capacity are separate workstreams,
+not prerequisites for that restricted QRZ pilot. None of these future steps is
+authorized while the instruction to keep exports disabled remains in effect.
+
+## Previous-release same-contact cloud check — 2026-10-24 21:10 UTC
 
 The exact signed `5a427a30` runtime, deployed as Worker
 `1e3a63b8-eceb-47dc-86d5-b4c64dd79a48`, completed source proof creation and QRZ

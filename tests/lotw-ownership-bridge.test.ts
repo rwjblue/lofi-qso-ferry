@@ -921,7 +921,7 @@ test("expired maintenance admission performs no registry reads or writes", async
   assert.equal(statements, 0);
   assert.equal(result.examined, 0);
 });
-test("a newer comparison policy invalidates current checks and rejects an old exact-only renewal", async (t) => {
+test("policy changes invalidate old plans, support combined renewal and hold unknown future rules", async (t) => {
   const h = await fixture(t),
     p = await h.prepare();
   assert.ok(p.attemptId);
@@ -950,6 +950,21 @@ test("a newer comparison policy invalidates current checks and rejects an old ex
       0,
       "an admitted old policy plan cannot be reused after policy advancement",
     );
+    await renewAttemptLotwOwnership(
+      h.store,
+      "a",
+      id,
+      payload,
+      Date.now(),
+      current.lease,
+    );
+    assert.equal(await attemptLotwOwnershipCurrent(h.store, "a", id), true);
+    await h.store
+      .statement(
+        "UPDATE lotw_ownership_state SET comparison_policy=3 WHERE tenant='a'",
+      )
+      .run();
+    assert.equal(await attemptLotwOwnershipCurrent(h.store, "a", id), false);
     await assert.rejects(
       () =>
         renewAttemptLotwOwnership(

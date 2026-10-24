@@ -17,7 +17,19 @@ import {
   prepareLotwHistoricalAssociations,
 } from "../src/lotw-historical-associations.ts";
 import { backfillLotwOwnership } from "../src/lotw-ownership.ts";
-import { canonicalLotwIdentity, lotwRemoteIdentity } from "../src/reconcile.ts";
+import {
+  LotwOwnershipUnavailable,
+  lotwOwnershipAvailable,
+  prepareLotwOwnershipBatch,
+} from "../src/lotw-ownership-bridge.ts";
+import {
+  adoptHistory,
+  adoptHistoryBatch,
+  canonicalLotwIdentity,
+  classifyHistory,
+  lotwRemoteIdentity,
+  type ReconciliationEvidence,
+} from "../src/reconcile.ts";
 import { type Envelope, open, seal } from "../src/security.ts";
 import { reconciliationCommitGuard, routeMatches } from "../src/service.ts";
 import {
@@ -127,6 +139,115 @@ async function publish(
 async function count(store: Store, table: string) {
   return store.statement(`SELECT COUNT(*) n FROM ${table}`).first<number>("n");
 }
+
+test("the write bridge includes raw historical owners and cannot promote them to exact mappings", async (t) => {
+  const h = await fixture(t);
+  await publish(h.store, [member(h.first)]);
+  const other = await owner(h.store, "q2");
+  await backfillLotwOwnership(h.store, "a");
+  const identity = canonicalLotwIdentity(
+    record({ MODE: "FT8", TIME_ON: "121500" }),
+  );
+  const exact = { identity, remoteId: await lotwRemoteIdentity(identity) };
+  assert.equal(await lotwOwnershipAvailable(h.store, other, exact), false);
+  assert.equal(await lotwOwnershipAvailable(h.store, h.first, exact), false);
+  for (const key of [other, h.first])
+    await assert.rejects(
+      prepareLotwOwnershipBatch(h.store, "mapping", [
+        { ...key, identity: exact, generation: "g1", sourceHash: "h1" },
+      ]),
+      LotwOwnershipUnavailable,
+    );
+  assert.equal(await count(h.store, "lotw_ownership_evidence"), 0);
+  assert.equal(await count(h.store, "lotw_ownership_write_guards"), 0);
+  assert.equal((await h.store.ledger(h.first))?.remote_id, null);
+});
+
+test("policy-two ownership admits unrelated exact mappings in one comparison cohort", async (t) => {
+  const h = await fixture(t);
+  await publish(h.store, [member(h.first)]);
+  const keys = await Promise.all([owner(h.store, "q2"), owner(h.store, "q3")]);
+  await backfillLotwOwnership(h.store, "a");
+  const evidence: ReconciliationEvidence = {
+    destination: "lotw",
+    capturedGeneration: "g1",
+    currentGeneration: "g1",
+    readAccess: true,
+    inventoryComplete: true,
+    catchupComplete: true,
+    freshCheckComplete: true,
+  };
+  const inputs = await Promise.all(
+    keys.map(async (key, index) => {
+      const exact = record({
+        MODE: "FT8",
+        APP_LOTW_MODEGROUP: "DATA",
+        TIME_ON: index ? "140001" : "130001",
+      });
+      return {
+        key,
+        generation: "g1",
+        outcome: classifyHistory(exact, [exact], evidence),
+        ledger: {
+          ...(await h.store.ledger(key))!,
+          destination_kind: "lotw" as const,
+        },
+        commitGuard: () => ({ sql: "1", params: [] }),
+      };
+    }),
+  );
+  const results = await adoptHistoryBatch(
+    h.store,
+    { tenant: "a", id: "source" },
+    inputs,
+  );
+  assert.deepEqual(results, [{ applied: true }, { applied: true }]);
+  for (const key of keys) assert.ok((await h.store.ledger(key))?.remote_id);
+  assert.equal((await h.store.ledger(h.first))?.remote_id, null);
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT comparison_policy FROM lotw_ownership_state WHERE tenant='a'",
+      )
+      .first("comparison_policy"),
+    2,
+  );
+  assert.equal(await count(h.store, "attempts"), 0);
+});
+
+test("an unknown future ownership policy holds exact mappings without a provisional owner", async (t) => {
+  const h = await fixture(t);
+  await h.store
+    .statement(
+      "UPDATE lotw_ownership_state SET comparison_policy=3 WHERE tenant='a'",
+    )
+    .run();
+  const exact = record({ MODE: "FT8", TIME_ON: "120001" });
+  const outcome = classifyHistory(exact, [exact], {
+    destination: "lotw",
+    capturedGeneration: "g1",
+    currentGeneration: "g1",
+    readAccess: true,
+    inventoryComplete: true,
+    catchupComplete: true,
+    freshCheckComplete: true,
+  });
+  const result = await adoptHistory(
+    h.store,
+    h.first,
+    "g1",
+    outcome,
+    Date.now(),
+    undefined,
+    { sql: "1", params: [] },
+  );
+  assert.deepEqual(result, {
+    applied: false,
+    reason: "lotw_ownership_unavailable",
+  });
+  assert.equal(await count(h.store, "lotw_ownership_evidence"), 0);
+  assert.equal((await h.store.ledger(h.first))?.remote_id, null);
+});
 
 test("minute-only raw evidence stays encrypted and blocks every LoTW route without exact identities", async (t) => {
   const h = await fixture(t),

@@ -3,6 +3,7 @@ import test from "node:test";
 import type { AdifRecord } from "../src/adif.ts";
 import { classifyLotwHistoricalAssociation } from "../src/lotw-historical-classification.ts";
 import {
+  classifyHistoricalAssociation,
   classifyHistory,
   lotwRemoteIdentity,
   type ReconciliationEvidence,
@@ -44,6 +45,19 @@ const classify = (local = source, records = [remote], coverage = evidence) =>
     coverage,
     classifyHistory(local, records, coverage),
   );
+
+test("reconciliation uses LoTW historical policy without granting exact receipt authority", () => {
+  const outcome = classifyHistoricalAssociation(source, [remote], evidence);
+  assert.deepEqual(outcome, classify());
+  assert.equal(outcome.state, "adopted_existing");
+  assert.equal(outcome.associationOnly, true);
+  assert.equal(outcome.associationProof, undefined);
+  assert.equal(outcome.remote, remote);
+  assert.notEqual(
+    classifyHistory(source, [remote], evidence).state,
+    outcome.state,
+  );
+});
 
 test("LoTW historical presence retains raw minute time, mode group and coarse grid without receipt authority", async () => {
   const before = structuredClone({ source, remote });

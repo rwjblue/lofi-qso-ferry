@@ -277,11 +277,11 @@ export function reconciliationCommitGuard(
   };
 }
 
-async function classifyReconciliationHistory(
+export async function classifyReconciliationHistory(
   store: Store,
   source: Connection,
   destination: Connection,
-  contact: IntakeContact,
+  contact: Contact,
   records: ReturnType<typeof contactReconciliationAdif>[],
   evidence: ReconciliationEvidence,
   now: number,
@@ -298,7 +298,7 @@ async function classifyReconciliationHistory(
       qso: contact.id,
       generation: contact.generation,
     },
-    vendor: "qrz",
+    vendor: evidence.destination,
     routeMatches,
     now,
   });

@@ -1,9 +1,7 @@
 import type { AdifRecord } from "./adif.ts";
 import { historicalCandidates } from "./historical-matching.ts";
-import {
-  lookupLotwOwnership,
-  prepareLotwOwnershipEvidence,
-} from "./lotw-ownership.ts";
+import { lookupLotwHistoricalOwnership } from "./lotw-historical-associations.ts";
+import { prepareLotwOwnershipEvidence } from "./lotw-ownership.ts";
 import { canonicalLotwIdentity, lotwRemoteIdentity } from "./reconcile.ts";
 import { canonical, randomToken, sha256 } from "./security.ts";
 import type { Lease, LedgerKey, LotwIdentityEvidence, Store } from "./store.ts";
@@ -102,33 +100,36 @@ export async function prepareLotwOwnershipBatch(
   )
     throw new LotwOwnershipUnavailable();
   try {
-    let snapshot: { clock: number; keyId: string } | undefined;
+    const observed = await lookupLotwHistoricalOwnership(
+      store,
+      tenant,
+      inputs.map((input) => input.identity.identity),
+    );
+    if (observed.state !== "observed" || !observed.snapshot)
+      throw new LotwOwnershipUnavailable();
+    const snapshot = observed.snapshot;
     let prepared = [];
     const excluded = new Set<number>();
     for (const [inputIndex, input] of inputs.entries()) {
-      const observed = await lookupLotwOwnership(
-        store,
-        tenant,
-        input.identity.identity,
-      );
-      if (observed.state !== "observed" || !observed.snapshot)
-        throw new LotwOwnershipUnavailable();
-      const conflict = observed.candidates.some(
-        (c) =>
-          c.source !== input.source ||
-          c.qso !== input.qso ||
-          (phase !== "mapping" &&
-            phase !== "receipt" &&
-            c.destination !== input.destination &&
-            c.evidence.firstEvidence !== "reserved"),
-      );
-      if (
-        snapshot &&
-        (snapshot.clock !== observed.snapshot.clock ||
-          snapshot.keyId !== observed.snapshot.keyId)
-      )
-        throw new LotwOwnershipUnavailable();
-      snapshot = observed.snapshot;
+      const conflict = observed.candidates.some((candidate) => {
+        const comparison = historicalCandidates(
+          "lotw",
+          view(input.identity.identity),
+          [view(candidate.record)],
+        );
+        if (comparison.state === "invalid" || comparison.issues.length)
+          throw new LotwOwnershipUnavailable();
+        return (
+          comparison.candidates.length > 0 &&
+          (candidate.kind === "historical" ||
+            candidate.source !== input.source ||
+            candidate.qso !== input.qso ||
+            (phase !== "mapping" &&
+              phase !== "receipt" &&
+              candidate.destination !== input.destination &&
+              candidate.kind !== "reserved"))
+        );
+      });
       if (conflict) {
         if (!options.partialMappings) throw new LotwOwnershipUnavailable();
         excluded.add(inputIndex);
@@ -173,7 +174,6 @@ export async function prepareLotwOwnershipBatch(
           excluded.add(right.inputIndex);
         }
       }
-    if (!snapshot) throw new LotwOwnershipUnavailable();
     prepared = prepared.filter((p) => !excluded.has(p.inputIndex));
     const id = randomToken(),
       expiresAt = Math.min(now + 60000, lease.expires_at);
@@ -202,12 +202,13 @@ export async function prepareLotwOwnershipBatch(
     );
     const begin = [
       store.statement(
-        "INSERT INTO lotw_ownership_write_guards(id,tenant,phase,key_id,clock,comparison_policy,plan,lease_token,lease_fence,checked_at,expires_at) VALUES(?,?,?,?,?,1,?,?,?,?,?)",
+        "INSERT INTO lotw_ownership_write_guards(id,tenant,phase,key_id,clock,comparison_policy,plan,lease_token,lease_fence,checked_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
         id,
         tenant,
         phase,
         snapshot.keyId,
         snapshot.clock,
+        snapshot.comparisonPolicy,
         canonical(plan),
         lease.token,
         lease.fence,
@@ -240,7 +241,7 @@ export async function prepareLotwOwnershipBatch(
       // writers remain pending and make the final whole-transaction assertion fail.
       finish.push(
         store.statement(
-          `UPDATE lotw_ownership_inputs AS i SET status='covered',checked_at=?,evidence_id=? WHERE i.tenant=? AND i.destination=? AND i.status!='covered' AND EXISTS(SELECT 1 FROM lotw_ownership_write_guards WHERE id=?) AND EXISTS(SELECT 1 FROM lotw_ownership_evidence e WHERE e.tenant=i.tenant AND e.id=? AND e.destination=? AND e.source=? AND e.qso=? AND e.exact_hash=?) AND ((i.kind='claim' AND i.reference=? AND i.source=? AND i.qso=? AND i.exact_hash=?) OR (i.kind='attempt' AND i.reference=? AND i.source=? AND i.qso=? AND EXISTS(SELECT 1 FROM attempt_identity_claims c WHERE c.tenant=i.tenant AND c.attempt=i.reference AND c.destination=i.destination AND c.vendor='lotw' AND c.identity_hash=? AND c.source=i.source AND c.qso=i.qso)) OR (i.kind='mapping' AND i.reference=? AND i.source=? AND i.qso=? AND i.exact_hash=? AND EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=i.tenant AND l.source=i.source AND l.qso=i.qso AND l.destination=i.destination AND l.remote_id=i.exact_hash)) OR (i.kind='identity' AND i.reference=? AND EXISTS(SELECT 1 FROM private_data d WHERE d.tenant=i.tenant AND d.connection=i.destination AND d.id=i.reference AND d.kind='lotw_identity' AND d.envelope=? AND d.revoked_at IS NULL AND d.expires_at IS NULL)))`,
+          `UPDATE lotw_ownership_inputs AS i SET status='covered',checked_at=?,evidence_id=? WHERE i.tenant=? AND i.destination=? AND i.status IN('pending','held') AND EXISTS(SELECT 1 FROM lotw_ownership_write_guards WHERE id=?) AND EXISTS(SELECT 1 FROM lotw_ownership_evidence e WHERE e.tenant=i.tenant AND e.id=? AND e.destination=? AND e.source=? AND e.qso=? AND e.exact_hash=?) AND ((i.kind='claim' AND i.reference=? AND i.source=? AND i.qso=? AND i.exact_hash=?) OR (i.kind='attempt' AND i.reference=? AND i.source=? AND i.qso=? AND EXISTS(SELECT 1 FROM attempt_identity_claims c WHERE c.tenant=i.tenant AND c.attempt=i.reference AND c.destination=i.destination AND c.vendor='lotw' AND c.identity_hash=? AND c.source=i.source AND c.qso=i.qso)) OR (i.kind='mapping' AND i.reference=? AND i.source=? AND i.qso=? AND i.exact_hash=? AND EXISTS(SELECT 1 FROM ledger l WHERE l.tenant=i.tenant AND l.source=i.source AND l.qso=i.qso AND l.destination=i.destination AND l.remote_id=i.exact_hash)) OR (i.kind='identity' AND i.reference=? AND EXISTS(SELECT 1 FROM private_data d WHERE d.tenant=i.tenant AND d.connection=i.destination AND d.id=i.reference AND d.kind='lotw_identity' AND d.envelope=? AND d.revoked_at IS NULL AND d.expires_at IS NULL)))`,
           now,
           p.evidenceId,
           tenant,
@@ -477,19 +478,17 @@ export async function lotwOwnershipAvailable(
   key: LedgerKey,
   identity: LotwIdentityEvidence,
 ) {
-  const result = await lookupLotwOwnership(
-    store,
-    key.tenant,
+  const result = await lookupLotwHistoricalOwnership(store, key.tenant, [
     identity.identity,
-  );
+  ]);
   return (
     result.state === "observed" &&
     result.candidates.every(
       (c) =>
+        c.kind !== "historical" &&
         c.source === key.source &&
         c.qso === key.qso &&
-        (c.destination === key.destination ||
-          c.evidence.firstEvidence === "reserved"),
+        (c.destination === key.destination || c.kind === "reserved"),
     ) &&
     !(await store
       .statement(

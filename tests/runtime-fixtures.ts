@@ -66,7 +66,14 @@ export function fixtureEnvironment(db: D1Database): Env {
   } as Env;
 }
 export async function schedulerFixture(
-  historical?: (h: Awaited<ReturnType<typeof database>>) => Promise<void>,
+  historical?: (
+    h: Awaited<ReturnType<typeof database>>,
+    records: {
+      qso: SourceRecord;
+      operation: SourceRecord;
+      lotwRecords: AdifRecord[];
+    },
+  ) => Promise<void>,
 ) {
   const state = await database();
   try {
@@ -217,7 +224,7 @@ export async function schedulerFixture(
     if (historical) {
       // These attempts existed before mandatory proofs. Install every current
       // guard before returning the fixture or running the scheduler.
-      await historical(state);
+      await historical(state, { qso, operation, lotwRecords });
       for (const name of migrations.filter((name) => name >= "0030_"))
         await applyMigration(state.db, name);
     }

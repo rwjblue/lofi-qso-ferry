@@ -13,6 +13,13 @@ import {
 import type { LedgerKey, Store } from "./store.ts";
 
 export const LOTW_HISTORICAL_COMPARISON_POLICY = 2;
+/** Expected preflight holds only. Database/transport failures are never wrapped. */
+export class LotwHistoricalUnavailable extends Error {
+  constructor(readonly reason: string) {
+    super(reason);
+    this.name = "LotwHistoricalUnavailable";
+  }
+}
 const MAX_CANDIDATES = 128;
 const MAX_BYTES = 4 * 1024 * 1024;
 const MAX_RECORD_BYTES = 64 * 1024;
@@ -370,12 +377,13 @@ export async function prepareLotwHistoricalAssociations(
   )
     throw new Error("invalid_lotw_historical_cohort");
   const lease = await store.claim(tenant, "lotw-ownership", now, 60000);
-  if (!lease) throw new Error("lotw_historical_lease_unavailable");
+  if (!lease)
+    throw new LotwHistoricalUnavailable("lotw_historical_lease_unavailable");
   try {
     const records = captured.map((m) => m.record as AdifRecord),
       result = await lookupLotwHistoricalOwnership(store, tenant, records);
     if (result.state !== "observed" || !result.snapshot)
-      throw new Error(`lotw_historical_${result.reason}`);
+      throw new LotwHistoricalUnavailable(`lotw_historical_${result.reason}`);
     for (let i = 0; i < captured.length; i++) {
       const owner = captured[i].key;
       const competing = [
@@ -396,12 +404,14 @@ export async function prepareLotwHistoricalAssociations(
           (comparison.candidates.length &&
             (other.source !== owner.source || other.qso !== owner.qso))
         )
-          throw new Error("lotw_historical_competing_owner");
+          throw new LotwHistoricalUnavailable(
+            "lotw_historical_competing_owner",
+          );
       }
     }
     const key = await readKey(store, tenant);
     if (!key || key.keyId !== result.snapshot.keyId)
-      throw new Error("lotw_historical_key_changed");
+      throw new LotwHistoricalUnavailable("lotw_historical_key_changed");
     const destinations = await store.db.batch(
       captured.map((m) =>
         store.statement(
@@ -427,7 +437,8 @@ export async function prepareLotwHistoricalAssociations(
             }
           | undefined,
         time = interval(r);
-      if (!d || !time) throw new Error("lotw_historical_scope_changed");
+      if (!d || !time)
+        throw new LotwHistoricalUnavailable("lotw_historical_scope_changed");
       const id = crypto.randomUUID(),
         ns = await namespace(key, tenant, r),
         b = await bucket(key, tenant, r, Math.floor(time.startMs / 60000)),
@@ -436,7 +447,7 @@ export async function prepareLotwHistoricalAssociations(
         await seal(r, aad(tenant, id, "historical"), store.keys),
       );
       if (encoder.encode(envelope).byteLength > 131072)
-        throw new Error("lotw_historical_byte_bound");
+        throw new LotwHistoricalUnavailable("lotw_historical_byte_bound");
       ids.push(id);
       begin.push(
         store.statement(

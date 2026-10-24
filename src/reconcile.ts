@@ -12,6 +12,8 @@ import {
   destinationIdentityClaim,
   reserveIdentityClaim,
 } from "./identity-claims.ts";
+import { adoptLotwHistoricalBatch } from "./lotw-historical-adoption.ts";
+import { classifyLotwHistoricalAssociation } from "./lotw-historical-classification.ts";
 import {
   type LotwOwnershipWrite,
   prepareLotwOwnershipBatch,
@@ -76,9 +78,48 @@ export async function adoptHistoryBatch(
     if (seen.has(key)) throw new Error("duplicate_reconciliation_route");
     seen.add(key);
   }
+  if (
+    items.some(
+      (item) =>
+        item.outcome.associationOnly &&
+        item.outcome.evidence.destination === "lotw",
+    )
+  ) {
+    const results: AdoptionResult[] = [];
+    for (let offset = 0; offset < items.length; offset += 8) {
+      const chunk = items.slice(offset, offset + 8);
+      const historical = chunk.filter(
+        (item) =>
+          item.outcome.associationOnly &&
+          item.outcome.evidence.destination === "lotw",
+      );
+      const ordinary = chunk.filter((item) => !historical.includes(item));
+      const historicalResults = await adoptLotwHistoricalBatch(
+        store,
+        source,
+        historical,
+        now,
+      );
+      const ordinaryResults = await adoptHistoryBatch(
+        store,
+        source,
+        ordinary,
+        now,
+      );
+      let historicalIndex = 0;
+      let ordinaryIndex = 0;
+      for (const item of chunk)
+        results.push(
+          historical.includes(item)
+            ? historicalResults[historicalIndex++]
+            : ordinaryResults[ordinaryIndex++],
+        );
+    }
+    return results;
+  }
   const results: AdoptionResult[] = [];
   // Eight exact LoTW mappings use at most 90 native statements, including
-  // collision quarantine and the common ownership reservation/accounting.
+  // ownership reservations, accounting and collision quarantine.
   for (let offset = 0; offset < items.length; offset += 8) {
     const commitTime = now();
     const plans = await Promise.all(
@@ -224,7 +265,7 @@ export interface ReconciliationOutcome {
 export const ADOPTION_CONFLICT_REASON =
   "Multiple source contacts claim one destination identity; review associations before exporting";
 /** Included in scheduling policy fingerprints so changed matching rules revisit held work. */
-export const HISTORICAL_MATCHING_VERSION = 4;
+export const HISTORICAL_MATCHING_VERSION = 5;
 /** Pure read-only classification. Partial evidence is never transformed into absence. */
 export function classifyHistory(
   source: AdifRecord,
@@ -375,7 +416,7 @@ export function classifyHistory(
 }
 
 /**
- * Published QRZ matching rules discover historical presence, never absence or an
+ * Published vendor matching rules discover historical presence, never absence or an
  * upload identity. A positive result still needs reverse-source uniqueness and
  * durable association-only ownership before prepareHistoryAdoption accepts it.
  */
@@ -385,6 +426,13 @@ export function classifyHistoricalAssociation(
   evidence: ReconciliationEvidence,
 ): ReconciliationOutcome {
   const previous = classifyHistory(source, remote, evidence);
+  if (evidence.destination === "lotw")
+    return classifyLotwHistoricalAssociation(
+      source,
+      remote,
+      evidence,
+      previous,
+    );
   if (
     evidence.destination !== "qrz" ||
     !evidence.capturedGeneration ||
@@ -538,6 +586,26 @@ export async function adoptHistory(
       key.destination,
     )
     .first<ReconciliationLedger>();
+  if (outcome.associationOnly && outcome.evidence.destination === "lotw") {
+    if (!ledger || !inventoryGuard)
+      return { applied: false, reason: "historical_comparison_proof_required" };
+    const [result] = await adoptLotwHistoricalBatch(
+      store,
+      { tenant: key.tenant, id: key.source },
+      [
+        {
+          key,
+          generation,
+          outcome,
+          ledger,
+          adoptedSourceHash,
+          commitGuard: () => inventoryGuard,
+        },
+      ],
+      () => now,
+    );
+    return result;
+  }
   let plan = await prepareHistoryAdoption(
     store,
     key,
@@ -615,7 +683,7 @@ async function prepareHistoryAdoption(
     return { applied: false, reason: "source_generation_changed" };
   if (ledger.provenance === "adoption_conflict")
     return { applied: false, reason: "remote_identity_claim_conflict" };
-  if (ledger.remote_id)
+  if (ledger.remote_id || ledger.lotw_historical_association_id)
     return { applied: false, reason: "trusted_mapping_preserved" };
   if (
     outcome.state === "missing_current_identity" ||
@@ -729,7 +797,7 @@ async function prepareHistoryAdoption(
     ],
   };
   const adoption = store.statement(
-    `UPDATE ledger SET confirmed=COALESCE(?,confirmed),state=?,reason=?,baseline_hash=COALESCE(?,source_hash),source_hash=COALESCE(?,source_hash),remote_hash=?,remote_id=?,provenance=CASE WHEN ?='adopted_existing' THEN 'adopted' ELSE provenance END,narrative=CASE WHEN ?='adopted_existing' AND ?='qrz' THEN 'remote_preserved' ELSE narrative END,updated_at=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND source_hash=? AND remote_id IS NULL AND state!='changed' AND sent_hash IS NULL AND template_version IS NULL AND provenance NOT IN('ferry_created','adoption_conflict') AND NOT EXISTS(SELECT 1 FROM ledger other WHERE other.tenant=? AND other.destination=? AND other.remote_id=? AND (other.source!=? OR other.qso!=?)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND EXISTS(SELECT 1 FROM connections d WHERE d.tenant=ledger.tenant AND d.id=ledger.destination AND d.kind=?) AND ${retainedClaim.sql} AND (${currentInventory.sql}) RETURNING qso`,
+    `UPDATE ledger SET confirmed=COALESCE(?,confirmed),state=?,reason=?,baseline_hash=COALESCE(?,source_hash),source_hash=COALESCE(?,source_hash),remote_hash=?,remote_id=?,provenance=CASE WHEN ?='adopted_existing' THEN 'adopted' ELSE provenance END,narrative=CASE WHEN ?='adopted_existing' AND ?='qrz' THEN 'remote_preserved' ELSE narrative END,updated_at=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND source_hash=? AND remote_id IS NULL AND lotw_historical_association_id IS NULL AND state!='changed' AND sent_hash IS NULL AND template_version IS NULL AND provenance NOT IN('ferry_created','adoption_conflict') AND NOT EXISTS(SELECT 1 FROM ledger other WHERE other.tenant=? AND other.destination=? AND other.remote_id=? AND (other.source!=? OR other.qso!=?)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND EXISTS(SELECT 1 FROM connections d WHERE d.tenant=ledger.tenant AND d.id=ledger.destination AND d.kind=?) AND ${retainedClaim.sql} AND (${currentInventory.sql}) RETURNING qso`,
     outcome.state === "adopted_existing" && ledger.destination_kind === "lotw"
       ? outcome.remote?.QSL_RCVD === "Y"
         ? 1

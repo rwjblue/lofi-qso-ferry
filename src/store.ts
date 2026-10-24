@@ -51,6 +51,8 @@ export interface Ledger extends LedgerKey {
   narrative: "unbound" | "template_bound" | "remote_preserved";
   template_version: string | null;
   remote_id: string | null;
+  /** A retained historical report; never an exact delivery receipt identity. */
+  lotw_historical_association_id?: string | null;
   provenance: string;
   due_at: number;
   updated_at: number;

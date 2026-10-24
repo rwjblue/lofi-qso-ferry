@@ -25,7 +25,7 @@ export async function reconciliationPreflightBatch(
   return (
     await store
       .statement(
-        "SELECT DISTINCT l.*,d.kind AS destination_kind FROM json_each(?1) i JOIN ledger l ON l.tenant=?2 AND l.source=?3 AND l.qso=json_extract(i.value,'$.qso') AND l.destination=json_extract(i.value,'$.destination') AND l.generation=json_extract(i.value,'$.generation') JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination WHERE l.remote_id IS NULL AND l.state!='changed' AND l.provenance!='adoption_conflict' AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND NOT EXISTS(SELECT 1 FROM reconciliation_checks c WHERE c.tenant=l.tenant AND c.source=l.source AND c.qso=l.qso AND c.destination=l.destination AND c.generation=l.generation AND c.next_due_at>?4)",
+        "SELECT DISTINCT l.*,d.kind AS destination_kind FROM json_each(?1) i JOIN ledger l ON l.tenant=?2 AND l.source=?3 AND l.qso=json_extract(i.value,'$.qso') AND l.destination=json_extract(i.value,'$.destination') AND l.generation=json_extract(i.value,'$.generation') JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination WHERE l.remote_id IS NULL AND l.lotw_historical_association_id IS NULL AND l.state!='changed' AND l.provenance!='adoption_conflict' AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND NOT EXISTS(SELECT 1 FROM reconciliation_checks c WHERE c.tenant=l.tenant AND c.source=l.source AND c.qso=l.qso AND c.destination=l.destination AND c.generation=l.generation AND c.next_due_at>?4)",
         JSON.stringify(inputs),
         source.tenant,
         source.id,
@@ -142,7 +142,7 @@ export async function reconciliationPreflight(
 ): Promise<Ledger | null> {
   return store
     .statement(
-      "SELECT l.* FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=?4 AND l.generation=?5 AND l.remote_id IS NULL AND l.state!='changed' AND l.provenance!='adoption_conflict' AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND NOT EXISTS(SELECT 1 FROM reconciliation_checks c WHERE c.tenant=l.tenant AND c.source=l.source AND c.qso=l.qso AND c.destination=l.destination AND c.generation=?5 AND c.next_due_at>?6)",
+      "SELECT l.* FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=?4 AND l.generation=?5 AND l.remote_id IS NULL AND l.lotw_historical_association_id IS NULL AND l.state!='changed' AND l.provenance!='adoption_conflict' AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND NOT EXISTS(SELECT 1 FROM reconciliation_checks c WHERE c.tenant=l.tenant AND c.source=l.source AND c.qso=l.qso AND c.destination=l.destination AND c.generation=?5 AND c.next_due_at>?6)",
       key.tenant,
       key.source,
       key.qso,

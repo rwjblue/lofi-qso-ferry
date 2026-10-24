@@ -12,6 +12,8 @@ import {
 import { pollSource, rereadOperation } from "../src/intake.ts";
 import type { SourceRecord } from "../src/lofi.ts";
 import { projectContact } from "../src/projection.ts";
+import type { ReconciliationEvidence } from "../src/reconcile.ts";
+import { classifyReconciliationHistory } from "../src/service.ts";
 import { backfillSourceHistoricalIndex } from "../src/source-historical-index.ts";
 import { sourceReadPolicy } from "../src/source-read-policy.ts";
 import { type Connection, Store } from "../src/store.ts";
@@ -19,6 +21,16 @@ import { database, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
 const at = Date.UTC(2026, 9, 24, 12);
+const lotwEvidence = (generation: string): ReconciliationEvidence => ({
+  destination: "lotw",
+  capturedGeneration: generation,
+  currentGeneration: generation,
+  readAccess: true,
+  inventoryComplete: true,
+  catchupComplete: true,
+  freshCheckComplete: false,
+  inventoryPositiveOnly: true,
+});
 const qso = (id: string, changes: SourceRecord = {}): SourceRecord => ({
   uuid: id,
   syncedAtMillis: 100,
@@ -675,6 +687,25 @@ test("LoTW reverse comparison accepts a unique DATA-group owner at the inclusive
   assert.deepEqual(result.candidate.record, remote);
   assert.equal(await guardCurrent(h.store, result), true);
   assert.equal(result.authoritative, false);
+  const outcome = await classifyReconciliationHistory(
+    h.store,
+    h.source,
+    h.destination,
+    h.selected,
+    [{ ...remote, MY_GRIDSQUARE: "FN31" }],
+    lotwEvidence(h.selected.generation),
+    Date.now(),
+  );
+  assert.equal(outcome.state, "adopted_existing");
+  assert.equal(outcome.associationOnly, true);
+  assert.ok(outcome.associationProof);
+  const guard = outcome.associationProof.commitGuard(Date.now());
+  assert.ok(
+    await h.store
+      .statement(`SELECT 1 WHERE ${guard.sql}`, ...guard.params)
+      .first(),
+    "the service uses the LoTW reverse-source policy and normal routing",
+  );
 });
 
 test("LoTW reverse comparison counts group-mode competitors across the full remote window regardless of location", async (t) => {
@@ -702,6 +733,17 @@ test("LoTW reverse comparison counts group-mode competitors across the full remo
   assert.equal(result.state, "ambiguous");
   assert.equal(result.competitors, 2);
   assert.equal(result.inspected, 2);
+  const outcome = await classifyReconciliationHistory(
+    h.store,
+    h.source,
+    h.destination,
+    h.selected,
+    [{ ...h.remote, MODE: "DATA", APP_LOTW_MODE: "FT8", TIME_ON: "120000" }],
+    lotwEvidence(h.selected.generation),
+    Date.now(),
+  );
+  assert.equal(outcome.state, "history_ambiguous");
+  assert.equal(outcome.associationProof, undefined);
 });
 
 test("LoTW minute precision crosses UTC midnight without hiding another source owner", async (t) => {

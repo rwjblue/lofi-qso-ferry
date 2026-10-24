@@ -3,6 +3,9 @@ import test from "node:test";
 import { serializeAdifRecord } from "../src/adif.ts";
 import { HISTORY_READ_RETRY_DELAY } from "../src/history-inventory.ts";
 import type { SourceRecord } from "../src/lofi.ts";
+import { projectContact, sourceFingerprint } from "../src/projection.ts";
+import { canonicalLotwIdentity, lotwRemoteIdentity } from "../src/reconcile.ts";
+import { canonical, sha256 } from "../src/security.ts";
 import { tick } from "../src/service.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import { seed } from "./helpers.ts";
@@ -18,8 +21,121 @@ const key = (destination: string) => ({
 // Export proofs use the database's actual clock. These delivery fixtures retain
 // server state across reads instead of consuming a change exactly once, allowing
 // targeted presence reads and the final canonical drain to observe real versions.
-async function exportSchedulerFixture() {
-  const h = await schedulerFixture();
+async function exportSchedulerFixture(retainedLotwReceipt = false) {
+  const h = await schedulerFixture(
+    retainedLotwReceipt
+      ? async (legacy, records) => {
+          // A real previously completed delivery, created before mandatory proofs.
+          // Every current migration is installed before the scheduler sees this row.
+          const contact = await projectContact(
+            records.qso,
+            records.operation,
+            [],
+            { operationComplete: true },
+          );
+          const sourceHash = await sourceFingerprint(contact, "lotw");
+          const identity = canonicalLotwIdentity(records.lotwRecords[0]!);
+          const remoteId = await lotwRemoteIdentity(identity);
+          const station = {
+            callsign: contact.stationCall,
+            dxcc: contact.dxcc,
+            grid: contact.grid,
+            state: contact.state,
+            county: contact.county,
+            cqZone: contact.cqZone,
+            ituZone: contact.ituZone,
+          };
+          const iso = new Date(contact.startAtMillis).toISOString();
+          const transmitted = {
+            call: contact.call,
+            band: contact.band,
+            mode: contact.mode,
+            date: iso.slice(0, 10),
+            time: `${iso.slice(11, 19)}Z`,
+            frequencyMHz: String(contact.frequencyMHz),
+          };
+          const projectionHash = await sha256(
+            canonical({ station, contact: transmitted }),
+          );
+          const at = Date.now() - 86400000;
+          const id = "retained-lotw-receipt";
+          await legacy.store
+            .statement(
+              "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,baseline_hash,sent_hash,remote_id,state,provenance,due_at,updated_at) VALUES('a','source','q1','lotw',?,?,?,?,?,'observed','ferry_created',0,?)",
+              contact.generation,
+              sourceHash,
+              sourceHash,
+              projectionHash,
+              remoteId,
+              at,
+            )
+            .run();
+          await legacy.store
+            .statement(
+              "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a',?,'source','q1','lotw',?,?,?,'fixture-lotw',?,?)",
+              id,
+              contact.generation,
+              id,
+              projectionHash,
+              at,
+              sourceHash,
+            )
+            .run();
+          await legacy.store
+            .statement(
+              "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at,remote_id) VALUES('a',?,'observed',0,?,?)",
+              id,
+              at,
+              remoteId,
+            )
+            .run();
+          await legacy.store
+            .statement(
+              "INSERT INTO attempt_identity_claims(tenant,attempt,destination,vendor,identity_hash,source,qso) VALUES('a',?,'lotw','lotw',?,'source','q1')",
+              id,
+              remoteId,
+            )
+            .run();
+          await legacy.store
+            .statement(
+              "INSERT INTO attempt_events(tenant,attempt,state,at) VALUES('a',?,'observed',?)",
+              id,
+              at,
+            )
+            .run();
+          await (
+            await legacy.store.lotwIdentityStatement(
+              key("lotw"),
+              { identity, remoteId },
+              "observed",
+              at,
+              { sql: "1", params: [] },
+            )
+          ).run();
+          await (
+            await legacy.store.putPrivate(
+              "a",
+              "lotw",
+              `observation:${id}`,
+              "lotw_observation",
+              {
+                station,
+                contact: {
+                  id: contact.id,
+                  generation: contact.generation,
+                  ...transmitted,
+                },
+                projectionHash,
+              },
+            )
+          ).run();
+          assert.equal(
+            (await legacy.store.ledger(key("lotw")))!.sent_hash,
+            projectionHash,
+          );
+        }
+      : undefined,
+  );
   const operations = new Map<string, SourceRecord>();
   const qsos = new Map<string, SourceRecord>();
   const fetcher: typeof fetch = async (input, init) => {
@@ -260,18 +376,15 @@ test("source identity conflicts remain visible without repeating vendor reads", 
       for (const destination of ["destination", "lotw"]) {
         const row = (await h.store.ledger({ ...key(destination), qso }))!;
         assert.equal(row.state, "history_ambiguous");
-        assert.equal(
-          row.provenance,
-          destination === "destination" ? "unknown" : "adoption_conflict",
-        );
-        if (destination === "destination") {
-          assert.match(row.reason!, /Multiple source contacts/);
-          assert.equal(row.remote_id, null);
-        }
-        assert(row.reason);
+        assert.equal(row.provenance, "unknown");
+        assert.match(row.reason!, /Multiple source contacts/);
+        assert.equal(row.remote_id, null);
+        assert.equal(row.lotw_historical_association_id, null);
       }
     assert.equal(await count(h, "historical_associations"), 0);
     assert.equal(await count(h, "historical_remote_owners"), 0);
+    assert.equal(await count(h, "lotw_historical_associations"), 0);
+    assert.equal(await count(h, "lotw_ownership_evidence"), 0);
     const reads = [h.calls.qrzReads, h.calls.lotwQueries];
     const retry = await tick(h.env, fetcher, FIXTURE_NOW + 5 * 60_000);
     assert.equal(retry.errors, 0);
@@ -626,7 +739,7 @@ test("unchanged adopted QRZ narrative and LoTW receive no work from source-note 
   }
 });
 test("operation-only correction keeps historical QRZ read only while signing the corrected LoTW station", async () => {
-  const h = await exportSchedulerFixture();
+  const h = await exportSchedulerFixture(true);
   try {
     await h.run(0);
     h.enable();
@@ -640,9 +753,17 @@ test("operation-only correction keeps historical QRZ read only while signing the
       assert(row.due_at >= h.base + 30 * 60000);
       assert(row.due_at <= Date.now() + 30 * 60000);
     }
-    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(
+      await count(h, "attempts"),
+      1,
+      "only the retained observed receipt exists",
+    );
     await h.run(20);
-    assert.equal(await count(h, "attempts"), 0);
+    assert.equal(
+      await count(h, "attempts"),
+      1,
+      "only the retained observed receipt exists",
+    );
     const sent = await h.run(36);
     assert.equal(sent.errors, 0);
     assert.equal(h.calls.qrzWrites, 0);
@@ -693,7 +814,7 @@ test("operation-only correction keeps historical QRZ read only while signing the
   }
 });
 test("historical QRZ remains read only across outages while LoTW corrections proceed independently", async () => {
-  const h = await exportSchedulerFixture();
+  const h = await exportSchedulerFixture(true);
   try {
     await h.run(0);
     const reads = h.calls.qrzReads;
@@ -1443,7 +1564,7 @@ test("read-only background history overlaps at most four contacts and preserves 
   }
 });
 
-test("twenty minute-time contacts share inventory, QRZ associations stay read only and LoTW holds stay quiet", async (t) => {
+test("twenty minute-time contacts share inventory and both historical associations stay read only", async (t) => {
   const h = await schedulerFixture();
   try {
     h.qrzRecords[0].TIME_ON = h.qrzRecords[0].TIME_ON!.slice(0, 4);
@@ -1469,20 +1590,38 @@ test("twenty minute-time contacts share inventory, QRZ associations stay read on
     assert.equal(first.errors, 0);
     assert.equal(first.contacts, 20);
     assert.equal(first.throughput?.classifiedDestinations, 40);
-    assert(
-      first.throughput!.reconciliationBatchCalls <= 190,
-      `initial reverse comparisons made ${first.throughput!.reconciliationBatchCalls} cohort RPCs`,
+    const appliedAssociations = first.throughput?.adoptedDestinations ?? 0;
+    assert.equal(appliedAssociations, 40);
+    t.diagnostic(
+      `initial minute cohort: ${first.throughput!.reconciliationBatchCalls} cohort RPCs, ${first.throughput!.database.calls} total RPCs, ${first.throughput!.database.statements} SQL statements`,
     );
     assert.equal(first.throughput?.inventoryFetches, 3);
     assert((first.throughput?.inventoryCacheHits ?? 0) >= 38);
     assert.equal(h.calls.qrzReads, 2);
     assert.equal(h.calls.lotwQueries, 1);
-    assert.equal(await count(h, "ledger", "state='history_ambiguous'"), 20);
-    assert.equal(await count(h, "ledger", "state='adopted_existing'"), 20);
+    assert.equal(await count(h, "ledger", "state='history_ambiguous'"), 0);
+    assert.equal(await count(h, "ledger", "state='adopted_existing'"), 40);
     assert.equal(await count(h, "historical_associations"), 20);
+    assert.equal(await count(h, "lotw_historical_associations"), 20);
+    assert.equal(
+      await count(h, "ledger", "destination='lotw' AND remote_id IS NOT NULL"),
+      0,
+    );
     assert.equal(
       await count(h, "destination_identity_claims", "vendor='qrz'"),
       0,
+    );
+    assert.equal(
+      await count(h, "destination_identity_claims", "vendor='lotw'"),
+      0,
+    );
+    assert.equal(
+      await count(
+        h,
+        "source_work",
+        "kind='qso' AND is_event=0 AND state='archived'",
+      ),
+      20,
     );
     const reads = [h.calls.qrzReads, h.calls.lotwQueries];
     const next = await tick(h.env, h.fetcher, FIXTURE_NOW + 300000);
@@ -1495,25 +1634,47 @@ test("twenty minute-time contacts share inventory, QRZ associations stay read on
     // Source verification cannot promote historical associations to delivery.
     h.env.SOURCE_BOUNDARY_VERIFIED = "true";
     const warm = await tick(h.env, h.fetcher, FIXTURE_NOW + 600000);
-    assert.equal(warm.contacts, 20);
+    t.diagnostic(
+      `warm minute cohort: ${warm.contacts} contacts, ${warm.throughput!.classifiedDestinations} classifications, ${warm.throughput!.reconciliationBatchCalls} cohort RPCs, ${warm.throughput!.database.calls} total RPCs, ${warm.throughput!.database.statements} SQL statements, ${warm.throughput!.inventoryCacheHits} cache hits`,
+    );
+    assert.equal(
+      warm.contacts,
+      0,
+      "fully resolved source bodies stay archived",
+    );
     assert.equal(warm.errors, 0);
-    assert.equal(warm.throughput?.classifiedDestinations, 20);
-    assert.equal(warm.throughput?.inventoryCacheHits, 20);
+    assert.equal(warm.throughput?.classifiedDestinations, 0);
+    assert.equal(warm.throughput?.inventoryCacheHits, 0);
     assert.equal(warm.throughput?.inventoryFetches, 0);
     assert(
       warm.throughput!.reconciliationBatchCalls <= 30,
       `warm cohort made ${warm.throughput!.reconciliationBatchCalls} database RPCs`,
     );
-    t.diagnostic(
-      `minute cohort: first ${first.throughput!.reconciliationBatchCalls} cohort RPCs; warm ${warm.throughput!.reconciliationBatchCalls} cohort RPCs, ${warm.throughput!.database.calls} total RPCs`,
-    );
+
     assert.deepEqual([h.calls.qrzReads, h.calls.lotwQueries], reads);
-    assert.equal(await count(h, "ledger", "state='history_ambiguous'"), 20);
-    assert.equal(await count(h, "ledger", "state='adopted_existing'"), 20);
+    assert.equal(await count(h, "ledger", "state='history_ambiguous'"), 0);
+    assert.equal(await count(h, "ledger", "state='adopted_existing'"), 40);
     assert.equal(await count(h, "historical_associations"), 20);
+    assert.equal(await count(h, "lotw_historical_associations"), 20);
+    assert.equal(
+      await count(h, "ledger", "destination='lotw' AND remote_id IS NOT NULL"),
+      0,
+    );
     assert.equal(await count(h, "attempts"), 0);
     assert.equal(h.calls.qrzWrites, 0);
     assert.equal(h.calls.lotwUploads, 0);
+    // The old 190-call budget completed 20 QRZ associations while 20 LoTW routes
+    // stayed held. Keep that 9.5 RPC-per-completed-association ceiling for the
+    // now-required 40 positive outcomes, rather than silently raising a fixed cap.
+    const perAssociationBudget = 190 / 20;
+    t.diagnostic(
+      `comparison budget: old 190 RPCs/20 completed associations; now ${first.throughput!.reconciliationBatchCalls} RPCs/${appliedAssociations} completed associations`,
+    );
+    assert(
+      first.throughput!.reconciliationBatchCalls <=
+        perAssociationBudget * appliedAssociations,
+      `initial reverse comparisons exceeded ${perAssociationBudget} RPCs per completed association`,
+    );
   } finally {
     await h.mf.dispose();
   }
@@ -1564,9 +1725,22 @@ test("source changes during shared history cannot commit a stale association", a
       assert.equal(result.errors, 0);
       for (const destination of ["destination", "lotw"]) {
         const ledger = await h.store.ledger(key(destination));
-        if (mutation) assert.equal(ledger?.remote_id, null, mutation);
-        else {
-          assert(ledger?.remote_id, "valid retained event context adopts");
+        if (mutation) {
+          assert.equal(ledger?.remote_id, null, mutation);
+          assert.equal(ledger?.lotw_historical_association_id, null, mutation);
+        } else {
+          assert(ledger);
+          if (destination === "lotw") {
+            assert.equal(ledger.remote_id, null);
+            assert(
+              ledger.lotw_historical_association_id,
+              "valid retained event context creates a raw association",
+            );
+          } else
+            assert(
+              ledger.remote_id,
+              "valid retained event context adopts its QRZ LOGID",
+            );
           assert.equal(ledger.state, "adopted_existing");
         }
       }
@@ -1580,7 +1754,7 @@ test("source changes during shared history cannot commit a stale association", a
   }
 });
 
-test("unknown newer source identity holds QRZ siblings until canonical repair without overwriting due work", async () => {
+test("unknown newer source identity holds both vendors until canonical repair without overwriting due work", async () => {
   const h = await schedulerFixture();
   try {
     h.changes.operations.length = 0;
@@ -1632,7 +1806,7 @@ test("unknown newer source identity holds QRZ siblings until canonical repair wi
       await count(
         h,
         "ledger",
-        "qso!='q1' AND destination='lotw' AND state='adopted_existing'",
+        "qso!='q1' AND destination='lotw' AND state='inventory_pending' AND remote_id IS NULL AND lotw_historical_association_id IS NULL",
       ),
       3,
     );
@@ -1644,6 +1818,8 @@ test("unknown newer source identity holds QRZ siblings until canonical repair wi
       ),
       3,
     );
+    assert.equal(await count(h, "historical_associations"), 0);
+    assert.equal(await count(h, "lotw_historical_associations"), 0);
     assert.equal(
       await count(h, "source_historical_index", "qso='q1' AND dirty=1"),
       1,

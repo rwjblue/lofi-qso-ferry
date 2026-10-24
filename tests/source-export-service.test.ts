@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { bindLegacyQrzIdentity } from "../src/identity-claims.ts";
 import { rereadOperation } from "../src/intake.ts";
 import type { SourceRecord } from "../src/lofi.ts";
+import {
+  isEventRecord,
+  projectContact,
+  sourceFingerprint,
+} from "../src/projection.ts";
+import { mergeQrzCorrection } from "../src/qrz.ts";
+import { canonical, sha256 } from "../src/security.ts";
 import { tick } from "../src/service.ts";
 import { schedulerFixture } from "./runtime-fixtures.ts";
 
@@ -15,6 +23,7 @@ async function fixture(
   baselineAgeMinutes = 40,
   initialState = "adopted_existing",
   vendor: "qrz" | "lotw" = "qrz",
+  qrzBaseline: "ferry_created" | "historical" = "ferry_created",
 ) {
   const h = await schedulerFixture();
   t.after(() => h.mf.dispose());
@@ -30,6 +39,71 @@ async function fixture(
   const operations = [h.operation];
   const qsos = [h.qso];
   setup?.(h, qsos, operations);
+  // Correction/proof scheduling starts from retained Ferry-created mappings.
+  // Fresh historical adoption is now permanently association-only, including
+  // exact matches, and must not be used to manufacture a writable baseline.
+  const retainedQrz =
+    vendor === "qrz" &&
+    initialState === "adopted_existing" &&
+    qrzBaseline === "ferry_created";
+  if (retainedQrz) {
+    for (const qso of qsos.filter((row) => !isEventRecord(row))) {
+      const contact = await projectContact(
+        qso,
+        operations.find((operation) => operation.uuid === qso.operation) ??
+          null,
+        qsos.filter(
+          (row) => isEventRecord(row) && row.operation === qso.operation,
+        ),
+        { operationComplete: true },
+      );
+      const remote = h.qrzRecords.find(
+        (record) => record.CALL === contact.call,
+      );
+      assert(remote?.APP_QRZLOG_LOGID);
+      const hash = await sourceFingerprint(contact, "qrz");
+      const sentHash = await sha256(
+        canonical(mergeQrzCorrection(remote, remote, "template_bound")),
+      );
+      await h.store
+        .statement(
+          "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,baseline_hash,remote_hash,sent_hash,state,remote_id,provenance,narrative,template_version,due_at,updated_at) VALUES('a','source',?,'destination',?,?,?,?,?,'delivered',?,'ferry_created','template_bound',?,0,?)",
+          contact.id,
+          contact.generation,
+          hash,
+          hash,
+          sentHash,
+          sentHash,
+          remote.APP_QRZLOG_LOGID,
+          h.template,
+          Date.now() - baselineAgeMinutes * 60_000,
+        )
+        .run();
+      // The normal exact-LOGID recovery binds the retained identity claim; no
+      // proof, attempt, stage guard, or association-only marker is fabricated.
+      assert(
+        await bindLegacyQrzIdentity(
+          h.store,
+          {
+            tenant: "a",
+            source: "source",
+            qso: contact.id,
+            destination: "destination",
+          },
+          remote,
+          contact.generation,
+          "fixture-qrz",
+          Date.now(),
+        ),
+      );
+    }
+    assert.equal(
+      await h.store
+        .statement("SELECT count(*) n FROM historical_associations")
+        .first<number>("n"),
+      0,
+    );
+  }
   const sourceReads: { forward: boolean; until?: number }[] = [];
   const fetcher: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
@@ -123,7 +197,7 @@ async function fixture(
         destination: vendor === "qrz" ? "destination" : "lotw",
       })
     )?.state,
-    initialState,
+    retainedQrz ? "delivered" : initialState,
   );
   const edit = () => {
     h.qso.freq = 14075;
@@ -178,6 +252,45 @@ test("enabled due correction collects once and dispatches its immutable proof in
     "delivered",
   );
   assert.equal(h.qrzMutations[0].FREQ, "14.075");
+});
+
+test("a historical QRZ association stays read-only after a source correction", async (t) => {
+  const h = await fixture(
+    t,
+    undefined,
+    40,
+    "adopted_existing",
+    "qrz",
+    "historical",
+  );
+  await h.observeDueEdit();
+  h.enable();
+  h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination"]';
+  const result = await tick(h.env, h.fetcher);
+  assert.equal(result.errors, 0);
+  assert.equal(h.calls.qrzWrites, 0);
+  assert.equal(await h.count("attempts"), 0);
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) n FROM historical_associations")
+      .first<number>("n"),
+    1,
+  );
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) n FROM historical_remote_owners")
+      .first<number>("n"),
+    1,
+  );
+  const row = await h.store.ledger({
+    tenant: "a",
+    source: "source",
+    qso: "q1",
+    destination: "destination",
+  });
+  assert.equal(row?.reason, "historical_association_read_only");
+  assert.equal(row?.narrative, "remote_preserved");
+  assert.equal(h.qrzRecords[0].FREQ, "14.07400");
 });
 
 test("closed export gates keep source proof collection and attempts off for an actionable correction", async (t) => {

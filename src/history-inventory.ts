@@ -1,11 +1,11 @@
 import type { AdifRecord } from "./adif.ts";
 import { LotwClient } from "./lotw.ts";
+import { adifInstant, QrzClient, QrzError, type QrzPage } from "./qrz.ts";
 import {
   type QrzCoveringProgress,
   selectQrzCoveringRange,
   validateQrzCoveringPage,
 } from "./qrz-covering.ts";
-import { adifInstant, QrzClient, QrzError, type QrzPage } from "./qrz.ts";
 import type { Envelope } from "./security.ts";
 import { canonical, open, randomToken, sha256 } from "./security.ts";
 import type { Connection, Lease, LedgerKey, Store } from "./store.ts";
@@ -214,19 +214,63 @@ interface Partition {
 }
 const date = (at: number) => new Date(at).toISOString().slice(0, 10);
 const adifDate = (value: string) => value.replaceAll("-", "");
-function ranges(input: HistoryInventoryInput): Range[] {
+/** Dates, not a new matching rule: retain every worked-call record on each
+ * touched UTC date. Minute evidence covers its whole minute without inventing
+ * seconds. The resulting interval can touch at most two dates/partition leaves.
+ */
+function lotwDates(record: AdifRecord): string[] {
+  const start = adifInstant(record);
+  const end = start + (record.TIME_ON.length === 4 ? 59_000 : 0);
+  const radius = 30 * 60_000;
+  return [...new Set([date(start - radius), date(end + radius)])];
+}
+function ranges(input: HistoryInventoryInput): { range: Range; day: string }[] {
   const at = adifInstant(input.record);
-  const days =
-    input.destination.kind === "qrz"
-      ? [at - QRZ_RADIUS, at + QRZ_RADIUS]
-      : [at];
+  if (input.destination.kind === "lotw")
+    return lotwDates(input.record).map((day) => {
+      const start = Math.floor(Date.parse(day) / (7 * DAY)) * 7 * DAY;
+      return {
+        range: { startDate: date(start), endDate: date(start + 6 * DAY) },
+        day,
+      };
+    });
   const starts = [
-    ...new Set(days.map((day) => Math.floor(day / (7 * DAY)) * 7 * DAY)),
+    ...new Set(
+      [at - QRZ_RADIUS, at + QRZ_RADIUS].map(
+        (day) => Math.floor(day / (7 * DAY)) * 7 * DAY,
+      ),
+    ),
   ];
   return starts.map((start) => ({
-    startDate: date(start),
-    endDate: date(start + 6 * DAY),
+    range: { startDate: date(start), endDate: date(start + 6 * DAY) },
+    day: date(at),
   }));
+}
+function splitChild(state: Manifest, day: string): Range | undefined {
+  const children = state.children;
+  if (!Array.isArray(children) || children.length !== 2) return;
+  const [left, right] = children;
+  if (
+    [left, right].some(
+      (child) =>
+        !child ||
+        typeof child !== "object" ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(child.startDate) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(child.endDate) ||
+        !Number.isFinite(Date.parse(child.startDate)) ||
+        !Number.isFinite(Date.parse(child.endDate)) ||
+        date(Date.parse(child.startDate)) !== child.startDate ||
+        date(Date.parse(child.endDate)) !== child.endDate ||
+        child.startDate > child.endDate,
+    ) ||
+    left.startDate !== state.startDate ||
+    right.endDate !== state.endDate ||
+    Date.parse(left.endDate) + DAY !== Date.parse(right.startDate)
+  )
+    return;
+  return children.find(
+    (child) => child.startDate <= day && child.endDate >= day,
+  );
 }
 function manifest(row: Partition): Manifest | null {
   try {
@@ -1306,8 +1350,15 @@ async function readHistoryCandidates(
   const scope = await scopeHash(input);
   const wanted = ranges(input);
   const required: Partition[] = [];
-  for (const range of wanted) {
-    let row = await partition(store, input, scope, range, now());
+  const loaded = new Map<string, Partition | null>();
+  const load = async (range: Range) => {
+    const key = `${range.startDate}/${range.endDate}`;
+    if (!loaded.has(key))
+      loaded.set(key, await partition(store, input, scope, range, now()));
+    return loaded.get(key);
+  };
+  for (const { range, day } of wanted) {
+    let row = await load(range);
     if (!row)
       return {
         ...result,
@@ -1316,17 +1367,14 @@ async function readHistoryCandidates(
     for (let depth = 0; depth < 4; depth++) {
       const state = requireManifest(row);
       if (state.phase !== "split") break;
-      const day = date(adifInstant(input.record));
-      const child = state.children?.find(
-        (entry) => entry.startDate <= day && entry.endDate >= day,
-      );
+      const child = splitChild(state, day);
       if (!child)
         return {
           ...result,
           state: "unavailable",
           reason: "History split coverage is incomplete",
         };
-      const next = await partition(store, input, scope, child, now());
+      const next = await load(child);
       if (!next)
         return {
           ...result,
@@ -1334,7 +1382,13 @@ async function readHistoryCandidates(
         };
       row = next;
     }
-    required.push(row);
+    if (requireManifest(row).phase === "split")
+      return {
+        ...result,
+        state: "unavailable",
+        reason: "History split coverage is incomplete",
+      };
+    if (!required.some((entry) => entry.id === row.id)) required.push(row);
   }
   for (let index = 0; index < required.length; index++) {
     const row = required[index];
@@ -1386,6 +1440,9 @@ async function readHistoryCandidates(
     input.record,
   );
   const candidates: AdifRecord[] = [];
+  const dates =
+    input.destination.kind === "lotw" ? lotwDates(input.record) : [];
+  let candidateCount = 0;
   for (const row of required) {
     const state = requireManifest(row);
     const [availability, neighborhoods] = await store.db.batch([
@@ -1422,14 +1479,12 @@ async function readHistoryCandidates(
       payload_id: string;
       envelope: string;
     }[];
-    if (
-      indexed.length > MAX_PAGES ||
-      indexed.reduce(
-        (count, entry) =>
-          count + (JSON.parse(entry.record_indices) as number[]).length,
-        0,
-      ) > MAX_CANDIDATES
-    )
+    candidateCount += indexed.reduce(
+      (count, entry) =>
+        count + (JSON.parse(entry.record_indices) as number[]).length,
+      0,
+    );
+    if (indexed.length > MAX_PAGES || candidateCount > MAX_CANDIDATES)
       return {
         ...result,
         state: "unavailable",
@@ -1473,7 +1528,10 @@ async function readHistoryCandidates(
               QRZ_RADIUS
           )
             candidates.push(record);
-        } else if (sameCall && record.QSO_DATE === input.record.QSO_DATE)
+        } else if (
+          sameCall &&
+          dates.some((day) => adifDate(day) === record.QSO_DATE)
+        )
           candidates.push(record);
       }
     }
@@ -1584,7 +1642,8 @@ function validInput(input: HistoryInventoryInput) {
 interface BatchMember {
   input: HistoryInventoryInput;
   ordinal: number;
-  wanted: { id: string; range: Range }[];
+  wanted: { id: string; range: Range; day: string }[];
+  dates: string[];
   required: Partition[];
   advance?: string;
   unavailable?: string;
@@ -1644,8 +1703,12 @@ async function readHistoryBatch(
       input,
       ordinal,
       wanted: await Promise.all(
-        ranges(input).map((r) => rangeIdentity(scope, r)),
+        ranges(input).map(async ({ range, day }) => ({
+          ...(await rangeIdentity(scope, range)),
+          day,
+        })),
       ),
+      dates: input.destination.kind === "lotw" ? lotwDates(input.record) : [],
       required: [],
       hash: await neighborhood(scope, input.destination.kind, input.record),
     })),
@@ -1699,15 +1762,15 @@ async function readHistoryBatch(
           continue;
         }
         if (state.phase === "split") {
-          const day = date(adifInstant(member.input.record));
-          const child = state.children?.find(
-            (entry) => entry.startDate <= day && entry.endDate >= day,
-          );
+          const child = splitChild(state, wanted.day);
           if (!child || depth === 4) {
             member.unavailable = "History split coverage is incomplete";
             continue;
           }
-          member.wanted[index] = await rangeIdentity(scope, child);
+          member.wanted[index] = {
+            ...(await rangeIdentity(scope, child)),
+            day: wanted.day,
+          };
           missing.add(member.wanted[index].id);
           continue;
         }
@@ -1718,7 +1781,8 @@ async function readHistoryBatch(
           if (retryHeld(state, now())) member.held = true;
           else member.advance ??= row.id;
         }
-        member.required.push(row);
+        if (!member.required.some((entry) => entry.id === row.id))
+          member.required.push(row);
       }
     }
     if (!missing.size) break;
@@ -1827,6 +1891,7 @@ async function readHistoryBatch(
   const failed = new Map<number, string>();
   const compared = new Map<number, AdifRecord[]>();
   const resultBytes = new Map<number, number>();
+  const candidateCounts = new Map<number, number>();
   let totalBytes = 0;
   for (const row of leaves.values()) {
     const relevant = ready.filter((m) =>
@@ -1877,12 +1942,17 @@ async function readHistoryBatch(
         counts.set(hash, (counts.get(hash) ?? 0) + 1);
       return values;
     });
-    for (const member of relevant)
-      if ((counts.get(member.hash) ?? 0) > MAX_CANDIDATES)
+    for (const member of relevant) {
+      const count =
+        (candidateCounts.get(member.ordinal) ?? 0) +
+        (counts.get(member.hash) ?? 0);
+      candidateCounts.set(member.ordinal, count);
+      if (count > MAX_CANDIDATES)
         failed.set(
           member.ordinal,
           "History neighborhood exceeds bounded comparison; targeted review is required",
         );
+    }
     for (let page = 0; page < indexed.length; page++) {
       const entry = indexed[page];
       const records = await open<AdifRecord[]>(
@@ -1915,7 +1985,7 @@ async function readHistoryBatch(
             first.destination.kind === "qrz"
               ? record.BAND.toUpperCase() !== source.BAND.toUpperCase() ||
                 Math.abs(adifInstant(record) - adifInstant(source)) > QRZ_RADIUS
-              : record.QSO_DATE !== source.QSO_DATE
+              : !member.dates.some((day) => adifDate(day) === record.QSO_DATE)
           )
             continue;
           const bytes = new TextEncoder().encode(JSON.stringify(record)).length;

@@ -1,11 +1,12 @@
 import { type AdifRecord, parseAdif } from "./adif.ts";
-import { VendorDeferredError } from "./vendor-requests.ts";
 import {
   type CertificateStatus,
   type LotwContact,
   type LotwStation,
   lotwMode,
+  validCallsign,
 } from "./signing.ts";
+import { VendorDeferredError } from "./vendor-requests.ts";
 
 const QUERY_ENDPOINT = "https://lotw.arrl.org/lotwuser/lotwreport.adi";
 const UPLOAD_ENDPOINT = "https://lotw.arrl.org/lotw/upload";
@@ -62,6 +63,32 @@ function validDate(value: string): boolean {
     new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
   );
 }
+function validReportCallsign(value: string): boolean {
+  return !/[^A-Za-z0-9/]/.test(value) && validCallsign(value.toUpperCase());
+}
+function validReportIdentity(record: AdifRecord): boolean {
+  const date = record.QSO_DATE ?? "";
+  const mode = record.APP_LOTW_MODE || record.MODE || "";
+  // Historical reports can contain modes/bands outside Ferry's signing subset.
+  // Validate their identity syntax without remapping or discarding those rows.
+  const modeToken = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+  return (
+    ["BAND", "MODE", "APP_LOTW_MODE", "SUBMODE", "QSO_DATE", "TIME_ON"].every(
+      (field) =>
+        record[field] === undefined || record[field] === record[field].trim(),
+    ) &&
+    validReportCallsign(record.CALL ?? "") &&
+    validReportCallsign(record.STATION_CALLSIGN ?? "") &&
+    /^(?:[1-9]\d*(?:\.\d+)?(?:M|CM|MM)|SUBMM)$/i.test(record.BAND ?? "") &&
+    modeToken.test(mode) &&
+    [record.MODE, record.APP_LOTW_MODE, record.SUBMODE].every(
+      (value) => !value || modeToken.test(value),
+    ) &&
+    /^\d{8}$/.test(date) &&
+    validDate(`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`) &&
+    /^(?:[01]\d|2[0-3])[0-5]\d(?:[0-5]\d)?$/.test(record.TIME_ON ?? "")
+  );
+}
 export async function boundedResponse(
   response: Response,
   limit = MAX_RESPONSE,
@@ -99,17 +126,10 @@ export function parseLotwReport(input: string): LotwReport {
     throw new Error("LoTW report count or program identity mismatch");
   for (const record of document.records) {
     if (
-      !record.CALL ||
-      !record.STATION_CALLSIGN ||
-      !record.BAND ||
-      !(record.MODE || record.APP_LOTW_MODE) ||
-      !/^\d{8}$/.test(record.QSO_DATE ?? "") ||
-      !/^(?:\d{4}|\d{6})$/.test(record.TIME_ON ?? "") ||
+      !validReportIdentity(record) ||
       !["Y", "N"].includes(record.QSL_RCVD ?? "")
     )
-      throw new Error(
-        "LoTW report is missing required identity/confirmation fields",
-      );
+      throw new Error("LoTW report has invalid identity/confirmation fields");
   }
   const receivedThrough = document.header.APP_LOTW_LASTQSORX ?? null;
   if (
@@ -178,6 +198,13 @@ export class LotwClient {
       )
     )
       throw new Error("Invalid LoTW receive checkpoint");
+    if (
+      [partition.stationCallsign, partition.workedCallsign].some(
+        (value) =>
+          value !== undefined && value !== "" && !validReportCallsign(value),
+      )
+    )
+      throw new Error("Invalid LoTW query callsign");
     const parameters = new URLSearchParams({
       login: this.credentials.username,
       password: this.credentials.password,
@@ -193,6 +220,10 @@ export class LotwClient {
       parameters.set("qso_owncall", partition.stationCallsign);
     if (partition.workedCallsign)
       parameters.set("qso_callsign", partition.workedCallsign);
+    const startDate = partition.startDate.replaceAll("-", "");
+    const endDate = partition.endDate.replaceAll("-", "");
+    const stationCallsign = partition.stationCallsign?.toUpperCase();
+    const workedCallsign = partition.workedCallsign?.toUpperCase();
     let response: Response;
     try {
       response = await this.request.call(
@@ -226,7 +257,21 @@ export class LotwClient {
       )
     )
       throw new LotwLoginError("credentials");
-    return parseLotwReport(body);
+    const report = parseLotwReport(body);
+    // The query contract promises these filters. A contradictory row makes the
+    // whole response unavailable; filtering it out must never establish absence.
+    if (
+      report.records.some(
+        (record) =>
+          record.QSO_DATE < startDate ||
+          record.QSO_DATE > endDate ||
+          (stationCallsign &&
+            record.STATION_CALLSIGN.toUpperCase() !== stationCallsign) ||
+          (workedCallsign && record.CALL.toUpperCase() !== workedCallsign),
+      )
+    )
+      throw new Error("LoTW report does not match the requested scope");
+    return report;
   }
   async certificateStatus(serial: string): Promise<CertificateStatus> {
     if (!/^\d{1,50}$/.test(serial)) return "unknown";

@@ -1004,7 +1004,21 @@ test("LoTW gates precede real signing; immutable per-contact TQ8 is submitted th
       if (url.includes("/lotw/crl?"))
         return new Response("<Status>Unrevoked</Status>");
       if (url.includes("lotwreport.adi?")) {
-        const records = accepted ? [record] : [];
+        const filters = new URL(url).searchParams;
+        // An old identity is not returned by the new worked-call query when
+        // this test prepares its later correction.
+        const records = (accepted ? [record] : []).filter(
+          (item) =>
+            item.QSO_DATE >=
+              filters.get("qso_startdate")!.replaceAll("-", "") &&
+            item.QSO_DATE <= filters.get("qso_enddate")!.replaceAll("-", "") &&
+            (!filters.has("qso_owncall") ||
+              item.STATION_CALLSIGN.toUpperCase() ===
+                filters.get("qso_owncall")!.toUpperCase()) &&
+            (!filters.has("qso_callsign") ||
+              item.CALL.toUpperCase() ===
+                filters.get("qso_callsign")!.toUpperCase()),
+        );
         return new Response(
           `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>${records.length}<EOH>${records.map(serializeAdifRecord).join("")}<APP_LOTW_EOF>`,
         );

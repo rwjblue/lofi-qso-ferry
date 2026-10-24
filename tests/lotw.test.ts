@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { serializeAdifRecord, type AdifRecord } from "../src/adif.ts";
+import { type AdifRecord, serializeAdifRecord } from "../src/adif.ts";
 import {
   boundedResponse,
   LotwClient,
@@ -12,6 +12,7 @@ import {
 } from "../src/lotw.ts";
 import type { LotwContact, LotwStation } from "../src/signing.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
+
 const vector: { station: LotwStation; contact: LotwContact } = JSON.parse(
   readFileSync(
     new URL("../fixtures/signing/vector.json", import.meta.url),
@@ -261,6 +262,219 @@ test("query requests all accepted records, own detail and explicit replay bounda
     (error: Error) => !error.message.includes("never-log-me"),
   );
 });
+
+test("every LoTW query record must satisfy every requested scope filter", async (t) => {
+  const query = {
+    startDate: "2026-10-22",
+    endDate: "2026-10-22",
+    stationCallsign: "w1aw",
+    workedCallsign: "k1abc",
+  };
+  for (const [name, change] of [
+    ["before the start date", { QSO_DATE: "20261021" }],
+    ["after the end date", { QSO_DATE: "20261023" }],
+    ["different station", { STATION_CALLSIGN: "W2AW" }],
+    ["different worked call", { CALL: "K2ABC" }],
+  ] as const) {
+    await t.test(name, async () => {
+      const mismatched = { ...record, ...change };
+      // Both an apparently empty neighborhood and a valid first row must fail.
+      for (const records of [[mismatched], [record, mismatched]]) {
+        const client = new LotwClient(
+          { username: "synthetic", password: "never-log-me" },
+          { fetcher: async () => new Response(report(records)) },
+        );
+        await assert.rejects(client.query(query), {
+          message: "LoTW report does not match the requested scope",
+        });
+      }
+    });
+  }
+});
+
+test("LoTW scope validation preserves inclusive ranges, optional filters and original case/precision", async () => {
+  const records = [
+    { ...record, QSO_DATE: "20261001", TIME_ON: "0000" },
+    {
+      ...record,
+      CALL: "k2abc/p",
+      STATION_CALLSIGN: "w2aw",
+      QSO_DATE: "20261031",
+      TIME_ON: "235959",
+      BAND: "8m",
+      MODE: "HELL",
+    },
+  ];
+  const client = new LotwClient(
+    { username: "synthetic", password: "synthetic" },
+    { fetcher: async () => new Response(report(records)) },
+  );
+  assert.deepEqual(
+    (
+      await client.query({ startDate: "2026-10-01", endDate: "2026-10-31" })
+    ).records.map((value) => ({ ...value })),
+    records,
+  );
+  for (const filters of [
+    { stationCallsign: "w1aw" },
+    { workedCallsign: "k1abc" },
+    { stationCallsign: "w1aw", workedCallsign: "k1abc" },
+  ]) {
+    const scoped = new LotwClient(
+      { username: "synthetic", password: "synthetic" },
+      {
+        fetcher: async () =>
+          new Response(report([{ ...record, TIME_ON: "1234" }])),
+      },
+    );
+    const result = await scoped.query({
+      startDate: "2026-10-22",
+      endDate: "2026-10-22",
+      ...filters,
+    });
+    assert.equal(result.records[0].TIME_ON, "1234");
+    assert.equal(
+      observeLotwContact(vector.station, vector.contact, result).state,
+      "ambiguous",
+    );
+  }
+  const empty = new LotwClient(
+    { username: "synthetic", password: "synthetic" },
+    { fetcher: async () => new Response(report([])) },
+  );
+  assert.deepEqual(
+    (await empty.query({ startDate: "2026-10-22", endDate: "2026-10-22" }))
+      .records,
+    [],
+  );
+});
+
+test("LoTW validates the sent scope even if the caller changes its query during transport", async () => {
+  const query = {
+    startDate: "2026-10-22",
+    endDate: "2026-10-22",
+    stationCallsign: "W1AW",
+    workedCallsign: "K1ABC",
+  };
+  const client = new LotwClient(
+    { username: "synthetic", password: "synthetic" },
+    {
+      fetcher: async () => {
+        Object.assign(query, {
+          startDate: "2026-10-23",
+          endDate: "2026-10-23",
+          stationCallsign: "W2AW",
+          workedCallsign: "K2ABC",
+        });
+        return new Response(
+          report([
+            {
+              ...record,
+              QSO_DATE: "20261023",
+              STATION_CALLSIGN: "W2AW",
+              CALL: "K2ABC",
+            },
+          ]),
+        );
+      },
+    },
+  );
+  await assert.rejects(client.query(query), {
+    message: "LoTW report does not match the requested scope",
+  });
+});
+
+test("malformed LoTW identities cannot hide outside the matched neighborhood", async (t) => {
+  for (const [field, value] of [
+    ["CALL", "   "],
+    ["CALL", "K1 ABC"],
+    ["CALL", "K1ABC/"],
+    ["CALL", "K1ABC\n"],
+    ["STATION_CALLSIGN", "W1ÅW"],
+    ["BAND", "20 m"],
+    ["BAND", "0m"],
+    ["BAND", "bogus"],
+    ["BAND", "20m\n"],
+    ["MODE", "   "],
+    ["MODE", "FT8\u0000"],
+    ["APP_LOTW_MODE", "FT 8"],
+    ["SUBMODE", "FT4\n"],
+    ["QSO_DATE", "20260229"],
+    ["QSO_DATE", "20260431"],
+    ["QSO_DATE", "20261301"],
+    ["QSO_DATE", "20261022\n"],
+    ["TIME_ON", "2400"],
+    ["TIME_ON", "1260"],
+    ["TIME_ON", "123460"],
+    ["TIME_ON", "123"],
+    ["TIME_ON", "123456\n"],
+  ] as const) {
+    await t.test(`${field} ${JSON.stringify(value)}`, async () => {
+      // Build the remote payload directly: the outbound serializer correctly
+      // refuses these characters and must not intercept this parser regression.
+      const malformed = { ...record, CALL: "K2ABC", [field]: value };
+      const body = report([record])
+        .replace("<APP_LoTW_NUMREC:1>1", "<APP_LoTW_NUMREC:1>2")
+        .replace(
+          "<APP_LoTW_EOF>",
+          `${Object.entries(malformed)
+            .map(([name, input]) => `<${name}:${input.length}>${input}`)
+            .join("")}<EOR><APP_LoTW_EOF>`,
+        );
+      const client = new LotwClient(
+        { username: "synthetic", password: "never-log-me" },
+        {
+          fetcher: async () => new Response(body),
+        },
+      );
+      await assert.rejects(
+        client.query({ startDate: "2026-10-01", endDate: "2026-10-31" }),
+        { message: "LoTW report has invalid identity/confirmation fields" },
+      );
+    });
+  }
+});
+
+test("LoTW report parsing preserves valid leap dates and APP_LOTW_MODE fallback", () => {
+  const alternate = {
+    ...record,
+    QSO_DATE: "20240229",
+    TIME_ON: "2359",
+    MODE: "",
+    APP_LOTW_MODE: "ft8",
+  };
+  assert.deepEqual(
+    parseLotwReport(report([alternate])).records.map((value) => ({ ...value })),
+    [alternate],
+  );
+});
+
+test("invalid LoTW callsign filters fail before transport", async () => {
+  let requests = 0;
+  const client = new LotwClient(
+    { username: "synthetic", password: "synthetic" },
+    {
+      fetcher: async () => {
+        requests++;
+        return new Response(report([]));
+      },
+    },
+  );
+  for (const filters of [
+    { stationCallsign: " " },
+    { workedCallsign: "K1ABC*" },
+  ])
+    await assert.rejects(
+      client.query({
+        startDate: "2026-10-22",
+        endDate: "2026-10-22",
+        ...filters,
+      }),
+      { message: "Invalid LoTW query callsign" },
+    );
+  assert.equal(requests, 0);
+});
+
 test("upload acknowledges submission separately; timeouts and unknown responses remain uncertain", async () => {
   assert.deepEqual(parseUploadResponse("<!-- .UPL. accepted -->"), {
     state: "submitted",

@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { serializeAdifRecord } from "../src/adif.ts";
 import {
   createFailureDiagnostics,
   type FailureStage,
   type FailureVendor,
 } from "../src/failure-diagnostics.ts";
-import { LotwLoginError } from "../src/lotw.ts";
+import { LotwClient, LotwLoginError } from "../src/lotw.ts";
 import { QrzError } from "../src/qrz.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
 
@@ -106,6 +107,56 @@ test("known protocol, report, retention and D1 guard errors have fixed codes", (
     assert.deepEqual(Object.keys(diagnostics.counts), [
       `history_read:none:${code}`,
     ]);
+  }
+});
+
+test("rejected LoTW responses retain safe actionable diagnostic categories", async () => {
+  const record = {
+    CALL: "K1ABC",
+    STATION_CALLSIGN: "W1AW",
+    BAND: "20m",
+    MODE: "FT8",
+    QSO_DATE: "20261022",
+    TIME_ON: "123456",
+    QSL_RCVD: "N",
+  };
+  for (const [row, stationCallsign, code] of [
+    [{ ...record, QSO_DATE: "20260230" }, "W1AW", "lotw_report_fields_invalid"],
+    [{ ...record, CALL: "K2ABC" }, "W1AW", "lotw_report_scope_mismatch"],
+    [record, "bad station", "lotw_query_callsign_invalid"],
+  ] as const) {
+    const diagnostics = createFailureDiagnostics();
+    const client = new LotwClient(
+      { username: "private-account", password: "private-password" },
+      {
+        fetcher: async () =>
+          new Response(
+            `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>1<EOH>${serializeAdifRecord(row)}<APP_LOTW_EOF>`,
+          ),
+      },
+    );
+    await assert.rejects(
+      client.query({
+        startDate: "2026-10-22",
+        endDate: "2026-10-22",
+        stationCallsign,
+        workedCallsign: "K1ABC",
+      }),
+      (error: unknown) => {
+        diagnostics.record(error, "history_read", "lotw");
+        return true;
+      },
+    );
+    assert.deepEqual(
+      { ...diagnostics.counts },
+      {
+        [`history_read:lotw:${code}`]: { events: 1, affected: 1 },
+      },
+    );
+    assert.doesNotMatch(
+      JSON.stringify(diagnostics.counts),
+      /private|K1ABC|K2ABC|W1AW/,
+    );
   }
 });
 

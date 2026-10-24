@@ -98,6 +98,15 @@ const internalMessages = new Map([
     "LoTW report is missing required identity/confirmation fields",
     "lotw_report_fields_missing",
   ],
+  [
+    "LoTW report has invalid identity/confirmation fields",
+    "lotw_report_fields_invalid",
+  ],
+  [
+    "LoTW report does not match the requested scope",
+    "lotw_report_scope_mismatch",
+  ],
+  ["Invalid LoTW query callsign", "lotw_query_callsign_invalid"],
   ["Invalid LoTW receive checkpoint", "lotw_checkpoint_invalid"],
   [
     "LoTW query credentials are not configured",

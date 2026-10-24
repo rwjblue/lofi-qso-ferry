@@ -889,8 +889,7 @@ test("one invocation visits every failed source and confirmation turns remain fa
 });
 
 test("one invocation drains unresolved attempts without repeating them or making them retryable", async () => {
-  const h = await schedulerFixture();
-  try {
+  const h = await schedulerFixture(async (h) => {
     for (let i = 0; i < 9; i++) {
       const id = `unresolved-${i}`;
       const ledgerKey = { ...key("lotw"), qso: id };
@@ -919,6 +918,8 @@ test("one invocation drains unresolved attempts without repeating them or making
         )
         .run();
     }
+  });
+  try {
     const first = await tick(h.env, h.fetcher, FIXTURE_NOW);
     assert.equal(first.attempts, 9);
     assert.equal(
@@ -997,8 +998,7 @@ test("new forward arrivals precede historical reconciliation, even with old QSO 
 });
 
 test("successive fair rounds drain live and historical attempts in one invocation", async () => {
-  const h = await schedulerFixture();
-  try {
+  const h = await schedulerFixture(async (h) => {
     for (const priority of ["background", "live"] as const)
       for (let i = 0; i < 9; i++) {
         const id = `${priority}-${i}`;
@@ -1027,6 +1027,8 @@ test("successive fair rounds drain live and historical attempts in one invocatio
           )
           .run();
       }
+  });
+  try {
     const result = await tick(h.env, h.fetcher, FIXTURE_NOW);
     assert.equal(result.errors, 0);
     assert.equal(result.attempts, 18);

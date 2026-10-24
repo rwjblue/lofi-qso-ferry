@@ -9,7 +9,7 @@ import {
 import type { SourceRecord } from "../src/lofi.ts";
 import { importPkcs12 } from "../src/signing.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
-import { database, keys, seed } from "./helpers.ts";
+import { applyMigration, database, keys, seed } from "./helpers.ts";
 export const FIXTURE_NOW = Date.parse("2027-01-01T00:00:00Z");
 export const FIXTURE_QSO_AT = Date.parse("2026-10-22T12:00:01Z");
 export async function applyAdditionalMigrations(db: D1Database) {
@@ -63,10 +63,22 @@ export function fixtureEnvironment(db: D1Database): Env {
     EMAIL_CODE_SECRET: "synthetic-code-secret-32-characters",
   } as Env;
 }
-export async function schedulerFixture() {
+export async function schedulerFixture(
+  historical?: (h: Awaited<ReturnType<typeof database>>) => Promise<void>,
+) {
   const state = await database();
   try {
-    await applyAdditionalMigrations(state.db);
+    const migrations = historical
+      ? (await readdir(new URL("../migrations/", import.meta.url)))
+          .filter(
+            (name) => /^\d{4}_.*\.sql$/.test(name) && !name.startsWith("0001_"),
+          )
+          .sort()
+      : [];
+    if (historical) {
+      for (const name of migrations.filter((name) => name < "0030_"))
+        await applyMigration(state.db, name);
+    } else await applyAdditionalMigrations(state.db);
     await seed(state.store);
     const env = fixtureEnvironment(state.db);
     const operation: SourceRecord = {
@@ -200,6 +212,13 @@ export async function schedulerFixture() {
       fields: { COMMENT: "New forward-only template {{ qso.notes }}" },
       fallbackNotes: false,
     });
+    if (historical) {
+      // These attempts existed before mandatory proofs. Install every current
+      // guard before returning the fixture or running the scheduler.
+      await historical(state);
+      for (const name of migrations.filter((name) => name >= "0030_"))
+        await applyMigration(state.db, name);
+    }
     const fetcher: typeof fetch = async (input, init) => {
       const url = new URL(String(input));
       if (url.pathname === "/v1/sync") {

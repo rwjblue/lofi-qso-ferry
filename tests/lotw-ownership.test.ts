@@ -462,6 +462,32 @@ test("legacy attempts require original immutable identity and known state; missi
       AT,
     )
     .run();
+  let removed = false;
+  const racedDb = interceptBatches(h.db, async (sql) => {
+    if (
+      !removed &&
+      sql.some((query) => query.startsWith("WITH matching AS MATERIALIZED"))
+    ) {
+      removed = true;
+      await h.store
+        .statement(
+          "DELETE FROM attempt_state WHERE tenant='a' AND attempt='legacy'",
+        )
+        .run();
+    }
+  });
+  await backfillLotwOwnership(new Store(racedDb, keys), "a");
+  assert.equal(removed, true);
+  assert.equal(
+    (await lookupLotwOwnership(h.store, "a", record())).reason,
+    "coverage_incomplete",
+  );
+  await h.store
+    .statement(
+      "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','legacy','uncertain',0,?)",
+      AT,
+    )
+    .run();
   await backfill(h.store);
   assert.equal((await observed(h.store)).candidates.length, 1);
   const snapshot = (await observed(h.store)).snapshot!;
@@ -676,4 +702,364 @@ test("comparison uses one captured identity even if the caller changes it during
   assert.equal(result.state, "observed", result.reason);
   assert.equal(result.candidates.length, 1);
   assert.equal(result.candidates[0].evidence.identity.CALL, "W1AW");
+});
+
+test("bounded mixed backfill shares RPCs while preserving all exact tuples", async (t) => {
+  const h = await fixture(t);
+  for (let i = 0; i < 30; i++)
+    await identity(
+      h.store,
+      await owner(h.store, `batch-${i}`),
+      record({ TIME_ON: String(120000 + i) }),
+    );
+  const meter = measuredDatabase(h.db);
+  const stats = await backfillLotwOwnership(
+    new Store(meter.database, keys),
+    "a",
+  );
+  assert.equal(stats.ownersHashed, 30);
+  assert.equal(stats.examined, 90);
+  assert.equal(stats.covered, 90);
+  assert.equal(stats.authoritative, false);
+  assert.equal(
+    await h.store
+      .statement("SELECT COUNT(*) n FROM lotw_ownership_evidence")
+      .first("n"),
+    30,
+  );
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT COUNT(*) n FROM lotw_ownership_inputs WHERE status!='covered'",
+      )
+      .first("n"),
+    0,
+  );
+  assert.equal((await observed(h.store)).candidates.length, 30);
+  assert.equal(
+    meter.metrics.calls,
+    11,
+    "188 RPC baseline for the same 30-contact fixture",
+  );
+  assert.equal(
+    meter.metrics.statements,
+    188,
+    "248 SQL baseline; nonidentity links are one statement",
+  );
+  t.diagnostic(
+    JSON.stringify({
+      calls: meter.metrics.calls,
+      statements: meter.metrics.statements,
+    }),
+  );
+});
+
+function interceptBatches(
+  raw: D1Database,
+  before: (sql: string[]) => Promise<void> | void,
+) {
+  const sql = new WeakMap<D1PreparedStatement, string>();
+  const db = Object.create(raw) as D1Database;
+  db.prepare = (query) => {
+    const statement = raw.prepare(query);
+    sql.set(statement, query);
+    return new Proxy(statement, {
+      get(target, property) {
+        if (property === "bind")
+          return (...values: unknown[]) => {
+            const bound = target.bind(...values);
+            sql.set(bound, query);
+            return bound;
+          };
+        const value: unknown = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+  };
+  db.batch = async <T>(statements: D1PreparedStatement[]) => {
+    await before(statements.map((statement) => sql.get(statement) ?? ""));
+    return raw.batch<T>(statements);
+  };
+  return db;
+}
+
+test("one hundred identity inputs retain bounded native batches and full tuple coverage", async (t) => {
+  const h = await fixture(t);
+  for (let i = 0; i < 100; i++)
+    await identity(
+      h.store,
+      await owner(h.store, `chunk-${i}`),
+      record({
+        TIME_ON: `12${String(Math.floor(i / 60)).padStart(2, "0")}${String(i % 60).padStart(2, "0")}`,
+      }),
+      false,
+    );
+  const sizes: number[] = [];
+  const db = interceptBatches(h.db, (sql) => {
+    sizes.push(sql.length);
+    assert.ok(sql.length <= 100);
+  });
+  const result = await backfillLotwOwnership(new Store(db, keys), "a");
+  assert.equal(result.examined, 100);
+  assert.equal(result.covered, 100);
+  assert.equal(result.ownersHashed, 100);
+  assert.equal(
+    sizes.filter((n) => n === 100).length,
+    4,
+    "owner hashes, owner lookups, and two guarded publication chunks",
+  );
+  assert.equal(
+    await h.store
+      .statement("SELECT COUNT(*) n FROM lotw_ownership_evidence")
+      .first("n"),
+    100,
+  );
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT COUNT(*) n FROM lotw_ownership_inputs WHERE status!='covered'",
+      )
+      .first("n"),
+    0,
+  );
+});
+
+test("failure in a later identity rolls back earlier publications in the same native batch", async (t) => {
+  const h = await fixture(t);
+  const first = await identity(
+    h.store,
+    await owner(h.store, "atomic-first"),
+    record(),
+    false,
+  );
+  await identity(
+    h.store,
+    await owner(h.store, "atomic-second"),
+    record({ TIME_ON: "120002" }),
+    false,
+  );
+  const ids = (
+    await h.store
+      .statement(
+        "SELECT reference FROM lotw_ownership_inputs WHERE kind='identity' ORDER BY reference",
+      )
+      .all<{ reference: string }>()
+  ).results;
+  assert.equal(ids.length, 2);
+  assert.ok(first.id);
+  await h.store
+    .statement(
+      `CREATE TRIGGER fail_second_identity BEFORE UPDATE OF status ON lotw_ownership_inputs WHEN NEW.status='covered' AND NEW.reference='${ids[1].reference}' BEGIN SELECT RAISE(ABORT,'synthetic second identity failure'); END`,
+    )
+    .run();
+  await assert.rejects(
+    backfillLotwOwnership(h.store, "a"),
+    /synthetic second identity failure/,
+  );
+  assert.equal(
+    await h.store
+      .statement("SELECT COUNT(*) n FROM lotw_ownership_evidence")
+      .first("n"),
+    0,
+  );
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT COUNT(*) n FROM lotw_ownership_inputs WHERE status='covered'",
+      )
+      .first("n"),
+    0,
+  );
+});
+
+test("nonidentity native links retain input version CAS after lookup and publication", async (t) => {
+  const h = await fixture(t);
+  await identity(h.store, await owner(h.store));
+  let raced = false;
+  const db = interceptBatches(h.db, async (sql) => {
+    if (
+      !raced &&
+      sql.some((q) => q.startsWith("WITH matching AS MATERIALIZED"))
+    ) {
+      raced = true;
+      await h.store
+        .statement(
+          "UPDATE lotw_ownership_inputs SET version=version+1,checked_at=0 WHERE kind='mapping'",
+        )
+        .run();
+    }
+  });
+  const result = await backfillLotwOwnership(new Store(db, keys), "a");
+  assert.equal(raced, true);
+  assert.equal(result.covered, 2);
+  const mapping = await h.store
+    .statement(
+      "SELECT status,checked_at FROM lotw_ownership_inputs WHERE kind='mapping'",
+    )
+    .first<{ status: string; checked_at: number }>();
+  assert.deepEqual(mapping, { status: "pending", checked_at: 0 });
+  assert.equal(
+    (await lookupLotwOwnership(h.store, "a", record())).reason,
+    "coverage_incomplete",
+  );
+  assert.equal((await backfillLotwOwnership(h.store, "a")).covered, 1);
+  assert.equal((await observed(h.store)).candidates.length, 1);
+});
+
+test("registry key change rejects the whole captured identity publication batch", async (t) => {
+  const h = await fixture(t);
+  await identity(h.store, await owner(h.store));
+  let raced = false;
+  const db = interceptBatches(h.db, async (sql) => {
+    if (
+      !raced &&
+      sql.some((q) => q.startsWith("INSERT INTO lotw_ownership_evidence"))
+    ) {
+      raced = true;
+      await h.store
+        .statement(
+          "UPDATE lotw_ownership_state SET key_id=? WHERE tenant='a'",
+          "x".repeat(43),
+        )
+        .run();
+    }
+  });
+  await assert.rejects(
+    backfillLotwOwnership(new Store(db, keys), "a"),
+    /LoTW ownership key changed/,
+  );
+  assert.equal(raced, true);
+  assert.equal(
+    await h.store
+      .statement("SELECT COUNT(*) n FROM lotw_ownership_evidence")
+      .first("n"),
+    0,
+  );
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT COUNT(*) n FROM lotw_ownership_inputs WHERE status='covered'",
+      )
+      .first("n"),
+    0,
+  );
+});
+
+test("an unavailable stable index secret never starts owner or evidence publication", async (t) => {
+  const h = await fixture(t);
+  await identity(h.store, await owner(h.store));
+  await h.store
+    .statement(
+      "UPDATE source_historical_state SET key_envelope='{}',clock=clock+1 WHERE tenant='a'",
+    )
+    .run();
+  const result = await backfillLotwOwnership(h.store, "a");
+  assert.equal(result.reason, "key_unavailable");
+  assert.equal(result.ownersHashed, 0);
+  assert.equal(result.examined, 0);
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT COUNT(*) n FROM lotw_ownership_owners WHERE owner_hash IS NOT NULL",
+      )
+      .first("n"),
+    0,
+  );
+  assert.equal(
+    await h.store
+      .statement("SELECT COUNT(*) n FROM lotw_ownership_evidence")
+      .first("n"),
+    0,
+  );
+});
+
+test("a later failed publication chunk preserves only prior fully committed chunks", async (t) => {
+  const h = await fixture(t);
+  for (let i = 0; i < 60; i++)
+    await identity(
+      h.store,
+      await owner(h.store, `partial-${i}`),
+      record({ TIME_ON: `1200${String(i).padStart(2, "0")}` }),
+      false,
+    );
+  const rows = (
+    await h.store
+      .statement(
+        "SELECT reference FROM lotw_ownership_inputs WHERE kind='identity' ORDER BY reference",
+      )
+      .all<{ reference: string }>()
+  ).results;
+  await h.store
+    .statement(
+      `CREATE TRIGGER fail_later_chunk BEFORE UPDATE OF status ON lotw_ownership_inputs WHEN NEW.status='covered' AND NEW.reference='${rows[55].reference}' BEGIN SELECT RAISE(ABORT,'synthetic later chunk failure'); END`,
+    )
+    .run();
+  await assert.rejects(
+    backfillLotwOwnership(h.store, "a"),
+    /synthetic later chunk failure/,
+  );
+  assert.equal(
+    await h.store
+      .statement("SELECT COUNT(*) n FROM lotw_ownership_evidence")
+      .first("n"),
+    50,
+  );
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT COUNT(*) n FROM lotw_ownership_inputs WHERE status='covered'",
+      )
+      .first("n"),
+    50,
+  );
+  assert.equal(
+    (await lookupLotwOwnership(h.store, "a", record())).reason,
+    "coverage_incomplete",
+  );
+  await h.store.statement("DROP TRIGGER fail_later_chunk").run();
+  const remaining = await backfillLotwOwnership(h.store, "a");
+  assert.equal(remaining.covered, 10);
+  assert.equal((await observed(h.store)).candidates.length, 60);
+});
+
+test("an unknown publication acknowledgement is thrown without a second native submission", async (t) => {
+  const h = await fixture(t);
+  await identity(h.store, await owner(h.store), record(), false);
+  const sql: string[] = [];
+  let publications = 0;
+  const db = interceptBatches(h.db, (queries) => {
+    sql.splice(0, sql.length, ...queries);
+  });
+  const batch = db.batch.bind(db);
+  db.batch = async <T>(statements: D1PreparedStatement[]) => {
+    const result = await batch<T>(statements);
+    if (
+      sql.some((query) =>
+        query.startsWith("INSERT INTO lotw_ownership_evidence"),
+      )
+    ) {
+      publications++;
+      throw Error("synthetic lost acknowledgement");
+    }
+    return result;
+  };
+  await assert.rejects(
+    backfillLotwOwnership(new Store(db, keys), "a"),
+    /synthetic lost acknowledgement/,
+  );
+  assert.equal(publications, 1);
+  assert.equal(
+    await h.store
+      .statement("SELECT COUNT(*) n FROM lotw_ownership_evidence")
+      .first("n"),
+    1,
+  );
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT COUNT(*) n FROM lotw_ownership_inputs WHERE status='covered'",
+      )
+      .first("n"),
+    1,
+  );
 });

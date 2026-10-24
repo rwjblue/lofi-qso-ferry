@@ -191,50 +191,65 @@ const inputParams = (input: Input) =>
     input.reference,
     input.version,
   ] as const;
-async function finishInput(
-  store: Store,
-  input: Input,
-  now: number,
-  evidenceId: string | null,
-) {
-  const result = await store
-    .statement(
-      `UPDATE lotw_ownership_inputs SET status=?,checked_at=?,evidence_id=COALESCE(?,evidence_id) WHERE ${inputWhere} RETURNING reference`,
-      evidenceId ? "covered" : "held",
-      now,
-      evidenceId,
-      ...inputParams(input),
-    )
-    .all();
-  return result.results.length === 1;
+function holdInput(store: Store, input: Input, now: number) {
+  return store.statement(
+    `UPDATE lotw_ownership_inputs SET status='held',checked_at=? WHERE ${inputWhere} RETURNING reference`,
+    now,
+    ...inputParams(input),
+  );
 }
-async function publishIdentity(
+function linkInput(
   store: Store,
   input: Input,
   key: SourceHistoricalIndexKey,
   now: number,
 ) {
+  // Re-read any attempt state and the exact evidence inside the version-CAS
+  // statement. Native batching must not turn an earlier SELECT into authority.
+  return store.statement(
+    `WITH matching AS MATERIALIZED (
+      SELECT e.id FROM lotw_ownership_evidence e WHERE e.tenant=? AND e.destination=? AND e.source=? AND e.qso=? AND e.key_id=?
+      AND e.exact_hash=COALESCE(?,(SELECT i.identity_hash FROM attempt_identity_claims i JOIN attempt_state s ON s.tenant=i.tenant AND s.attempt=i.attempt WHERE i.tenant=? AND i.destination=? AND i.attempt=? AND i.source=? AND i.qso=? AND i.vendor='lotw' AND s.state IN('prepared','dispatching','submitted','uncertain','reconciliation_required','delivered','observed','cancelled','rejected')))
+      AND EXISTS(SELECT 1 FROM source_historical_state WHERE tenant=? AND key_id=?)
+    ) UPDATE lotw_ownership_inputs SET status=CASE WHEN EXISTS(SELECT 1 FROM matching) THEN 'covered' ELSE 'held' END,checked_at=?,evidence_id=COALESCE((SELECT id FROM matching),evidence_id) WHERE ${inputWhere} RETURNING status`,
+    input.tenant,
+    input.destination,
+    input.source,
+    input.qso,
+    key.keyId,
+    input.exact_hash,
+    input.tenant,
+    input.destination,
+    input.reference,
+    input.source,
+    input.qso,
+    input.tenant,
+    key.keyId,
+    now,
+    ...inputParams(input),
+  );
+}
+function identityReference(input: Input, now: number) {
   if (
     !input.envelope ||
     input.oversized ||
     input.revoked_at !== null ||
     (input.expires_at !== null && input.expires_at <= now)
   )
-    return false;
-  const match = /^identity:([A-Za-z0-9_-]{43}):([A-Za-z0-9_-]{43})$/.exec(
+    return null;
+  return /^identity:([A-Za-z0-9_-]{43}):([A-Za-z0-9_-]{43})$/.exec(
     input.reference,
   );
-  if (!match) return false;
-  const owners = (
-    await store
-      .statement(
-        "SELECT tenant,destination,source,qso FROM lotw_ownership_owners WHERE tenant=? AND destination=? AND owner_hash=? LIMIT 2",
-        input.tenant,
-        input.destination,
-        match[1],
-      )
-      .all<Owner>()
-  ).results;
+}
+async function prepareIdentityPublication(
+  store: Store,
+  input: Input,
+  key: SourceHistoricalIndexKey,
+  now: number,
+  owners: Owner[],
+) {
+  const match = identityReference(input, now);
+  if (!match || !input.envelope) return false;
   if (owners.length !== 1) return false;
   let data: RetainedLotwIdentity | null;
   try {
@@ -287,7 +302,7 @@ async function publishIdentity(
     input.tenant,
     key.keyId,
   ];
-  const result = await store.db.batch([
+  return [
     store.statement(
       `INSERT INTO lotw_ownership_evidence(tenant,id,destination,source,qso,exact_hash,key_id,bucket,envelope,created_at) SELECT ?,?,?,?,?,?,?,?,?,? WHERE ${guard} AND NOT EXISTS(SELECT 1 FROM lotw_ownership_evidence WHERE tenant=? AND id=?) ON CONFLICT DO NOTHING`,
       owner.tenant,
@@ -315,8 +330,7 @@ async function publishIdentity(
       key.keyId,
       locality,
     ),
-  ]);
-  return result[1].results.length === 1;
+  ];
 }
 /** Bounded maintenance only. Never grants historical adoption or write authority.
  * Each pass hashes at most 100 owner references and examines at most 100 inputs;
@@ -406,44 +420,64 @@ export async function backfillLotwOwnership(
       .all<Input>()
   ).results;
   let covered = 0;
-  for (const input of inputs) {
-    if (input.kind === "identity") {
-      if (await publishIdentity(store, input, key, now)) {
-        covered++;
-        continue;
-      }
-      await finishInput(store, input, now, null);
-      continue;
-    }
-    const hash =
-      input.exact_hash ??
-      (
-        await store
-          .statement(
-            "SELECT i.identity_hash FROM attempt_identity_claims i JOIN attempt_state s ON s.tenant=i.tenant AND s.attempt=i.attempt WHERE i.tenant=? AND i.destination=? AND i.attempt=? AND i.source=? AND i.qso=? AND i.vendor='lotw' AND s.state IN('prepared','dispatching','submitted','uncertain','reconciliation_required','delivered','observed','cancelled','rejected')",
-            tenant,
-            input.destination,
-            input.reference,
-            input.source,
-            input.qso,
-          )
-          .first<{ identity_hash: string }>()
-      )?.identity_hash;
-    const evidence = hash
-      ? await store
-          .statement(
-            "SELECT id FROM lotw_ownership_evidence WHERE tenant=? AND destination=? AND source=? AND qso=? AND exact_hash=? AND key_id=?",
-            tenant,
-            input.destination,
-            input.source,
-            input.qso,
-            hash,
-            key.keyId,
-          )
-          .first<{ id: string }>()
+  const identities = inputs.filter((input) => input.kind === "identity");
+  const ownerQueries = identities.map((input) => {
+    const match = identityReference(input, now);
+    return match
+      ? store.statement(
+          "SELECT tenant,destination,source,qso FROM lotw_ownership_owners WHERE tenant=? AND destination=? AND owner_hash=? LIMIT 2",
+          input.tenant,
+          input.destination,
+          match[1],
+        )
       : null;
-    const changed = await finishInput(store, input, now, evidence?.id ?? null);
-    if (evidence && changed) covered++;
+  });
+  const validOwnerQueries = ownerQueries.filter((query) => query !== null);
+  const ownerResults = validOwnerQueries.length
+    ? await store.db.batch<Owner>(validOwnerQueries)
+    : [];
+  const publications: { input: Input; statements: D1PreparedStatement[] }[] =
+    [];
+  const holds: Input[] = [];
+  let ownerIndex = 0;
+  for (let i = 0; i < identities.length; i++) {
+    const input = identities[i];
+    const found = ownerQueries[i] ? ownerResults[ownerIndex++].results : [];
+    const statements = await prepareIdentityPublication(
+      store,
+      input,
+      key,
+      now,
+      found,
+    );
+    if (statements) publications.push({ input, statements });
+    else holds.push(input);
+  }
+  // At most 100 inputs and 100 statements per native batch. Each two-statement
+  // identity publication keeps its original ciphertext/key/version guards and
+  // atomicity; a thrown batch is never retried or converted to held evidence.
+  for (let offset = 0; offset < publications.length; offset += MAX_INPUTS / 2) {
+    const chunk = publications.slice(offset, offset + MAX_INPUTS / 2);
+    const results = await store.db.batch(
+      chunk.flatMap((entry) => entry.statements),
+    );
+    for (let i = 0; i < chunk.length; i++) {
+      if (results[i * 2 + 1].results.length === 1) covered++;
+      else holds.push(chunk[i].input);
+    }
+  }
+  if (holds.length)
+    await store.db.batch(holds.map((input) => holdInput(store, input, now)));
+  // These keyed links run after this pass's identity publications, so the same
+  // pass can cover a tuple and its claim/mapping without per-input round trips.
+  const links = inputs.filter((input) => input.kind !== "identity");
+  if (links.length) {
+    const results = await store.db.batch<{ status: string }>(
+      links.map((input) => linkInput(store, input, key, now)),
+    );
+    covered += results.filter(
+      (result) => result.results[0]?.status === "covered",
+    ).length;
   }
   return {
     ...noAuthority,

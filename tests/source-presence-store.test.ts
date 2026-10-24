@@ -225,7 +225,7 @@ test("canonical positives retain call-start freshness across empty handoff and c
     row.detail.startsWith("SEARCH w "),
   )?.detail;
   assert.ok(
-    lookup?.includes("kind=? AND id=?"),
+    lookup?.includes("(tenant=? AND source=? AND id=? AND kind=?)"),
     "source lookup must constrain each requested identity, not scan the whole epoch",
   );
   assert.equal(

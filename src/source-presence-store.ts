@@ -103,9 +103,11 @@ export async function loadSourcePresence(
     .statement(
       // CROSS JOIN keeps the bounded requested set ahead of source_work. Without
       // that ordering SQLite can scan every row in the current policy epoch.
+      // Pin the exact identity key: timestamp indexes may otherwise win and
+      // scan arbitrarily many records sharing a server timestamp.
       `SELECT CAST(requested.key AS INTEGER) AS position,w.positive_observed_at AS observed_at
      FROM json_each(?1) requested
-     CROSS JOIN source_work w ON w.tenant=?2 AND w.source=?3 AND w.kind=json_extract(requested.value,'$.kind') AND w.id=json_extract(requested.value,'$.id')
+     CROSS JOIN source_work w INDEXED BY sqlite_autoindex_source_work_1 ON w.tenant=?2 AND w.source=?3 AND w.kind=json_extract(requested.value,'$.kind') AND w.id=json_extract(requested.value,'$.id')
      JOIN source_read_policy_ready ready ON ready.tenant=w.tenant AND ready.source=w.source AND ready.epoch=?4
      JOIN source_read_policies p ON p.tenant=ready.tenant AND p.source=ready.source AND p.epoch=ready.epoch
      JOIN connections c ON c.tenant=w.tenant AND c.id=w.source

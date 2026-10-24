@@ -12,6 +12,10 @@ import {
   destinationIdentityClaim,
   reserveIdentityClaim,
 } from "./identity-claims.ts";
+import {
+  type LotwOwnershipWrite,
+  prepareLotwOwnershipBatch,
+} from "./lotw-ownership-bridge.ts";
 import { matchQrzHistory, sameQrzIdentity } from "./qrz.ts";
 import type { ReconciliationLedger } from "./reconciliation-work.ts";
 import { canonical, randomToken, sha256 } from "./security.ts";
@@ -38,6 +42,10 @@ interface AdoptionPlan {
   statements: D1PreparedStatement[];
   adoptionIndex: number;
   quarantineIndex?: number;
+  ownership?: LotwOwnershipWrite;
+  ownershipCurrent?: HistoryCommitGuard;
+  ownershipHold?: AdoptionPlan;
+  failureReason?: string;
 }
 
 function adoptionResult(plan: AdoptionPlan, rows: D1Result[]): AdoptionResult {
@@ -48,7 +56,7 @@ function adoptionResult(plan: AdoptionPlan, rows: D1Result[]): AdoptionResult {
       plan.quarantineIndex !== undefined &&
       rows[plan.quarantineIndex]?.results.length === 1
         ? "remote_identity_claim_conflict"
-        : "generation_mapping_or_attempt_conflict",
+        : (plan.failureReason ?? "generation_mapping_or_attempt_conflict"),
   };
 }
 
@@ -69,7 +77,8 @@ export async function adoptHistoryBatch(
     seen.add(key);
   }
   const results: AdoptionResult[] = [];
-  // At most ten statements per item, including claim and collision quarantine.
+  // Eight exact LoTW mappings use at most 90 native statements, including
+  // collision quarantine and the common ownership reservation/accounting.
   for (let offset = 0; offset < items.length; offset += 8) {
     const commitTime = now();
     const plans = await Promise.all(
@@ -88,10 +97,79 @@ export async function adoptHistoryBatch(
           ),
         ),
     );
+    // Skip already-stale mappings before reserving a common ownership plan.
+    // Every original guard and mapping CAS is still checked atomically below;
+    // a later race rolls back every provisional reservation in that chunk.
+    const guarded = plans.flatMap((plan, index) =>
+      "statements" in plan && plan.ownership && plan.ownershipCurrent
+        ? [{ index, guard: plan.ownershipCurrent }]
+        : [],
+    );
+    if (guarded.length) {
+      const current = await store.db.batch(
+        guarded.map(({ guard }) =>
+          store.statement(
+            `SELECT 1 AS current WHERE ${guard.sql}`,
+            ...guard.params,
+          ),
+        ),
+      );
+      for (const [index, item] of guarded.entries())
+        if (!current[index]?.results.length)
+          plans[item.index] = {
+            applied: false,
+            reason: "source_generation_changed",
+          };
+    }
+    const ownershipInputs = plans.flatMap((plan) =>
+      "statements" in plan && plan.ownership ? [plan.ownership] : [],
+    );
+    let ownership:
+      | Awaited<ReturnType<typeof prepareLotwOwnershipBatch>>
+      | undefined;
+    if (ownershipInputs.length)
+      try {
+        ownership = await prepareLotwOwnershipBatch(
+          store,
+          "mapping",
+          ownershipInputs,
+          commitTime,
+          undefined,
+          { partialMappings: true },
+        );
+        let ownershipIndex = 0;
+        for (const [n, plan] of plans.entries()) {
+          if (!("statements" in plan) || !plan.ownership) continue;
+          if (ownership.excluded.includes(ownershipIndex++))
+            plans[n] = plan.ownershipHold ?? {
+              applied: false,
+              reason: "lotw_ownership_unavailable",
+            };
+        }
+      } catch {
+        for (const [n, plan] of plans.entries())
+          if ("statements" in plan && plan.ownership)
+            plans[n] = plan.ownershipHold ?? {
+              applied: false,
+              reason: "lotw_ownership_unavailable",
+            };
+      }
     const statements = plans.flatMap((plan) =>
       "statements" in plan ? plan.statements : [],
     );
-    const rows = statements.length ? await store.db.batch(statements) : [];
+    let rows: D1Result[];
+    try {
+      const all = statements.length
+        ? await store.db.batch([
+            ...(ownership?.begin ?? []),
+            ...statements,
+            ...(ownership?.finish ?? []),
+          ])
+        : [];
+      rows = all.slice(ownership?.begin.length ?? 0);
+    } finally {
+      await ownership?.release();
+    }
     let index = 0;
     for (const plan of plans) {
       if (!("statements" in plan)) results.push(plan);
@@ -460,7 +538,7 @@ export async function adoptHistory(
       key.destination,
     )
     .first<ReconciliationLedger>();
-  const plan = await prepareHistoryAdoption(
+  let plan = await prepareHistoryAdoption(
     store,
     key,
     generation,
@@ -470,9 +548,44 @@ export async function adoptHistory(
     adoptedSourceHash,
     inventoryGuard,
   );
-  return "statements" in plan
-    ? adoptionResult(plan, await store.db.batch(plan.statements))
-    : plan;
+  if (!("statements" in plan)) return plan;
+  if (
+    plan.ownership &&
+    plan.ownershipCurrent &&
+    !(await store
+      .statement(
+        `SELECT 1 AS current WHERE ${plan.ownershipCurrent.sql}`,
+        ...plan.ownershipCurrent.params,
+      )
+      .first())
+  )
+    return { applied: false, reason: "source_generation_changed" };
+  let ownership:
+    | Awaited<ReturnType<typeof prepareLotwOwnershipBatch>>
+    | undefined;
+  if (plan.ownership)
+    try {
+      ownership = await prepareLotwOwnershipBatch(
+        store,
+        "mapping",
+        [plan.ownership],
+        now,
+      );
+    } catch {
+      if (!plan.ownershipHold)
+        return { applied: false, reason: "lotw_ownership_unavailable" };
+      plan = plan.ownershipHold;
+    }
+  try {
+    const rows = await store.db.batch([
+      ...(ownership?.begin ?? []),
+      ...plan.statements,
+      ...(ownership?.finish ?? []),
+    ]);
+    return adoptionResult(plan, rows.slice(ownership?.begin.length ?? 0));
+  } finally {
+    await ownership?.release();
+  }
 }
 
 async function prepareHistoryAdoption(
@@ -651,6 +764,7 @@ async function prepareHistoryAdoption(
     ...retainedClaim.params,
     ...currentInventory.params,
   );
+  let privateEnvelope: string | undefined;
   const identity =
     ledger.destination_kind === "lotw" && remote && remoteId
       ? await store.lotwIdentityStatement(
@@ -669,6 +783,9 @@ async function prepareHistoryAdoption(
               remoteId,
               ...currentInventory.params,
             ],
+          },
+          (value) => {
+            privateEnvelope = value;
           },
         )
       : null;
@@ -816,7 +933,41 @@ async function prepareHistoryAdoption(
     );
   }
   if (guardEnd) statements.push(guardEnd);
-  return { statements, adoptionIndex, quarantineIndex };
+  return {
+    statements,
+    adoptionIndex,
+    quarantineIndex,
+    ...(ledger.destination_kind === "lotw" &&
+    outcome.state === "adopted_existing" &&
+    remote &&
+    remoteId
+      ? {
+          ownershipCurrent: inventoryGuard,
+          // Ownership failure cannot map or reserve, but the preexisting exact
+          // claim collision diagnosis remains useful and independently fenced.
+          ownershipHold: {
+            statements: [
+              ...(guardStart ? [guardStart] : []),
+              ...(quarantineIndex === undefined
+                ? []
+                : statements.slice(quarantineIndex, quarantineIndex + 4)),
+              ...(guardEnd ? [guardEnd] : []),
+            ],
+            adoptionIndex: -1,
+            quarantineIndex:
+              quarantineIndex === undefined ? undefined : guardStart ? 1 : 0,
+            failureReason: "lotw_ownership_unavailable",
+          },
+          ownership: {
+            ...key,
+            generation,
+            sourceHash: ledger.source_hash,
+            identity: { identity: canonicalLotwIdentity(remote), remoteId },
+            privateEnvelope,
+          },
+        }
+      : {}),
+  };
 }
 /** Uncertain absence never authorizes resubmission; only exact revision observation settles it. */
 export function reconcileQrzAttempt(

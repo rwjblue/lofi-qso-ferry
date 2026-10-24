@@ -5,6 +5,8 @@ import { contactReconciliationAdif, prepareDue } from "../src/delivery.ts";
 import { historicalGridsCompatible } from "../src/historical-location.ts";
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
 import { observeLotwContact } from "../src/lotw.ts";
+import { backfillLotwOwnership } from "../src/lotw-ownership.ts";
+import { renewAttemptLotwOwnership } from "../src/lotw-ownership-bridge.ts";
 import { projectContact, sourceFingerprint } from "../src/projection.ts";
 import {
   ADOPTION_CONFLICT_REASON,
@@ -37,6 +39,16 @@ async function reconciliationDatabase() {
   } catch (error) {
     await h.mf.dispose();
     throw error;
+  }
+}
+async function maintainOwnership(store: Store, tenant = "a") {
+  for (let pass = 0; pass < 10; pass++) {
+    const result = await backfillLotwOwnership(store, tenant);
+    if (
+      result.reason !== "examined" ||
+      !(result.advanced || result.covered || result.ownersHashed)
+    )
+      break;
   }
 }
 async function reconciliationStageProof(
@@ -366,7 +378,7 @@ test("batched adoption quarantines same-chunk and cross-chunk duplicate claims a
           )
           .run();
         const requests = [];
-        for (let index = 0; index <= collision; index++) {
+        for (let index = 0; index <= Math.max(collision, 2); index++) {
           const qso = `collision-${index}`;
           requests.push({
             qso,
@@ -410,7 +422,9 @@ test("batched adoption quarantines same-chunk and cross-chunk duplicate claims a
             },
           };
         });
-        let commitTime = 0;
+        if (destination === "lotw") await maintainOwnership(h.store);
+        const began = Date.now();
+        let commitTime = began;
         const results = await adoptHistoryBatch(
           h.store,
           { tenant: "a", id: "source" },
@@ -419,27 +433,40 @@ test("batched adoption quarantines same-chunk and cross-chunk duplicate claims a
         );
         assert.deepEqual(
           commitTimes,
-          items.map((_, index) => Math.floor(index / 8) + 1),
+          items.map((_, index) => began + Math.floor(index / 8) + 1),
         );
+        const prospective = destination === "lotw" && collision === 1;
         assert.equal(
           results[collision]?.reason,
-          "remote_identity_claim_conflict",
+          prospective
+            ? "lotw_ownership_unavailable"
+            : "remote_identity_claim_conflict",
+        );
+        assert.equal(
+          results[2]?.applied,
+          true,
+          "a fitting mapping neighbor keeps its independent authority",
         );
         for (const index of [0, collision]) {
           const row = await h.store.ledger({
             ...key,
             qso: `collision-${index}`,
           });
-          assert.equal(row?.provenance, "adoption_conflict");
-          assert.equal(row?.state, "history_ambiguous");
-          assert.equal(row?.reason, ADOPTION_CONFLICT_REASON);
-          assert.equal(row?.remote_id === null, index === collision);
+          if (prospective) {
+            assert.equal(row?.remote_id, null);
+            assert.notEqual(row?.provenance, "adopted");
+          } else {
+            assert.equal(row?.provenance, "adoption_conflict");
+            assert.equal(row?.state, "history_ambiguous");
+            assert.equal(row?.reason, ADOPTION_CONFLICT_REASON);
+            assert.equal(row?.remote_id === null, index === collision);
+          }
         }
         if (destination === "lotw") {
           assert.equal(
             (await h.store.lotwIdentities({ ...key, qso: "collision-0" }))
               .length,
-            1,
+            prospective ? 0 : 1,
           );
           assert.equal(
             (
@@ -593,6 +620,7 @@ test("fractional source times adopt only a unique seconds projection and cannot 
         assert.equal(outcome.state, "adopted_existing");
         const fingerprint = await sourceFingerprint(contact, destination);
         await store.observe(key, contact.generation, fingerprint, 30, false, 0);
+        if (destination === "lotw") await maintainOwnership(store);
         assert.equal(
           (
             await adoptHistory(
@@ -600,7 +628,7 @@ test("fractional source times adopt only a unique seconds projection and cannot 
               key,
               contact.generation,
               outcome,
-              1,
+              Date.now(),
               fingerprint,
             )
           ).applied,
@@ -748,13 +776,15 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
       destination: "lotw",
     });
     await store.observe(key, "g1", "adopt-input", 30, false, 0);
-    assert((await adoptHistory(store, key, "g1", outcome, 1)).applied);
+    await maintainOwnership(store);
+    const adoptedAt = Date.now();
+    assert((await adoptHistory(store, key, "g1", outcome, adoptedAt)).applied);
     const identities = await store.lotwIdentities(key);
     assert.equal(identities.length, 1);
     assert.deepEqual(identities[0]!.identity, canonicalLotwIdentity(source));
     assert.equal(identities[0]!.remoteId, await lotwRemoteIdentity(source));
     assert.equal(identities[0]!.firstEvidence, "adopted");
-    assert.equal(identities[0]!.recordedAt, 1);
+    assert.equal(identities[0]!.recordedAt, adoptedAt);
     assert.equal((await store.ledger(key))!.confirmed, 1);
     assert.equal(await store.lotwPriorIdentityCount(key), 0);
     for (const other of [
@@ -785,10 +815,22 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
     };
     await store.observe(key, "g2", "corrected-input", 30, false, 10);
     const proof = await reconciliationStageProof(store, key, "W2NEW");
+    const payload = {
+      kind: "lotw",
+      station: { callsign: source.STATION_CALLSIGN },
+      contact: {
+        call: "W2NEW",
+        date: "2026-10-22",
+        time: "12:00:01Z",
+        band: source.BAND,
+        mode: source.MODE,
+      },
+      tq8: "fixture signed bytes",
+    };
     const attempt = await store.stage(
       key,
       proof.generation,
-      { signed: "synthetic artifact" },
+      payload,
       "v1",
       null,
       proof.now,
@@ -808,7 +850,26 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
       proof.now + 1,
       120000,
     ))!;
-    assert(await store.claimAttempt("a", attempt, lease, proof.now + 2));
+    const ownership = await renewAttemptLotwOwnership(
+      store,
+      "a",
+      attempt,
+      payload,
+    );
+    try {
+      assert(
+        await store.claimAttempt(
+          "a",
+          attempt,
+          lease,
+          proof.now + 2,
+          nextIdentity,
+          { payload, lease: ownership.lease },
+        ),
+      );
+    } finally {
+      await store.release(ownership.lease);
+    }
     await store.resolve(
       "a",
       attempt,
@@ -861,6 +922,7 @@ test("read-only LoTW adoption retains only encrypted canonical identity and scop
     assert.deepEqual(await store.lotwIdentities(conflicting), []);
     const otherTenant = { ...key, tenant: "b" };
     await store.observe(otherTenant, "g1", "other-tenant-input", 30, false, 0);
+    await maintainOwnership(store, "b");
     assert(
       (await adoptHistory(store, otherTenant, "g1", outcome, proof.now + 6))
         .applied,
@@ -1225,10 +1287,26 @@ test("adopted and observed LoTW identity keys prevent a second source UUID from 
     await store
       .statement("UPDATE ledger SET state='missing_current_identity'")
       .run();
+    const payload = {
+      kind: "lotw",
+      station: { callsign: source.STATION_CALLSIGN },
+      contact: {
+        call: source.CALL,
+        date: "2026-10-22",
+        time: "12:00:01Z",
+        band: source.BAND,
+        mode: source.MODE,
+      },
+      tq8: "fixture signed bytes",
+    };
+    const retained = {
+      remoteId: await lotwRemoteIdentity(lotwRemote),
+      identity: canonicalLotwIdentity(lotwRemote),
+    };
     const id = await store.stage(
       first,
       proof.generation,
-      { fixture: "signed" },
+      payload,
       "v1",
       null,
       proof.now,
@@ -1247,14 +1325,43 @@ test("adopted and observed LoTW identity keys prevent a second source UUID from 
       proof.now,
       120000,
     ))!;
-    assert(await store.claimAttempt("a", id, lease, proof.now + 1));
-    await store.resolve("a", id, lease, "uncertain", null, proof.now + 2);
+    const ownership = await renewAttemptLotwOwnership(
+      store,
+      "a",
+      id,
+      payload,
+      proof.now + 1,
+    );
+    try {
+      assert(
+        await store.claimAttempt("a", id, lease, proof.now + 1, retained, {
+          payload,
+          lease: ownership.lease,
+        }),
+      );
+    } finally {
+      await store.release(ownership.lease);
+    }
+    await store.resolve(
+      "a",
+      id,
+      lease,
+      "uncertain",
+      null,
+      proof.now + 2,
+      retained,
+    );
     const identity = await lotwRemoteIdentity(lotwRemote);
     assert(
-      await store.resolveReconciled("a", id, lease, identity, proof.now + 3),
+      await store.resolveReconciled("a", id, lease, identity, proof.now + 3, {
+        identity: retained,
+        confirmed: false,
+        data: { fixture: "exact observed receipt" },
+      }),
     );
     const second = { ...first, qso: "q2" };
     await store.observe(second, "g1", "h2", 30, false, 0);
+    await maintainOwnership(store);
     const outcome = classifyHistory(source, [lotwRemote], {
       ...evidence,
       destination: "lotw",
@@ -1723,12 +1830,13 @@ test("LoTW grid association retains exact source and remote evidence and quarant
       assert.equal(outcome.state, "adopted_existing");
       assert.equal(outcome.remote, remoteRecord);
       await store.observe(key, contact.generation, fingerprint, 30, false, 0);
+      await maintainOwnership(store);
       const result = await adoptHistory(
         store,
         key,
         contact.generation,
         outcome,
-        1,
+        Date.now(),
       );
       assert.equal(result.applied, index === 0);
       assert.equal(projected.MY_GRIDSQUARE, contact.grid);

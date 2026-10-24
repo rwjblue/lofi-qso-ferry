@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { observeContact, pollSource, rereadOperation } from "../src/intake.ts";
 import type { SourceRecord } from "../src/lofi.ts";
+import { backfillLotwOwnership } from "../src/lotw-ownership.ts";
 import { canonical } from "../src/security.ts";
 import {
   loadCurrentSourcePresenceScope,
@@ -130,6 +131,27 @@ export async function mintFixtureSourceProofs(
       Date.now(),
       input.destinations,
     );
+  // Current delivery callers normally receive this bounded maintenance after
+  // observation from the scheduler. Historical migration fixtures keep their
+  // original schema and behavior; no proof or registry fact is fabricated here.
+  if (
+    await store
+      .statement(
+        "SELECT 1 present FROM sqlite_master WHERE type='table' AND name='lotw_ownership_write_guards'",
+      )
+      .first()
+  ) {
+    for (let pass = 0; pass < 10; pass++) {
+      const ownership = await backfillLotwOwnership(store, source.tenant, {
+        limit: 100,
+      });
+      if (
+        ownership.reason !== "examined" ||
+        !(ownership.advanced || ownership.covered || ownership.ownersHashed)
+      )
+        break;
+    }
+  }
   const lease = await store.claim(
     source.tenant,
     `cycle:${source.id}`,

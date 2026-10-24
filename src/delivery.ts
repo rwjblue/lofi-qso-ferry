@@ -12,6 +12,12 @@ import {
 import { type IntakeContact, pendingContacts } from "./intake.ts";
 import { LotwClient, observeLotwContact } from "./lotw.ts";
 import { checkLotwFirstInsertHistory } from "./lotw-first-insert.ts";
+import {
+  attemptLotwOwnershipCurrent,
+  LotwOwnershipUnavailable,
+  lotwOwnershipAvailable,
+  renewAttemptLotwOwnership,
+} from "./lotw-ownership-bridge.ts";
 import { type Contact, isTestCallsign, isTestContact } from "./projection.ts";
 import {
   mergeQrzCorrection,
@@ -45,6 +51,7 @@ import {
 } from "./source-export-proofs.ts";
 import {
   type Connection,
+  type Lease,
   type LedgerKey,
   LOTW_PRIOR_IDENTITY_NOTICE,
   type LotwIdentityEvidence,
@@ -1049,7 +1056,10 @@ export async function prepareDue(
         ? { frequencyMHz: String(contact.frequencyMHz) }
         : {}),
     };
-    lotwIdentityId = (await lotwAttemptIdentity(station, lotwContact)).remoteId;
+    const exactLotwIdentity = await lotwAttemptIdentity(station, lotwContact);
+    lotwIdentityId = exactLotwIdentity.remoteId;
+    if (!(await lotwOwnershipAvailable(store, key, exactLotwIdentity)))
+      return { state: "blocked", reason: "lotw_ownership_unavailable" };
     const { id: _id, generation: _generation, ...transmitted } = lotwContact;
     const projectionHash = await sha256(
       canonical({ station, contact: transmitted }),
@@ -1247,6 +1257,11 @@ export async function prepareDue(
       { ...sourceProof, authorizationMode },
     );
   } catch (error) {
+    if (
+      error instanceof LotwOwnershipUnavailable ||
+      (error instanceof Error && error.message.includes("LoTW ownership"))
+    )
+      return { state: "blocked", reason: "lotw_ownership_unavailable" };
     if (
       error instanceof Error &&
       error.message.includes("historical association is read only")
@@ -1482,6 +1497,9 @@ export async function dispatchAttempt(
     120000,
   );
   if (!lease) return { state: "skipped", reason: "delivery_lease_busy" };
+  let ownershipLease: Lease | undefined;
+  let ownershipExpiresAt = 0;
+  let claimed = false;
   let mutationStarted = false;
   let mutationBlocked = false;
   const retireUnsentProof = async (): Promise<DeliveryResult> => {
@@ -1515,6 +1533,17 @@ export async function dispatchAttempt(
     };
   };
   try {
+    if (data.payload.kind === "lotw") {
+      const ownership = await renewAttemptLotwOwnership(
+        store,
+        tenant,
+        id,
+        data.payload,
+        currentTime(),
+      );
+      ownershipLease = ownership.lease;
+      ownershipExpiresAt = ownership.expiresAt;
+    }
     if (
       !(await store.claimAttempt(
         tenant,
@@ -1527,9 +1556,13 @@ export async function dispatchAttempt(
               data.payload.contact,
             )
           : undefined,
+        ownershipLease
+          ? { payload: data.payload, lease: ownershipLease }
+          : undefined,
       ))
     )
       return { state: "skipped", reason: "attempt_not_claimable" };
+    claimed = true;
     let state: "delivered" | "submitted" | "uncertain" | "rejected" =
       "uncertain";
     let remoteId: string | null = null;
@@ -1714,12 +1747,10 @@ export async function dispatchAttempt(
       let authorizeTransport: (() => Promise<boolean>) | undefined;
       const transport: typeof fetch = async (input, init) => {
         const url = new URL(String(input));
-        const fresh = authorizationMode === "lotw_fresh_insert";
         const upload = url.pathname === "/lotw/upload";
         // A narrow capability may use only the adapter's two read endpoints or
         // the exact single-artifact upload. No other mutation can bypass this hook.
         if (
-          fresh &&
           !upload &&
           !(
             url.origin === "https://lotw.arrl.org" &&
@@ -1737,7 +1768,7 @@ export async function dispatchAttempt(
         if (upload) {
           mutationBlocked = true;
           let requestCurrent = () => true;
-          if (fresh) {
+          {
             const form = init?.body;
             const file = form instanceof FormData ? form.get("upfile") : null;
             requestCurrent = () =>
@@ -1761,15 +1792,35 @@ export async function dispatchAttempt(
             )
               throw new UnsentAuthorizationError();
           }
+          try {
+            const ownership = await renewAttemptLotwOwnership(
+              store,
+              tenant,
+              id,
+              payload,
+              currentTime(),
+              ownershipLease,
+            );
+            ownershipExpiresAt = ownership.expiresAt;
+          } catch {
+            throw new UnsentAuthorizationError();
+          }
           if (
             !requestCurrent() ||
             !authorizeTransport ||
             !(await authorizeTransport()) ||
+            !(await attemptLotwOwnershipCurrent(
+              store,
+              tenant,
+              id,
+              currentTime(),
+            )) ||
             !operationAuthorized() ||
             !requestCurrent() ||
             !certificate ||
             !certificateCurrentlyValid(certificate, currentTime()) ||
-            currentTime() >= Math.min(proofExpiresAt, lease.expires_at)
+            currentTime() >=
+              Math.min(proofExpiresAt, lease.expires_at, ownershipExpiresAt)
           ) {
             throw new UnsentAuthorizationError();
           }
@@ -1974,6 +2025,21 @@ export async function dispatchAttempt(
   } catch (error) {
     if (
       !mutationStarted &&
+      (error instanceof LotwOwnershipUnavailable ||
+        (error instanceof Error && error.message.includes("LoTW ownership")))
+    ) {
+      if (claimed)
+        await store.retryUnsent(
+          tenant,
+          id,
+          lease,
+          "lotw_ownership_unavailable",
+          currentTime(),
+        );
+      return { state: "blocked", reason: "lotw_ownership_unavailable" };
+    }
+    if (
+      !mutationStarted &&
       error instanceof Error &&
       error.message.includes("historical association is read only")
     )
@@ -2026,6 +2092,7 @@ export async function dispatchAttempt(
     );
     return { state: "uncertain", attemptId: id };
   } finally {
+    if (ownershipLease) await store.release(ownershipLease);
     await store.release(lease);
   }
 }

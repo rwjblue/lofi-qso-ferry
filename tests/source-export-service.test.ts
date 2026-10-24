@@ -176,7 +176,9 @@ async function fixture(
     await tick(
       h.env,
       fetcher,
-      Date.now() - (baselineAgeMinutes - turn * 5) * 60_000,
+      vendor === "lotw" && initialState === "adopted_existing"
+        ? Date.now()
+        : Date.now() - (baselineAgeMinutes - turn * 5) * 60_000,
     );
     if (
       await h.store.ledger({

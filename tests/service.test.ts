@@ -79,11 +79,18 @@ async function exportSchedulerFixture() {
     }
     return h.fetcher(input, init);
   };
-  const base = Date.now() - 46 * 60_000;
+  const base = Date.now();
   const run = async (minutes: number, transport = fetcher) => {
-    if (minutes > 36) {
+    if (minutes >= 36) {
       // Make another scheduled turn available without aging source/proof facts
       // into the future or rebinding a prepared attempt's immutable evidence.
+      // The fixture reaches the quiet-period boundary without future-dating
+      // canonical observations or backdating a database ownership lease.
+      await h.store
+        .statement(
+          "UPDATE ledger SET due_at=0 WHERE state IN('changed','missing_current_identity','live_new')",
+        )
+        .run();
       await h.store
         .statement("UPDATE reconciliation_work SET next_due_at=0,selected_at=0")
         .run();
@@ -98,11 +105,7 @@ async function exportSchedulerFixture() {
         )
         .run();
     }
-    return tick(
-      h.env,
-      transport,
-      minutes < 36 ? base + minutes * 60_000 : undefined,
-    );
+    return tick(h.env, transport);
   };
   return { ...h, fetcher, base, run };
 }
@@ -634,7 +637,8 @@ test("operation-only correction keeps historical QRZ read only while signing the
     for (const destination of ["destination", "lotw"]) {
       const row = (await h.store.ledger(key(destination)))!;
       assert.equal(row.state, "changed");
-      assert.equal(row.due_at, h.base + 35 * 60000);
+      assert(row.due_at >= h.base + 30 * 60000);
+      assert(row.due_at <= Date.now() + 30 * 60000);
     }
     assert.equal(await count(h, "attempts"), 0);
     await h.run(20);

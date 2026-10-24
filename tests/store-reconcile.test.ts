@@ -2,8 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { AdifRecord } from "../src/adif.ts";
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
+import { backfillLotwOwnership } from "../src/lotw-ownership.ts";
+import { renewAttemptLotwOwnership } from "../src/lotw-ownership-bridge.ts";
 import { adifInstant } from "../src/qrz.ts";
-import { canonicalLotwIdentity, lotwRemoteIdentity } from "../src/reconcile.ts";
+import {
+  adoptHistory,
+  canonicalLotwIdentity,
+  classifyHistory,
+  lotwRemoteIdentity,
+} from "../src/reconcile.ts";
 import type { LedgerKey, Store } from "../src/store.ts";
 import { LOTW_PRIOR_IDENTITY_NOTICE } from "../src/store.ts";
 import { database, seed } from "./helpers.ts";
@@ -76,6 +83,28 @@ async function freshEvidence(
     contact: evidence.snapshots[0].contact,
     sourceHash: (await store.ledger(key))!.source_hash,
     now: Date.now(),
+  };
+}
+function lotwPayload(
+  record: AdifRecord,
+  key: LedgerKey,
+  generation: string,
+  revision: number,
+) {
+  const iso = new Date(adifInstant(record)).toISOString();
+  return {
+    kind: "lotw" as const,
+    station: { callsign: record.STATION_CALLSIGN, dxcc: 291 },
+    contact: {
+      id: key.qso,
+      generation,
+      call: record.CALL,
+      date: iso.slice(0, 10),
+      time: `${iso.slice(11, 19)}Z`,
+      band: record.BAND,
+      mode: record.MODE,
+    },
+    revision,
   };
 }
 test("observed uncertain artifact preserves exact baseline across new source and fences replay", async () => {
@@ -179,16 +208,29 @@ test("fenced LoTW dispatch retains possible identity across a crash and outbox e
       identity: original,
     };
     await store.observe(key, "g1", "h1", 30, false, 0);
-    await store.db.batch([
-      store.statement(
-        "UPDATE ledger SET state='adopted_existing',baseline_hash=source_hash,remote_id=?,confirmed=1",
-        originalIdentity.remoteId,
-      ),
-      await store.lotwIdentityStatement(key, originalIdentity, "adopted", 1, {
-        sql: "1",
-        params: [],
-      }),
-    ]);
+    await backfillLotwOwnership(store, key.tenant);
+    const operatingRecord = { ...original, MY_DXCC: "291" };
+    const outcome = classifyHistory(
+      operatingRecord,
+      [{ ...operatingRecord, QSL_RCVD: "Y" }],
+      {
+        destination: "lotw",
+        capturedGeneration: "g1",
+        currentGeneration: "g1",
+        readAccess: true,
+        inventoryComplete: true,
+        catchupComplete: true,
+        freshCheckComplete: true,
+      },
+    );
+    assert.equal(outcome.state, "adopted_existing");
+    const adopted = await adoptHistory(store, key, "g1", outcome);
+    assert.equal(adopted.applied, true);
+    assert.equal(
+      (await store.ledger(key))!.remote_id,
+      originalIdentity.remoteId,
+    );
+    assert.equal((await store.ledger(key))!.confirmed, 1);
     const corrected = canonicalLotwIdentity({ ...original, CALL: "W2NEW" });
     const correction = {
       remoteId: await lotwRemoteIdentity(corrected),
@@ -197,10 +239,11 @@ test("fenced LoTW dispatch retains possible identity across a crash and outbox e
     await store.observe(key, "g2", "h2", 30, false, 10);
     const proof = await freshEvidence(store, key, corrected, 2);
     const preparedAt = proof.now;
+    const payload = lotwPayload(corrected, key, proof.contact.generation, 2);
     const id = await store.stage(
       key,
       proof.contact.generation,
-      { kind: "lotw", signed: "private artifact" },
+      payload,
       "v1",
       null,
       preparedAt,
@@ -212,6 +255,12 @@ test("fenced LoTW dispatch retains possible identity across a crash and outbox e
         sourceVersion: proof.authorization.reconciliationVersion,
       },
       proof.authorization,
+    );
+    const ownership = await renewAttemptLotwOwnership(
+      store,
+      key.tenant,
+      id,
+      payload,
     );
     const expiredLease = (await store.claim(
       "a",
@@ -226,6 +275,7 @@ test("fenced LoTW dispatch retains possible identity across a crash and outbox e
         expiredLease,
         preparedAt + 2,
         correction,
+        { payload, lease: ownership.lease },
       ),
       false,
     );
@@ -238,16 +288,23 @@ test("fenced LoTW dispatch retains possible identity across a crash and outbox e
       "a",
       "delivery:destination",
       preparedAt + 3,
-      1000,
+      120000,
     ))!;
     assert(
-      await store.claimAttempt("a", id, lease, preparedAt + 4, correction),
+      await store.claimAttempt("a", id, lease, preparedAt + 4, correction, {
+        payload,
+        lease: ownership.lease,
+      }),
     );
     assert.equal(
-      await store.claimAttempt("a", id, lease, preparedAt + 4, correction),
+      await store.claimAttempt("a", id, lease, preparedAt + 4, correction, {
+        payload,
+        lease: ownership.lease,
+      }),
       false,
     );
     assert.equal(await store.lotwPriorIdentityCount(key), 1);
+    await store.release(ownership.lease);
     await store.recover(preparedAt + 7 * 86400000 + 1);
     assert.equal(
       (await store
@@ -303,10 +360,16 @@ test("later revisions retain one confirmation projection and deduplicate canonic
           .run();
       const proof = await freshEvidence(store, key, identity.identity, index);
       const observedAt = proof.now;
+      const payload = lotwPayload(
+        identity.identity,
+        key,
+        proof.contact.generation,
+        index,
+      );
       const id = await store.stage(
         key,
         proof.contact.generation,
-        { revision: index },
+        payload,
         "v1",
         null,
         observedAt,
@@ -319,13 +382,30 @@ test("later revisions retain one confirmation projection and deduplicate canonic
         },
         proof.authorization,
       );
+      const ownership = await renewAttemptLotwOwnership(
+        store,
+        "a",
+        id,
+        payload,
+      );
       const lease = (await store.claim(
         "a",
         "delivery:destination",
         observedAt,
-        1000,
+        120000,
       ))!;
-      assert(await store.claimAttempt("a", id, lease, observedAt + 1));
+      assert(
+        await store.claimAttempt("a", id, lease, observedAt + 1, identity, {
+          payload,
+          lease: ownership.lease,
+        }),
+      );
+      const beforeFailedResolution = await store.lotwIdentities(key);
+      assert.equal(
+        beforeFailedResolution.length,
+        1,
+        "claim atomically retains the one possibly submitted identity",
+      );
       await assert.rejects(
         store.resolve(
           "a",
@@ -333,12 +413,16 @@ test("later revisions retain one confirmation projection and deduplicate canonic
           lease,
           "uncertain",
           null,
-          observedAt + 1001,
+          lease.expires_at + 1,
           identity,
         ),
         /lease lost/,
       );
-      assert.equal((await store.lotwIdentities(key)).length, index - 1);
+      assert.deepEqual(
+        await store.lotwIdentities(key),
+        beforeFailedResolution,
+        "expired resolution cannot replace or add identity evidence",
+      );
       await store.resolve(
         "a",
         id,
@@ -348,6 +432,7 @@ test("later revisions retain one confirmation projection and deduplicate canonic
         observedAt + 2,
         identity,
       );
+      await store.release(ownership.lease);
       assert(
         await store.resolveReconciled(
           "a",
@@ -375,10 +460,16 @@ test("later revisions retain one confirmation projection and deduplicate canonic
     assert.equal((await store.ledger(key))!.confirmed, 0);
     const proof = await freshEvidence(store, key, identity.identity, 3);
     const now = proof.now;
+    const payload = lotwPayload(
+      identity.identity,
+      key,
+      proof.contact.generation,
+      3,
+    );
     const pending = await store.stage(
       key,
       proof.contact.generation,
-      { revision: 3 },
+      payload,
       "v1",
       null,
       now + 0,
@@ -391,13 +482,24 @@ test("later revisions retain one confirmation projection and deduplicate canonic
       },
       proof.authorization,
     );
+    const ownership = await renewAttemptLotwOwnership(
+      store,
+      "a",
+      pending,
+      payload,
+    );
     const lease = (await store.claim(
       "a",
       "delivery:destination",
       now + 0,
-      1000,
+      120000,
     ))!;
-    assert(await store.claimAttempt("a", pending, lease, now + 1));
+    assert(
+      await store.claimAttempt("a", pending, lease, now + 1, identity, {
+        payload,
+        lease: ownership.lease,
+      }),
+    );
     await store.resolve(
       "a",
       pending,
@@ -407,6 +509,7 @@ test("later revisions retain one confirmation projection and deduplicate canonic
       now + 2,
       identity,
     );
+    await store.release(ownership.lease);
     await store.observe(key, "g4", "h4", 30, false, now + 3);
     assert(
       await store.resolveReconciled(

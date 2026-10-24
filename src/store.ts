@@ -1,4 +1,11 @@
 import type { DestinationIdentityClaim } from "./identity-claims.ts";
+import {
+  attemptLotwOwnershipWrite,
+  type LotwOwnershipWrite,
+  lotwPayloadIdentity,
+  prepareLotwOwnershipBatch,
+  prepareLotwReceiptOwnership,
+} from "./lotw-ownership-bridge.ts";
 import type { Envelope, Keyring } from "./security.ts";
 import { canonical, open, randomToken, seal, sha256 } from "./security.ts";
 import type { SourceExportAuthorization } from "./source-export-proofs.ts";
@@ -18,6 +25,19 @@ export interface LedgerKey {
   source: string;
   qso: string;
   destination: string;
+}
+export interface StageInput {
+  key: LedgerKey;
+  generation: string;
+  payload: unknown;
+  credentialVersion: string;
+  expectedTemplate: string | null;
+  now?: number;
+  transmittedHash?: string;
+  lotwIdentityId?: string;
+  priority?: "live" | "background";
+  identity?: { claim: DestinationIdentityClaim; sourceVersion?: number };
+  sourceProof?: SourceExportAuthorization;
 }
 export interface Ledger extends LedgerKey {
   generation: string;
@@ -160,6 +180,7 @@ export class Store {
     firstEvidence: RetainedLotwIdentity["firstEvidence"],
     now: number,
     guard: SqlGuard,
+    capture?: (envelope: string) => void,
   ): Promise<D1PreparedStatement> {
     const id = (await this.lotwIdentityPrefix(key)) + evidence.remoteId;
     const value: RetainedLotwIdentity = {
@@ -178,6 +199,7 @@ export class Store {
       },
       this.keys,
     );
+    capture?.(JSON.stringify(envelope));
     return this.statement(
       `INSERT INTO private_data(tenant,connection,id,kind,envelope,created_at) SELECT ?,?,?,'lotw_identity',?,? WHERE ${guard.sql} ON CONFLICT(tenant,connection,id,kind) DO NOTHING`,
       key.tenant,
@@ -241,6 +263,7 @@ export class Store {
     firstEvidence: RetainedLotwIdentity["firstEvidence"],
     now: number,
     guard: SqlGuard,
+    capture?: (envelope: string) => void,
   ): Promise<D1PreparedStatement[]> {
     if (!identity) return [];
     const key = await this.statement(
@@ -258,6 +281,7 @@ export class Store {
         firstEvidence,
         now,
         guard,
+        capture,
       ),
       this.statement(
         `UPDATE ledger SET confirmed=CASE WHEN remote_id IS NULL OR remote_id!=? THEN 0 ELSE confirmed END,reason=CASE WHEN state IN('source_deleted','retained_old_route') THEN reason WHEN EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=? AND p.connection=? AND p.kind='lotw_identity' AND substr(p.id,1,?)=? AND p.id!=? AND p.revoked_at IS NULL) THEN ? ELSE reason END WHERE tenant=? AND source=? AND qso=? AND destination=? AND ${guard.sql}`,
@@ -431,6 +455,69 @@ export class Store {
     },
     sourceProof?: SourceExportAuthorization,
   ) {
+    const [id] = await this.stageBatch([
+      {
+        key,
+        generation,
+        payload,
+        credentialVersion,
+        expectedTemplate,
+        now,
+        transmittedHash,
+        lotwIdentityId,
+        priority,
+        identity,
+        sourceProof,
+      },
+    ]);
+    if (!id) throw new Error("stage produced no attempt");
+    return id;
+  }
+  /** Stage at most 20 members under one ownership clock (203 native statements). */
+  async stageBatch(supplied: readonly StageInput[]): Promise<string[]> {
+    if (
+      !supplied.length ||
+      supplied.length > 20 ||
+      new Set(supplied.map((x) => x.key.tenant)).size !== 1
+    )
+      throw new Error("invalid stage cohort");
+    const inputs = structuredClone(supplied);
+    const plans = [];
+    for (const input of inputs) plans.push(await this.stagePlan(input));
+    const writes = plans.flatMap((p) => (p.ownership ? [p.ownership] : []));
+    const ownership = writes.length
+      ? await prepareLotwOwnershipBatch(
+          this,
+          "stage",
+          writes,
+          Math.min(...inputs.map((x) => x.now ?? Date.now())),
+        )
+      : null;
+    try {
+      await this.db.batch([
+        ...(ownership?.begin ?? []),
+        ...plans.flatMap((p) => p.statements),
+        ...(ownership?.finish ?? []),
+      ]);
+    } finally {
+      await ownership?.release();
+    }
+    return plans.map((p) => p.id);
+  }
+  private async stagePlan(input: StageInput) {
+    const {
+      key,
+      generation,
+      payload,
+      credentialVersion,
+      expectedTemplate,
+      now = Date.now(),
+      transmittedHash,
+      lotwIdentityId,
+      priority,
+      identity,
+      sourceProof,
+    } = input;
     const id = randomToken();
     const payloadHash = transmittedHash ?? (await sha256(canonical(payload)));
     const encrypted = await this.putPrivate(
@@ -441,7 +528,32 @@ export class Store {
       payload,
       now + 7 * 86400_000,
     );
-    await this.db.batch([
+    const ledger =
+      identity?.claim.vendor === "lotw"
+        ? await this.statement(
+            "SELECT source_hash FROM ledger WHERE tenant=? AND source=? AND qso=? AND destination=?",
+            key.tenant,
+            key.source,
+            key.qso,
+            key.destination,
+          ).first<{ source_hash: string }>()
+        : null;
+    const ownership: LotwOwnershipWrite | undefined =
+      identity?.claim.vendor === "lotw"
+        ? {
+            ...key,
+            attempt: id,
+            generation,
+            sourceHash: ledger?.source_hash ?? "",
+            payloadHash,
+            artifactHash: await sha256(canonical(payload)),
+            sourceVersion: identity.sourceVersion,
+            sourceProofId: sourceProof?.proofId,
+            credentialVersion,
+            identity: await lotwPayloadIdentity(payload),
+          }
+        : undefined;
+    const statements = [
       this.statement(
         `INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version${identity ? ",identity_vendor,identity_hash,identity_source_version,identity_lotw_owner_id" : ""}${sourceProof ? ",source_export_proof_id,source_export_scope,source_export_reconciliation_version" : ""}${sourceProof?.authorizationMode !== undefined ? ",authorization_mode" : ""}) VALUES(${Array.from({ length: 9 + (identity ? 4 : 0) + (sourceProof ? 3 : 0) + (sourceProof?.authorizationMode !== undefined ? 1 : 0) }, () => "?").join(",")})`,
         id,
@@ -536,8 +648,8 @@ export class Store {
         key.destination,
       ),
       this.statement("DELETE FROM stage_guards WHERE id=?", id),
-    ]);
-    return id;
+    ];
+    return { id, statements, ownership };
   }
   async claimAttempt(
     tenant: string,
@@ -545,7 +657,9 @@ export class Store {
     lease: Lease,
     now = Date.now(),
     lotwIdentity?: LotwIdentityEvidence,
+    ownershipContext?: { payload: unknown; lease: Lease },
   ): Promise<boolean> {
+    let privateEnvelope: string | undefined;
     const winner = lotwIdentity ? randomToken() : null;
     const identityStatements = await this.lotwResolutionStatements(
       tenant,
@@ -557,10 +671,32 @@ export class Store {
         sql: "EXISTS(SELECT 1 FROM attempt_state WHERE tenant=? AND attempt=? AND state='dispatching' AND reason=?)",
         params: [tenant, id, winner],
       },
+      (value) => {
+        privateEnvelope = value;
+      },
     );
-    const [result] = await this.db.batch([
+    const ownership =
+      lotwIdentity && ownershipContext
+        ? await prepareLotwOwnershipBatch(
+            this,
+            "claim",
+            [
+              await attemptLotwOwnershipWrite(
+                this,
+                tenant,
+                id,
+                ownershipContext.payload,
+                privateEnvelope,
+              ),
+            ],
+            now,
+            ownershipContext.lease,
+          )
+        : null;
+    const results = await this.db.batch([
+      ...(ownership?.begin ?? []),
       this.statement(
-        `UPDATE attempt_state SET state='dispatching',dispatched_at=?,updated_at=?,lease_token=?,fence=?,reason=CASE WHEN ? IS NULL THEN reason ELSE ? END WHERE tenant=? AND attempt=? AND state='prepared' AND due_at<=? AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?) AND EXISTS(SELECT 1 FROM attempts a JOIN connections c ON c.tenant=a.tenant AND c.id=a.destination JOIN connections src ON src.tenant=a.tenant AND src.id=a.source AND src.status='active' JOIN private_data p ON p.tenant=a.tenant AND p.connection=a.destination AND p.id=a.credential_version AND p.kind='credential' WHERE a.tenant=? AND a.id=? AND c.status='active' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) AND c.credential_version=a.credential_version)`,
+        `UPDATE attempt_state SET state='dispatching',dispatched_at=?,updated_at=?,lease_token=?,fence=?,reason=CASE WHEN ? IS NULL THEN reason ELSE ? END WHERE tenant=? AND attempt=? AND state='prepared' AND due_at<=? AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?) AND EXISTS(SELECT 1 FROM attempts a JOIN connections c ON c.tenant=a.tenant AND c.id=a.destination JOIN connections src ON src.tenant=a.tenant AND src.id=a.source AND src.status='active' JOIN private_data p ON p.tenant=a.tenant AND p.connection=a.destination AND p.id=a.credential_version AND p.kind='credential' WHERE a.tenant=? AND a.id=? AND c.status='active' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) AND c.credential_version=a.credential_version) RETURNING attempt`,
         now,
         now,
         lease.token,
@@ -590,8 +726,9 @@ export class Store {
             ),
           ]
         : []),
+      ...(ownership?.finish ?? []),
     ]);
-    return result.meta.changes === 1;
+    return results[ownership?.begin.length ?? 0].results.length === 1;
   }
   async resolve(
     tenant: string,
@@ -736,6 +873,7 @@ export class Store {
   ): Promise<boolean> {
     if (lease.tenant !== tenant) return false;
     const winner = randomToken();
+    let privateEnvelope: string | undefined;
     const identityStatements = await this.lotwResolutionStatements(
       tenant,
       id,
@@ -745,6 +883,9 @@ export class Store {
       {
         sql: "EXISTS(SELECT 1 FROM attempt_state WHERE tenant=? AND attempt=? AND reason=?)",
         params: [tenant, id, winner],
+      },
+      (value) => {
+        privateEnvelope = value;
       },
     );
     const destination = observation
@@ -773,97 +914,143 @@ export class Store {
             ),
           )
         : null;
-    const results = await this.db.batch([
-      this.statement(
-        `UPDATE attempt_state SET state='observed',lease_token=?,fence=?,updated_at=?,reason=?,remote_id=? WHERE tenant=? AND attempt=? AND state IN('uncertain','submitted','reconciliation_required') AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?) AND EXISTS(SELECT 1 FROM attempts a JOIN private_data p ON p.tenant=a.tenant AND p.connection=a.destination AND p.id=a.payload_id AND p.kind='outbox' WHERE a.tenant=? AND a.id=? AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?))`,
-        lease.token,
-        lease.fence,
-        now,
-        winner,
-        remoteId,
-        tenant,
-        id,
-        tenant,
-        lease.scope,
-        lease.token,
-        lease.fence,
-        now,
-        tenant,
-        id,
-        now,
-      ),
-      ...identityStatements,
-      this.statement(
-        `INSERT INTO private_data(tenant,connection,id,kind,envelope,created_at) SELECT ?,?,?,'lotw_observation',?,? WHERE ? IS NOT NULL AND EXISTS(SELECT 1 FROM attempt_state WHERE tenant=? AND attempt=? AND reason=?) ON CONFLICT(tenant,connection,id,kind) DO NOTHING`,
-        tenant,
-        destination ?? null,
-        identityId,
-        identityEnvelope,
-        now,
-        identityEnvelope,
-        tenant,
-        id,
-        winner,
-      ),
-      this.statement(
-        `DELETE FROM private_data WHERE tenant=? AND kind='lotw_observation' AND ? IS NOT NULL AND (connection,id) IN(SELECT destination,'observation:'||id FROM attempts a WHERE a.tenant=? AND a.id!=? AND (a.source,a.qso,a.destination)=(SELECT source,qso,destination FROM attempts WHERE tenant=? AND id=?)) AND EXISTS(SELECT 1 FROM attempt_state WHERE tenant=? AND attempt=? AND reason=?)`,
-        tenant,
-        identityEnvelope,
-        tenant,
-        id,
-        tenant,
-        id,
-        tenant,
-        id,
-        winner,
-      ),
-      this.statement(
-        `UPDATE ledger SET confirmed=CASE WHEN source_hash!=(SELECT source_hash FROM attempts WHERE tenant=? AND id=?) THEN 0 ELSE COALESCE(?,confirmed) END,state=CASE WHEN state IN('source_deleted','retained_old_route') THEN state WHEN source_hash!=(SELECT source_hash FROM attempts WHERE tenant=? AND id=?) THEN 'changed' ELSE 'observed' END,remote_id=COALESCE(?,remote_id),sent_hash=(SELECT payload_hash FROM attempts WHERE tenant=? AND id=?),baseline_hash=(SELECT source_hash FROM attempts WHERE tenant=? AND id=?) WHERE tenant=? AND (source,qso,destination) IN(SELECT source,qso,destination FROM attempts WHERE tenant=? AND id=?) AND EXISTS(SELECT 1 FROM attempt_state WHERE tenant=? AND attempt=? AND reason=?)`,
-        tenant,
-        id,
-        observation ? (observation.confirmed ? 1 : 0) : null,
-        tenant,
-        id,
-        remoteId,
-        tenant,
-        id,
-        tenant,
-        id,
-        tenant,
-        tenant,
-        id,
-        tenant,
-        id,
-        winner,
-      ),
-      this.statement(
-        `INSERT INTO attempt_events(tenant,attempt,state,at) SELECT ?,?,'observed',? WHERE EXISTS(SELECT 1 FROM attempt_state WHERE tenant=? AND attempt=? AND reason=?)`,
-        tenant,
-        id,
-        now,
-        tenant,
-        id,
-        winner,
-      ),
-      this.statement(
-        `DELETE FROM private_data WHERE tenant=? AND connection=(SELECT destination FROM attempts WHERE tenant=? AND id=?) AND id=(SELECT payload_id FROM attempts WHERE tenant=? AND id=?) AND kind='outbox' AND EXISTS(SELECT 1 FROM attempt_state WHERE tenant=? AND attempt=? AND reason=?)`,
-        tenant,
-        tenant,
-        id,
-        tenant,
-        id,
-        tenant,
-        id,
-        winner,
-      ),
-      this.statement(
-        "UPDATE attempt_state SET reason=NULL WHERE tenant=? AND attempt=? AND reason=?",
-        tenant,
-        id,
-        winner,
-      ),
-    ]);
-    return results[0].meta.changes === 1;
+    let ownership:
+      | Awaited<ReturnType<typeof prepareLotwReceiptOwnership>>
+      | undefined;
+    if (observation?.identity)
+      try {
+        ownership = await prepareLotwReceiptOwnership(
+          this,
+          tenant,
+          id,
+          observation.identity,
+          privateEnvelope,
+          now,
+        );
+      } catch {
+        /* Facts survive incomplete/conflicting ownership; mapping remains held. */
+      }
+    let results: D1Result[];
+    let withOwnership = Boolean(ownership);
+    const execute = () =>
+      this.db.batch([
+        ...(withOwnership ? (ownership?.begin ?? []) : []),
+        this.statement(
+          `UPDATE attempt_state SET state='observed',lease_token=?,fence=?,updated_at=?,reason=?,remote_id=? WHERE tenant=? AND attempt=? AND state IN('uncertain','submitted','reconciliation_required') AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?) AND EXISTS(SELECT 1 FROM attempts a JOIN private_data p ON p.tenant=a.tenant AND p.connection=a.destination AND p.id=a.payload_id AND p.kind='outbox' WHERE a.tenant=? AND a.id=? AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)) RETURNING attempt`,
+          lease.token,
+          lease.fence,
+          now,
+          winner,
+          remoteId,
+          tenant,
+          id,
+          tenant,
+          lease.scope,
+          lease.token,
+          lease.fence,
+          now,
+          tenant,
+          id,
+          now,
+        ),
+        ...identityStatements,
+        this.statement(
+          `INSERT INTO private_data(tenant,connection,id,kind,envelope,created_at) SELECT ?,?,?,'lotw_observation',?,? WHERE ? IS NOT NULL AND EXISTS(SELECT 1 FROM attempt_state WHERE tenant=? AND attempt=? AND reason=?) ON CONFLICT(tenant,connection,id,kind) DO NOTHING`,
+          tenant,
+          destination ?? null,
+          identityId,
+          identityEnvelope,
+          now,
+          identityEnvelope,
+          tenant,
+          id,
+          winner,
+        ),
+        this.statement(
+          `DELETE FROM private_data WHERE tenant=? AND kind='lotw_observation' AND ? IS NOT NULL AND (connection,id) IN(SELECT destination,'observation:'||id FROM attempts a WHERE a.tenant=? AND a.id!=? AND (a.source,a.qso,a.destination)=(SELECT source,qso,destination FROM attempts WHERE tenant=? AND id=?)) AND EXISTS(SELECT 1 FROM attempt_state WHERE tenant=? AND attempt=? AND reason=?)`,
+          tenant,
+          identityEnvelope,
+          tenant,
+          id,
+          tenant,
+          id,
+          tenant,
+          id,
+          winner,
+        ),
+        ...(withOwnership ? (ownership?.account ?? []) : []),
+        ...(withOwnership ? (ownership?.checks ?? []) : []),
+        this.statement(
+          `UPDATE ledger SET confirmed=CASE WHEN source_hash!=(SELECT source_hash FROM attempts WHERE tenant=? AND id=?) THEN 0 ELSE COALESCE(?,confirmed) END,state=CASE WHEN state IN('source_deleted','retained_old_route') THEN state WHEN source_hash!=(SELECT source_hash FROM attempts WHERE tenant=? AND id=?) THEN 'changed' ELSE 'observed' END,remote_id=COALESCE(?,remote_id),sent_hash=(SELECT payload_hash FROM attempts WHERE tenant=? AND id=?),baseline_hash=(SELECT source_hash FROM attempts WHERE tenant=? AND id=?) WHERE tenant=? AND (source,qso,destination) IN(SELECT source,qso,destination FROM attempts WHERE tenant=? AND id=?) AND EXISTS(SELECT 1 FROM attempt_state WHERE tenant=? AND attempt=? AND reason=?)`,
+          tenant,
+          id,
+          observation ? (observation.confirmed ? 1 : 0) : null,
+          tenant,
+          id,
+          remoteId,
+          tenant,
+          id,
+          tenant,
+          id,
+          tenant,
+          tenant,
+          id,
+          tenant,
+          id,
+          winner,
+        ),
+        this.statement(
+          `INSERT INTO attempt_events(tenant,attempt,state,at) SELECT ?,?,'observed',? WHERE EXISTS(SELECT 1 FROM attempt_state WHERE tenant=? AND attempt=? AND reason=?)`,
+          tenant,
+          id,
+          now,
+          tenant,
+          id,
+          winner,
+        ),
+        this.statement(
+          `DELETE FROM private_data WHERE tenant=? AND connection=(SELECT destination FROM attempts WHERE tenant=? AND id=?) AND id=(SELECT payload_id FROM attempts WHERE tenant=? AND id=?) AND kind='outbox' AND EXISTS(SELECT 1 FROM attempt_state WHERE tenant=? AND attempt=? AND reason=?)`,
+          tenant,
+          tenant,
+          id,
+          tenant,
+          id,
+          tenant,
+          id,
+          winner,
+        ),
+        this.statement(
+          "UPDATE attempt_state SET reason=NULL WHERE tenant=? AND attempt=? AND reason=?",
+          tenant,
+          id,
+          winner,
+        ),
+        ...(withOwnership ? (ownership?.finish ?? []) : []),
+      ]);
+    try {
+      try {
+        results = await execute();
+      } catch (error) {
+        if (
+          !withOwnership ||
+          !(error instanceof Error) ||
+          !/^D1_ERROR: LoTW ownership (?:unavailable|changed|receipt unavailable|prior route unavailable|pin changed): SQLITE_CONSTRAINT(?: \(extended: SQLITE_CONSTRAINT_TRIGGER\))?$/.test(
+            error.message,
+          )
+        )
+          throw error;
+        // The native batch rolled back. Preserve the exact observed facts once
+        // under their original receipt CAS; the mapping trigger holds projection.
+        withOwnership = false;
+        results = await execute();
+      }
+    } finally {
+      await ownership?.release();
+    }
+    return (
+      results[withOwnership ? (ownership?.begin.length ?? 0) : 0].results
+        .length === 1
+    );
   }
   async recover(now = Date.now()) {
     // A crash after dispatch can never become a blind retry.

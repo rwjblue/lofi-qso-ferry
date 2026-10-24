@@ -40,6 +40,7 @@ import {
 } from "./intake.ts";
 import { LotwClient, LotwLoginError } from "./lotw.ts";
 import { refreshLotwCertificates } from "./lotw-maintenance.ts";
+import { backfillLotwOwnership } from "./lotw-ownership.ts";
 import { purgeResolvedSource, rotatePrivateData } from "./maintenance.ts";
 import type { Contact } from "./projection.ts";
 import { sourceFingerprint } from "./projection.ts";
@@ -246,7 +247,7 @@ function reconciliationFailure(error: unknown, preparing: boolean): string {
     ? "Delivery preparation failed; review contact and connection"
     : "Destination reconciliation failed; retry automatically";
 }
-function reconciliationCommitGuard(
+export function reconciliationCommitGuard(
   key: LedgerKey,
   contact: IntakeContact,
   inventory: HistoryInventoryResult,
@@ -256,7 +257,7 @@ function reconciliationCommitGuard(
     ? historyInventoryGuard(key, inventory.fence, commitTime)
     : { sql: inventory.state === "ready" ? "0" : "1", params: [] };
   return {
-    sql: `${inventoryFence.sql} AND EXISTS(SELECT 1 FROM reconciliation_work r JOIN source_work w ON w.tenant=r.tenant AND w.source=r.source AND w.id=r.qso AND w.kind='qso' JOIN private_data p ON p.tenant=w.tenant AND p.connection=w.source AND p.id=w.private_id AND p.kind='source' JOIN cursors c ON c.tenant=r.tenant AND c.connection=r.source AND c.stream='context' WHERE r.tenant=? AND r.source=? AND r.qso=? AND r.version=? AND w.state IN('pending','waiting') AND w.expires_at>? AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) AND c.generation=? AND json_extract(c.cursor,'$.complete')=1 AND (? IS NULL OR EXISTS(SELECT 1 FROM source_work o JOIN private_data op ON op.tenant=o.tenant AND op.connection=o.source AND op.id=o.private_id AND op.kind='source' WHERE o.tenant=w.tenant AND o.source=w.source AND o.id=? AND o.kind='operation' AND o.state='context' AND o.expires_at>? AND op.revoked_at IS NULL AND (op.expires_at IS NULL OR op.expires_at>?) AND NOT EXISTS(SELECT 1 FROM source_work e LEFT JOIN private_data ep ON ep.tenant=e.tenant AND ep.connection=e.source AND ep.id=e.private_id AND ep.kind='source' WHERE e.tenant=o.tenant AND e.source=o.source AND e.operation_id=o.id AND e.kind='qso' AND e.is_event=1 AND e.deleted=0 AND (e.expires_at<=? OR ep.id IS NULL OR ep.revoked_at IS NOT NULL OR (ep.expires_at IS NOT NULL AND ep.expires_at<=?))))))`,
+    sql: `${inventoryFence.sql} AND EXISTS(SELECT 1 FROM reconciliation_work r JOIN source_work w ON w.tenant=r.tenant AND w.source=r.source AND w.id=r.qso AND w.kind='qso' JOIN private_data p ON p.tenant=w.tenant AND p.connection=w.source AND p.id=w.private_id AND p.kind='source' JOIN cursors c ON c.tenant=r.tenant AND c.connection=r.source AND c.stream='context' WHERE r.tenant=? AND r.source=? AND r.qso=? AND r.version=? AND w.state IN('pending','waiting') AND w.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER)) AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER))) AND c.generation=? AND json_extract(c.cursor,'$.complete')=1 AND (? IS NULL OR EXISTS(SELECT 1 FROM source_work o JOIN private_data op ON op.tenant=o.tenant AND op.connection=o.source AND op.id=o.private_id AND op.kind='source' WHERE o.tenant=w.tenant AND o.source=w.source AND o.id=? AND o.kind='operation' AND o.state='context' AND o.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER)) AND op.revoked_at IS NULL AND (op.expires_at IS NULL OR op.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER))) AND NOT EXISTS(SELECT 1 FROM source_work e LEFT JOIN private_data ep ON ep.tenant=e.tenant AND ep.connection=e.source AND ep.id=e.private_id AND ep.kind='source' WHERE e.tenant=o.tenant AND e.source=o.source AND e.operation_id=o.id AND e.kind='qso' AND e.is_event=1 AND e.deleted=0 AND (e.expires_at<=MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER)) OR ep.id IS NULL OR ep.revoked_at IS NOT NULL OR (ep.expires_at IS NOT NULL AND ep.expires_at<=MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER))))))))`,
     params: [
       ...inventoryFence.params,
       key.tenant,
@@ -513,6 +514,7 @@ async function reconcileReadOnlyBatch(
   expired: () => boolean,
   metrics: ThroughputMetrics,
   diagnostics: ReturnType<typeof createFailureDiagnostics>,
+  afterObservation: () => Promise<void>,
 ) {
   const result = { contacts: contacts.length, errors: 0, deferred: 0 };
   const statements: D1PreparedStatement[] = [];
@@ -532,6 +534,7 @@ async function reconcileReadOnlyBatch(
     observations,
     currentTime(),
   );
+  await afterObservation();
   const ready = observations.filter((_, index) => {
     const observation = observed[index];
     if (observation.status === "fulfilled") return true;
@@ -886,6 +889,10 @@ export interface ThroughputMetrics {
   sourceIndexExamined: number;
   sourceIndexPublished: number;
   sourceIndexHeld: number;
+  lotwOwnershipPasses: number;
+  lotwOwnershipExamined: number;
+  lotwOwnershipCovered: number;
+  lotwOwnershipOwnersHashed: number;
   identityBackfill?: IdentityBackfillResult;
   failures: ReturnType<typeof createFailureDiagnostics>["counts"];
   stageMs: Record<string, number>;
@@ -919,6 +926,10 @@ export async function tick(
     sourceIndexExamined: 0,
     sourceIndexPublished: 0,
     sourceIndexHeld: 0,
+    lotwOwnershipPasses: 0,
+    lotwOwnershipExamined: 0,
+    lotwOwnershipCovered: 0,
+    lotwOwnershipOwnersHashed: 0,
     failures: diagnostics.counts,
     stageMs: {},
     database: metered.metrics,
@@ -991,12 +1002,48 @@ export async function tick(
   const completedRescans = new Map<string, Set<string>>();
   const stoppedRereads = new Set<string>();
   const unavailableHistoricalIndexes = new Set<string>();
+  const maintainedLotwOwnership = new Set<string>();
   // Freshly prepared attempts share the existing round's dispatch allowance.
   const attemptSlots: Record<VendorPriority, number> = {
     live: 6,
     background: 2,
   };
   const sourceProofAttempts = new Map<string, number>();
+  const maintainLotwOwnership = async (tenant: string) => {
+    if (!maintainedLotwOwnership.has(tenant) && metered.metrics.calls < 720) {
+      maintainedLotwOwnership.add(tenant);
+      const beganAt = metered.metrics.calls;
+      // One tenant phase per cycle, at most 1,000 inputs and 120 admitted RPCs.
+      // Reserve room for contact work and yield before another tenant's phase.
+      const admitted = () =>
+        !expired() &&
+        metered.metrics.calls < 720 &&
+        metered.metrics.calls - beganAt < 120;
+      try {
+        for (let pass = 0; pass < 10 && admitted(); pass++) {
+          const ownership = await measure("lotwOwnership", () =>
+            backfillLotwOwnership(store, tenant, {
+              limit: 100,
+              now: currentTime(),
+              shouldContinue: admitted,
+            }),
+          );
+          throughput.lotwOwnershipPasses++;
+          throughput.lotwOwnershipExamined += ownership.examined;
+          throughput.lotwOwnershipCovered += ownership.covered;
+          throughput.lotwOwnershipOwnersHashed += ownership.ownersHashed;
+          if (
+            ownership.reason !== "examined" ||
+            !(ownership.advanced || ownership.covered || ownership.ownersHashed)
+          )
+            break;
+        }
+      } catch (error) {
+        diagnostics.record(error, "reconciliation", "lotw");
+        result.errors++;
+      }
+    }
+  };
   const processSource = async (
     source: (typeof sources)[number],
     priority: VendorPriority,
@@ -1363,6 +1410,7 @@ export async function tick(
             expired,
             throughput,
             diagnostics,
+            () => maintainLotwOwnership(source.tenant),
           ),
         ).finally(() => {
           throughput.reconciliationBatchCalls += metered.metrics.calls - before;
@@ -1371,6 +1419,31 @@ export async function tick(
         result.deferred += processed.deferred;
         return batch.selected;
       }
+      // Register this bounded cohort through the normal projection guards before
+      // the tenant's single ownership maintenance phase. Newly observed owners
+      // must not wait a whole cycle merely because maintenance ran first.
+      const observations = await observeContacts(
+        store,
+        source,
+        batch.contacts.map((contact) => ({
+          contact,
+          routedDestinations: (["qrz", "lotw"] as const).flatMap((kind) => {
+            const matches = destinations.filter(
+              (destination) =>
+                destination.kind === kind && routeMatches(destination, contact),
+            );
+            return matches.length === 1 ? matches : [];
+          }),
+        })),
+        currentTime(),
+      );
+      const observationByContact = new Map(
+        batch.contacts.map((contact, index) => [
+          contact.id,
+          observations[index],
+        ]),
+      );
+      if (batch.contacts.length) await maintainLotwOwnership(source.tenant);
       const priorBudgetHolds = new Set<string>();
       if (exportsEffective(gates) && batch.contacts.length) {
         const markers = await store
@@ -1429,13 +1502,10 @@ export async function tick(
         const now = currentTime();
         try {
           result.contacts++;
-          const routed = (["qrz", "lotw"] as const).flatMap((kind) => {
-            const matches = destinations.filter(
-              (c) => c.kind === kind && routeMatches(c, contact),
-            );
-            return matches.length === 1 ? matches : [];
-          });
-          await observeContact(store, source, contact, now, routed);
+          const observation = observationByContact.get(contact.id);
+          if (!observation)
+            throw new Error("Missing contact observation result");
+          if (observation.status === "rejected") throw observation.reason;
           const routingIssues: string[] = [];
           for (const kind of ["qrz", "lotw"] as const) {
             if (expired()) break;
@@ -1919,6 +1989,13 @@ export async function tick(
       sourceOffset = 0;
       passProgress = 0;
     }
+  }
+  // Empty early baseline turns must not consume maintenance before a later
+  // cohort registers owners. Tenants with no selected contacts still get one
+  // bounded phase after the fair source pass, if the cycle budget permits it.
+  for (const tenant of new Set(sources.map((source) => source.tenant))) {
+    if (expired()) break;
+    await maintainLotwOwnership(tenant);
   }
   const tenants = (
     await store

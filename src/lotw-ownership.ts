@@ -32,6 +32,7 @@ interface State {
   key_id: string;
 }
 interface Input extends Owner {
+  status: "pending" | "held" | "covered";
   kind: "identity" | "claim" | "mapping" | "attempt" | "legacy";
   reference: string;
   exact_hash: string | null;
@@ -57,8 +58,14 @@ export interface LotwOwnershipSnapshot {
 export interface LotwOwnershipCandidate extends Owner {
   evidenceId: string;
   /** Original validated tuple, never rounded or rewritten to the query identity. */
-  evidence: RetainedLotwIdentity;
+  evidence: LotwOwnershipEvidence;
 }
+export type LotwOwnershipEvidence = Omit<
+  RetainedLotwIdentity,
+  "firstEvidence"
+> & {
+  firstEvidence: RetainedLotwIdentity["firstEvidence"] | "reserved";
+};
 const noAuthority = {
   authoritative: false as const,
   requiresWriteBridge: true as const,
@@ -119,15 +126,22 @@ function interval(record: AdifRecord) {
   const result = historicalCandidates("lotw", comparable, [comparable]);
   return result.state === "unique" ? result.candidates[0].time.source : null;
 }
-async function retained(value: unknown): Promise<RetainedLotwIdentity | null> {
+async function retained(
+  value: unknown,
+  reservation = false,
+): Promise<LotwOwnershipEvidence | null> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const data = value as RetainedLotwIdentity;
+  const data = value as LotwOwnershipEvidence;
   if (
     typeof data.remoteId !== "string" ||
     !/^[A-Za-z0-9_-]{43}$/.test(data.remoteId) ||
-    !["adopted", "submitted", "uncertain", "observed"].includes(
-      data.firstEvidence,
-    ) ||
+    ![
+      "adopted",
+      "submitted",
+      "uncertain",
+      "observed",
+      ...(reservation ? ["reserved"] : []),
+    ].includes(data.firstEvidence) ||
     !Number.isSafeInteger(data.recordedAt) ||
     data.recordedAt <= 0 ||
     !data.identity ||
@@ -251,7 +265,7 @@ async function prepareIdentityPublication(
   const match = identityReference(input, now);
   if (!match || !input.envelope) return false;
   if (owners.length !== 1) return false;
-  let data: RetainedLotwIdentity | null;
+  let data: LotwOwnershipEvidence | null;
   try {
     data = await retained(
       await open<unknown>(
@@ -339,11 +353,29 @@ async function prepareIdentityPublication(
 export async function backfillLotwOwnership(
   store: Store,
   tenant: string,
-  options: { limit?: number; now?: number } = {},
+  options: {
+    limit?: number;
+    now?: number;
+    shouldContinue?: () => boolean;
+  } = {},
 ) {
   if (!tenant) throw new Error("invalid_lotw_ownership_tenant");
   const limit = bound(options.limit, MAX_INPUTS),
     now = instant(options.now ?? Date.now());
+  let ownersHashed = 0,
+    examined = 0,
+    covered = 0,
+    advanced = 0;
+  const continuing = () => options.shouldContinue?.() ?? true;
+  const stopped = () => ({
+    ...noAuthority,
+    reason: "stopped" as const,
+    ownersHashed,
+    examined,
+    covered,
+    advanced,
+  });
+  if (!continuing()) return stopped();
   let key: SourceHistoricalIndexKey;
   try {
     key = await sourceHistoricalIndexKey(store, tenant);
@@ -356,8 +388,10 @@ export async function backfillLotwOwnership(
       ownersHashed: 0,
       examined: 0,
       covered: 0,
+      advanced: 0,
     };
   }
+  if (!continuing()) return stopped();
   await store
     .statement(
       "INSERT INTO lotw_ownership_state(tenant,key_id) VALUES(?,?) ON CONFLICT(tenant) DO UPDATE SET key_id=excluded.key_id,clock=clock+1 WHERE lotw_ownership_state.key_id=''",
@@ -378,6 +412,7 @@ export async function backfillLotwOwnership(
       ownersHashed: 0,
       examined: 0,
       covered: 0,
+      advanced: 0,
     };
   const owners = (
     await store
@@ -388,21 +423,24 @@ export async function backfillLotwOwnership(
       )
       .all<Owner>()
   ).results;
-  if (owners.length)
-    await store.db.batch(
-      await Promise.all(
-        owners.map(async (owner) =>
-          store.statement(
-            "UPDATE lotw_ownership_owners SET owner_hash=? WHERE tenant=? AND destination=? AND source=? AND qso=? AND owner_hash IS NULL",
-            await sha256(canonical([owner.source, owner.qso])),
-            tenant,
-            owner.destination,
-            owner.source,
-            owner.qso,
-          ),
+  if (owners.length) {
+    const ownerStatements = await Promise.all(
+      owners.map(async (owner) =>
+        store.statement(
+          "UPDATE lotw_ownership_owners SET owner_hash=? WHERE tenant=? AND destination=? AND source=? AND qso=? AND owner_hash IS NULL",
+          await sha256(canonical([owner.source, owner.qso])),
+          tenant,
+          owner.destination,
+          owner.source,
+          owner.qso,
         ),
       ),
     );
+    if (!continuing()) return stopped();
+    const results = await store.db.batch(ownerStatements);
+    ownersHashed = results.reduce((n, r) => n + Number(r.meta.changes > 0), 0);
+  }
+  if (!continuing()) return stopped();
   const inputs = (
     await store
       .statement(
@@ -419,7 +457,6 @@ export async function backfillLotwOwnership(
       )
       .all<Input>()
   ).results;
-  let covered = 0;
   const identities = inputs.filter((input) => input.kind === "identity");
   const ownerQueries = identities.map((input) => {
     const match = identityReference(input, now);
@@ -433,6 +470,7 @@ export async function backfillLotwOwnership(
       : null;
   });
   const validOwnerQueries = ownerQueries.filter((query) => query !== null);
+  if (!continuing()) return stopped();
   const ownerResults = validOwnerQueries.length
     ? await store.db.batch<Owner>(validOwnerQueries)
     : [];
@@ -441,6 +479,7 @@ export async function backfillLotwOwnership(
   const holds: Input[] = [];
   let ownerIndex = 0;
   for (let i = 0; i < identities.length; i++) {
+    if (!continuing()) return stopped();
     const input = identities[i];
     const found = ownerQueries[i] ? ownerResults[ownerIndex++].results : [];
     const statements = await prepareIdentityPublication(
@@ -458,23 +497,44 @@ export async function backfillLotwOwnership(
   // atomicity; a thrown batch is never retried or converted to held evidence.
   for (let offset = 0; offset < publications.length; offset += MAX_INPUTS / 2) {
     const chunk = publications.slice(offset, offset + MAX_INPUTS / 2);
+    if (!continuing()) return stopped();
     const results = await store.db.batch(
       chunk.flatMap((entry) => entry.statements),
     );
+    examined += chunk.length;
     for (let i = 0; i < chunk.length; i++) {
-      if (results[i * 2 + 1].results.length === 1) covered++;
-      else holds.push(chunk[i].input);
+      if (results[i * 2 + 1].results.length === 1) {
+        covered++;
+        if (chunk[i].input.status === "pending") advanced++;
+      } else holds.push(chunk[i].input);
     }
   }
-  if (holds.length)
-    await store.db.batch(holds.map((input) => holdInput(store, input, now)));
+  if (holds.length) {
+    if (!continuing()) return stopped();
+    const held = await store.db.batch(
+      holds.map((input) => holdInput(store, input, now)),
+    );
+    advanced += held.filter(
+      (result, i) =>
+        result.results.length === 1 && holds[i].status === "pending",
+    ).length;
+    examined += holds.filter(
+      (input) => !publications.some((p) => p.input === input),
+    ).length;
+  }
   // These keyed links run after this pass's identity publications, so the same
   // pass can cover a tuple and its claim/mapping without per-input round trips.
   const links = inputs.filter((input) => input.kind !== "identity");
   if (links.length) {
+    if (!continuing()) return stopped();
     const results = await store.db.batch<{ status: string }>(
       links.map((input) => linkInput(store, input, key, now)),
     );
+    examined += links.length;
+    advanced += results.filter(
+      (result, i) =>
+        result.results.length === 1 && links[i].status === "pending",
+    ).length;
     covered += results.filter(
       (result) => result.results[0]?.status === "covered",
     ).length;
@@ -482,9 +542,10 @@ export async function backfillLotwOwnership(
   return {
     ...noAuthority,
     reason: "examined" as const,
-    ownersHashed: owners.length,
-    examined: inputs.length,
+    ownersHashed,
+    examined,
     covered,
+    advanced,
   };
 }
 /** Observation-only comparison. The tenant + exact station callsign namespace
@@ -555,7 +616,7 @@ export async function lookupLotwOwnership(
   const candidates: LotwOwnershipCandidate[] = [];
   for (const row of rows.results as unknown as Evidence[]) {
     if (!row.envelope) return held("byte_bound");
-    let data: RetainedLotwIdentity | null;
+    let data: LotwOwnershipEvidence | null;
     try {
       data = await retained(
         await open<unknown>(
@@ -563,6 +624,7 @@ export async function lookupLotwOwnership(
           evidenceIdentity(tenant, row.id),
           store.keys,
         ),
+        true,
       );
     } catch {
       return held("evidence_unavailable");
@@ -621,4 +683,57 @@ export async function lotwOwnershipSnapshotCurrent(
       )
       .first(),
   );
+}
+
+export async function prepareLotwOwnershipEvidence(
+  store: Store,
+  owner: Owner,
+  identity: AdifRecord,
+  now: number,
+  basis: LotwOwnershipEvidence["firstEvidence"] = "reserved",
+) {
+  identity = { ...identity };
+  const data = await retained(
+    {
+      remoteId: await lotwRemoteIdentity(identity),
+      identity,
+      firstEvidence: basis,
+      recordedAt: instant(now),
+    },
+    true,
+  );
+  const key = await readKey(store, owner.tenant);
+  const time = data && interval(data.identity);
+  if (!data || !key || !time) throw new Error("LoTW ownership unavailable");
+  const id = await sha256(
+    canonical([
+      "lotw-ownership-v1",
+      owner.tenant,
+      owner.destination,
+      owner.source,
+      owner.qso,
+      data.remoteId,
+    ]),
+  );
+  return {
+    id,
+    keyId: key.keyId,
+    identityHash: data.remoteId,
+    namespace: await sign(key.key, [
+      "lotw-ownership-v1",
+      "station",
+      owner.tenant,
+      data.identity.STATION_CALLSIGN,
+    ]),
+    bucket: await bucket(
+      key.key,
+      owner.tenant,
+      data.identity,
+      Math.floor(time.startMs / 60000),
+    ),
+    envelope: JSON.stringify(
+      await seal(data, evidenceIdentity(owner.tenant, id), store.keys),
+    ),
+    identity: data.identity,
+  };
 }

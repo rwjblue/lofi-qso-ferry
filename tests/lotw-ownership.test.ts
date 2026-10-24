@@ -30,6 +30,7 @@ async function fixture(t: TestContext, beforeMigration = false) {
     .filter(
       (s) =>
         s.endsWith(".sql") &&
+        s < "0036" &&
         s > "0001_foundation.sql" &&
         (!beforeMigration || s < "0035"),
     )
@@ -436,7 +437,9 @@ test("legacy attempts require original immutable identity and known state; missi
     )
     .run();
   for (const file of (await readdir(new URL("../migrations", import.meta.url)))
-    .filter((s) => s.endsWith(".sql") && s > "0001_foundation.sql")
+    .filter(
+      (s) => s.endsWith(".sql") && s > "0001_foundation.sql" && s < "0036",
+    )
     .sort())
     await applyMigration(h.db, file);
   await backfill(h.store);

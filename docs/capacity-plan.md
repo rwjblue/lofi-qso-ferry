@@ -1,6 +1,13 @@
 # Capacity plan
 
-Current status, 2026-10-24 UTC: baseline/drain/quarantine completed at 06:35:44
+The QRZ historical association integration is implemented and focused-tested, with
+full combined checks and deployment pending. Its 20-contact fixture costs **178
+cohort / 282 whole-tick D1 RPCs**, versus the previous 65 cohort RPCs. This is a
+known regression to optimize, not a capacity claim. Production remains at the
+verified `0dad1031` checkpoint with all eight export controls closed; see the
+[pending integration measurements](#historical-comparison-index-integration--release-pending).
+
+Earlier source-readiness checkpoint, 2026-10-24 UTC: baseline/drain/quarantine completed at 06:35:44
 for all 4,500 retained rows. At 08:12:53, a protected exact-deployed-code diagnostic
 minted one source proof and verified fresh QRZ absence for the same contact, using
 two source and three QRZ reads. That bounded sample does not establish sustained
@@ -759,15 +766,66 @@ precision policy, exception review and the existing
 scoped canary authorization and observed results. Capacity work itself does not
 provide that authorization or evidence.
 
-## Historical comparison index prototype (2026-10-24)
+## Historical comparison index integration — release pending
+
+The opaque source index, reverse comparison and association-only QRZ integration
+are implemented and focused-tested. Full combined checks, deployment of `0033`/
+`0034`, production backfill and the first completed reconciliation run remain
+pending. These bounds preserve correctness under incomplete coverage; they do
+not establish import completion time or sustained capacity.
+
+The weak worked-call/UTC-minute lookup uses three D1 RPCs and keyed
+`(tenant, key_id, bucket_hash)` searches. A real-D1 regression with 4,000 unrelated
+rows reads fewer than 140 rows for one candidate without scanning source
+ciphertexts. Reverse comparison caps each cohort at 128 candidate QSOs, 256 distinct
+retained dependencies and 4 MiB of ciphertext. Twenty one-contact mixed-week reverse
+cohorts measured **120 RPCs / 160 statements / 2,919 rows read**, with zero writes.
+
+The complete 20-contact/two-destination fixture uses **178 cohort D1 RPCs / 282
+whole-tick RPCs**, compared with **65 cohort RPCs** before reverse proof integration.
+It verifies 20 QRZ associations and zero attempts/vendor writes. The extra key,
+coverage, projection and commit checks are a measured cost; shared bounded metadata
+and cohort work should be evaluated before broader rollout. Binding calls, SQL
+statements and vendor requests are separate metrics. No request budget was raised.
+
+Index backfill handles at most 100 rows and 4 MiB of encrypted bodies per
+advancement, leaving omitted rows dirty for bounded continuation. The helper's
+default is 50 rows; the service requests 100. Several advancements may occur in
+one scheduler invocation, so this is not a 100-row-per-cron guarantee. Canonical
+intake can publish accepted raw versions in its existing atomic checkpoint.
+Unpublished or semantically changed rows block comparison until coverage is
+restored; ordinary retention preserves known opaque buckets, holding only relevant
+unavailable competitors. A legacy archived row without a published bucket needs
+normal upstream replay before it can be localized safely.
+
+### Comparison-key backup and rotation
+
+Each tenant has a stable random HMAC secret encrypted in
+`source_historical_state.key_envelope`. Initialization and rewrap use CAS; changing
+the active KEK does not replace the secret or churn buckets. Preserve the full
+state table and encrypted envelopes in backups, and verify restoration after key
+initialization. The protected predeployment audit has 4,141 ordinary retained
+contacts, no missing/archived bodies, and an isolated `0033`/`0034` rehearsal that
+preserves all 2,336 destination claims with clean integrity/foreign-key checks and
+repeated recovery quarantine. It does not yet include proof of live initialized
+index-key restoration.
+
+Retain old KEKs until every retained comparison-key envelope, including inactive
+tenants, is rewrapped. Existing `private_data` rotation does not enumerate these
+envelopes; intake/backfill rewrap on access, while lookup only decrypts. A missing
+KEK holds wider QRZ comparison. The typed key-unavailable path lets canonical
+source intake continue and leaves index rows dirty; it does not swallow SQL,
+schema or CAS failures. Published archived buckets must not be discarded merely
+because their source body is no longer retained.
+
+### Earlier prototype and production baseline (2026-10-24)
 
 The first completed run of deployed revision `0dad1031` at 13:45:43–13:47:22 UTC
 processed 84 contact turns, classified 113 destinations and adopted 44, with zero
 errors, deferrals or attempt turns. It stopped at the deadline after 98.845
 seconds, reporting 419 D1 calls, 2,590 statements, 1,876,280 rows read and 97.938
-seconds of database wall time. This confirms continued read-only draining, while
-database work remains the main throughput limit; it does not validate sustained
-capacity or the not-yet-integrated comparison index below.
+seconds of database wall time. This preceded the new index integration and does
+not measure its deployed cost.
 
 A protected in-memory SQLite prototype seeded 200,000 synthetic source contacts,
 10,000 remote records, 10,000 operation versions and 100 coverage scopes. Candidate,
@@ -778,19 +836,14 @@ Seven scenarios covered a unique pair, competing arrivals, body and context
 changes, localized unknown scope, incomplete coverage and overflow at 101 rows.
 The entire synthetic run took about 2.34 seconds and made no live calls or writes.
 
-This validates a bounded lookup shape, not production D1 latency or a complete
-200,000-contact import. The synthetic prototype retains timestamps for comparison;
-production still needs its privacy-preserving index representation, incremental
-backfill, old-worker invalidation, exact dependency/coverage fences, permanent
-historical ownership and atomic competitor rechecks. Measure construction cost,
-dense cohorts and real D1 binding/SQL work before claiming end-to-end capacity.
-Code review supports a smaller production index: projected worked call and time
-come only from raw QSO fields, so versioned HMAC call/minute keys can find a bounded
-cohort whose current contexts are then projected on demand. Operation changes
-invalidate a comparison clock without rebuilding those weak keys. Unknown or
-unprojectable competitors and elapsed retention expiry still require explicit
-holds and final transaction checks. No production implementation is claimed.
-See the [historical matching rollout](bootstrap.md#historical-association-and-vendor-matching).
+That prototype validated a lookup shape, not production D1 latency or a complete
+200,000-contact import. It retained synthetic timestamps rather than the final
+opaque representation. The new implementation adds privacy, incremental coverage,
+legacy-write invalidation, exact dependency guards and historical ownership, but
+still needs construction-cost, dense-cohort, full-import and sustained workload
+measurements. Neither the prototype nor the focused integration fixtures prove
+end-to-end 200,000-contact capacity. See the
+[historical matching contract](bootstrap.md#historical-association-and-vendor-matching).
 
 ## Platform constraints informing this plan
 

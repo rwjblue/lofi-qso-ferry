@@ -1,6 +1,38 @@
 # Reconciliation exceptions and capacity
 
+## QRZ association integration — release pending
+
+The wider QRZ historical matcher is implemented and focused-tested locally, with
+full combined checks and deployment still pending. Migrations `0033`/`0034` and the
+runtime integration add opaque source comparison buckets, dirty/coverage barriers,
+bounded reverse-source projection, durable book-scoped LOGID ownership and
+association-only stage/dispatch guards. Every historical QRZ adoption through this
+path, including exact-time matches, retains that write restriction. Exact Ferry
+receipt/readback behavior and outbound precision are unchanged.
+
+This addresses precision-driven false holds without choosing the nearest record
+or ignoring competitors. Minute intervals and ±30-minute candidates must be unique
+in both directions under current source, context, inventory and ownership fences.
+Unknown relevant candidates, conflicting location and incomplete coverage remain
+held. LoTW's broader time-window adoption is not part of this integration; its
+current exact-identity/nested-grid behavior remains.
+
+The 20-contact/two-destination fixture verifies 20 QRZ associations with zero
+attempts or vendor writes, but costs **178 cohort D1 RPCs / 282 whole-tick RPCs**
+versus the earlier 65 cohort RPCs. Reverse comparison alone measured 120 RPCs,
+160 statements and 2,919 rows read for 20 one-contact cohorts, with zero writes.
+These are bounded correctness/cost measurements, not a throughput improvement or
+200,000-contact capacity result. See [capacity and key lifecycle](capacity-plan.md#historical-comparison-index-integration--release-pending).
+
+The protected backup audit found 4,141 ordinary retained nondeleted contacts with
+zero missing or archived bodies. Isolated pending-migration rehearsal preserved
+2,336 destination claims and passed integrity, foreign-key and repeated quarantine
+checks. Production index coverage, ownership and the first completed new-release
+cron still need verification. Keep all eight export controls closed.
+
 ## Precision matching investigation (2026-10-24)
+
+### Previous verified release (0dad1031)
 
 Signed revision `0dad1031507bde4798bedef68e12c582f3af1889` deployed at **2026-10-24 09:43 EDT**, Worker
 `6d745929-708d-40e3-bd00-d29c084185f3` at 100% traffic. All **1,373 tests** and required release checks
@@ -15,8 +47,8 @@ ownership checks. Original source and remote precision remain intact; new export
 retain the most accurate supported source value. The separate published
 **±30-minute candidate policy** is implemented and tested, including primary-mode
 and LoTW mode-group comparisons, UTC precision, bounded inputs and unknown-data
-holds. It has no production reconciliation consumer and grants no adoption,
-absence, correction or export authority.
+holds. At this release it had no production reconciliation consumer and granted
+no adoption, absence, correction or export authority.
 
 The first completed run on this release ran **13:45:43–13:47:22 UTC**:
 84 contact turns, 113 destination
@@ -30,8 +62,9 @@ LoTW identities covered. Export attempts, cutovers and temporary stage guards
 remain zero. Policy version 3 is active. These are read-only reconciliation
 measurements, not sustained capacity or completed cross-vendor contacts.
 
-Next: finish the bounded source comparison index, current source/remote uniqueness,
-durable historical ownership and association-only stage/dispatch restrictions.
+The next work at that checkpoint was the bounded source comparison index,
+current source/remote uniqueness, durable historical ownership and association-only
+stage/dispatch restrictions.
 Extend LoTW retained coverage across UTC day/week boundaries before using the
 wider window for adoption. Then review actual identity/location conflicts and
 refresh exact source/vendor evidence for the separate export-readiness packet.
@@ -137,11 +170,11 @@ with the corrected frequency projection. These observations establish compound
 precision holds in the bounded sample, not a backlog-wide adoption or uniqueness
 claim. The audit made zero vendor calls or production writes.
 
-QRZ minute precision needs a separate historical-association design. Appending
+This investigation required a separate QRZ historical-association path. Appending
 seconds would fabricate precision, and the outbound identity-claim helper correctly
-rejects four-digit times. The future path must preserve the actual LOGID and
-timestamp precision, exclude competing source and remote candidates, and reserve
-the historical association durably without granting insert/correction authority.
+rejects four-digit times. The pending integration preserves the actual LOGID and
+timestamp precision, excludes competing source and remote candidates, and reserves
+the association durably without granting insert/correction authority.
 The generic identity category and incomplete field evidence remain investigation
 work. No production flag or held row was changed by the histogram query.
 
@@ -167,53 +200,44 @@ LoTW confirmations to its own log. Its manual separately describes LoTW's
 unique local association and exact upload identity as explicit separate contracts,
 rather than claiming every logger adopts any contact inside a common tolerance.
 
-The implemented historical-only ±30-minute candidate policy handles adjacent UTC
-dates and recorded minute intervals, retaining exact raw times and modes. It has
-no production reconciliation consumer. Automatic adoption still needs uniqueness
-in both source-to-remote and remote-to-source directions; no closest-time
-tie-break. Frequency, location detail and mode mapping are not interchangeable
-with durable upload identity. Supplied contradictory location fields remain
-visible in candidate differences.
-The [ADIF grid definition](https://adif.org/316/ADIF_316.htm#GridSquare) permits
-2/4/6/8-character locators; the deployed shared historical helper now accepts
-compatible containing cells at each of those precisions for both QRZ and LoTW.
-New exports retain all supported source precision.
+The historical-only ±30-minute candidate policy handles adjacent UTC dates and
+recorded minute intervals, retaining original times and modes. The pending QRZ
+integration now consumes it only after source-to-remote and remote-to-source
+uniqueness; there is no closest-time tie-break. Frequency and location comparisons
+cannot remove an identity competitor merely to obtain a unique result. Supplied
+contradictory or missing location fields remain visible as holds. The
+[ADIF grid definition](https://adif.org/316/ADIF_316.htm#GridSquare) permits
+2/4/6/8-character locators; compatible containing cells are supported without
+truncating source or remote values. Exact upload identity and receipts remain
+separate from historical association.
 
-The broader policy needs a bounded opaque source comparison index with current
-body/context/policy coverage, and separate durable historical remote ownership.
-Reverse uniqueness must inspect the window around each remote candidate, which
-can reach approximately 60 minutes from the original source. Widen LoTW's retained
-inventory across day/week boundaries before relying on those candidates. Keep
-outbound claims, first-insert absence, upload receipts and corrections on their
-existing exact contracts. QRZ's API guide does not establish the import page's
-replacement rules for API writes. These remain implementation tasks, not claims
-that ±30-minute production adoption is already active.
+### QRZ association implementation awaiting release
 
-### Next QRZ association slice
+The weak index stores opaque worked-call/UTC-minute buckets for every retained
+ordinary QSO work state. It publishes only under exact source/body CAS and uses
+DB-enforced dirty coverage plus a tenant comparison clock. Reverse lookup spans
+active sources and projects the bounded cohort against current base/event context;
+late arrivals, relevant configuration changes and elapsed body expiry cannot pass
+a stale adoption guard. Partial and unknown scopes remain possible competitors.
+A known archived bucket stays localized even when its body is unavailable, so it
+holds overlapping comparisons without blocking unrelated calls and times.
 
-Treat a four-digit time as its UTC minute interval and retain the original value.
-Require a unique compatible source-to-remote association in both directions before
-recording a match. An exact candidate plus a competing coarse-time candidate must
-remain held. A selected processing batch alone cannot establish source uniqueness.
+Book-scoped ownership reserves the actual QRZ LOGID outside the exact-second
+outbound identity namespace. Every new-path historical adoption is association-only
+at stage and dispatch, preserving ownership through source edits, retention and
+same-book reconnects. The existing mapping uniqueness and competing-owner quarantine
+remain additional defenses. No `00` seconds or delivery receipt are manufactured.
 
-Build a bounded, incrementally maintained source comparison index tied to current
-source policy, body incarnations, projection version and operation/event context.
-Its opaque keys should locate possible competitors without retaining another copy
-of private logbook fields. Unknown or stale possible competitors prevent an
-association; incomplete retained history prevents any absence claim.
+Focused regressions exercise source arrivals, cross-source conflicts, body/context
+changes, minute/midnight boundaries, unknown projection, retention, key rewrap,
+concurrent claims and edited associations. Full release checks, migration and
+read-only production observation remain pending. LoTW still needs wider retained
+coverage across UTC day/week boundaries and separate adoption integration. QRZ's
+API guide does not establish the import page's replacement rules for API writes;
+this release creates no replacement, absence or export authority.
 
-Reserve the actual historical QRZ LOGID independently of the exact-second outbound
-identity namespace, preserving tenant/destination scope and ownership through
-retention, reconnects and source edits. The existing mapping-uniqueness constraint
-and competing-owner quarantine remain additional defenses. Never manufacture `00`
-seconds to fit the outbound claim helper.
-
-Separate association evidence from full projection agreement. Preserve minute and
-grid precision and missing/conflicting field explanations. An association can
-establish that history is already present while corrections, replacement, insert
-authority and upload acceptance still require their own current checks. Validate
-new-source arrivals, context changes, competing source UUIDs, duplicate LOGIDs,
-partial inventories, midnight boundaries and concurrent claims before rollout.
+The following offline prototypes preceded the runtime integration and remain
+conditional retained-snapshot estimates, not measured deployment outcomes.
 
 An offline prototype over the newer backup projected 3,833 QRZ-routed sources
 and read 24 retained QRZ pages. Among 2,610 usable distinct remote records, it

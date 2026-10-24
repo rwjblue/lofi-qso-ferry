@@ -35,70 +35,81 @@ Validate ADIF framing and `APP_LoTW_NUMREC`; errors can be HTML. Keep `APP_LoTW_
 
 Use the vendor's published matching rules to discover historical candidates, then require a unique, one-to-one association with durable ownership. QRZ documents ±30 minutes, callsigns, band and primary mode for confirmations and ADIF import duplicates. LoTW confirms reciprocal callsigns on the same band within 30 minutes, using exact mode or its mode group and matching satellite/SAT where applicable. See the [published rules and implementation plan](reconciliation-investigation.md#published-vendor-rules-and-revised-implementation-plan-2026-10-24). Normalize case and documented aliases; retain callsign suffixes and original remote modes. A confirmation rule does not establish an API replacement or upload identity.
 
-Retain timestamp precision. [ADIF permits both HHMM and HHMMSS](https://adif.org/316/ADIF_316.htm#Time). A minute-only value represents an interval, not invented `00` seconds. The current automatic association path still requires exact normalized contact identity and a six-digit time. A separate non-authoritative historical candidate policy supplies the published time/mode comparisons; broader adoption waits for source uniqueness, complete relevant coverage and durable historical ownership. Include adjacent UTC dates and search reverse competitors around each remote candidate. Do not select the nearest contact from competing candidates.
+The QRZ integration described below is implemented and focused-tested, with full
+combined release checks and deployment pending. The previous verified release is
+`0dad1031`; this section does not claim that the new migrations or matcher are
+already active in production.
 
-QRZ's [file-import duplicate rules](https://www.qrz.com/docs/logbook30/adif-import) define a ±30-minute window, but their replacement behavior differs from the API guide. Historical recognition must not silently authorize replacement. LoTW also identifies own-log corrections and upload receipts using exact fields, separately from QSL confirmation tolerances.
+Retain timestamp precision. [ADIF permits both HHMM and HHMMSS](https://adif.org/316/ADIF_316.htm#Time).
+A minute-only value represents an interval, not invented `00` seconds. The new QRZ
+path applies the published ±30-minute candidate policy, includes adjacent UTC
+coverage and requires uniqueness in both source-to-remote and remote-to-source
+directions. An exact candidate plus another plausible coarse-time candidate stays
+held; there is no closest-time tie-break. LoTW still uses its existing exact
+normalized identity/six-digit-time association path. Its broader time-window
+adoption requires a separate retained-coverage and ownership integration.
 
-Compare operating location after identifying candidates. Wrong grid, state, county, or DXCC means an existing-record mismatch, not a missing QSO. Missing evidence is not equality. Only compare fields the destination supports and exposes, using explicit precision rules; unsupported fields cannot be verified there. Extra remote fields and narrative differences are not, by themselves, historical errors.
+QRZ's [file-import duplicate rules](https://www.qrz.com/docs/logbook30/adif-import)
+define a ±30-minute window, but their replacement behavior differs from the API
+guide. Historical recognition must not silently authorize replacement. LoTW also
+identifies own-log corrections and upload receipts using exact fields, separately
+from QSL confirmation tolerances.
 
-For QRZ and LoTW historical association, two valid two-, four-, six- or eight-character grids
-are compatible when either is a prefix of the other. Require one exact normalized
-contact identity with a valid six-digit time and agreement on every other current
-frequency/location comparison. Preserve both original grid values and the normal
-durable ownership guards. This identifies an existing contact; it does not claim
-that the full station projection was transmitted or accepted. Upload receipt
-verification still compares the exact supported projection. A different grid
-prefix, invalid/missing grid, competing identity or other field conflict remains
-held. CQ/ITU zone values use their valid numeric values, including ADIF-permitted
-leading zeroes, rather than textual formatting alone.
+Compare operating location only after establishing identity uniqueness. Wrong
+grid, state, county or DXCC means an existing-record mismatch, not a missing QSO.
+Missing evidence is not equality. Compare only supported, exposed fields; extra
+remote fields and narrative differences are not themselves historical errors.
+Valid nested two-, four-, six- or eight-character
+grids describe compatible regions in either prefix direction; retain both original
+values and all other required frequency/location checks. This compatibility does
+not prove that the full station projection was transmitted or accepted. Exact
+upload receipt verification is unchanged. CQ/ITU zones compare valid numeric
+values, including ADIF-permitted leading zeroes.
 
-Before wider/coarse-time matches become trusted adoptions, require a durable
-association-only capability checked during both preparation and dispatch.
-Editing an adopted source currently enters correction processing; a broader
-historical match must not inherit exact replacement or INSERT authority from
-that transition. Retain the original baseline, remote hash and actual remote
-identity separately from an exact outbound claim.
+Every QRZ historical adoption made by the new path, including exact-time matches,
+receives a durable **association-only** restriction checked at preparation and
+dispatch. Source edits, reconnects or relinking to the same logical book cannot
+promote it to INSERT, REPLACE or DELETE authority. Retain the original baseline,
+remote hash and actual LOGID independently of exact outbound identity claims.
+Existing exact Ferry receipt verification and mapped readback remain unchanged.
 
-Build a weak source comparison index from the already-decrypted raw QSO's
-normalized worked call and UTC minute, using domain-separated, versioned HMAC keys
-without plaintext minute storage. These two inputs are independent of current
-operation/segment projection. Index all retained ordinary QSOs, regardless of work
-state; operation/event changes advance the comparison clock rather than rebuilding
-weak keys. Look up bounded candidate IDs across active source connections, then
-project only that cohort against its current operation/event context.
+The weak source comparison index uses the already-decrypted raw QSO's normalized
+worked call and UTC minute, stored as domain-separated HMAC buckets without
+plaintext calls or minutes. These inputs do not depend on operation/segment
+projection. All retained ordinary nondeleted QSOs are indexed regardless of work
+state. A bounded reverse lookup spans active LoFi sources in the tenant, then
+projects only the possible competitors against current operation/event context.
+Operation changes advance the comparison clock without rebuilding unchanged weak
+keys. The reverse window centers on the remote interval and can reach about
+60 minutes from the originally selected source.
 
-Database-enforced dirty/coverage barriers and a tenant comparison clock must cover
-old-worker writes, source heads/bodies, policy/connection changes and key rotation.
-Publish keys only with an exact revision/body-incarnation CAS. Partial call-only,
-time-only and fully unknown scopes remain possible competitors. Overflow or an
-unprojectable relevant row cannot disappear from the uniqueness check. Distinguish
-an explicitly proven non-contact from an unknown projection failure.
+Database dirty/coverage barriers and a tenant comparison clock cover legacy
+writes, source heads/bodies, matching policy and relevant connection changes.
+Exact revision/body-incarnation CAS controls publication. Partial call-only,
+time-only and fully unknown scopes remain possible competitors; none is silently
+dropped. Reverse comparison holds on overflow or unavailable relevant data and
+excludes only a proven non-contact under current dependency guards. Atomic adoption
+rechecks source/context/retention, complete inventory provenance, comparison clock
+and exclusive book-scoped LOGID ownership. This proves uniqueness within current
+retained coverage, not universal upstream completeness or absence.
 
-Atomic adoption must recheck the complete comparison, current body/dependency
-retention, inventory provenance and exclusive historical ownership. Clock equality
-alone cannot detect expiry caused only by elapsed time. This establishes uniqueness
-within current retained source coverage, not universal upstream completeness.
-Validate late arrivals, reverse-window competitors, stale context, cross-source
-collisions, legacy-worker overlap and edited associations before rollout.
+Published opaque buckets survive ordinary body expiry, revocation and archival.
+An overlapping unavailable body holds that cohort; unrelated cohorts may proceed.
+An unpublished pre-index archive remains dirty until normal source replay supplies
+its raw record for one guarded restoration/publication. The random tenant HMAC
+secret is encrypted separately from source bodies and rewrapped without changing
+buckets. Preserve its envelope and required KEKs in backups; see the
+[key lifecycle and measured cost](capacity-plan.md#historical-comparison-index-integration--release-pending).
+An unreadable index key leaves coverage dirty while canonical source intake can
+continue; SQL/schema/CAS errors are not converted into successful coverage.
 
-Implement the next QRZ association slice in four small commits:
-1. Add the weak index, incremental backfill and database-enforced dirty/coverage
-   barriers. Verify stale publication, interrupted backfill, old-worker writes,
-   relinking/key rotation and absence of plaintext call/time index values.
-2. Add bounded reverse-source comparison across active connections. Verify
-   competing arrivals, minute/midnight boundaries, current operation context,
-   unknown projections and indexed lookup bounds at 4,000/200,000 rows.
-3. Reserve book-scoped QRZ LOGIDs with durable association-only capability.
-   Enforce it during staging and dispatch, including direct SQL and old workers;
-   test concurrent claims, source edits and existing uncertain attempts.
-4. Wire reconciliation only after those guards exist, then advance its policy
-   version once. Require complete current coverage, unchanged comparison clock,
-   one candidate in each direction and atomic ownership acquisition. Verify zero
-   export attempts and preservation of original source/remote values.
-
-Keep the wider candidate policy dormant until these prerequisites pass. Extend
-LoTW's retained time coverage across UTC day/week boundaries before a separate
-LoTW adoption rollout; the QRZ slice does not establish that coverage.
+Focused tests cover interrupted backfill, stale publication, legacy writes,
+retention/KEK changes, late arrivals, cross-source conflicts, midnight intervals,
+context changes, concurrent ownership, source edits and direct stage/dispatch
+attempts. Full combined checks and deployed backfill/association observations are
+still required. Broader LoTW adoption must extend retained coverage across UTC
+day/week boundaries before a separate rollout. No historical association supplies
+first-insert absence, a current source proof or write permission.
 
 Two source UUIDs must not silently claim one remote record. Remote records without a source match remain untouched. Never fabricate source UUIDs for remote history or upload a marker merely to establish ownership.
 
@@ -129,7 +140,7 @@ V1 uses one source contact as its bounded partition: QRZ reads its documented co
 2. **Capture one bounded source partition.** Save its UUIDs, exact observed version tokens, destination projections, and effective location dependencies temporarily. An inventory page of mutable current records is not an immutable historical snapshot.
 3. **Stream remote candidates.** Build a bounded temporary index for the corresponding account, callsign, dates, and collision margins. Resume failed pages; incomplete or malformed responses cannot establish absence. Track coverage independently for each destination.
 4. **Classify and commit.** Match against the captured source versions. Compare-and-set each ledger baseline against that same version. Never compute a baseline from a later reread and claim it describes the earlier match. If inputs changed, reconcile the new version; retain or replay the change instead of swallowing it.
-5. **Catch up before delivery.** Drain source changes since the starting boundary and catch up remote additions/modifications. Recheck a missing candidate immediately before its first write. New records or edits discovered during scanning enter the normal 20–60-minute cooldown. An adopted old QSO edited afterward is eligible too; a historical QSO date is not a permanent exclusion rule.
+5. **Catch up before delivery.** Drain source changes since the starting boundary and catch up remote additions/modifications. Recheck a missing candidate immediately before its first write. New records or edits discovered during scanning enter the normal 20–60-minute cooldown. A historical date alone is not a permanent exclusion rule, but a QRZ association-only marker keeps an edited adopted contact held; it cannot enter automatic correction or INSERT processing.
 6. **Discard temporary inventory.** After a partition's associations, exceptions, coverage, and replay checkpoint are durable, delete its temporary source/remote index. Retain minimal exception evidence, not every remote record. Restarts must resume safely without converting a partial partition into an empty one.
 
 If LoFi cannot supply a reliable replay boundary, use overlapping rescans and version checks as mitigation, but do not claim they create a snapshot. Keep coverage-dependent absence decisions pending until the adapter can establish the required boundary. Cursor expiration or a detected gap requires reconciliation, not advancing past unseen changes.
@@ -140,7 +151,7 @@ If LoFi cannot supply a reliable replay boundary, use overlapping rescans and ve
 
 Newly adopted QRZ records use `remote_preserved` under the [narrative policy](templates.md#contacts-adopted-during-bootstrap). All existing narrative remains remote-owned, including text originally derived from source notes. Bootstrap neither applies the current template nor infers which application wrote that text. Source-note-only changes on these contacts generate no outgoing work; they are excluded from the relevant source-input fingerprint. QRZ describes preserving otherwise-unused fields in [Lossless ADIF](https://www.qrz.com/docs/logbook30/lossless-adif).
 
-Before any later full-record replacement, fetch the associated LOGID and preserve its current narrative and remote-owned extras through an explicit field-ownership policy. Exclude server-owned identifiers/status fields from outgoing data. If the required read fails, retry rather than replace with missing text. Concurrent external edits remain a race; the read/merge/write sequence is not atomic.
+The new QRZ historical association path forbids later automatic replacement, insertion or deletion, including after source edits. The following correction rules apply only to separately authorized exact Ferry delivery paths without an association-only restriction. Before any permitted full-record replacement, fetch the associated LOGID and preserve its current narrative and remote-owned extras through an explicit field-ownership policy. Exclude server-owned identifiers/status fields from outgoing data. If the required read fails, retry rather than replace with missing text. Concurrent external edits remain a race; the read/merge/write sequence is not atomic.
 
 Template-managed records retain their immutable binding. A changed default template must not cause a historical rewrite. Adoption does not opt an old record into that template; a corrected copy also retains the adopted association's preservation policy.
 
@@ -152,22 +163,23 @@ A signing certificate is not a substitute for account read access. Without the w
 
 ## Acceptance cases
 
-| Scenario                                                                   | Required result                                                            |
-| -------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Historical QSOs already exist at both services, including unconfirmed ones | Adopt; zero INSERT, REPLACE, DELETE, or signing operations.                |
-| QRZ text differs from today's template                                     | Preserve text; unchanged future polls remain silent.                       |
-| Same identity has wrong portable location                                  | `history_mismatch`; no automatic historical rewrite.                       |
-| Minute-only time, unknown mode mapping, or two plausible candidates        | `history_ambiguous`; no nearest-match adoption.                            |
-| One source UUID matches exactly; another claims the same remote record     | No silent second association; isolate the conflict.                        |
-| Full inventory and fresh read establish absence at only one destination    | Queue that destination only, after cooldown.                               |
-| QRZ page fails or LoTW returns HTML/truncated ADIF                         | Coverage remains incomplete; no inferred missing records.                  |
-| Source QSO or operation location changes between capture and commit        | Version check fails; replay/reconcile without losing the edit.             |
-| Source creates a QSO while its historical partition is scanning            | Change intake discovers it; one logical delivery is scheduled.             |
-| Crash after association commit but before temporary cleanup                | Resume idempotently and remove the temporary index.                        |
-| Credentials rotate or the same remote account/book reconnects              | Retain adoption, mappings, provenance, and narrative/template policy.      |
-| Trusted Ferry history already contains a QRZ template binding              | Restore it; do not downgrade to `remote_preserved` during reconciliation.  |
-| Only source notes change on an adopted `remote_preserved` contact          | No outgoing work and no takeover of existing narrative.                    |
-| An adopted QRZ identity is corrected into a distinct new record            | Preserve the old historical record and surface it; no automatic deletion.  |
-| QRZ replacement reuses the prior LOGID                                     | Retain its creation provenance; never delete it as an obsolete ID.         |
-| LoTW password is omitted                                                   | Unverified history stays unsent; established live-cutover records proceed. |
-| Template edits alone                                                       | Zero historical scans, invalidations, hash recomputations, or export jobs. |
+| Scenario                                                                   | Required result                                                                                |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Historical QSOs already exist at both services, including unconfirmed ones | Adopt; zero INSERT, REPLACE, DELETE, or signing operations.                                    |
+| QRZ text differs from today's template                                     | Preserve text; unchanged future polls remain silent.                                           |
+| Same identity has wrong portable location                                  | `history_mismatch`; no automatic historical rewrite.                                           |
+| QRZ minute-only time with one compatible candidate in both directions      | Association-only adoption after current coverage/ownership checks; preserve the original time. |
+| Unknown mode mapping, competing candidates or incomplete reverse coverage  | Hold; no nearest-match adoption or inferred absence.                                           |
+| One source UUID matches exactly; another claims the same remote record     | No silent second association; isolate the conflict.                                            |
+| Full inventory and fresh read establish absence at only one destination    | Queue that destination only, after cooldown.                                                   |
+| QRZ page fails or LoTW returns HTML/truncated ADIF                         | Coverage remains incomplete; no inferred missing records.                                      |
+| Source QSO or operation location changes between capture and commit        | Version check fails; replay/reconcile without losing the edit.                                 |
+| Source creates a QSO while its historical partition is scanning            | Change intake discovers it; one logical delivery is scheduled.                                 |
+| Crash after association commit but before temporary cleanup                | Resume idempotently and remove the temporary index.                                            |
+| Credentials rotate or the same remote account/book reconnects              | Retain adoption, mappings, provenance, and narrative/template policy.                          |
+| Trusted Ferry history already contains a QRZ template binding              | Restore it; do not downgrade to `remote_preserved` during reconciliation.                      |
+| Only source notes change on an adopted `remote_preserved` contact          | No outgoing work and no takeover of existing narrative.                                        |
+| A QRZ association-only contact changes identity                            | Preserve its owner and remote history; no automatic INSERT, REPLACE or DELETE.                 |
+| QRZ replacement reuses the prior LOGID                                     | Retain its creation provenance; never delete it as an obsolete ID.                             |
+| LoTW password is omitted                                                   | Unverified history stays unsent; established live-cutover records proceed.                     |
+| Template edits alone                                                       | Zero historical scans, invalidations, hash recomputations, or export jobs.                     |

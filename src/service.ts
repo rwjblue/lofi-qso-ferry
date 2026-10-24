@@ -51,6 +51,7 @@ import {
   adoptHistory,
   adoptHistoryBatch,
   classifyHistory,
+  HISTORICAL_MATCHING_VERSION,
 } from "./reconcile.ts";
 import {
   finishReconciliationWork,
@@ -874,6 +875,7 @@ export async function tick(
   await syncReconciliationPolicy(
     store,
     JSON.stringify({
+      historicalMatchingVersion: HISTORICAL_MATCHING_VERSION,
       sourceBoundaryVerified: gates.sourceBoundaryVerified,
       qrzFreshInsertsEnabled: gates.qrzFreshInsertsEnabled === true,
       lotwFreshInsertsEnabled: gates.lotwFreshInsertsEnabled === true,

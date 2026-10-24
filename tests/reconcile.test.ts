@@ -3,6 +3,7 @@ import test from "node:test";
 import { measuredDatabase } from "../src/database-metrics.ts";
 import { contactReconciliationAdif, prepareDue } from "../src/delivery.ts";
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
+import { observeLotwContact } from "../src/lotw.ts";
 import { projectContact, sourceFingerprint } from "../src/projection.ts";
 import {
   ADOPTION_CONFLICT_REASON,
@@ -10,6 +11,7 @@ import {
   adoptHistoryBatch,
   canonicalLotwIdentity,
   classifyHistory,
+  comparableRemote,
   type HistoryAdoptionInput,
   lotwRemoteIdentity,
   type ReconciliationEvidence,
@@ -20,6 +22,7 @@ import {
   reconciliationCheckStatement,
   reconciliationPreflightBatch,
 } from "../src/reconciliation-work.ts";
+import { canonical, sha256 } from "../src/security.ts";
 import { type LedgerKey, Store } from "../src/store.ts";
 import { database, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
@@ -1305,13 +1308,17 @@ test("LoTW adoption compares supported location only and requires meaningful fre
     "adopted_existing",
   );
 });
-test("LoTW lower grid precision receives a review hold without truncating or adopting the source", () => {
+test("LoTW historical association accepts nested grid regions in either direction without changing records", () => {
   const scope = { ...evidence, destination: "lotw" as const };
   for (const [localGrid, remoteGrid] of [
     ["FN31PR12", "FN31PR"],
     ["FN31PR12", "FN31"],
     ["FN31PR", "FN31"],
+    ["FN31PR", "FN31PR12"],
+    ["FN31", "FN31PR12"],
+    ["FN31", "FN31PR"],
     ["fn31pr12", "fn31pr"],
+    ["fn31", "fn31pr12"],
   ]) {
     const current = Object.freeze({
       ...source,
@@ -1330,12 +1337,9 @@ test("LoTW lower grid precision receives a review hold without truncating or ado
       APP_LOTW_MODE: "FT4",
     });
     const outcome = classifyHistory(current, [candidate], scope);
-    assert.equal(outcome.state, "history_ambiguous");
-    assert.equal(
-      outcome.reason,
-      "LoTW history has lower MY_GRIDSQUARE precision; review the station location before exporting",
-    );
-    assert.equal(outcome.remote, undefined);
+    assert.equal(outcome.state, "adopted_existing");
+    assert.equal(outcome.reason, null);
+    assert.equal(outcome.remote, candidate);
     assert.equal(current.MY_GRIDSQUARE, localGrid);
     assert.equal(candidate.MY_GRIDSQUARE, remoteGrid);
   }
@@ -1354,7 +1358,7 @@ test("LoTW lower grid precision receives a review hold without truncating or ado
     "adopted_existing",
   );
 });
-test("LoTW grid precision review requires valid nested grids and agreement on every other comparison", () => {
+test("LoTW grid association requires valid nested regions and agreement on every other comparison", () => {
   const scope = { ...evidence, destination: "lotw" as const };
   const current = {
     ...source,
@@ -1373,6 +1377,11 @@ test("LoTW grid precision review requires valid nested grids and agreement on ev
     [current, [{ ...candidate, MY_GRIDSQUARE: "FN31P?" }], "history_mismatch"],
     [current, [{ ...candidate, MY_GRIDSQUARE: "FN31P" }], "history_mismatch"],
     [current, [{ ...candidate, MY_GRIDSQUARE: "FN" }], "history_mismatch"],
+    [
+      current,
+      [{ ...candidate, MY_GRIDSQUARE: "FN31PR\n" }],
+      "history_mismatch",
+    ],
     [current, [{ ...candidate, MY_GRIDSQUARE: "" }], "history_ambiguous"],
     [{ ...current, MY_GRIDSQUARE: "FN31PR1" }, [candidate], "history_mismatch"],
     [
@@ -1380,21 +1389,39 @@ test("LoTW grid precision review requires valid nested grids and agreement on ev
       [candidate],
       "history_mismatch",
     ],
-    [{ ...current, MY_GRIDSQUARE: "FN31" }, [candidate], "history_mismatch"],
+    [
+      { ...current, MY_GRIDSQUARE: "FN31PR12\n" },
+      [candidate],
+      "history_mismatch",
+    ],
+    [
+      { ...current, MY_GRIDSQUARE: "", MY_STATE: "" },
+      [candidate],
+      "history_ambiguous",
+    ],
     [current, [{ ...candidate, FREQ: "14.075" }], "history_mismatch"],
     [current, [{ ...candidate, FREQ: "" }], "history_ambiguous"],
     [current, [{ ...candidate, MY_STATE: "NY" }], "history_mismatch"],
     [current, [{ ...candidate, MODE: "SSB" }], "history_ambiguous"],
     [current, [{ ...candidate, TIME_ON: "1200" }], "history_ambiguous"],
+    [
+      { ...current, TIME_ON: "1200" },
+      [{ ...candidate, TIME_ON: "1200" }],
+      "history_mismatch",
+    ],
+    [
+      { ...current, TIME_ON: "240000" },
+      [{ ...candidate, TIME_ON: "240000" }],
+      "history_mismatch",
+    ],
     [current, [candidate, candidate], "history_ambiguous"],
   ] as const) {
     const outcome = classifyHistory(expected, [...candidates], scope);
     assert.equal(outcome.state, state);
-    assert.doesNotMatch(outcome.reason ?? "", /lower MY_GRIDSQUARE precision/);
     assert.equal(outcome.remote, undefined);
   }
 });
-test("LoTW grid precision review ignores unrelated neighbors but requires one exact normalized identity", () => {
+test("LoTW grid association ignores unrelated neighbors but requires one exact normalized identity", () => {
   const scope = { ...evidence, destination: "lotw" as const };
   const current = {
     ...source,
@@ -1414,12 +1441,9 @@ test("LoTW grid precision review ignores unrelated neighbors but requires one ex
     [neighbor, candidate],
   ]) {
     const outcome = classifyHistory(current, candidates, scope);
-    assert.equal(outcome.state, "history_ambiguous");
-    assert.equal(
-      outcome.reason,
-      "LoTW history has lower MY_GRIDSQUARE precision; review the station location before exporting",
-    );
-    assert.equal(outcome.remote, undefined);
+    assert.equal(outcome.state, "adopted_existing");
+    assert.equal(outcome.reason, null);
+    assert.equal(outcome.remote, candidate);
   }
   const competing = classifyHistory(
     current,
@@ -1433,7 +1457,155 @@ test("LoTW grid precision review ignores unrelated neighbors but requires one ex
   );
   assert.equal(competing.remote, undefined);
 });
-test("precision review outcomes persist as holds without a remote association or an attempt", async () => {
+test("LoTW historical grid association does not relax exact upload receipt verification", () => {
+  for (const [localGrid, remoteGrid] of [
+    ["FN31PR12", "FN31PR"],
+    ["FN31", "FN31PR12"],
+  ]) {
+    const current = { ...source, MY_GRIDSQUARE: localGrid, MY_DXCC: "291" };
+    const candidate = {
+      ...remote,
+      MY_GRIDSQUARE: remoteGrid,
+      MY_DXCC: "291",
+      QSL_RCVD: "Y",
+    };
+    assert.equal(
+      classifyHistory(current, [candidate], {
+        ...evidence,
+        destination: "lotw",
+      }).state,
+      "adopted_existing",
+    );
+    const observation = observeLotwContact(
+      { callsign: source.STATION_CALLSIGN, dxcc: 291, grid: localGrid },
+      {
+        id: "q1",
+        generation: "g1",
+        call: source.CALL,
+        date: "2026-10-22",
+        time: "12:00:01Z",
+        band: source.BAND,
+        mode: source.MODE,
+      },
+      { records: [candidate], receivedThrough: null, complete: true },
+    );
+    assert.equal(observation.state, "projection_mismatch");
+    assert.deepEqual(observation.differingFields, ["MY_GRIDSQUARE"]);
+  }
+});
+test("LoTW grid association retains exact source and remote evidence and quarantines competing owners", async () => {
+  const { mf, store } = await reconciliationDatabase();
+  try {
+    const first = await seed(store);
+    await store
+      .statement("UPDATE connections SET kind='lotw' WHERE id='destination'")
+      .run();
+    const contacts = await Promise.all(
+      ["FN31PR12", "FN31PR34"].map((grid, index) =>
+        projectContact(
+          {
+            uuid: `q${index + 1}`,
+            operation: null,
+            startAtMillis: Date.parse("2026-10-22T12:00:01Z"),
+            band: "20m",
+            mode: "CW",
+            their: { call: "W1AW" },
+            our: { stationCall: "N0TEST/P", grid },
+          },
+          null,
+        ),
+      ),
+    );
+    const remoteRecord = Object.freeze({
+      ...contactReconciliationAdif(contacts[0]!),
+      MY_GRIDSQUARE: "FN31PR",
+      QSL_RCVD: "Y",
+    });
+    for (const [index, contact] of contacts.entries()) {
+      const key = { ...first, qso: contact.id };
+      const projected = Object.freeze(contactReconciliationAdif(contact));
+      const fingerprint = await sourceFingerprint(contact, "lotw");
+      const outcome = classifyHistory(projected, [remoteRecord], {
+        ...evidence,
+        destination: "lotw",
+        capturedGeneration: contact.generation,
+        currentGeneration: contact.generation,
+      });
+      assert.equal(outcome.state, "adopted_existing");
+      assert.equal(outcome.remote, remoteRecord);
+      await store.observe(key, contact.generation, fingerprint, 30, false, 0);
+      const result = await adoptHistory(
+        store,
+        key,
+        contact.generation,
+        outcome,
+        1,
+      );
+      assert.equal(result.applied, index === 0);
+      assert.equal(projected.MY_GRIDSQUARE, contact.grid);
+      assert.equal(remoteRecord.MY_GRIDSQUARE, "FN31PR");
+      if (index === 0) {
+        const ledger = (await store.ledger(key))!;
+        assert.equal(ledger.state, "adopted_existing");
+        assert.equal(ledger.provenance, "adopted");
+        assert.equal(ledger.source_hash, fingerprint);
+        assert.equal(ledger.baseline_hash, fingerprint);
+        assert.equal(ledger.sent_hash, null);
+        assert.equal(ledger.template_version, null);
+        assert.equal(ledger.confirmed, 1);
+        assert.equal(ledger.remote_id, await lotwRemoteIdentity(remoteRecord));
+        assert.equal(
+          ledger.remote_hash,
+          await sha256(canonical(comparableRemote(remoteRecord))),
+        );
+        assert.deepEqual(
+          (await store.lotwIdentities(key))[0]!.identity,
+          canonicalLotwIdentity(remoteRecord),
+        );
+        assert.equal(
+          (
+            await prepareDue(
+              store,
+              key,
+              contact,
+              {
+                exportsEnabled: true,
+                liveWriteAuthorized: true,
+                sourceBoundaryVerified: true,
+              },
+              {
+                now: 1800001,
+                fetcher: async () =>
+                  assert.fail("adoption made a vendor request"),
+                sign: async () => assert.fail("adoption signed an upload"),
+              },
+            )
+          ).reason,
+          "not_due_or_current",
+        );
+      } else {
+        assert.equal(result.reason, "remote_identity_claim_conflict");
+        assert.deepEqual(await store.lotwIdentities(key), []);
+      }
+    }
+    for (const contact of contacts) {
+      const ledger = (await store.ledger({ ...first, qso: contact.id }))!;
+      assert.equal(ledger.state, "history_ambiguous");
+      assert.equal(ledger.provenance, "adoption_conflict");
+      assert.equal(ledger.reason, ADOPTION_CONFLICT_REASON);
+      assert.equal(ledger.sent_hash, null);
+    }
+    assert.equal(
+      (await store
+        .statement("SELECT COUNT(*) n FROM attempts")
+        .first<{ n: number }>())!.n,
+      0,
+    );
+  } finally {
+    await mf.dispose();
+  }
+});
+test("unverifiable precision outcomes persist as holds without a remote association or an attempt", async () => {
   const { mf, store } = await reconciliationDatabase();
   try {
     const baseKey = await seed(store);
@@ -1445,11 +1617,15 @@ test("precision review outcomes persist as holds without a remote association or
           destination,
         )
         .run();
-      const current = { ...source, MY_GRIDSQUARE: "FN31PR12" };
+      const current = {
+        ...source,
+        MY_GRIDSQUARE: "FN31PR12",
+        ...(destination === "lotw" ? { FREQ: "14.074001" } : {}),
+      };
       const candidate =
         destination === "qrz"
           ? { ...remote, MY_GRIDSQUARE: "FN31PR12", TIME_ON: "1200" }
-          : { ...remote, MY_GRIDSQUARE: "FN31PR" };
+          : { ...remote, MY_GRIDSQUARE: "FN31PR", FREQ: "14.07400" };
       const outcome = classifyHistory(current, [candidate], {
         ...evidence,
         destination,

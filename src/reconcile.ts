@@ -130,6 +130,8 @@ export interface ReconciliationOutcome {
 }
 export const ADOPTION_CONFLICT_REASON =
   "Multiple source contacts claim one destination identity; review associations before exporting";
+/** Included in scheduling policy fingerprints so changed matching rules revisit held work. */
+export const HISTORICAL_MATCHING_VERSION = 2;
 /** Pure read-only classification. Partial evidence is never transformed into absence. */
 export function classifyHistory(
   source: AdifRecord,
@@ -243,20 +245,24 @@ export function classifyHistory(
     const validGrid = /^[A-R]{2}[0-9]{2}(?:[A-X]{2}(?:[0-9]{2})?)?$/;
     if (
       candidate &&
+      /^([01]\d|2[0-3])[0-5]\d[0-5]\d$/.test(candidate.TIME_ON ?? "") &&
+      candidate.TIME_ON.length === 6 &&
+      [4, 6, 8].includes(localGrid.length) &&
+      [4, 6, 8].includes(remoteGrid.length) &&
       validGrid.test(localGrid) &&
       validGrid.test(remoteGrid) &&
-      remoteGrid.length < localGrid.length &&
-      localGrid.startsWith(remoteGrid) &&
-      // This projection is diagnostic only: every other comparison must agree,
-      // and a lower-precision location never becomes an adopted association.
+      (localGrid.startsWith(remoteGrid) || remoteGrid.startsWith(localGrid)) &&
+      // A nested Maidenhead region is compatible historical location evidence,
+      // not proof that the full transmitted station projection is identical.
+      // Every other comparison must agree; neither original record is changed.
       matchQrzHistory({ ...matchingSource, MY_GRIDSQUARE: remoteGrid }, [
         candidate,
       ]).state === "adopted_existing"
     )
-      return result(
-        "history_ambiguous",
-        "LoTW history has lower MY_GRIDSQUARE precision; review the station location before exporting",
-      );
+      return {
+        ...result("adopted_existing"),
+        remote: remote[matchingRemote.indexOf(candidate)],
+      };
   }
   if (match.state === "adopted_existing") {
     if (

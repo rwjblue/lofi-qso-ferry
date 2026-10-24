@@ -97,7 +97,12 @@ test("twenty distinct history weeks share scope validation without changing cont
           inventoryPositiveOnly: true,
           provenNewAfterCutover: false,
         });
-        assert.equal(outcome.state, "history_ambiguous");
+        assert.equal(
+          outcome.state,
+          destination.kind === "lotw"
+            ? "adopted_existing"
+            : "history_ambiguous",
+        );
         const key = {
           tenant: source.tenant,
           source: source.id,
@@ -122,6 +127,7 @@ test("twenty distinct history weeks share scope validation without changing cont
     assert.equal(result.exportsEnabled, false);
     assert(result.throughput);
     assert.equal(result.throughput.classifiedDestinations, 40);
+    assert.equal(result.throughput.adoptedDestinations, 20);
     assert.equal(result.throughput.inventoryFetches, 0);
     assert.equal(result.throughput.inventoryCacheHits, 40);
     // Week-separated service groups need 120 inventory RPCs alone. One scope

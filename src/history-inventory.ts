@@ -1,11 +1,16 @@
 import type { AdifRecord } from "./adif.ts";
 import { LotwClient } from "./lotw.ts";
+import {
+  type QrzCoveringProgress,
+  selectQrzCoveringRange,
+  validateQrzCoveringPage,
+} from "./qrz-covering.ts";
 import { adifInstant, QrzClient, QrzError, type QrzPage } from "./qrz.ts";
 import type { Envelope } from "./security.ts";
 import { canonical, open, randomToken, sha256 } from "./security.ts";
 import type { Connection, Lease, LedgerKey, Store } from "./store.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
-import { vendorFetch } from "./vendor-requests.ts";
+import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
 
 const DAY = 86_400_000;
 export const HISTORY_INVENTORY_TTL = 4 * 3_600_000;
@@ -191,6 +196,12 @@ interface Manifest extends Range {
   reason?: string;
   retryStartedAt?: number;
   retryAfter?: number;
+  /** Read plan/progress only; the target stays the original weekly range. */
+  qrzCover?: Range & {
+    attempts: number;
+    progress?: QrzCoveringProgress;
+    base?: { digest: string; recordCount: number };
+  };
 }
 interface Partition {
   id: string;
@@ -243,6 +254,7 @@ function manifest(row: Partition): Manifest | null {
       !Number.isInteger(value.recordCount) ||
       value.recordCount < 0 ||
       value.recordCount > MAX_RECORDS ||
+      (value.qrzCover !== undefined && !validCoverManifest(value)) ||
       ((value.retryAfter !== undefined || value.retryStartedAt !== undefined) &&
         (typeof value.retryAfter !== "number" ||
           typeof value.retryStartedAt !== "number" ||
@@ -260,6 +272,59 @@ function manifest(row: Partition): Manifest | null {
   } catch {
     return null;
   }
+}
+function validCoverManifest(value: Manifest): boolean {
+  const cover = value.qrzCover;
+  if (!cover) return false;
+  const hash = (value: unknown) =>
+    typeof value === "string" && /^[A-Za-z0-9_-]{43}$/.test(value);
+  const integer = (value: unknown, max: number) =>
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 0 &&
+    value <= max;
+  if (
+    !cover ||
+    typeof cover !== "object" ||
+    !["base", "verify", "done", "blocked"].includes(value.phase) ||
+    !integer(cover.attempts, 4) ||
+    ![cover.startDate, cover.endDate].every(
+      (day) =>
+        typeof day === "string" &&
+        /^\d{4}-\d{2}-\d{2}$/.test(day) &&
+        Number.isFinite(Date.parse(day)) &&
+        date(Date.parse(day)) === day,
+    ) ||
+    cover.startDate > value.startDate ||
+    cover.endDate < value.endDate ||
+    Date.parse(cover.endDate) - Date.parse(cover.startDate) > 34 * DAY ||
+    (cover.base !== undefined &&
+      (!hash(cover.base.digest) ||
+        !integer(cover.base.recordCount, 996) ||
+        cover.base.recordCount === 0)) ||
+    (["verify", "done"].includes(value.phase) && !cover.base) ||
+    (value.phase === "base" && cover.base !== undefined)
+  )
+    return false;
+  const progress = cover.progress;
+  if (!progress) return value.phase !== "done" && value.cursor === 0;
+  return (
+    integer(progress.pages, 4) &&
+    progress.pages > 0 &&
+    progress.pages <= cover.attempts &&
+    integer(progress.bytes, MAX_PARTITION_BYTES) &&
+    progress.bytes > 0 &&
+    integer(progress.recordCount, 996) &&
+    progress.recordCount > 0 &&
+    hash(progress.digest) &&
+    !!progress.anchor &&
+    integer(progress.anchor.id, Number.MAX_SAFE_INTEGER) &&
+    hash(progress.anchor.hash) &&
+    value.cursor === progress.anchor.id &&
+    (value.phase !== "done" ||
+      (progress.digest === cover.base?.digest &&
+        progress.recordCount === cover.base?.recordCount))
+  );
 }
 function requireManifest(row: Partition): Manifest {
   const value = manifest(row);
@@ -331,7 +396,9 @@ async function current(
     .statement(`SELECT 1 n WHERE ${guard.sql}`, ...guard.params)
     .first());
 }
-async function scopeHash(input: HistoryInventoryInput) {
+async function scopeHash(
+  input: Pick<HistoryInventoryInput, "source" | "destination" | "record">,
+) {
   const { source: s, destination: d } = input;
   return sha256(
     canonical({
@@ -347,6 +414,57 @@ async function scopeHash(input: HistoryInventoryInput) {
       station: input.record.STATION_CALLSIGN.toUpperCase(),
     }),
   );
+}
+/** Same-scope metadata chooses a read range only, never evidence or write authority. */
+export async function historyCoveringRange(
+  store: Store,
+  input: Pick<HistoryInventoryInput, "source" | "destination" | "record">,
+  target: [string, string],
+  now = Date.now(),
+): Promise<[string, string] | null> {
+  const config = JSON.parse(input.destination.config) as Record<
+    string,
+    unknown
+  >;
+  if (
+    input.destination.kind !== "qrz" ||
+    input.source.tenant !== input.destination.tenant ||
+    !input.destination.credential_version ||
+    typeof config.bookId !== "string" ||
+    !config.bookId ||
+    typeof config.stationCallsign !== "string" ||
+    config.stationCallsign.toUpperCase() !==
+      input.record.STATION_CALLSIGN.toUpperCase() ||
+    typeof config.startDate !== "string" ||
+    typeof config.endDate !== "string" ||
+    config.readAccess === false
+  )
+    return null;
+  const book: [string, string] = [config.startDate, config.endDate];
+  if (!selectQrzCoveringRange(target, book)) return null;
+  const rows = await store
+    .statement(
+      "SELECT * FROM partitions WHERE tenant=? AND source=? AND destination=? AND history_scope=? AND state='complete' AND expires_at>? ORDER BY id LIMIT ?",
+      input.source.tenant,
+      input.source.id,
+      input.destination.id,
+      await scopeHash(input),
+      now,
+      MAX_PARTITIONS + 1,
+    )
+    .all<Partition>();
+  if (rows.results.length > MAX_PARTITIONS) return null;
+  const hints: [string, string][] = [];
+  for (const row of rows.results) {
+    const state = manifest(row);
+    if (
+      state?.phase === "done" &&
+      state.recordCount > 0 &&
+      state.destinationVersion === input.destination.credential_version
+    )
+      hints.push([state.startDate, state.endDate]);
+  }
+  return selectQrzCoveringRange(target, book, hints);
 }
 async function neighborhood(
   scope: string,
@@ -762,11 +880,21 @@ async function advance(
           complete: false,
           noReadAccess: true,
         };
+      const client = new QrzClient(credentials.apiKey, { fetch: transport });
+      if (prior.qrzCover)
+        return await advanceCover(
+          store,
+          input,
+          row,
+          lease,
+          prior,
+          client,
+          options,
+          isolateReadFailures,
+        );
       let page: QrzPage;
       try {
-        page = await new QrzClient(credentials.apiKey, {
-          fetch: transport,
-        }).fetchPage({
+        page = await client.fetchPage({
           between: [prior.startDate, prior.endDate],
           afterLogId: prior.cursor,
           max: PAGE_SIZE,
@@ -782,6 +910,42 @@ async function advance(
           error.detail === "ambiguous_empty_selection"
         ) {
           const checkedAt = now();
+          const cover = await historyCoveringRange(
+            store,
+            input,
+            [prior.startDate, prior.endDate],
+            checkedAt,
+          );
+          if (cover) {
+            // The failed selection supplies no evidence. Persist a fixed read
+            // plan, discarding every previous partial page in the same guard.
+            await save(
+              store,
+              input,
+              row,
+              lease,
+              {
+                ...prior,
+                epoch: randomToken(),
+                phase: "base",
+                cursor: 0,
+                pageCount: 0,
+                recordCount: 0,
+                createdAt: checkedAt,
+                retryStartedAt: undefined,
+                retryAfter: undefined,
+                qrzCover: {
+                  startDate: cover[0],
+                  endDate: cover[1],
+                  attempts: 0,
+                },
+              },
+              [],
+              checkedAt,
+              true,
+            );
+            return { fetched: true, progressed: true, complete: false };
+          }
           await save(
             store,
             input,
@@ -933,6 +1097,152 @@ async function advance(
   } finally {
     await store.release(lease);
   }
+}
+/** One budgeted page per turn; both cover passes must finish within the original cache TTL. */
+async function advanceCover(
+  store: Store,
+  input: HistoryInventoryInput,
+  row: Partition,
+  lease: Lease,
+  prior: Manifest,
+  client: QrzClient,
+  options: HistoryInventoryOptions,
+  isolateReadFailures: boolean,
+) {
+  const now = () => options.now ?? Date.now();
+  const cover = prior.qrzCover;
+  if (!cover) throw new Error("Missing history covering read plan");
+  if (options.shouldContinue?.() === false)
+    return { fetched: false, progressed: false, complete: false };
+  if (cover.attempts >= 4)
+    throw new QrzError("blocked", "QRZ covering read attempt limit reached");
+  const nextCover = { ...cover, attempts: cover.attempts + 1 };
+  let next: Manifest = {
+    ...prior,
+    retryStartedAt: undefined,
+    retryAfter: undefined,
+    qrzCover: nextCover,
+  };
+  let records: AdifRecord[];
+  let complete: boolean;
+  let progress: QrzCoveringProgress;
+  try {
+    const deadline = Math.min(lease.expires_at, row.expires_at) - now();
+    if (deadline <= 0)
+      throw new QrzError("blocked", "QRZ covering read deadline reached");
+    const page = await client.fetchPage({
+      between: [cover.startDate, cover.endDate],
+      afterLogId: cover.progress?.anchor?.id ?? 0,
+      max: PAGE_SIZE,
+      signal: AbortSignal.timeout(Math.max(1, Math.min(20_000, deadline))),
+    });
+    const validated = await validateQrzCoveringPage(
+      page,
+      [cover.startDate, cover.endDate],
+      input.record.STATION_CALLSIGN,
+      cover.progress,
+    );
+    // Validate the entire cover before any original-target filtering. Only
+    // target rows enter encrypted storage; outer records survive as hashes.
+    let compacted: AdifRecord[];
+    try {
+      compacted = compact(validated.records, input, cover);
+    } catch {
+      throw new QrzError(
+        "protocol",
+        "QRZ covering read retained scope mismatch",
+      );
+    }
+    records = compacted.filter(
+      (record) =>
+        record.QSO_DATE >= adifDate(prior.startDate) &&
+        record.QSO_DATE <= adifDate(prior.endDate),
+    );
+    complete = validated.complete;
+    progress = validated.progress;
+    nextCover.progress = progress;
+    next.cursor = progress.anchor.id;
+    if (
+      complete &&
+      prior.phase === "verify" &&
+      (validated.progress.digest !== cover.base?.digest ||
+        validated.progress.recordCount !== cover.base?.recordCount)
+    )
+      throw new QrzError("blocked", "QRZ covering verification changed");
+  } catch (error) {
+    // Budget-only deferral sends no request and consumes no persisted attempt.
+    if (
+      error instanceof QrzError ||
+      (error instanceof VendorDeferredError && error.requestSent)
+    ) {
+      const at = now();
+      const retry =
+        (error instanceof VendorDeferredError ||
+          ["transient", "auth"].includes(error.kind)) &&
+        cover.attempts + 1 < 4;
+      await save(
+        store,
+        input,
+        row,
+        lease,
+        {
+          ...prior,
+          qrzCover: { ...cover, attempts: cover.attempts + 1 },
+          phase: retry ? prior.phase : "blocked",
+          reason: retry
+            ? undefined
+            : "QRZ covering history could not be verified; retry after cache expiry or review",
+          retryStartedAt: retry ? at : undefined,
+          retryAfter: retry
+            ? Math.min(at + QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY, row.expires_at)
+            : undefined,
+        },
+        [],
+        at,
+      );
+    }
+    throw isolateReadFailures ? new HistoryReadFailure(error) : error;
+  }
+  if (complete && prior.phase === "base") {
+    // Start verification from zero over exactly the same cover. Clearing base
+    // pages avoids retaining deleted/changed identities from the first pass.
+    next = {
+      ...next,
+      phase: "verify",
+      epoch: randomToken(),
+      cursor: 0,
+      pageCount: 0,
+      recordCount: 0,
+      qrzCover: {
+        startDate: cover.startDate,
+        endDate: cover.endDate,
+        attempts: 0,
+        base: {
+          digest: progress.digest,
+          recordCount: progress.recordCount,
+        },
+      },
+    };
+    const partition = await save(
+      store,
+      input,
+      row,
+      lease,
+      next,
+      [],
+      now(),
+      true,
+    );
+    return { fetched: true, progressed: true, complete: false, partition };
+  }
+  next.recordCount += records.length;
+  next.pageCount += retainedPages(records).length;
+  if (complete) {
+    next.phase = "done";
+    next.completedAt = now();
+  }
+  const partition = await save(store, input, row, lease, next, records, now());
+  return { fetched: true, progressed: true, complete, partition };
 }
 /**
  * At most one bounded, budgeted read per invocation. Partial/expired/revoked

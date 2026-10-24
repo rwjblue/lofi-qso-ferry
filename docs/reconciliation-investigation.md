@@ -179,6 +179,24 @@ unknown competitors within affected cohorts instead of blocking every contact
 because an unrelated projection failed. Runtime-fenced uniqueness and authority
 remain unproved by an offline retained subset. Five focused prototype tests pass.
 
+A second offline prototype applies the published ±30-minute window and verified
+QRZ primary-mode aliases to the same 3,833 routed sources and 24 retained pages.
+It finds 2,007 conditionally compatible bidirectionally unique pairs, including
+1,943 unchanged source generations, versus 2,012/1,948 with same-minute association.
+Two pairs become unique and seven formerly unique pairs gain competitors. Before
+frequency/location filtering, eight competing components contain 14 sources and
+16 remote records. Widening the window therefore reveals repeated-contact
+ambiguity; it does not simply turn every hold into a match.
+
+The wider partial scope of one unprojectable source can overlap eight otherwise
+unique pairs. Excluding those, and requiring uniqueness before field-compatibility
+filtering, leaves 1,994 conditional pairs / 1,930 unchanged generations. No unique
+pair requires nonoverlapping recorded time intervals or a two-character grid in
+this retained sample. All 44 earlier remote-mode exclusions resolve as explicit
+legacy primary-mode aliases. Five prototype tests pass. These are incomplete
+retained-snapshot estimates, not runtime-fenced adoption, current vendor evidence
+or export authority. No live request or production write occurred.
+
 A separate static LoTW reproduction also found that normalizing an unrelated
 unsupported-mode neighbor can block an otherwise exact match. That finding is
 tracked separately from the deployed grid/frequency corrections; its production

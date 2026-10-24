@@ -31,17 +31,17 @@ Query `https://lotw.arrl.org/lotwuser/lotwreport.adi` with website `login`, `pas
 
 Validate ADIF framing and `APP_LoTW_NUMREC`; errors can be HTML. Keep `APP_LoTW_LASTQSORX` with the exact query scope for overlapping catch-up. Read `STATION_CALLSIGN`, own-location fields, and `MODE`/`APP_LoTW_MODE`. `APP_LoTW_MODEGROUP` is an award category, not a unique mode identity. These contracts are documented in [Querying LoTW](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/). Redact credential-bearing URLs from logs.
 
-## Conservative matching
+## Historical association and vendor matching
 
-Ferry's adoption rule is stricter than a destination's confirmation or duplicate rule. Require a unique, one-to-one association using station callsign, worked callsign, UTC QSO date/time, band, and a verified destination mode mapping. Include satellite/propagation distinctions when applicable. Normalize case, decimal representation, and documented aliases; never strip callsign suffixes or silently collapse all digital modes.
+Use the vendor's published matching rules to discover historical candidates, then require a unique, one-to-one association with durable ownership. QRZ documents ±30 minutes, callsigns, band and primary mode for confirmations and ADIF import duplicates. LoTW confirms reciprocal callsigns on the same band within 30 minutes, using exact mode or its mode group and matching satellite/SAT where applicable. See the [published rules and implementation plan](reconciliation-investigation.md#published-vendor-rules-and-revised-implementation-plan-2026-10-24). Normalize case and documented aliases; retain callsign suffixes and original remote modes. A confirmation rule does not establish an API replacement or upload identity.
 
-Retain timestamp precision. [ADIF permits both HHMM and HHMMSS](https://adif.org/316/ADIF_316.htm#Time). A minute-only value does not prove equality to a source timestamp with different seconds. A known legacy export normalization may be supported explicitly, with unique-candidate checks and fixtures; an unknown transformation produces an exception.
+Retain timestamp precision. [ADIF permits both HHMM and HHMMSS](https://adif.org/316/ADIF_316.htm#Time). A minute-only value represents an interval, not invented `00` seconds. The current automatic association path still requires exact normalized contact identity and a six-digit time. A separate non-authoritative historical candidate policy supplies the published time/mode comparisons; broader adoption waits for source uniqueness, complete relevant coverage and durable historical ownership. Include adjacent UTC dates and search reverse competitors around each remote candidate. Do not select the nearest contact from competing candidates.
 
-QRZ's [file-import duplicate rules](https://www.qrz.com/docs/logbook30/adif-import) use matching callsigns, mode, band, and a ±30-minute window. That is much broader than Ferry's adoption rule and is not an independently documented API identity contract. Search that neighborhood for collisions, including adjacent date partitions; do not adopt the nearest record merely because it falls inside the window.
+QRZ's [file-import duplicate rules](https://www.qrz.com/docs/logbook30/adif-import) define a ±30-minute window, but their replacement behavior differs from the API guide. Historical recognition must not silently authorize replacement. LoTW also identifies own-log corrections and upload receipts using exact fields, separately from QSL confirmation tolerances.
 
 Compare operating location after identifying candidates. Wrong grid, state, county, or DXCC means an existing-record mismatch, not a missing QSO. Missing evidence is not equality. Only compare fields the destination supports and exposes, using explicit precision rules; unsupported fields cannot be verified there. Extra remote fields and narrative differences are not, by themselves, historical errors.
 
-For LoTW historical association, two valid four-, six- or eight-character grids
+For QRZ and LoTW historical association, two valid two-, four-, six- or eight-character grids
 are compatible when either is a prefix of the other. Require one exact normalized
 contact identity with a valid six-digit time and agreement on every other current
 frequency/location comparison. Preserve both original grid values and the normal
@@ -51,6 +51,23 @@ verification still compares the exact supported projection. A different grid
 prefix, invalid/missing grid, competing identity or other field conflict remains
 held. CQ/ITU zone values use their valid numeric values, including ADIF-permitted
 leading zeroes, rather than textual formatting alone.
+
+Before wider/coarse-time matches become trusted adoptions, require a durable
+association-only capability checked during both preparation and dispatch.
+Editing an adopted source currently enters correction processing; a broader
+historical match must not inherit exact replacement or INSERT authority from
+that transition. Retain the original baseline, remote hash and actual remote
+identity separately from an exact outbound claim.
+
+Populate the opaque source comparison index incrementally from ordinary source
+projections. Fence coverage and competitor checks to the current account/policy,
+body incarnations, projected generation, route and all operation/event dependencies.
+Unindexed or stale possible competitors prevent adoption; bound unknown scopes
+where independently valid call/time evidence permits it. Recheck these facts with
+inventory provenance and ownership in the atomic association transaction. Do not
+scan every retained source ciphertext for each contact. Validate late arrivals,
+reverse-window competitors, stale context, cross-source collisions, legacy-worker
+overlap and edited associations before rollout.
 
 Two source UUIDs must not silently claim one remote record. Remote records without a source match remain untouched. Never fabricate source UUIDs for remote history or upload a marker merely to establish ownership.
 

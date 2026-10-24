@@ -179,6 +179,15 @@ npx wrangler d1 execute ferry-production --env production --remote --command "SE
 
 Require all live rows to use the active version; an unreadable envelope blocks that row and needs its original KEK. Exercise interrupted rotation, decrypt/readback and a restored backup before retiring an old KEK. A missing KEK is data loss, not permission to relink or resend. Keep old keys available for retained backups and any unexpired local-only mailbox envelopes until their documented retention expires.
 
+The pending `0035` LoTW ownership foundation also copies permanent encrypted
+evidence into `lotw_ownership_evidence`. These envelopes are outside the current
+`private_data` rewrap job and are immutable. Retain every KEK they reference until
+a bounded compare-and-set rewrap path for that table is implemented. Missing keys
+hold ownership coverage; they never release a prior owner. Recovery snapshots
+must preserve all four `lotw_ownership_*` tables and the shared tenant historical
+index key. This foundation is observation-only and is not yet deployed; it grants
+no historical adoption, staging or export authority.
+
 Certificate renewal imports a new verified credential version on the same logical route. In-flight signed artifacts keep their certificate/configuration version; renewal must not regenerate an uncertain artifact. Revalidate the matching key, date authorization, current validity and revocation/supersession. Import rejects unsuitable keys and excessive work. Signing requires fresh unrevoked serial status; LoTW validates certificate authority when processing the upload. Successful preflight checks do not verify upload acceptance.
 
 ## Backup and restore

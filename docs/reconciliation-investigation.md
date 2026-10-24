@@ -57,6 +57,19 @@ candidate comparisons. A generic reason can hide compound differences: the
 minute-only diagnostic currently applies only if every operating field also
 matches. It does not establish that multiple candidates were actually found.
 
+A newer verified 12:29 UTC backup contains 24 retained QRZ pages. A bounded
+repeat on the same 20 sampled contacts opened seven relevant pages, totaling
+376,255 encrypted-payload bytes. Ten contacts had comparable records and unchanged
+saved source generations: all ten reproduced generic holds with six-digit source
+and four-digit remote times in the same minute. Eight also had matching-prefix
+eight-to-six-character grids, one had coordinate differences, and one had an
+additional neighboring record at another time. No frequency differences occurred
+in those ten comparisons. Seven samples had no retained matching candidate (not
+evidence of absence); three were excluded because their source generation changed
+with the corrected frequency projection. These observations establish compound
+precision holds in the bounded sample, not a backlog-wide adoption or uniqueness
+claim. The audit made zero vendor calls or production writes.
+
 QRZ minute precision needs a separate historical-association design. Appending
 seconds would fabricate precision, and the outbound identity-claim helper correctly
 rejects four-digit times. The future path must preserve the actual LOGID and

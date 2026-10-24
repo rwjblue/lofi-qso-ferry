@@ -1,4 +1,5 @@
 import { type AdifRecord, parseAdif, serializeAdifRecord } from "./adif.ts";
+import { canonical } from "./security.ts";
 import { VendorDeferredError } from "./vendor-requests.ts";
 export const QRZ_ENDPOINT = "https://logbook.qrz.com/api";
 export class QrzError extends Error {
@@ -180,6 +181,26 @@ export interface QrzFetchOptions {
   band?: string;
   mode?: string;
   logIds?: string[];
+  signal?: AbortSignal;
+}
+export interface QrzCoveringReadOptions {
+  /** Inclusive target range, limited to seven days. */
+  target: [string, string];
+  /** Must come from the caller's verified book configuration. */
+  stationCallsign: string;
+  /** One fixed covering range per call; seven adds seven days on each side. */
+  expandDays?: 0 | 7;
+  shouldContinue?: () => boolean;
+  deadlineAt?: number;
+  now?: () => number;
+}
+export interface QrzCoveringRead {
+  target: [string, string];
+  cover: [string, string];
+  records: AdifRecord[];
+  pages: number;
+  startedAt: number;
+  completedAt: number;
 }
 export class QrzClient {
   private readonly transport: typeof fetch;
@@ -192,6 +213,7 @@ export class QrzClient {
   private async request(
     action: string,
     values: Record<string, string> = {},
+    signal?: AbortSignal,
   ): Promise<QrzResponse> {
     const mutating = action === "INSERT" || action === "DELETE";
     if (mutating && !this.options.writesEnabled)
@@ -218,7 +240,9 @@ export class QrzClient {
           ACTION: action,
           ...values,
         }),
-        signal: AbortSignal.timeout(20000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(20000)])
+          : AbortSignal.timeout(20000),
         redirect: "manual",
       });
     } catch (error) {
@@ -339,7 +363,11 @@ export class QrzClient {
         throw new QrzError("protocol", "Invalid QRZ LOGIDs");
       filters.push(`LOGIDS:${options.logIds.join("+")}`);
     }
-    const result = await this.request("FETCH", { OPTION: filters.join(",") });
+    const result = await this.request(
+      "FETCH",
+      { OPTION: filters.join(",") },
+      options.signal,
+    );
     // A generic FAIL must never authorize missing-history backfill.
     if (result.RESULT !== "OK")
       throw new QrzError(
@@ -408,18 +436,147 @@ export class QrzClient {
       throw new QrzError("protocol", "Nonunique mapped QRZ record");
     return page.records[0] ?? null;
   }
+  /**
+   * A complete observed covering read, never a snapshot or independent book
+   * identity/absence authorization. Callers must retain current book, credential,
+   * source and commit fences. No partial result escapes a failed read.
+   *
+   * At most four FETCH attempts, each bounded by the existing two-MiB response
+   * limit; retained records also total at most two MiB. A positive unchanged
+   * overlap anchors every continuation, including the final short page.
+   */
+  async readCoveringRange(
+    options: QrzCoveringReadOptions,
+  ): Promise<QrzCoveringRead> {
+    const day = 86_400_000;
+    const target: [string, string] = [
+      validDate(options.target[0]),
+      validDate(options.target[1]),
+    ];
+    const start = Date.parse(target[0]);
+    const end = Date.parse(target[1]);
+    const expansion = options.expandDays ?? 0;
+    const now = options.now ?? Date.now;
+    const startedAt = now();
+    if (
+      options.target.length !== 2 ||
+      end < start ||
+      end - start > 6 * day ||
+      (expansion !== 0 && expansion !== 7) ||
+      !/^[A-Za-z0-9/.-]{1,64}$/.test(options.stationCallsign) ||
+      !Number.isSafeInteger(startedAt) ||
+      (options.deadlineAt !== undefined &&
+        !Number.isSafeInteger(options.deadlineAt))
+    )
+      throw new QrzError("protocol", "Invalid QRZ covering read scope");
+    const date = (at: number) => new Date(at).toISOString().slice(0, 10);
+    const cover: [string, string] = [
+      validDate(date(start - expansion * day)),
+      validDate(date(end + expansion * day)),
+    ];
+    const deadlineAt = Math.min(
+      options.deadlineAt ?? startedAt + 60_000,
+      startedAt + 60_000,
+    );
+    const deadline = AbortSignal.timeout(Math.max(1, deadlineAt - startedAt));
+    const check = () => {
+      const at = now();
+      if (!Number.isSafeInteger(at) || at < startedAt)
+        throw new QrzError("protocol", "QRZ covering read clock changed");
+      if (
+        at >= deadlineAt ||
+        deadline.aborted ||
+        options.shouldContinue?.() === false
+      )
+        throw new QrzError("blocked", "QRZ covering read deadline reached");
+      return at;
+    };
+    const records: AdifRecord[] = [];
+    let retainedBytes = 0;
+    let anchor: { id: number; record: string } | undefined;
+    for (let pages = 1; pages <= 4; pages++) {
+      check();
+      let page: QrzPage;
+      try {
+        page = await this.fetchPage({
+          between: cover,
+          afterLogId: anchor?.id ?? 0,
+          max: 250,
+          signal: deadline,
+        });
+      } catch (error) {
+        if (deadline.aborted)
+          throw new QrzError("blocked", "QRZ covering read deadline reached");
+        throw error;
+      }
+      check();
+      if (!Number.isSafeInteger(page.count))
+        throw new QrzError("protocol", "Invalid QRZ covering read count");
+      if (!page.records.length)
+        throw new QrzError(
+          "protocol",
+          "QRZ covering read has no positive anchor",
+        );
+      let previousId = -1;
+      for (const record of page.records) {
+        const id = Number(record.APP_QRZLOG_LOGID);
+        if (id <= previousId)
+          throw new QrzError("protocol", "QRZ covering read order changed");
+        previousId = id;
+        adifInstant(record);
+        if (
+          ["CALL", "BAND", "MODE"].some(
+            (field) => !/^[A-Za-z0-9/.-]+$/.test(record[field] ?? ""),
+          ) ||
+          record.STATION_CALLSIGN?.toUpperCase() !==
+            options.stationCallsign.toUpperCase() ||
+          record.QSO_DATE < cover[0].replaceAll("-", "") ||
+          record.QSO_DATE > cover[1].replaceAll("-", "")
+        )
+          throw new QrzError("protocol", "QRZ covering read scope mismatch");
+      }
+      if (
+        anchor &&
+        (Number(page.records[0].APP_QRZLOG_LOGID) !== anchor.id ||
+          canonical(page.records[0]) !== anchor.record)
+      )
+        throw new QrzError("protocol", "QRZ covering read anchor changed");
+      for (const record of page.records.slice(anchor ? 1 : 0)) {
+        retainedBytes += new TextEncoder().encode(canonical(record)).length;
+        if (retainedBytes > 2 * 1024 * 1024)
+          throw new QrzError(
+            "blocked",
+            "QRZ covering read retained record bound reached",
+          );
+        records.push(record);
+      }
+      const completedAt = check();
+      if (page.records.length < 250)
+        return { target, cover, records, pages, startedAt, completedAt };
+      const last = page.records[page.records.length - 1];
+      const highest = Number(last.APP_QRZLOG_LOGID);
+      if (anchor && highest <= anchor.id)
+        throw new QrzError(
+          "protocol",
+          "QRZ covering read cursor did not advance",
+        );
+      anchor = { id: highest, record: canonical(last) };
+    }
+    throw new QrzError("blocked", "QRZ covering read page limit reached");
+  }
   async findNeighborhood(record: AdifRecord): Promise<AdifRecord[]> {
     const at = adifInstant(record);
+    const radius = 30 * 60000 + 59000;
     const date = (ms: number) => new Date(ms).toISOString().slice(0, 10);
     const found: AdifRecord[] = [];
     for await (const page of this.inventory({
       call: record.CALL,
       band: record.BAND,
-      between: [date(at - 30 * 60000), date(at + 30 * 60000)],
+      between: [date(at - radius), date(at + radius)],
     }))
       found.push(
         ...page.records.filter(
-          (other) => Math.abs(adifInstant(other) - at) <= 30 * 60000 + 59000,
+          (other) => Math.abs(adifInstant(other) - at) <= radius,
         ),
       );
     return found;

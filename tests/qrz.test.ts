@@ -35,6 +35,69 @@ const remote = {
 };
 const encode = (data: Record<string, string>) =>
   new Response(new URLSearchParams(data).toString());
+test("QRZ neighborhood dates include the full accepted time radius across UTC midnight", async (t) => {
+  for (const scenario of [
+    {
+      name: "preceding day",
+      time: "003030",
+      edgeDate: "20261021",
+      edgeTime: "235931",
+      outsideTime: "235930",
+      between: "2026-10-21+2026-10-22",
+    },
+    {
+      name: "following day",
+      time: "232930",
+      edgeDate: "20261023",
+      edgeTime: "000029",
+      outsideTime: "000030",
+      between: "2026-10-22+2026-10-23",
+    },
+  ])
+    await t.test(scenario.name, async () => {
+      const record = { ...contact, TIME_ON: scenario.time };
+      const rows = [
+        { ...record, APP_QRZLOG_LOGID: "1" },
+        {
+          ...remote,
+          QSO_DATE: scenario.edgeDate,
+          TIME_ON: scenario.edgeTime,
+          APP_QRZLOG_LOGID: "2",
+        },
+        {
+          ...remote,
+          QSO_DATE: scenario.edgeDate,
+          TIME_ON: scenario.outsideTime,
+          APP_QRZLOG_LOGID: "3",
+        },
+      ];
+      let calls = 0;
+      const client = new QrzClient("synthetic", {
+        fetch: async (_url, init) => {
+          calls++;
+          const option = new URLSearchParams(String(init?.body)).get("OPTION");
+          const range = option?.match(/BETWEEN:([^,]+)/)?.[1];
+          assert.equal(range, scenario.between);
+          const [start, end] = range!.replaceAll("-", "").split("+");
+          const selected = rows.filter(
+            (row) => row.QSO_DATE >= start && row.QSO_DATE <= end,
+          );
+          return encode({
+            RESULT: "OK",
+            COUNT: String(selected.length),
+            ADIF: selected.map(serializeAdifRecord).join(""),
+          });
+        },
+      });
+      assert.deepEqual(
+        (await client.findNeighborhood(record)).map(
+          (row) => row.APP_QRZLOG_LOGID,
+        ),
+        ["1", "2"],
+      );
+      assert.equal(calls, 1);
+    });
+});
 test("QRZ preserves typed transport deferrals for reads and uploads", async () => {
   const deferred = new VendorDeferredError(Date.now() + 300000);
   const client = new QrzClient("synthetic", {

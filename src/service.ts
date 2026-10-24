@@ -13,6 +13,7 @@ import {
   refreshConfirmations,
 } from "./delivery.ts";
 import { createFailureDiagnostics } from "./failure-diagnostics.ts";
+import { historicalSourceCandidates } from "./historical-source-candidates.ts";
 import type {
   HistoryInventoryInput,
   HistoryInventoryResult,
@@ -50,7 +51,7 @@ import type {
 import {
   adoptHistory,
   adoptHistoryBatch,
-  classifyHistory,
+  classifyHistoricalAssociation,
   HISTORICAL_MATCHING_VERSION,
 } from "./reconcile.ts";
 import {
@@ -78,6 +79,7 @@ import {
   qrzFreshInsertCurrent,
   type SourceExportSnapshot,
 } from "./source-export-proofs.ts";
+import { backfillSourceHistoricalIndex } from "./source-historical-index.ts";
 import type { SourcePresenceScope } from "./source-presence-store.ts";
 import type { Connection, LedgerKey } from "./store.ts";
 import { Store } from "./store.ts";
@@ -273,6 +275,52 @@ function reconciliationCommitGuard(
     ],
   };
 }
+
+async function classifyReconciliationHistory(
+  store: Store,
+  source: Connection,
+  destination: Connection,
+  contact: IntakeContact,
+  records: ReturnType<typeof contactReconciliationAdif>[],
+  evidence: ReconciliationEvidence,
+  now: number,
+) {
+  const record = contactReconciliationAdif(contact);
+  const outcome = classifyHistoricalAssociation(record, records, evidence);
+  if (!outcome.associationOnly || !outcome.remote) return outcome;
+  const comparison = await historicalSourceCandidates(store, {
+    tenant: source.tenant,
+    destination,
+    remote: outcome.remote,
+    selected: {
+      source: source.id,
+      qso: contact.id,
+      generation: contact.generation,
+    },
+    vendor: "qrz",
+    routeMatches,
+    now,
+  });
+  if (comparison.state !== "unique")
+    return {
+      state:
+        comparison.state === "ambiguous"
+          ? ("history_ambiguous" as const)
+          : ("inventory_pending" as const),
+      reason:
+        comparison.state === "ambiguous"
+          ? "Multiple source contacts match this destination record; review associations"
+          : "Historical source coverage or context is incomplete; retry after it is current",
+      evidence,
+    };
+  return {
+    ...outcome,
+    associationProof: {
+      bookIdentity: destination.remote_identity,
+      commitGuard: comparison.commitGuard,
+    },
+  };
+}
 async function reconcileContact(
   store: Store,
   source: Connection,
@@ -393,7 +441,15 @@ async function reconcileContact(
       !readAccess &&
       (await proveNewAfterCutover(store, key)),
   };
-  let outcome = classifyHistory(record, remote, evidence);
+  let outcome = await classifyReconciliationHistory(
+    store,
+    source,
+    destination,
+    contact,
+    remote,
+    evidence,
+    vendorNow ?? Date.now(),
+  );
   if (inventory.state === "pending")
     outcome = {
       ...outcome,
@@ -678,8 +734,11 @@ async function reconcileReadOnlyBatch(
                 qso: route.contact.id,
                 destination: route.destination.id,
               };
-              let outcome = classifyHistory(
-                route.input.record,
+              let outcome = await classifyReconciliationHistory(
+                store,
+                source,
+                route.destination,
+                route.contact,
                 evidence.records,
                 {
                   destination: route.destination.kind as "qrz" | "lotw",
@@ -696,6 +755,7 @@ async function reconcileReadOnlyBatch(
                     !evidence.readAccess &&
                     (await proveNewAfterCutover(store, key)),
                 },
+                currentTime(),
               );
               if (evidence.state === "pending")
                 outcome = {
@@ -823,6 +883,9 @@ export interface ThroughputMetrics {
   inventoryFetches: number;
   inventoryCacheHits: number;
   reconciliationBatchCalls: number;
+  sourceIndexExamined: number;
+  sourceIndexPublished: number;
+  sourceIndexHeld: number;
   identityBackfill?: IdentityBackfillResult;
   failures: ReturnType<typeof createFailureDiagnostics>["counts"];
   stageMs: Record<string, number>;
@@ -853,6 +916,9 @@ export async function tick(
     inventoryFetches: 0,
     inventoryCacheHits: 0,
     reconciliationBatchCalls: 0,
+    sourceIndexExamined: 0,
+    sourceIndexPublished: 0,
+    sourceIndexHeld: 0,
     failures: diagnostics.counts,
     stageMs: {},
     database: metered.metrics,
@@ -924,6 +990,7 @@ export async function tick(
   const completedPolls = new Set<string>();
   const completedRescans = new Map<string, Set<string>>();
   const stoppedRereads = new Set<string>();
+  const unavailableHistoricalIndexes = new Set<string>();
   // Freshly prepared attempts share the existing round's dispatch allowance.
   const attemptSlots: Record<VendorPriority, number> = {
     live: 6,
@@ -1228,6 +1295,28 @@ export async function tick(
       }
     };
     const processRetainedContacts = async (readyContextOnly = false) => {
+      if (expired()) return 0;
+      // Intake maintains new entries atomically. Older retained contacts receive
+      // bounded incremental indexing without scanning their ciphertext per match.
+      if (!unavailableHistoricalIndexes.has(source.tenant))
+        try {
+          const indexed = await measure("sourceHistoricalIndex", () =>
+            backfillSourceHistoricalIndex(store, source.tenant, {
+              limit: 100,
+              now: currentTime(),
+            }),
+          );
+          throughput.sourceIndexExamined += indexed.examined;
+          throughput.sourceIndexPublished += indexed.published;
+          throughput.sourceIndexHeld += indexed.held;
+          progress += indexed.published;
+        } catch (error) {
+          // QRZ remains held by its comparison check. A key/index failure must
+          // not prevent independent LoTW history from being reconciled.
+          unavailableHistoricalIndexes.add(source.tenant);
+          diagnostics.record(error, "reconciliation", "qrz");
+          result.errors++;
+        }
       if (expired()) return 0;
       await establishCutovers(store, source, gates, currentTime());
       if (expired()) return 0;

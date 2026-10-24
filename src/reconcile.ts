@@ -146,7 +146,7 @@ export interface ReconciliationOutcome {
 export const ADOPTION_CONFLICT_REASON =
   "Multiple source contacts claim one destination identity; review associations before exporting";
 /** Included in scheduling policy fingerprints so changed matching rules revisit held work. */
-export const HISTORICAL_MATCHING_VERSION = 3;
+export const HISTORICAL_MATCHING_VERSION = 4;
 /** Pure read-only classification. Partial evidence is never transformed into absence. */
 export function classifyHistory(
   source: AdifRecord,

@@ -6,11 +6,11 @@ import {
   historyInventoryGuard,
 } from "../src/history-inventory.ts";
 import { pendingContactBatch } from "../src/intake.ts";
-import { classifyHistory } from "../src/reconcile.ts";
+import { classifyHistoricalAssociation } from "../src/reconcile.ts";
 import { tick } from "../src/service.ts";
 import { FIXTURE_NOW, schedulerFixture } from "./runtime-fixtures.ts";
 
-test("twenty distinct history weeks share scope validation without changing contact outcomes or fences", async (t) => {
+test("twenty distinct history weeks share inventory while guarding wider source associations", async (t) => {
   const h = await schedulerFixture();
   try {
     h.qrzRecords[0].TIME_ON = "1200";
@@ -86,23 +86,22 @@ test("twenty distinct history weeks share scope validation without changing cont
         assert.equal(inventory.records[0].CALL, record.CALL);
         assert.equal(inventory.records[0].QSO_DATE, record.QSO_DATE);
         assert(inventory.fence);
-        const outcome = classifyHistory(record, inventory.records, {
-          destination: destination.kind as "qrz" | "lotw",
-          capturedGeneration: contact.generation,
-          currentGeneration: contact.generation,
-          readAccess: true,
-          inventoryComplete: true,
-          catchupComplete: true,
-          freshCheckComplete: false,
-          inventoryPositiveOnly: true,
-          provenNewAfterCutover: false,
-        });
-        assert.equal(
-          outcome.state,
-          destination.kind === "lotw"
-            ? "adopted_existing"
-            : "history_ambiguous",
+        const outcome = classifyHistoricalAssociation(
+          record,
+          inventory.records,
+          {
+            destination: destination.kind as "qrz" | "lotw",
+            capturedGeneration: contact.generation,
+            currentGeneration: contact.generation,
+            readAccess: true,
+            inventoryComplete: true,
+            catchupComplete: true,
+            freshCheckComplete: false,
+            inventoryPositiveOnly: true,
+            provenNewAfterCutover: false,
+          },
         );
+        assert.equal(outcome.state, "adopted_existing");
         const key = {
           tenant: source.tenant,
           source: source.id,
@@ -127,15 +126,15 @@ test("twenty distinct history weeks share scope validation without changing cont
     assert.equal(result.exportsEnabled, false);
     assert(result.throughput);
     assert.equal(result.throughput.classifiedDestinations, 40);
-    assert.equal(result.throughput.adoptedDestinations, 20);
+    assert.equal(result.throughput.adoptedDestinations, 40);
     assert.equal(result.throughput.inventoryFetches, 0);
     assert.equal(result.throughput.inventoryCacheHits, 40);
-    // Week-separated service groups need 120 inventory RPCs alone. One scope
-    // per destination needs 44, leaving a bounded allowance for other cohort work.
-    assert(result.throughput.reconciliationBatchCalls <= 65);
+    // Inventory remains shared. Each wider QRZ association additionally inspects
+    // a bounded, indexed reverse cohort and rechecks it before the atomic commit.
     t.diagnostic(
       `mixed-week warm tick: ${result.throughput.reconciliationBatchCalls} cohort RPCs; ${result.throughput.database.calls} total RPCs; ${result.throughput.database.statements} statements`,
     );
+    assert(result.throughput.reconciliationBatchCalls <= 220);
     assert.equal(h.calls.qrzReads, before.qrzReads);
     assert.equal(h.calls.lotwQueries, before.lotwQueries);
     for (const { key, generation, outcome } of expected) {
@@ -148,6 +147,14 @@ test("twenty distinct history weeks share scope validation without changing cont
       assert.equal(result.results[0].valid, 1);
     assert.equal(h.calls.qrzWrites, 0);
     assert.equal(h.calls.lotwUploads, 0);
+    assert.equal(
+      (
+        await h.store
+          .statement("SELECT count(*) n FROM historical_associations")
+          .first<{ n: number }>()
+      )?.n,
+      20,
+    );
     assert.equal(
       (
         await h.store

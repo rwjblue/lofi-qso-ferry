@@ -247,9 +247,18 @@ test("source identity conflicts remain visible without repeating vendor reads", 
       for (const destination of ["destination", "lotw"]) {
         const row = (await h.store.ledger({ ...key(destination), qso }))!;
         assert.equal(row.state, "history_ambiguous");
-        assert.equal(row.provenance, "adoption_conflict");
+        assert.equal(
+          row.provenance,
+          destination === "destination" ? "unknown" : "adoption_conflict",
+        );
+        if (destination === "destination") {
+          assert.match(row.reason!, /Multiple source contacts/);
+          assert.equal(row.remote_id, null);
+        }
         assert(row.reason);
       }
+    assert.equal(await count(h, "historical_associations"), 0);
+    assert.equal(await count(h, "historical_remote_owners"), 0);
     const reads = [h.calls.qrzReads, h.calls.lotwQueries];
     const retry = await tick(h.env, fetcher, FIXTURE_NOW + 5 * 60_000);
     assert.equal(retry.errors, 0);
@@ -602,7 +611,7 @@ test("unchanged adopted QRZ narrative and LoTW receive no work from source-note 
     await h.mf.dispose();
   }
 });
-test("operation-only location correction waits per-contact then preserves QRZ text and signs correct LoTW station", async () => {
+test("operation-only correction keeps historical QRZ read only while signing the corrected LoTW station", async () => {
   const h = await exportSchedulerFixture();
   try {
     await h.run(0);
@@ -621,7 +630,7 @@ test("operation-only location correction waits per-contact then preserves QRZ te
     assert.equal(await count(h, "attempts"), 0);
     const sent = await h.run(36);
     assert.equal(sent.errors, 0);
-    assert.equal(h.calls.qrzWrites, 1);
+    assert.equal(h.calls.qrzWrites, 0);
     assert.equal(h.calls.lotwUploads, 1);
     assert.equal(
       (
@@ -632,15 +641,19 @@ test("operation-only location correction waits per-contact then preserves QRZ te
           .first<{ pins: number; proofs: number }>()
       )?.proofs,
       1,
-      "both destinations pin the same refreshed source proof",
+      "the eligible LoTW destination pins the refreshed source proof",
     );
-    assert.equal(await count(h, "attempt_source_export_proofs"), 2);
-    assert.equal(h.qrzMutations[0]!.MY_GRIDSQUARE, "FN32BB");
-    assert.equal(h.qrzMutations[0]!.COMMENT, "Adopted narrative & + = 100%");
+    assert.equal(await count(h, "attempt_source_export_proofs"), 1);
+    assert.equal(await count(h, "attempts", "destination='destination'"), 0);
+    assert.equal(await count(h, "historical_associations"), 1);
+    assert.equal(h.qrzMutations.length, 0);
+    assert.equal(h.qrzRecords[0]!.MY_GRIDSQUARE, "FN31AA");
+    assert.equal(h.qrzRecords[0]!.COMMENT, "Adopted narrative & + = 100%");
     assert.match(h.tq8Texts[0]!, /<GRIDSQUARE:6>FN32BB/);
+    assert.equal((await h.store.ledger(key("destination")))!.state, "changed");
     assert.equal(
-      (await h.store.ledger(key("destination")))!.state,
-      "delivered",
+      (await h.store.ledger(key("destination")))!.reason,
+      "historical_association_read_only",
     );
     assert.equal(
       (await h.store.ledger(key("destination")))!.narrative,
@@ -657,16 +670,18 @@ test("operation-only location correction waits per-contact then preserves QRZ te
         "source_work",
         "kind='qso' AND is_event=0 AND state!='archived'",
       ),
-      0,
+      1,
+      "the unresolved QRZ correction retains its source for review",
     );
   } finally {
     await h.mf.dispose();
   }
 });
-test("QRZ outage leaves LoTW corrections independent and visible for later QRZ recovery", async () => {
+test("historical QRZ remains read only across outages while LoTW corrections proceed independently", async () => {
   const h = await exportSchedulerFixture();
   try {
     await h.run(0);
+    const reads = h.calls.qrzReads;
     h.enable();
     h.errors.qrz = true;
     h.operation.grid = "FN32BB";
@@ -681,8 +696,15 @@ test("QRZ outage leaves LoTW corrections independent and visible for later QRZ r
     assert((await h.store.ledger(key("destination")))!.reason);
     h.errors.qrz = false;
     await h.run(41);
-    assert.equal(h.calls.qrzWrites, 1);
+    assert.equal(h.calls.qrzWrites, 0);
     assert.equal(h.calls.lotwUploads, 1);
+    assert.equal(h.calls.qrzReads, reads);
+    assert.equal(await count(h, "historical_associations"), 1);
+    assert.equal(await count(h, "attempts", "destination='destination'"), 0);
+    assert.equal(
+      (await h.store.ledger(key("destination")))!.reason,
+      "historical_association_read_only",
+    );
   } finally {
     await h.mf.dispose();
   }
@@ -1406,7 +1428,7 @@ test("read-only background history overlaps at most four contacts and preserves 
   }
 });
 
-test("twenty historical contacts share inventory and unchanged minute-time holds stay quiet", async () => {
+test("twenty minute-time contacts share inventory, QRZ associations stay read only and LoTW holds stay quiet", async (t) => {
   const h = await schedulerFixture();
   try {
     h.qrzRecords[0].TIME_ON = h.qrzRecords[0].TIME_ON!.slice(0, 4);
@@ -1432,11 +1454,21 @@ test("twenty historical contacts share inventory and unchanged minute-time holds
     assert.equal(first.errors, 0);
     assert.equal(first.contacts, 20);
     assert.equal(first.throughput?.classifiedDestinations, 40);
+    assert(
+      first.throughput!.reconciliationBatchCalls <= 190,
+      `initial reverse comparisons made ${first.throughput!.reconciliationBatchCalls} cohort RPCs`,
+    );
     assert.equal(first.throughput?.inventoryFetches, 3);
     assert((first.throughput?.inventoryCacheHits ?? 0) >= 38);
     assert.equal(h.calls.qrzReads, 2);
     assert.equal(h.calls.lotwQueries, 1);
-    assert.equal(await count(h, "ledger", "state='history_ambiguous'"), 40);
+    assert.equal(await count(h, "ledger", "state='history_ambiguous'"), 20);
+    assert.equal(await count(h, "ledger", "state='adopted_existing'"), 20);
+    assert.equal(await count(h, "historical_associations"), 20);
+    assert.equal(
+      await count(h, "destination_identity_claims", "vendor='qrz'"),
+      0,
+    );
     const reads = [h.calls.qrzReads, h.calls.lotwQueries];
     const next = await tick(h.env, h.fetcher, FIXTURE_NOW + 300000);
     assert.equal(next.contacts, 0);
@@ -1445,20 +1477,25 @@ test("twenty historical contacts share inventory and unchanged minute-time holds
       h.store.statement("UPDATE reconciliation_checks SET next_due_at=0"),
       h.store.statement("UPDATE reconciliation_work SET next_due_at=0"),
     ]);
-    // Source verification must not add per-contact proof reads for readable history.
+    // Source verification cannot promote historical associations to delivery.
     h.env.SOURCE_BOUNDARY_VERIFIED = "true";
     const warm = await tick(h.env, h.fetcher, FIXTURE_NOW + 600000);
     assert.equal(warm.contacts, 20);
     assert.equal(warm.errors, 0);
-    assert.equal(warm.throughput?.classifiedDestinations, 40);
-    assert.equal(warm.throughput?.inventoryCacheHits, 40);
+    assert.equal(warm.throughput?.classifiedDestinations, 20);
+    assert.equal(warm.throughput?.inventoryCacheHits, 20);
     assert.equal(warm.throughput?.inventoryFetches, 0);
     assert(
       warm.throughput!.reconciliationBatchCalls <= 30,
       `warm cohort made ${warm.throughput!.reconciliationBatchCalls} database RPCs`,
     );
+    t.diagnostic(
+      `minute cohort: first ${first.throughput!.reconciliationBatchCalls} cohort RPCs; warm ${warm.throughput!.reconciliationBatchCalls} cohort RPCs, ${warm.throughput!.database.calls} total RPCs`,
+    );
     assert.deepEqual([h.calls.qrzReads, h.calls.lotwQueries], reads);
-    assert.equal(await count(h, "ledger", "state='history_ambiguous'"), 40);
+    assert.equal(await count(h, "ledger", "state='history_ambiguous'"), 20);
+    assert.equal(await count(h, "ledger", "state='adopted_existing'"), 20);
+    assert.equal(await count(h, "historical_associations"), 20);
     assert.equal(await count(h, "attempts"), 0);
     assert.equal(h.calls.qrzWrites, 0);
     assert.equal(h.calls.lotwUploads, 0);
@@ -1528,15 +1565,16 @@ test("source changes during shared history cannot commit a stale association", a
   }
 });
 
-test("a stale source in a reconciliation cohort cannot overwrite or delay its newer work", async () => {
+test("unknown newer source identity holds QRZ siblings until canonical repair without overwriting due work", async () => {
   const h = await schedulerFixture();
   try {
     h.changes.operations.length = 0;
-    h.changes.qsos[0] = {
+    const current = {
       ...h.qso,
       operation: null,
       our: { stationCall: "W1AW", grid: "FN31AA", dxccCode: 291 },
     };
+    h.changes.qsos[0] = current;
     for (let index = 1; index < 4; index++) {
       const call = `K1COHORT${index}`;
       h.changes.qsos.push({
@@ -1576,8 +1614,24 @@ test("a stale source in a reconciliation cohort cannot overwrite or delay its ne
       0,
     );
     assert.equal(
-      await count(h, "ledger", "qso!='q1' AND state='adopted_existing'"),
-      6,
+      await count(
+        h,
+        "ledger",
+        "qso!='q1' AND destination='lotw' AND state='adopted_existing'",
+      ),
+      3,
+    );
+    assert.equal(
+      await count(
+        h,
+        "ledger",
+        "qso!='q1' AND destination='destination' AND state='inventory_pending' AND remote_id IS NULL",
+      ),
+      3,
+    );
+    assert.equal(
+      await count(h, "source_historical_index", "qso='q1' AND dirty=1"),
+      1,
     );
     const newer = await h.store
       .statement(
@@ -1587,6 +1641,21 @@ test("a stale source in a reconciliation cohort cannot overwrite or delay its ne
     assert.equal(newer?.next_due_at, 0);
     assert.equal(await count(h, "reconciliation_checks", "qso='q1'"), 0);
     assert.equal(await count(h, "history_adoption_guards"), 0);
+    // An unknown new call/time cannot reuse the old opaque locality. Repair it
+    // through a real higher-stamp canonical page, never a manual index update.
+    h.changes.qsos.push({
+      ...current,
+      notes: "Updated source revision",
+      syncedAtMillis: 200,
+    });
+    const repaired = await tick(h.env, h.fetcher, FIXTURE_NOW + 5 * 60_000);
+    assert.equal(repaired.errors, 0);
+    assert.equal(await count(h, "source_historical_index", "dirty=1"), 0);
+    assert.equal(
+      await count(h, "ledger", "qso!='q1' AND state='adopted_existing'"),
+      6,
+    );
+    assert.equal(await count(h, "historical_associations"), 4);
     assert.equal(await count(h, "attempts"), 0);
     assert.equal(h.calls.qrzWrites, 0);
     assert.equal(h.calls.lotwUploads, 0);

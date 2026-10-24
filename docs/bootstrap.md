@@ -59,15 +59,46 @@ historical match must not inherit exact replacement or INSERT authority from
 that transition. Retain the original baseline, remote hash and actual remote
 identity separately from an exact outbound claim.
 
-Populate the opaque source comparison index incrementally from ordinary source
-projections. Fence coverage and competitor checks to the current account/policy,
-body incarnations, projected generation, route and all operation/event dependencies.
-Unindexed or stale possible competitors prevent adoption; bound unknown scopes
-where independently valid call/time evidence permits it. Recheck these facts with
-inventory provenance and ownership in the atomic association transaction. Do not
-scan every retained source ciphertext for each contact. Validate late arrivals,
-reverse-window competitors, stale context, cross-source collisions, legacy-worker
-overlap and edited associations before rollout.
+Build a weak source comparison index from the already-decrypted raw QSO's
+normalized worked call and UTC minute, using domain-separated, versioned HMAC keys
+without plaintext minute storage. These two inputs are independent of current
+operation/segment projection. Index all retained ordinary QSOs, regardless of work
+state; operation/event changes advance the comparison clock rather than rebuilding
+weak keys. Look up bounded candidate IDs across active source connections, then
+project only that cohort against its current operation/event context.
+
+Database-enforced dirty/coverage barriers and a tenant comparison clock must cover
+old-worker writes, source heads/bodies, policy/connection changes and key rotation.
+Publish keys only with an exact revision/body-incarnation CAS. Partial call-only,
+time-only and fully unknown scopes remain possible competitors. Overflow or an
+unprojectable relevant row cannot disappear from the uniqueness check. Distinguish
+an explicitly proven non-contact from an unknown projection failure.
+
+Atomic adoption must recheck the complete comparison, current body/dependency
+retention, inventory provenance and exclusive historical ownership. Clock equality
+alone cannot detect expiry caused only by elapsed time. This establishes uniqueness
+within current retained source coverage, not universal upstream completeness.
+Validate late arrivals, reverse-window competitors, stale context, cross-source
+collisions, legacy-worker overlap and edited associations before rollout.
+
+Implement the next QRZ association slice in four small commits:
+1. Add the weak index, incremental backfill and database-enforced dirty/coverage
+   barriers. Verify stale publication, interrupted backfill, old-worker writes,
+   relinking/key rotation and absence of plaintext call/time index values.
+2. Add bounded reverse-source comparison across active connections. Verify
+   competing arrivals, minute/midnight boundaries, current operation context,
+   unknown projections and indexed lookup bounds at 4,000/200,000 rows.
+3. Reserve book-scoped QRZ LOGIDs with durable association-only capability.
+   Enforce it during staging and dispatch, including direct SQL and old workers;
+   test concurrent claims, source edits and existing uncertain attempts.
+4. Wire reconciliation only after those guards exist, then advance its policy
+   version once. Require complete current coverage, unchanged comparison clock,
+   one candidate in each direction and atomic ownership acquisition. Verify zero
+   export attempts and preservation of original source/remote values.
+
+Keep the wider candidate policy dormant until these prerequisites pass. Extend
+LoTW's retained time coverage across UTC day/week boundaries before a separate
+LoTW adoption rollout; the QRZ slice does not establish that coverage.
 
 Two source UUIDs must not silently claim one remote record. Remote records without a source match remain untouched. Never fabricate source UUIDs for remote history or upload a marker merely to establish ownership.
 

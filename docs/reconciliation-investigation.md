@@ -2,6 +2,43 @@
 
 ## Precision matching investigation (2026-10-24)
 
+Signed revision `0dad1031507bde4798bedef68e12c582f3af1889` deployed at **2026-10-24 09:43 EDT**, Worker
+`6d745929-708d-40e3-bd00-d29c084185f3` at 100% traffic. All **1,373 tests** and required release checks
+passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40098125350).
+Independent version, HTTPS and asset checks confirm all **eight export controls
+closed**. All 31 migrations and 32 mandatory guards remain verified; no migration
+or vendor mutation occurred.
+
+Historical grid compatibility now accepts valid nested **2/4/6/8-character**
+regions for both QRZ and LoTW under the existing exact-identity, other-field and
+ownership checks. Original source and remote precision remain intact; new exports
+retain the most accurate supported source value. The separate published
+**±30-minute candidate policy** is implemented and tested, including primary-mode
+and LoTW mode-group comparisons, UTC precision, bounded inputs and unknown-data
+holds. It has no production reconciliation consumer and grants no adoption,
+absence, correction or export authority.
+
+The first completed run on this release ran **13:45:43–13:47:22 UTC**:
+84 contact turns, 113 destination
+classifications and 44 adoptions, with zero attempt turns,
+0 errors and 0 deferrals; it stopped at
+`deadline` after 98.845 seconds.
+The aggregate snapshot at `2026-10-24T13:47:30.260Z` records
+**1,360 LoTW adoptions** and
+1,360 retained destination claims, with all mapped
+LoTW identities covered. Export attempts, cutovers and temporary stage guards
+remain zero. Policy version 3 is active. These are read-only reconciliation
+measurements, not sustained capacity or completed cross-vendor contacts.
+
+Next: finish the bounded source comparison index, current source/remote uniqueness,
+durable historical ownership and association-only stage/dispatch restrictions.
+Extend LoTW retained coverage across UTC day/week boundaries before using the
+wider window for adoption. Then review actual identity/location conflicts and
+refresh exact source/vendor evidence for the separate export-readiness packet.
+Exports remain disabled; no first-write trial is authorized by this release.
+
+### Earlier matching correction release (ba8c982a)
+
 The matching corrections deployed read-only at **2026-10-24 08:51 EDT** as signed revision
 `ba8c982a0b67b97e354f1bcb4acc8efe50729097`, Worker `6b07bcf7-ac24-4bcb-abf4-be43766c8938` at 100% traffic.
 All **1,353 tests** and required release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40094384509).
@@ -21,6 +58,16 @@ deferrals remain; this sample does not establish sustained capacity. The 12:58:0
 snapshot has 479 LoTW adoptions and identity claims (up from 380), with no uncovered
 mapped identities, export attempts, cutovers or temporary stage guards. Matching
 policy version 2 is active. QRZ remains held for the separate association work.
+
+At **13:27:30 UTC**, the deployed version-2 matcher has reached **953 LoTW
+adoptions and durable identity claims**, up from the pre-release 380. The latest
+completed run classified 104 destinations and adopted 44 in 160 processing turns,
+with zero errors, deferrals or attempt turns; it stopped at the soft deadline.
+LoTW destination rows then comprised 2,380 ambiguous, 161 mismatched and 339 pending.
+QRZ had 3,420 ambiguous and 413 pending. All mapped LoTW identities were covered;
+export attempts, cutovers and temporary stage guards remained zero. These are
+read-only reconciliation outcomes, not completed cross-vendor contacts or
+sustained capacity. The broader candidate policy is not active in this snapshot.
 
 The 08:16 EDT production reason histogram identifies a systematic matching-policy
 problem. `history_ambiguous` combines competing identities with ordinary differences
@@ -112,14 +159,24 @@ next slice from same-minute-only matching to the published **±30-minute** windo
 | [LoTW logger reconciliation](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/) | Compare date/time, band and worked call; modes may have been mapped. ARRL suggests mode only when needed to resolve multiple local matches, without defining a local time tolerance. |
 | [eQSL confirmation](https://www.eqsl.cc/qslcard/FAQDisplay.cfm?Topic=1058)               | Its official FAQ permits time differences up to ±1 hour. This is a separate service's confirmation policy, not Ferry's selected window.                                              |
 
-Implement a historical-only ±30-minute candidate policy, including adjacent UTC
-dates and recorded minute intervals. Keep exact raw times and modes and require
-uniqueness in both source-to-remote and remote-to-source directions; no closest-time
+Desktop reconciliation is a distinct operation from a vendor confirmation.
+[DXKeeper's official manual](https://www.dxlabsuite.com/dxkeeper/Help/QSL.htm)
+uses same-minute starts plus matching calls, band and mode when applying downloaded
+LoTW confirmations to its own log. Its manual separately describes LoTW's
+30-minute cross-station window. This supports keeping candidate discovery,
+unique local association and exact upload identity as explicit separate contracts,
+rather than claiming every logger adopts any contact inside a common tolerance.
+
+The implemented historical-only ±30-minute candidate policy handles adjacent UTC
+dates and recorded minute intervals, retaining exact raw times and modes. It has
+no production reconciliation consumer. Automatic adoption still needs uniqueness
+in both source-to-remote and remote-to-source directions; no closest-time
 tie-break. Frequency, location detail and mode mapping are not interchangeable
-with durable upload identity. Report any supplied contradictory location field.
+with durable upload identity. Supplied contradictory location fields remain
+visible in candidate differences.
 The [ADIF grid definition](https://adif.org/316/ADIF_316.htm#GridSquare) permits
-2/4/6/8-character locators, so the next shared historical location helper includes
-valid two-character containing cells as well as the deployed 4/6/8 precision policy.
+2/4/6/8-character locators; the deployed shared historical helper now accepts
+compatible containing cells at each of those precisions for both QRZ and LoTW.
 New exports retain all supported source precision.
 
 The broader policy needs a bounded opaque source comparison index with current

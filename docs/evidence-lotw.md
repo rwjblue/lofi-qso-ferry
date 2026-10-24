@@ -1,6 +1,6 @@
 # LoTW actual-contact preflight evidence
 
-Updated **2026-10-24 08:51 EDT**. Production exports remain disabled. This page
+Updated **2026-10-24 09:43 EDT**. Production exports remain disabled. This page
 records an unsigned snapshot check and a later fresh query for one actual contact. The
 [signing evidence](evidence-signing.md) separately documents synthetic signatures,
 released TQSL source and local Worker compatibility; the
@@ -43,7 +43,7 @@ signature acceptance or ARRL processing.
 
 The eight-character grid belongs to this contact. Ferry preserves each contact's
 supported four-, six- or eight-character grid; this result imposes no
-eight-character requirement on other contacts. The deployed historical matcher now accepts valid nested 4/6/8-character grids
+eight-character requirement on other contacts. The deployed historical matcher now accepts valid nested 2/4/6/8-character grids
 for a unique exact contact identity when every other current comparison agrees.
 Both original grids and durable ownership remain intact. This association does
 not establish exact full-grid upload acceptance; strict readback remains separate.
@@ -192,3 +192,28 @@ LoTW association, exact decimal frequency conversion and valid numeric zone
 comparison are now available to normal reconciliation. Their policy version wakes
 held work once; the 2,858 grid and 87 artifact-related frequency counts describe
 the investigation cohorts, not a claim that every row has already reconciled.
+
+## Shared historical grid policy release
+
+Signed revision `0dad1031507bde4798bedef68e12c582f3af1889` deployed at **2026-10-24 09:43 EDT**, Worker
+`6d745929-708d-40e3-bd00-d29c084185f3` at 100% traffic. All **1,373 tests** and required release checks
+passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40098125350).
+Independent version, HTTPS and asset checks confirm all **eight export controls
+closed**. All 31 migrations and 32 mandatory guards remain verified; no migration
+or vendor mutation occurred.
+
+Historical grid compatibility now accepts valid nested **2/4/6/8-character**
+regions for both QRZ and LoTW under the existing exact-identity, other-field and
+ownership checks. Original source and remote precision remain intact; new exports
+retain the most accurate supported source value. The separate published
+**±30-minute candidate policy** is implemented and tested, including primary-mode
+and LoTW mode-group comparisons, UTC precision, bounded inputs and unknown-data
+holds. It has no production reconciliation consumer and grants no adoption,
+absence, correction or export authority.
+
+Next: finish the bounded source comparison index, current source/remote uniqueness,
+durable historical ownership and association-only stage/dispatch restrictions.
+Extend LoTW retained coverage across UTC day/week boundaries before using the
+wider window for adoption. Then review actual identity/location conflicts and
+refresh exact source/vendor evidence for the separate export-readiness packet.
+Exports remain disabled; no first-write trial is authorized by this release.

@@ -759,6 +759,39 @@ precision policy, exception review and the existing
 scoped canary authorization and observed results. Capacity work itself does not
 provide that authorization or evidence.
 
+## Historical comparison index prototype (2026-10-24)
+
+The first completed run of deployed revision `0dad1031` at 13:45:43–13:47:22 UTC
+processed 84 contact turns, classified 113 destinations and adopted 44, with zero
+errors, deferrals or attempt turns. It stopped at the deadline after 98.845
+seconds, reporting 419 D1 calls, 2,590 statements, 1,876,280 rows read and 97.938
+seconds of database wall time. This confirms continued read-only draining, while
+database work remains the main throughput limit; it does not validate sustained
+capacity or the not-yet-integrated comparison index below.
+
+A protected in-memory SQLite prototype seeded 200,000 synthetic source contacts,
+10,000 remote records, 10,000 operation versions and 100 coverage scopes. Candidate,
+reverse-competitor, dirty-context and unknown-scope queries used keyed index
+searches without a source-table or ciphertext scan. Warm local medians were
+0.0035–0.0050 ms, with 40–118 SQLite VM instructions for the tested lookups.
+Seven scenarios covered a unique pair, competing arrivals, body and context
+changes, localized unknown scope, incomplete coverage and overflow at 101 rows.
+The entire synthetic run took about 2.34 seconds and made no live calls or writes.
+
+This validates a bounded lookup shape, not production D1 latency or a complete
+200,000-contact import. The synthetic prototype retains timestamps for comparison;
+production still needs its privacy-preserving index representation, incremental
+backfill, old-worker invalidation, exact dependency/coverage fences, permanent
+historical ownership and atomic competitor rechecks. Measure construction cost,
+dense cohorts and real D1 binding/SQL work before claiming end-to-end capacity.
+Code review supports a smaller production index: projected worked call and time
+come only from raw QSO fields, so versioned HMAC call/minute keys can find a bounded
+cohort whose current contexts are then projected on demand. Operation changes
+invalidate a comparison clock without rebuilding those weak keys. Unknown or
+unprojectable competitors and elapsed retention expiry still require explicit
+holds and final transaction checks. No production implementation is claimed.
+See the [historical matching rollout](bootstrap.md#historical-association-and-vendor-matching).
+
 ## Platform constraints informing this plan
 
 [D1 batches](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch)

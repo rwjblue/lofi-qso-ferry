@@ -4,6 +4,43 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-24 UTC)
 
+Signed revision `0dad1031507bde4798bedef68e12c582f3af1889` deployed at **2026-10-24 09:43 EDT**, Worker
+`6d745929-708d-40e3-bd00-d29c084185f3` at 100% traffic. All **1,373 tests** and required release checks
+passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40098125350).
+Independent version, HTTPS and asset checks confirm all **eight export controls
+closed**. All 31 migrations and 32 mandatory guards remain verified; no migration
+or vendor mutation occurred.
+
+Historical grid compatibility now accepts valid nested **2/4/6/8-character**
+regions for both QRZ and LoTW under the existing exact-identity, other-field and
+ownership checks. Original source and remote precision remain intact; new exports
+retain the most accurate supported source value. The separate published
+**±30-minute candidate policy** is implemented and tested, including primary-mode
+and LoTW mode-group comparisons, UTC precision, bounded inputs and unknown-data
+holds. It has no production reconciliation consumer and grants no adoption,
+absence, correction or export authority.
+
+The first completed run on this release ran **13:45:43–13:47:22 UTC**:
+84 contact turns, 113 destination
+classifications and 44 adoptions, with zero attempt turns,
+0 errors and 0 deferrals; it stopped at
+`deadline` after 98.845 seconds.
+The aggregate snapshot at `2026-10-24T13:47:30.260Z` records
+**1,360 LoTW adoptions** and
+1,360 retained destination claims, with all mapped
+LoTW identities covered. Export attempts, cutovers and temporary stage guards
+remain zero. Policy version 3 is active. These are read-only reconciliation
+measurements, not sustained capacity or completed cross-vendor contacts.
+
+Next: finish the bounded source comparison index, current source/remote uniqueness,
+durable historical ownership and association-only stage/dispatch restrictions.
+Extend LoTW retained coverage across UTC day/week boundaries before using the
+wider window for adoption. Then review actual identity/location conflicts and
+refresh exact source/vendor evidence for the separate export-readiness packet.
+Exports remain disabled; no first-write trial is authorized by this release.
+
+### Earlier matching correction release (ba8c982a)
+
 **Priority update, 08:51 EDT:** matching corrections are deployed; finish the
 separate QRZ historical association policy before the first-export packet. The
 08:16 EDT investigation histogram
@@ -170,6 +207,8 @@ Timestamp/grid precision, routing and source-validity holds still require review
 
 Core feature paths, owner enrollment and service linking are implemented. The next milestone is a safe one- or two-user export trial; the full large-scale capacity plan follows separately. Production remains read-only. Linking credentials and waiting for cron do not establish export readiness. See the [personal acceptance checklist](docs/rollout-checklist.md) for exact prerequisites and the first-write packet.
 Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-character LoTW signing and the aggregate source audit are implemented, tested and deployed. Claims protect adoption, preparation and dispatch across cancellation, uncertainty, source edits and payload expiry. Historical precision holds and live vendor acceptance remain separate.
+
+The immediate matching priority is the four-commit [QRZ association rollout](docs/bootstrap.md#historical-association-and-vendor-matching): weak source index and completeness barrier, reverse-source comparison, durable LOGID ownership with association-only write restrictions, then guarded reconciliation integration. The shared grid policy is active; the wider ±30-minute candidate policy is implemented but has no production consumer. LoTW's wider adoption additionally needs retained coverage across UTC day/week boundaries. Finish these checks before treating the remaining ambiguity count as a manual exception queue.
 1. **Repeat per-contact source verification on the deployed release.** The production baseline,
    forward drain and quarantine handoff are complete: all 4,500 retained rows
    were witnessed, with 4,130 contacts eligible for reconciliation. The immutable
@@ -207,19 +246,20 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    bounded read path, with no events in its two-dependency closure. Refresh the exact contact's evidence
    before any future authorized write. Minute-only history,
    ambiguous associations and incompatible/unknown locations remain review holds.
-   Valid nested LoTW grids now use guarded historical association.
+   Valid nested QRZ/LoTW grids now use guarded historical association.
 4. **Prepare a trial packet; do not execute it under the current instruction.**
    The latest instruction to keep exports disabled supersedes the earlier one-
    or two-contact trial authorization. No actual trial may run until the owner
    changes that instruction and the remaining evidence checks pass.
    The proposed sequence remains QRZ first, then LoTW. Both contact and destination allowlists must be
-   exact, so LoTW remains excluded during QRZ work. A fresh protected production
-   SQL backup was verified at 11:48 UTC: isolated restore with all 30 then-installed
-   migrations, integrity/foreign-key checks, three credential decryptions and
-   repeated quarantine passed, preserving 380 claims and zero attempts/cutovers.
-   An isolated rehearsal preserved all 56 tables before production migration `0032`.
-   The backup itself remains a pre-migration snapshot. Preserve its evidence and
-   refresh it if needed before external changes. Earlier restore rehearsals
+   exact, so LoTW remains excluded during QRZ work. The protected 12:29 UTC
+   production backup contains the current 31-migration schema, all 4,500 source
+   bodies, 7,666 destination rows and the then-current 380 identity claims.
+   Isolated restore, integrity/foreign-key checks, all three credential decryptions
+   and repeated recovery quarantine passed. The 11:48 backup and pre-`0032`
+   rehearsal remain historical evidence. Preserve both snapshots and refresh the
+   backup before external changes if needed to capture subsequent adoptions.
+   Earlier restore rehearsals
    remain recorded in the deployment history. Preserve each contact's
    actual 4/6/8-character grid. No
    external logbook entry has been changed. Record exact readback and deployed

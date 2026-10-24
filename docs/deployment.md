@@ -2,26 +2,36 @@
 
 Verified 2026-10-24 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
 
-The matching corrections deployed read-only at **2026-10-24 08:51 EDT** as signed revision
-`ba8c982a0b67b97e354f1bcb4acc8efe50729097`, Worker `6b07bcf7-ac24-4bcb-abf4-be43766c8938` at 100% traffic.
-All **1,353 tests** and required release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40094384509).
-Independent readback confirms all eight export controls closed, healthy HTTPS
-and matching assets. There was no migration or vendor write. The grid-compatible
-LoTW association, exact decimal frequency conversion and valid numeric zone
-comparison are now available to normal reconciliation. Their policy version wakes
-held work once; the 2,858 grid and 87 artifact-related frequency counts describe
-the investigation cohorts, not a claim that every row has already reconciled.
+Signed revision `0dad1031507bde4798bedef68e12c582f3af1889` deployed at **2026-10-24 09:43 EDT**, Worker
+`6d745929-708d-40e3-bd00-d29c084185f3` at 100% traffic. All **1,373 tests** and required release checks
+passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40098125350).
+Independent version, HTTPS and asset checks confirm all **eight export controls
+closed**. All 31 migrations and 32 mandatory guards remain verified; no migration
+or vendor mutation occurred.
 
-Exports remain disabled. Finish historical matching work and refresh the exact
-source/vendor evidence before a future authorized QRZ-first acceptance trial.
+Historical grid compatibility now accepts valid nested **2/4/6/8-character**
+regions for both QRZ and LoTW under the existing exact-identity, other-field and
+ownership checks. Original source and remote precision remain intact; new exports
+retain the most accurate supported source value. The separate published
+**±30-minute candidate policy** is implemented and tested, including primary-mode
+and LoTW mode-group comparisons, UTC precision, bounded inputs and unknown-data
+holds. It has no production reconciliation consumer and grants no adoption,
+absence, correction or export authority.
+
+Next: finish the bounded source comparison index, current source/remote uniqueness,
+durable historical ownership and association-only stage/dispatch restrictions.
+Extend LoTW retained coverage across UTC day/week boundaries before using the
+wider window for adoption. Then review actual identity/location conflicts and
+refresh exact source/vendor evidence for the separate export-readiness packet.
+Exports remain disabled; no first-write trial is authorized by this release.
 
 | Resource                 | Current value                                                                                             |
 | ------------------------ | --------------------------------------------------------------------------------------------------------- |
 | Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                     |
 | Worker                   | `lofi-qso-ferry`, environment `production`                                                                |
-| Deployed source revision | `ba8c982a0b67b97e354f1bcb4acc8efe50729097`                                                                |
-| Worker version           | `6b07bcf7-ac24-4bcb-abf4-be43766c8938`, created `2026-10-24T12:51:25.857823Z`                             |
-| Deployment               | `35198e29-0360-40c6-b3fd-0346e6b7cb3d`, `2026-10-24T12:51:27.551001Z`, 100% of traffic                    |
+| Deployed source revision | `0dad1031507bde4798bedef68e12c582f3af1889`                                                                |
+| Worker version           | `6d745929-708d-40e3-bd00-d29c084185f3`, created `2026-10-24T13:43:36.432728Z`                             |
+| Deployment               | `ae41b017-a739-4dff-ab4d-ded6cb39164d`, `2026-10-24T13:43:37.374878Z`, 100% of traffic                    |
 | Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                             |
 | Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                          |
 | Migrations               | All 31 migrations through `0032_lotw_fresh_insert_authorization`; independently verified after deployment |
@@ -29,9 +39,23 @@ source/vendor evidence before a future authorized QRZ-first acceptance trial.
 | Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                      |
 | Schedule                 | `*/5 * * * *`                                                                                             |
 | Alternate origins        | workers.dev and version previews disabled                                                                 |
-| Artifact                 | 1,935.26 KiB raw / 376.54 KiB gzip; reported startup 24 ms                                                |
+| Artifact                 | 1,935.48 KiB raw / 376.63 KiB gzip; reported startup 32 ms                                                |
 
 The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
+
+## Vendor-matching release verification
+
+The first completed run on this release ran **13:45:43–13:47:22 UTC**:
+84 contact turns, 113 destination
+classifications and 44 adoptions, with zero attempt turns,
+0 errors and 0 deferrals; it stopped at
+`deadline` after 98.845 seconds.
+The aggregate snapshot at `2026-10-24T13:47:30.260Z` records
+**1,360 LoTW adoptions** and
+1,360 retained destination claims, with all mapped
+LoTW identities covered. Export attempts, cutovers and temporary stage guards
+remain zero. Policy version 3 is active. These are read-only reconciliation
+measurements, not sustained capacity or completed cross-vendor contacts.
 
 ## Matching release verification (2026-10-24, 12:51 UTC)
 
@@ -78,7 +102,7 @@ ROLLOUT_DESTINATION_IDS_JSON=[]
 - Session endpoint returns unauthenticated state with `signupAllowed=false`. The public landing shows an invite-only notice and passkey sign-in; the signup form is hidden. A live uninvited signup probe returned 403 before proof creation or sending.
 - Following the invitation link stays at `/join`, serves the app without the asset-canonicalization redirect, reveals invited enrollment and focuses its email field. Both confirmation inputs expose six-digit numeric/one-time-code attributes.
 - Remote settings independently confirm every closed gate, exact origin/RP, dedicated D1 and sender allowlist. Production local-mailbox and alternate workers.dev endpoints return 404. Email-content previews remain disabled, and no secrets were rotated.
-- The current release passes **1,353 tests** and all required checks in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40094384509).
+- The current release passes **1,373 tests** and all required checks in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40098125350).
 - Read-only remote D1 probes verified that the invite task must use query results, rather than bulk-file import summaries, to establish an exact email/deadline grant. Existing OAuth includes Email Sending write access. No real invitation grant/send was performed; CLI sends still require recipient-specific delivery confirmation.
 - The initial deployment delivered one real verification message to the owner's inbox through the same native provider path; only fixed delivery metadata was inspected. That smoke test enrolled no production account and initially observed zero account/connection/ledger/attempt rows. These are historical counts, not a claim about subsequent personal use. New branded mail was rendered/tested locally; email-client/device autofill remains unverified.
 

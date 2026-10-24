@@ -44,8 +44,23 @@ not write acceptance or standing permission to export.
    reviewed payload, execution window and at most one mutating transport
    attempt. No actual trial runs under the present keep-disabled instruction.
 
-The execution/recovery wrapper remains under preparation. A template or a
-successful read-only proof is not a completed trial packet.
+The protected operator packet now passes **22 native offline cases** for review,
+normal preparation/dispatch and stopped/uncertain outcomes. Its separate
+recovery verifier passes **21 lifecycle and isolated-restore cases**. Independent
+source, producer/consumer, protected-file and deterministic-bundle reviews found
+no material blocker. These local tools do not change the deployed scheduler or
+authorize a write.
+
+The SELECT-only payload review succeeded at **2026-10-24 22:36:54.773 UTC** for
+the same selected contact, using **52 D1 RPCs / 58 SQL statements**. It retained
+the exact record, serialized ADIF, template/book binding and hashes in protected
+local files, with all eight production controls closed before and after. It made
+no source/vendor request and created no attempt. Earlier binding changes stopped
+before saving a review; the later review explicitly re-read that same contact,
+without substituting another. Current context still needs the normal refresh,
+so its metadata/proof/readiness flags remain false. A specific owner instruction
+for the actual trial is pending. No vendor acknowledgement or readback acceptance
+has occurred.
 
 ## Acceptance after a separately authorized attempt
 

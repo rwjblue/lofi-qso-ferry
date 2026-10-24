@@ -1,10 +1,37 @@
 # LoTW actual-contact preflight evidence
 
-Updated **2026-10-24 09:43 EDT**. Production exports remain disabled. This page
+Updated **2026-10-24 18:37 EDT**. Production exports remain disabled. This page
 records an unsigned snapshot check and a later fresh query for one actual contact. The
 [signing evidence](evidence-signing.md) separately documents synthetic signatures,
 released TQSL source and local Worker compatibility; the
 [certificate checks](lotw-certificates.md) explain the preflight limits.
+
+## Current-release three-day diagnostic
+
+The separately reviewed exact-`f2c41cb3` packet passes **24 native offline cases**,
+strict types and formatting. A SELECT-only plan for the same contact succeeded
+at **22:28:02.816 UTC**: one unique route, complete ownership coverage with zero
+candidates, one locally date-valid certificate and full eight-character grid
+preservation. It used **35 D1 RPCs / 39 SQL statements**, made no vendor/source
+request and changed no row. An earlier stale binding held; the later plan
+explicitly re-read the same contact rather than silently changing its binding.
+
+At **22:30:58.466 UTC**, explicit verification stopped at the three-day-history
+phase. The normal coordinator had made one positive collection and one final
+drain, minted a proof at **22:30:50.081 UTC**, and passed the strict metadata
+audit for both routes. The run used **101 D1 RPCs / 131 SQL statements**, including
+ordinary proof/checkpoint and vendor-budget bookkeeping. Its raw LoTW request
+counter stayed **zero**: the local transport path stopped before a GET reached
+the vendor. The reported category is `unexpected_failure`; a separate diagnostic
+is tracing the local guard without changing its policy or bounds. The held run's
+final proof/readiness flags are false, and it establishes no three-day absence.
+
+All eight controls remained closed. No signing, preparation, attempt, upload or
+vendor mutation occurred. The verified **22:29:48.108 UTC** pre-run backup has
+36 migrations, all 3,327 exact ownership records, zero attempts/proofs/pins and
+two isolated quarantines. Certificate status, actual signing/upload acceptance
+and supported-projection readback remain separate requirements. This diagnostic
+does not delay the restricted QRZ first-insert trial.
 
 ## Unsigned snapshot check
 

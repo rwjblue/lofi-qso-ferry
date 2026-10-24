@@ -4,6 +4,22 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-24 UTC)
 
+### Export readiness at a glance
+
+| Work                            | Current state                                                                                       | Next acceptance evidence                                                                                        |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                                           |
+| Source comparison and ownership | Clean 4,146-contact index; all 9,981 ownership inputs covered at the recorded checkpoint            | Observe ongoing intake and sustained cost/throughput                                                            |
+| QRZ first-insert evidence       | Current-release source proof and complete empty neighborhood observed for one contact               | Renew normal evidence immediately before any separately authorized trial                                        |
+| QRZ delivery                    | Disabled; no vendor write acceptance claimed                                                        | One reviewed payload, durable recovery capture, at most one INSERT, exact acknowledged-record readback          |
+| LoTW delivery                   | Disabled; separate acceptance work                                                                  | Fresh three-day history, certificate/signing checks, upload/readback acceptance and populated-evidence recovery |
+| Broader rollout                 | Disabled                                                                                            | Accept the restricted QRZ trial, then explicitly approve destination scope and eligible older-contact backfill  |
+
+The next decision is the restricted QRZ trial described in
+[the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
+and source-wide cutovers remain separate work. Detailed dated observations below
+are evidence checkpoints, not a claim that every backlog item has been resolved.
+
 ### Current production — ownership bootstrap and deletion status (f2c41cb3)
 
 Signed revision `f2c41cb3a929ae3d3545e235894027b84fbf09fb` deployed read-only at
@@ -107,9 +123,16 @@ its own or a supported parent-grid center at recorded precision. The cause and
 vendor provenance remain unproved; user location-policy clarification is pending
 and contradictions remain held. See [QRZ evidence](docs/evidence-qrz.md).
 
-The remaining first-QRZ-write work is explicit owner authorization, a concrete
-single-attempt/stop/recovery procedure, fresh normal preparation evidence, and
-real acknowledgement plus exact readback acceptance. Follow the
+The concrete protected single-attempt/stop/recovery packet now passes 22 native
+offline cases and a separate 21-case recovery suite, with independent review.
+The same-contact SELECT-only payload capture succeeded at **22:36:54.773 UTC**;
+it grants no source-proof or write authority. The **22:29:48.108 UTC** backup
+verifies all 3,327 exact ownership records, 2,798 QRZ owners/markers, zero
+attempts and two isolated quarantines. A later LoTW diagnostic minted a proof
+but stopped before its raw vendor GET; three-day absence remains unverified.
+
+The remaining first-QRZ-write work is explicit owner authorization, fresh normal
+preparation evidence, and real acknowledgement plus exact readback acceptance. Follow the
 [restricted QRZ pilot guide](docs/qrz-pilot.md). **Keep exports disabled**
 is still the controlling instruction. Unrelated historical exceptions,
 currently empty raw-LoTW recovery and 200,000-contact capacity do not block that

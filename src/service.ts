@@ -793,7 +793,7 @@ export async function tick(
   const sources = (
     await store
       .statement(
-        "SELECT c.*,COALESCE(json_extract(p.cursor,'$.mode'),'backfill') AS sync_mode FROM connections c LEFT JOIN cursors p ON p.tenant=c.tenant AND p.connection=c.id AND p.stream='sync' WHERE c.kind='lofi' AND c.status='active' ORDER BY ROW_NUMBER() OVER(PARTITION BY COALESCE(json_extract(p.cursor,'$.mode'),'backfill') ORDER BY COALESCE(c.last_poll_at,0),c.tenant,c.id),CASE WHEN json_extract(p.cursor,'$.mode')='forward' THEN 0 ELSE 1 END,c.tenant,c.id",
+        "SELECT c.*,CASE WHEN p.source IS NOT NULL THEN 'forward' ELSE 'backfill' END AS sync_mode FROM connections c LEFT JOIN source_read_policy_ready p ON p.tenant=c.tenant AND p.source=c.id WHERE c.kind='lofi' AND c.status='active' ORDER BY ROW_NUMBER() OVER(PARTITION BY p.source IS NOT NULL ORDER BY COALESCE(c.last_poll_at,0),c.tenant,c.id),CASE WHEN p.source IS NOT NULL THEN 0 ELSE 1 END,c.tenant,c.id",
       )
       .all<Connection & { sync_mode: "backfill" | "forward" }>()
   ).results;
@@ -830,6 +830,8 @@ export async function tick(
       5 * 60_000,
     );
     if (!lease) return 0;
+    // The all-client baseline, forward drain and quarantine share background
+    // admission. A legacy forward cursor still needs that baseline first.
     const canonicalTurn =
       (source.sync_mode === "forward" ? "live" : "background") === priority;
     // Independent background admission can choose a forward source before
@@ -1167,7 +1169,11 @@ export async function tick(
           throughput.sourceRecords += page.records;
           result.sources += page.pages;
           progress += page.pages;
-          if (page.complete || page.pages === 0 || page.records === 0)
+          if (
+            page.complete ||
+            page.pages === 0 ||
+            (page.records === 0 && !page.policyProgress)
+          )
             completedPolls.add(sourceKey);
         } catch (error) {
           diagnostics.record(error, "source_poll", "lofi");

@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   type ContactObservation,
@@ -10,7 +9,7 @@ import {
 } from "../src/intake.ts";
 import { sourceFingerprint } from "../src/projection.ts";
 import { Store } from "../src/store.ts";
-import { database, seed } from "./helpers.ts";
+import { applyMigration, database, seed } from "./helpers.ts";
 
 const at = 1792684800000;
 const syncResponse = (qsos: unknown[], operations: unknown[] = []) =>
@@ -31,26 +30,10 @@ async function setup(count = 4) {
     "0009_vendor_requests.sql",
     "0010_source_priority.sql",
     "0018_reconciliation_work.sql",
-  ]) {
-    const sql = await readFile(
-      new URL(`../migrations/${file}`, import.meta.url),
-      "utf8",
-    );
-    let statement = "";
-    for (const line of sql.split("\n")) {
-      statement += `${line}\n`;
-      const trigger = statement.trimStart().startsWith("CREATE TRIGGER");
-      if (
-        line.trimEnd().endsWith(";") &&
-        (!trigger ||
-          line.trim() === "END;" ||
-          line.trimStart().startsWith("CREATE TRIGGER"))
-      ) {
-        await state.db.prepare(statement).run();
-        statement = "";
-      }
-    }
-  }
+    "0025_source_read_policy.sql",
+    "0026_source_read_guards.sql",
+  ])
+    await applyMigration(state.db, file);
   const { store } = state;
   await seed(store);
   await (
@@ -62,7 +45,7 @@ async function setup(count = 4) {
   ).run();
   await store
     .statement(
-      "UPDATE connections SET credential_version='v2',config=? WHERE tenant='a' AND id='source'",
+      "UPDATE connections SET credential_version='v2',remote_identity='account-1',config=? WHERE tenant='a' AND id='source'",
       JSON.stringify({ accountId: "account-1" }),
     )
     .run();
@@ -108,6 +91,9 @@ async function setup(count = 4) {
       ),
     now,
   );
+  // Complete the independent forward drain and quarantine before projection.
+  for (let pass = 0; pass < 2; pass++)
+    await pollSource(store, source, async () => syncResponse([]), now);
   if (count > 1)
     await rereadOperation(
       store,

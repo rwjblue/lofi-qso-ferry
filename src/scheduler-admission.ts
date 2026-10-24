@@ -16,7 +16,7 @@ export async function backgroundSources(
   return (
     await store
       .statement(
-        `SELECT c.*,COALESCE(json_extract(p.cursor,'$.mode'),'backfill') AS sync_mode,
+        `SELECT c.*,CASE WHEN p.source IS NOT NULL THEN 'forward' ELSE 'backfill' END AS sync_mode,
           a.last_turn AS account_turn,s.last_turn AS source_turn
          FROM scheduler_background_accounts a
          JOIN scheduler_background_sources s ON s.tenant=a.tenant AND s.source=(
@@ -26,7 +26,7 @@ export async function backgroundSources(
                AND l.scope='cycle:'||candidate.source AND l.expires_at>?)
            ORDER BY candidate.last_turn,candidate.source LIMIT 1)
          JOIN connections c ON c.tenant=s.tenant AND c.id=s.source
-         LEFT JOIN cursors p ON p.tenant=c.tenant AND p.connection=c.id AND p.stream='sync'
+         LEFT JOIN source_read_policy_ready p ON p.tenant=c.tenant AND p.source=c.id
          WHERE a.eligible=1
          ORDER BY a.last_turn,a.tenant LIMIT ?`,
         now,

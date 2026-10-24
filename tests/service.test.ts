@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { serializeAdifRecord } from "../src/adif.ts";
 import { tick } from "../src/service.ts";
-import { seed } from "./helpers.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
-import { schedulerFixture, FIXTURE_NOW } from "./runtime-fixtures.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
+import { seed } from "./helpers.ts";
+import { FIXTURE_NOW, schedulerFixture } from "./runtime-fixtures.ts";
+
 const key = (destination: string) => ({
   tenant: "a",
   source: "source",
@@ -31,7 +32,7 @@ test("scheduler refreshes certificate status without downloading trust roots", a
     };
     const first = await tick(h.env, fetcher, FIXTURE_NOW);
     assert.equal(first.errors, 0);
-    assert.equal(h.calls.sourceSync, 1);
+    assert.equal(h.calls.sourceSync, 3); // Baseline, forward drain, quarantine handoff.
     const connection = (await h.store.connections("a")).find(
       (item) => item.kind === "lotw",
     )!;
@@ -68,7 +69,7 @@ test("an idle drain polls a completed source and processes each contact only onc
     assert.equal(result.errors, 0);
     assert.equal(result.contacts, 1);
     assert.equal(result.attempts, 0);
-    assert.equal(h.calls.sourceSync, 1);
+    assert.equal(h.calls.sourceSync, 3);
     assert.equal(h.calls.reread, 1);
     assert.equal(h.calls.qrzReads, 2); // Shared base inventory plus modification catch-up.
     assert.equal(h.calls.lotwQueries, 1);
@@ -227,9 +228,16 @@ test("one invocation resumes incomplete source pages and stops polling at comple
       if (new URL(String(input)).pathname !== "/v1/sync")
         return h.fetcher(input, init);
       pages++;
-      assert(pages <= 2);
+      assert(pages <= 4);
       const body = JSON.parse(String(init?.body));
       if (pages === 2) assert.equal(body.meta.sync.qsos.cursor, "page-two");
+      if (pages > 2)
+        return Response.json({
+          account: { uuid: "account-fixture" },
+          operations: [],
+          qsos: [],
+          meta: { operations: { records_left: 0 }, qsos: { records_left: 0 } },
+        });
       return Response.json({
         account: { uuid: "account-fixture" },
         operations: [],
@@ -256,7 +264,7 @@ test("one invocation resumes incomplete source pages and stops polling at comple
     assert.equal(result.errors, 0);
     assert.equal(result.contacts, 2);
     assert(result.rounds > 1);
-    assert.equal(pages, 2);
+    assert.equal(pages, 4); // Two baseline pages, then drain and quarantine.
     assert.equal(h.calls.reread, 0);
   } finally {
     await h.mf.dispose();
@@ -305,7 +313,7 @@ test("failed operation context reads yield the invocation instead of spinning", 
     assert.equal(result.stopReason, "idle");
     assert.equal(result.errors, 1);
     assert.equal(result.contacts, 0);
-    assert.equal(h.calls.sourceSync, 1);
+    assert.equal(h.calls.sourceSync, 3);
     assert.equal(h.calls.reread, 1);
   } finally {
     wallClock.mock.restore();
@@ -325,13 +333,15 @@ test("the wall-time deadline stops a drain before starting more vendor work", as
     const result = await tick(h.env, slowSource, FIXTURE_NOW);
     assert.equal(result.stopReason, "deadline");
     assert.equal(result.elapsedMs, 90_001);
-    assert.equal(result.errors, 0);
+    assert.equal(result.errors, 1); // The response outlived its source lease.
     assert.equal(result.contacts, 0);
     assert.equal(result.attempts, 0);
     assert.equal(h.calls.sourceSync, 1);
     assert.equal(h.calls.reread, 0);
     assert.equal(h.calls.qrzReads, 0);
     assert.equal(h.calls.lotwQueries, 0);
+    assert.equal(await count(h, "source_work"), 0);
+    assert.equal(await count(h, "source_read_policy_ready"), 0);
   } finally {
     wallClock.mock.restore();
     await h.mf.dispose();
@@ -351,6 +361,11 @@ test("retained background history reconciles after source polling and before a s
     assert.equal(initial.contacts, 1);
     h.errors.qrz = false;
     h.errors.lotw = false;
+    // Select the retained-first lane explicitly; baseline phases also rotate
+    // background admission, so their count must not choose this test's lane.
+    await h.store
+      .statement("DELETE FROM cursors WHERE stream='scheduler:background'")
+      .run();
     await h.store
       .statement(
         "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) VALUES('a','source','rescan:destination',?,0,?)",
@@ -399,7 +414,7 @@ test("retained background history reconciles after source polling and before a s
     ]);
     assert.equal(result.stopReason, "deadline");
     assert.equal(result.elapsedMs, 90_001);
-    assert.equal(result.errors, 0);
+    assert.equal(result.errors, 1); // Expired rescan lease cannot commit a page.
     assert.equal(result.contacts, 1);
     assert.equal(result.attempts, 0);
     assert.equal(h.calls.reread, 1);
@@ -839,7 +854,7 @@ test("new forward arrivals precede historical reconciliation, even with old QSO 
     assert.equal(first.contacts, 11);
     assert(first.rounds > 1);
     assert.equal(first.stopReason, "idle");
-    assert.equal(h.calls.sourceSync, 1);
+    assert.equal(h.calls.sourceSync, 3);
     h.changes.qsos.push({
       ...h.qso,
       uuid: "offline-new",
@@ -1157,8 +1172,9 @@ test("expired history resumes through background repair without resetting forwar
     const restored: typeof fetch = async (input, init) => {
       if (new URL(String(input)).pathname === "/v1/sync") {
         const body = JSON.parse(String(init?.body));
-        if (body.meta.sync.qsos.anyClient) {
+        if ("syncedUntilMillis" in body.meta.sync.qsos) {
           repairs++;
+          assert.equal(body.meta.sync.qsos.anyClient, true);
           assert.equal(body.meta.sync.qsos.limit, 25);
           return Response.json({
             account: { uuid: "account-fixture" },
@@ -1671,7 +1687,7 @@ test("background lanes rotate across deadlines and failures while source polling
     ).run();
     await h.store
       .statement(
-        "INSERT INTO source_work(tenant,source,id,kind,private_id,revision,expires_at,priority) VALUES('a','source','op-pending','operation','pending-context','synthetic-operation-revision',?,'background')",
+        "INSERT INTO source_work(tenant,source,id,kind,private_id,revision,expires_at,priority,policy_seen_epoch) VALUES('a','source','op-pending','operation','pending-context','synthetic-operation-revision',?,'background',(SELECT epoch FROM source_read_policies WHERE tenant='a' AND source='source'))",
         FIXTURE_NOW + 86_400_000,
       )
       .run();
@@ -1707,9 +1723,9 @@ test("background lanes rotate across deadlines and failures while source polling
       assert.equal(result.stopReason, "deadline");
       assert.equal(result.exportsEnabled, false);
       assert.equal(result.contacts, index === 0 ? 1 : 0);
-      assert.equal(result.errors, index === 0 ? 1 : 0);
-      assert.equal(result.throughput?.rescanPages, index === 1 ? 1 : 0);
-      assert.equal(result.throughput?.rereadPages, index === 2 ? 1 : 0);
+      assert.equal(result.errors, 1);
+      assert.equal(result.throughput?.rescanPages, 0);
+      assert.equal(result.throughput?.rereadPages, 0);
       const turn = await h.store
         .statement(
           "SELECT generation,cursor FROM cursors WHERE tenant='a' AND connection='source' AND stream='scheduler:background'",
@@ -1717,6 +1733,27 @@ test("background lanes rotate across deadlines and failures while source polling
         .first<{ generation: number; cursor: string }>();
       assert.deepEqual(turn, { generation: index + 1, cursor: "{}" });
     }
+    assert.equal(
+      await count(h, "source_work", "id='op-pending' AND state='context'"),
+      0,
+      "the expired reread cannot publish context",
+    );
+    wall = FIXTURE_NOW + 20 * 60_000;
+    const recovered = await tick(
+      h.env,
+      async (input, init) => {
+        if (
+          new URL(String(input)).pathname === "/v1/operations/op-pending/qsos"
+        )
+          return Response.json({
+            qsos: [],
+            meta: { qsos: { records_left: 0 } },
+          });
+        return h.fetcher(input, init);
+      },
+      wall,
+    );
+    assert.equal(recovered.errors, 0);
     assert.equal(
       await count(h, "source_work", "id='op-pending' AND state='context'"),
       1,
@@ -1831,7 +1868,7 @@ test("a slow forward-source background batch cannot strand a paired account's in
     ).run();
     await h.store
       .statement(
-        "UPDATE connections SET credential_version='import-source',config=? WHERE tenant='b' AND id='source'",
+        "UPDATE connections SET credential_version='import-source',remote_identity='account-import',config=? WHERE tenant='b' AND id='source'",
         JSON.stringify({ accountId: "account-import" }),
       )
       .run();
@@ -1902,7 +1939,8 @@ test("a slow forward-source background batch cannot strand a paired account's in
     const second = await tick(h.env, transport, wall);
     assert.deepEqual(phases, ["forward-poll", "import-poll"]);
     assert.equal(second.stopReason, "deadline");
-    assert.equal(second.sources, 2);
+    assert.equal(second.sources, 1); // Only the forward page committed.
+    assert.equal(second.errors, 1); // The admitted import exceeded its lease.
     assert.equal(
       (
         await h.store
@@ -1911,7 +1949,7 @@ test("a slow forward-source background batch cannot strand a paired account's in
           )
           .first<{ mode: string }>()
       )?.mode,
-      "forward",
+      "backfill",
     );
     assert.equal(first.exportsEnabled, false);
     assert.equal(second.exportsEnabled, false);
@@ -1946,7 +1984,8 @@ test("slow failed background imports yield to every account across fresh invocat
       ).run();
       await h.store
         .statement(
-          "UPDATE connections SET credential_version='import-source',config=? WHERE tenant=? AND id='source'",
+          "UPDATE connections SET credential_version='import-source',remote_identity=?,config=? WHERE tenant=? AND id='source'",
+          `account-${tenant}`,
           JSON.stringify({ accountId: `account-${tenant}` }),
           tenant,
         )
@@ -1986,7 +2025,10 @@ test("slow failed background imports yield to every account across fresh invocat
       ],
     );
     assert.equal(await count(h, "attempts"), 0);
-    assert.equal(await count(h, "cursors", "stream='sync'"), 0);
+    assert.equal(await count(h, "cursors", "stream='sync'"), 3);
+    assert.equal(await count(h, "source_read_policies", "phase='backfill'"), 3);
+    assert.equal(await count(h, "source_read_policy_ready"), 0);
+    assert.equal(await count(h, "source_work"), 0);
     assert.equal(h.calls.qrzWrites + h.calls.lotwUploads, 0);
   } finally {
     wallClock.mock.restore();
@@ -1998,12 +2040,6 @@ test("an independently admitted forward source is refreshed once before its late
   const h = await schedulerFixture();
   try {
     await tick(h.env, h.fetcher, FIXTURE_NOW);
-    const cursor = await h.store
-      .statement(
-        "SELECT cursor FROM cursors WHERE tenant='a' AND connection='source' AND stream='sync'",
-      )
-      .first<{ cursor: string }>();
-    assert(cursor);
     for (const tenant of ["b", "c"]) {
       await seed(h.store, tenant);
       await (
@@ -2021,33 +2057,13 @@ test("an independently admitted forward source is refreshed once before its late
       ).run();
       await h.store
         .statement(
-          "UPDATE connections SET credential_version='forward-source',config=? WHERE tenant=? AND id='source'",
+          "UPDATE connections SET credential_version='forward-source',remote_identity=?,config=? WHERE tenant=? AND id='source'",
+          `account-${tenant}`,
           JSON.stringify({ accountId: `account-${tenant}` }),
           tenant,
         )
         .run();
-      await h.store
-        .statement(
-          "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) VALUES(?,'source','sync',?,1,?)",
-          tenant,
-          JSON.stringify({
-            ...JSON.parse(cursor.cursor),
-            accountId: `account-${tenant}`,
-          }),
-          FIXTURE_NOW,
-        )
-        .run();
     }
-    await h.store
-      .statement(
-        "UPDATE connections SET last_poll_at=CASE tenant WHEN 'a' THEN 0 WHEN 'b' THEN 1 ELSE 2 END WHERE kind='lofi'",
-      )
-      .run();
-    await h.store
-      .statement(
-        "UPDATE scheduler_background_accounts SET last_turn=CASE tenant WHEN 'c' THEN 0 ELSE 1 END",
-      )
-      .run();
     const visited: string[] = [];
     const transport: typeof fetch = async (input, init) => {
       if (new URL(String(input)).pathname === "/v1/sync") {
@@ -2067,7 +2083,27 @@ test("an independently admitted forward source is refreshed once before its late
       }
       return h.fetcher(input, init);
     };
-    const result = await tick(h.env, transport, FIXTURE_NOW + 300_000);
+    // Complete each independent source's real tagged baseline before measuring
+    // the established-forward scheduling order. A copied cursor is not proof.
+    // Six baseline/drain/handoff reads for b+c span two shared background
+    // budget windows; none of this fixture setup may bypass that admission.
+    for (const offset of [300_000, 600_000]) {
+      const baseline = await tick(h.env, transport, FIXTURE_NOW + offset);
+      assert.equal(baseline.errors, 0);
+    }
+    assert.equal(await count(h, "source_read_policy_ready"), 3);
+    visited.length = 0;
+    await h.store
+      .statement(
+        "UPDATE connections SET last_poll_at=CASE tenant WHEN 'a' THEN 0 WHEN 'b' THEN 1 ELSE 2 END WHERE kind='lofi'",
+      )
+      .run();
+    await h.store
+      .statement(
+        "UPDATE scheduler_background_accounts SET last_turn=CASE tenant WHEN 'c' THEN 0 ELSE 1 END",
+      )
+      .run();
+    const result = await tick(h.env, transport, FIXTURE_NOW + 900_000);
     assert.equal(result.stopReason, "idle");
     assert.equal(result.errors, 0);
     assert.equal(result.sources, 3);

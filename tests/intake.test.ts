@@ -22,7 +22,8 @@ import { purgeResolvedSource } from "../src/maintenance.ts";
 import { sourceFingerprint } from "../src/projection.ts";
 import { adoptHistory } from "../src/reconcile.ts";
 import { seal } from "../src/security.ts";
-import { Store } from "../src/store.ts";
+import { sourceReadPolicy } from "../src/source-read-policy.ts";
+import { type Connection, Store } from "../src/store.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
 
@@ -103,6 +104,8 @@ async function setup() {
       "0018_reconciliation_work.sql",
       "0023_outbound_identity_claims.sql",
       "0024_identity_mapping_overlap.sql",
+      "0025_source_read_policy.sql",
+      "0026_source_read_guards.sql",
     ])
       await applyMigration(state.db, file);
   } catch (error) {
@@ -119,7 +122,7 @@ async function setup() {
   ).run();
   await state.store
     .statement(
-      "UPDATE connections SET credential_version='v2',config=? WHERE tenant='a' AND id='source'",
+      "UPDATE connections SET credential_version='v2',remote_identity='account-1',config=? WHERE tenant='a' AND id='source'",
       JSON.stringify({ accountId: "account-1" }),
     )
     .run();
@@ -139,6 +142,57 @@ async function work(
       kind,
     )
     .first<Work & { processed_at: number }>();
+}
+
+/** Seed one actual historical page in the fixture preparation vendor window. */
+function pollBaselinePage(
+  store: Store,
+  source: Connection,
+  fetcher: typeof fetch,
+  now: number,
+) {
+  return pollSource(store, source, fetcher, now, "sync", now - 300_000);
+}
+
+/** Complete actual forward drain/quarantine after the fixture's first full page.
+ * All setup reads use a separate vendor window; checkpoint and lease times
+ * stay coherent with the scenario, and measured actions retain their own budget.
+ */
+async function finishBaseline(
+  store: Store,
+  source: Connection,
+  now: number,
+  setupVendorNow = now - 300_000,
+) {
+  for (let page = 0; page < 3; page++) {
+    const policy = await sourceReadPolicy(store, source.tenant, source.id);
+    assert.ok(policy, "fixture must first observe a canonical source page");
+    if (policy.phase === "ready") return;
+    assert.notEqual(
+      policy.phase,
+      "backfill",
+      "do not invent missing baseline pages",
+    );
+    await pollSource(
+      store,
+      source,
+      async (_input, init) => {
+        const body = JSON.parse(String(init?.body));
+        for (const side of [body.meta.sync.operations, body.meta.sync.qsos]) {
+          assert.equal(side.anyClient, true);
+          assert.equal(side.limit, 25);
+        }
+        return response([], []);
+      },
+      now,
+      "sync",
+      setupVendorNow,
+    );
+  }
+  assert.equal(
+    (await sourceReadPolicy(store, source.tenant, source.id))?.phase,
+    "ready",
+  );
 }
 
 function countedStore(store: Store) {
@@ -205,12 +259,13 @@ test("observations batch fresh contact metadata and preserve adopted narrative a
   const destinations = (await store.connections("a")).filter(
     (destination) => destination.kind !== "lofi",
   );
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     async () => response([], [{ ...loose, notes: "original source notes" }]),
     now,
   );
+  await finishBaseline(store, source, now);
   const [first] = await pendingContacts(store, source, 40, now + 1);
   assert.ok(first);
   const measured = countedStore(store);
@@ -291,12 +346,13 @@ test("synced test operations remain retained without destination work while ordi
     uuid: `test-qso-${index}`,
     operation: operation.uuid,
   }));
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     async () => response(operations, [...tests, loose]),
     now,
   );
+  await finishBaseline(store, source, now);
   for (let index = 0; index < operations.length; index++)
     await rereadOperation(
       store,
@@ -384,7 +440,13 @@ test("operation test edits cancel only prepared attempts and restoration preserv
   t.after(() => mf.dispose());
   const states = ["prepared", "submitted", "uncertain", "delivered"] as const;
   const records = states.map((status) => ({ ...qso, uuid: `qso-${status}` }));
-  await pollSource(store, source, async () => response([op], records), now);
+  await pollBaselinePage(
+    store,
+    source,
+    async () => response([op], records),
+    now,
+  );
+  await finishBaseline(store, source, now);
   await rereadOperation(
     store,
     source,
@@ -564,12 +626,13 @@ test("test segments suppress only their interval and a segment edit releases ret
     uuid: "event-reset",
     startAtMillis: at + 1000,
   };
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     async () => response([op], [...records, testBoundary, reset]),
     now,
   );
+  await finishBaseline(store, source, now);
   await rereadOperation(
     store,
     source,
@@ -629,7 +692,7 @@ test("test classification migration revisits retained holds and guards already c
     "test",
     "processed",
   ];
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     async () =>
@@ -643,6 +706,7 @@ test("test classification migration revisits retained holds and guards already c
       ),
     now,
   );
+  await finishBaseline(store, source, now);
   await store
     .statement(
       "UPDATE source_work SET state='blocked',reason='old projection hold' WHERE kind='qso'",
@@ -742,15 +806,16 @@ test("page intake RPC counts stay bounded for polling, replay and operation rere
     syncedAtMillis: 200 + index,
   }));
   const measured = countedStore(store);
-  await pollSource(
+  await pollBaselinePage(
     measured.store,
     source,
     async () => response([op], contacts),
     now,
   );
+  await finishBaseline(store, source, now);
   t.diagnostic(`polling 26 records: ${measured.calls.length} database calls`);
-  assert.equal(measured.calls.length, 7);
-  assert.equal(measured.calls.filter((c) => c.method === "batch").length, 1);
+  assert.equal(measured.calls.length, 8);
+  assert.equal(measured.calls.filter((c) => c.method === "batch").length, 2);
   assert.equal(
     measured.calls.filter((c) => c.sql?.includes("AS replay_resolved")).length,
     1,
@@ -763,7 +828,7 @@ test("page intake RPC counts stay bounded for polling, replay and operation rere
     now + 1,
   );
   t.diagnostic(`rereading 25 records: ${measured.calls.length} database calls`);
-  assert.equal(measured.calls.length, 9);
+  assert.equal(measured.calls.length, 10);
   await store
     .statement(
       "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,baseline_hash,state,due_at,updated_at) SELECT tenant,source,id,'destination','g','h','h','adopted_existing',0,0 FROM source_work WHERE kind='qso'",
@@ -812,12 +877,13 @@ test("retained batches share operation ciphertext reads while preserving complet
     ...qso,
     uuid: `bulk-${index}`,
   }));
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     async () => response([op], [...contacts, boundary]),
     now,
   );
+  await finishBaseline(store, source, now);
   await rereadOperation(
     store,
     source,
@@ -854,7 +920,7 @@ test("retained batches share operation ciphertext reads while preserving complet
         .first<{ version: number }>()
     )?.version,
   );
-  assert.equal(measured.calls.length, 5);
+  assert.equal(measured.calls.length, 6);
   assert.equal(measured.calls.filter((c) => c.method === "batch").length, 1);
   assert.equal(
     measured.calls.filter((c) =>
@@ -867,7 +933,8 @@ test("retained batches share operation ciphertext reads while preserving complet
 test("full forward pages prefetch bounded metadata without splitting the atomic checkpoint", async (t) => {
   const { store, source, now, mf } = await setup();
   t.after(() => mf.dispose());
-  await pollSource(store, source, async () => response([], []), now);
+  await pollBaselinePage(store, source, async () => response([], []), now);
+  await finishBaseline(store, source, now);
   const operations = Array.from({ length: 100 }, (_, index) => ({
     ...op,
     uuid: `operation-${index}`,
@@ -889,14 +956,14 @@ test("full forward pages prefetch bounded metadata without splitting the atomic 
     now + 1,
   );
   assert.equal(result.records, 200);
-  assert.equal(measured.calls.length, 8);
+  assert.equal(measured.calls.length, 9);
   assert.equal(
     measured.calls.filter((c) => c.sql?.includes("AS replay_resolved")).length,
     2,
   );
   const checkpoints = measured.calls.filter((c) => c.method === "batch");
   assert.equal(checkpoints.length, 1);
-  assert.equal(checkpoints[0].statements, 1307);
+  assert.equal(checkpoints[0].statements, 1308);
   t.diagnostic(
     `full forward page: ${measured.calls.length} database calls, ${checkpoints[0].statements} statements in one atomic checkpoint`,
   );
@@ -906,7 +973,8 @@ test("prefetched replay resolution remains destination specific and rejects unre
   const state = await setup();
   const { store, source, now, mf } = state;
   t.after(() => mf.dispose());
-  await pollSource(store, source, async () => response([], [loose]), now);
+  await pollBaselinePage(store, source, async () => response([], [loose]), now);
+  await finishBaseline(store, source, now);
   await store
     .statement(
       "INSERT INTO connections(tenant,id,kind,remote_identity,label,created_at) VALUES('a','other','qrz','other','other',0)",
@@ -1154,7 +1222,8 @@ test("page metadata and retained ciphertext reads stay tenant scoped for collidi
       now + 60000,
     )
     .run();
-  await pollSource(store, source, async () => response([], [loose]), now);
+  await pollBaselinePage(store, source, async () => response([], [loose]), now);
+  await finishBaseline(store, source, now);
   const local = await work(state, "loose-1");
   const body = await store.private("a", "source", local!.private_id, "source");
   await (
@@ -1205,7 +1274,7 @@ test("general-log station migration requeues only retained projection holds with
     "wrong-payload-kind",
     "wrong-payload-connection",
   ];
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     async () =>
@@ -1219,6 +1288,7 @@ test("general-log station migration requeues only retained projection holds with
       ),
     now,
   );
+  await finishBaseline(store, source, now);
   await store
     .statement(
       "UPDATE source_work SET state='blocked',reason='missing_or_ambiguous_station_call',processed_at=? WHERE kind='qso'",
@@ -1307,7 +1377,13 @@ test("source polls and operation rereads retain renewed bearers after success, f
       await t.test(`${read}: ${outcome}`, async (t) => {
         const { store, source, now, mf } = await setup();
         t.after(() => mf.dispose());
-        await pollSource(store, source, async () => response([op], []), now);
+        await pollBaselinePage(
+          store,
+          source,
+          async () => response([op], []),
+          now,
+        );
+        await finishBaseline(store, source, now);
         const at = Math.floor(now / 300_000) * 300_000 + 300_001;
         if (outcome === "deferred")
           await store
@@ -1427,7 +1503,13 @@ test("late source renewals cannot overwrite a concurrent renewal or changed conn
       await t.test(`${read}: ${change}`, async (t) => {
         const { store, source, now, mf } = await setup();
         t.after(() => mf.dispose());
-        await pollSource(store, source, async () => response([op], []), now);
+        await pollBaselinePage(
+          store,
+          source,
+          async () => response([op], []),
+          now,
+        );
+        await finishBaseline(store, source, now);
         const at = Math.floor(now / 300_000) * 300_000 + 300_001;
         const readEnvelope = () =>
           store
@@ -1508,6 +1590,8 @@ test("late source renewals cannot overwrite a concurrent renewal or changed conn
             : rereadOperation(store, source, pages, at);
         if (change === "replacement" || change === "revocation")
           await assert.rejects(pending, /source connection changed/);
+        else if (change === "identity" && read === "poll")
+          await assert.rejects(pending, /source policy cursor changed/);
         else await pending;
         assert.equal((await readEnvelope())?.envelope, expected);
         if (change === "replacement")
@@ -1543,7 +1627,7 @@ test("contact batches count invalid selections and exclude work already handled 
     ),
     { contacts: [], selected: 0 },
   );
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     fetcher(async () =>
@@ -1557,6 +1641,7 @@ test("contact batches count invalid selections and exclude work already handled 
     ),
     now,
   );
+  await finishBaseline(store, source, now);
   const first = await pendingContactBatch(
     store,
     source,
@@ -1625,7 +1710,7 @@ test("contact turns prefer ready retained context over older operation holds wit
       };
       const held = { ...qso, uuid: "b-held", operation: "z-pending" };
       const general = { ...loose, uuid: "zz-general" };
-      await pollSource(
+      await pollBaselinePage(
         store,
         source,
         async () =>
@@ -1639,6 +1724,7 @@ test("contact turns prefer ready retained context over older operation holds wit
           ),
         now,
       );
+      await finishBaseline(store, source, now);
       await rereadOperation(
         store,
         source,
@@ -1720,12 +1806,13 @@ test("ready-context ordering preserves live precedence, explicit selection and i
   const { store, source, now, mf } = state;
   t.after(() => mf.dispose());
   const held = { ...qso, uuid: "a-live-held" };
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     async () => response([op], [held, loose]),
     now,
   );
+  await finishBaseline(store, source, now);
   await store
     .statement("UPDATE source_work SET priority='live' WHERE id='a-live-held'")
     .run();
@@ -1770,7 +1857,8 @@ test("ready-only contact selection leaves operation holds available for same-dra
   const state = await setup();
   const { store, source, now, mf } = state;
   t.after(() => mf.dispose());
-  await pollSource(store, source, async () => response([op], [qso]), now);
+  await pollBaselinePage(store, source, async () => response([op], [qso]), now);
+  await finishBaseline(store, source, now);
   assert.deepEqual(
     await pendingContactBatch(
       store,
@@ -1813,12 +1901,13 @@ test("finishing an operation reread releases context-blocked contacts from every
   const { store, source, now, mf } = state;
   t.after(() => mf.dispose());
   const earlier = { ...qso, uuid: "qso-earlier", syncedAtMillis: 90 };
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     fetcher(async () => response([op], [qso, earlier])),
     now,
   );
+  await finishBaseline(store, source, now);
   assert.deepEqual(await pendingContacts(store, source, 40, now + 1), []);
   for (const contact of [qso, earlier]) {
     const row = await work(state, String(contact.uuid));
@@ -1873,7 +1962,8 @@ test("historical pages stay small while forward arrivals and edits retain live p
     });
   const historical = { ...loose, uuid: "a-history" };
   const edited = { ...loose, uuid: "z-edited", startAtMillis: at - 86400_000 };
-  await pollSource(store, source, page([historical, edited]), now);
+  await pollBaselinePage(store, source, page([historical, edited]), now);
+  await finishBaseline(store, source, now);
   assert.equal(await contactPriority(store, source, edited.uuid), "background");
 
   // A timestamp-only replay has no meaningful source change to promote.
@@ -1905,6 +1995,17 @@ test("historical pages stay small while forward arrivals and edits retain live p
     "background",
   );
   assert.deepEqual(limits, [25, 100, 100, 25]);
+  assert.equal(
+    (await work(state, rescanned.uuid))?.policy_seen_epoch,
+    null,
+    "a destination rescan cannot certify newly discovered canonical membership",
+  );
+  await pollSource(
+    store,
+    source,
+    async () => response([], [rescanned]),
+    now + 4,
+  );
   assert.deepEqual(
     (await pendingContacts(store, source, 2, now + 4)).map((c) => c.id),
     [newlyArrived.uuid, edited.uuid],
@@ -1956,12 +2057,13 @@ test("historical inventory baselines stay background until a forward correction 
   t.after(() => mf.dispose());
   const absent = { ...loose, uuid: "absent" };
   const unverified = { ...loose, uuid: "unverified" };
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     fetcher(async () => response([], [absent, unverified])),
     now,
   );
+  await finishBaseline(store, source, now);
   for (const contact of await pendingContacts(store, source, 20, now + 1)) {
     await observeContact(store, source, contact, now + 1);
     const missing = contact.id === absent.uuid;
@@ -2031,12 +2133,13 @@ test("expired general-log history gets a resumable repair without resetting forw
   t.after(() => mf.dispose());
   const archived = { ...loose, uuid: "already-resolved" };
   const absent = { ...loose, uuid: "not-returned" };
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     fetcher(async () => response([], [loose, archived, absent])),
     now,
   );
+  await finishBaseline(store, source, now);
   for (const contact of await pendingContacts(store, source, 20, now + 1))
     await observeContact(store, source, contact, now + 1);
   await store
@@ -2181,7 +2284,7 @@ test("operation context for live work runs first and vendor deferrals preserve p
   const state = await setup();
   const { store, source, now, mf } = state;
   t.after(() => mf.dispose());
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     fetcher(async () =>
@@ -2195,6 +2298,7 @@ test("operation context for live work runs first and vendor deferrals preserve p
     ),
     now,
   );
+  await finishBaseline(store, source, now);
   await pollSource(
     store,
     source,
@@ -2265,7 +2369,7 @@ test("operation rereads skip tombstones and failed or partial pages yield fairly
   const state = await setup();
   const { store, source, now, mf } = state;
   t.after(() => mf.dispose());
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     async () =>
@@ -2280,6 +2384,7 @@ test("operation rereads skip tombstones and failed or partial pages yield fairly
       ),
     now,
   );
+  await finishBaseline(store, source, now);
   const seen: string[] = [];
   const pages = fetcher(async (url) => {
     seen.push(url.pathname);
@@ -2362,12 +2467,13 @@ test("canonical sync refreshes account email without using immutable names, pend
       const body = (await response([], []).json()) as SourceRecord;
       return Response.json({ ...body, account });
     };
-  await pollSource(
+  await pollBaselinePage(
     store,
     source,
     page({ uuid: "account-1", name: "iPad", email: "owner@example.test" }),
     now,
   );
+  await finishBaseline(store, source, now);
   assert.equal(
     (await store.connection("a", "source"))?.label,
     "owner@example.test",
@@ -2438,7 +2544,8 @@ test("late failed operation reads cannot mark a newer lease's pending progress a
   const state = await setup();
   const { store, source, now, mf } = state;
   t.after(() => mf.dispose());
-  await pollSource(store, source, async () => response([op], []), now);
+  await pollBaselinePage(store, source, async () => response([op], []), now);
+  await finishBaseline(store, source, now);
   let failOld: (() => void) | undefined;
   let reached: (() => void) | undefined;
   const started = new Promise<void>((resolve) => {
@@ -2526,7 +2633,8 @@ test("raw intake and cursor commit together, overlapping poll lease cannot skip 
           .statement("SELECT generation FROM cursors WHERE stream='sync'")
           .first<{ generation: number }>()
       )?.generation,
-      1,
+      2,
+      "activation and the first raw page committed; the raced second page did not",
     );
   } finally {
     await mf.dispose();
@@ -2537,12 +2645,13 @@ test("operation-only location edit rereads a purged contact and preserves its ad
   const state = await setup();
   const { store, source, now, mf, key } = state;
   try {
-    await pollSource(
+    await pollBaselinePage(
       store,
       source,
       fetcher(async () => response([op], [qso])),
       now,
     );
+    await finishBaseline(store, source, now);
     assert.deepEqual(
       await pendingContacts(store, source, 40, now),
       [],
@@ -2597,10 +2706,26 @@ test("operation-only location edit rereads a purged contact and preserves its ad
       }),
       now + 4,
     );
-    const [corrected] = await pendingContacts(store, source, 40, now + 5);
+    assert.equal((await work(state, "qso-1"))?.policy_seen_epoch, null);
+    assert.deepEqual(
+      await pendingContacts(store, source, 40, now + 5),
+      [],
+      "a newly recreated REST row needs a canonical policy witness",
+    );
+    assert.equal(
+      (await work(state, "qso-1"))?.reason,
+      "source_policy_membership_unavailable",
+    );
+    await pollSource(
+      store,
+      source,
+      fetcher(async () => response([], [qso])),
+      now + 5,
+    );
+    const [corrected] = await pendingContacts(store, source, 40, now + 6);
     assert.ok(corrected);
     assert.equal(corrected.grid, "FN42CC");
-    await observeContact(store, source, corrected, now + 5);
+    await observeContact(store, source, corrected, now + 6);
     const ledger = await store.ledger(ledgerKey);
     assert.equal(ledger?.state, "changed");
     assert.equal(ledger?.narrative, "remote_preserved");
@@ -2616,12 +2741,13 @@ test("stale composite context cannot update a ledger or stage an immutable attem
   const state = await setup();
   const { store, source, now, mf } = state;
   try {
-    await pollSource(
+    await pollBaselinePage(
       store,
       source,
       fetcher(async () => response([], [loose])),
       now,
     );
+    await finishBaseline(store, source, now);
     const [captured] = await pendingContacts(store, source, 40, now + 1);
     assert.ok(captured);
     await observeContact(store, source, captured, now + 1);
@@ -2677,12 +2803,13 @@ test("null-operation records project independently and sparse tombstones cancel 
   const state = await setup();
   const { store, source, now, mf } = state;
   try {
-    await pollSource(
+    await pollBaselinePage(
       store,
       source,
       fetcher(async () => response([], [loose])),
       now,
     );
+    await finishBaseline(store, source, now);
     const [contact] = await pendingContacts(store, source, 40, now + 1);
     assert.ok(contact);
     assert.equal(contact.operationId, null);
@@ -2759,7 +2886,8 @@ test("ordinary web tombstones with unchanged application revisions follow newer 
     updatedAtMillis: 50,
     syncedAtMillis: 102,
   }));
-  await pollSource(store, source, async () => response([], records), now);
+  await pollBaselinePage(store, source, async () => response([], records), now);
+  await finishBaseline(store, source, now);
   const contacts = await pendingContacts(store, source, 40, now + 1);
   assert.equal(contacts.length, statuses.length);
   const template = await store.saveTemplate("a", "destination", {
@@ -2919,7 +3047,13 @@ test("ordinary web operation deletion with an unchanged application revision inv
   const { store, source, now, mf } = state;
   t.after(() => mf.dispose());
   const original = { ...op, updatedAtMillis: 50 };
-  await pollSource(store, source, async () => response([original], [qso]), now);
+  await pollBaselinePage(
+    store,
+    source,
+    async () => response([original], [qso]),
+    now,
+  );
+  await finishBaseline(store, source, now);
   await rereadOperation(
     store,
     source,
@@ -2999,12 +3133,13 @@ test("event expiry and missing membership never erase a segment or block an unre
   const state = await setup();
   const { store, source, now, mf } = state;
   try {
-    await pollSource(
+    await pollBaselinePage(
       store,
       source,
       fetcher(async () => response([op], [qso, boundary, loose])),
       now,
     );
+    await finishBaseline(store, source, now);
     await rereadOperation(
       store,
       source,
@@ -3089,12 +3224,13 @@ test("expired operation recovery preserves backfill progress across scheduler cy
   const state = await setup();
   const { store, source, now, mf } = state;
   try {
-    await pollSource(
+    await pollBaselinePage(
       store,
       source,
       fetcher(async () => response([op], [qso])),
       now,
     );
+    await finishBaseline(store, source, now);
     await store
       .statement(
         "UPDATE source_work SET expires_at=? WHERE id='op-1' AND kind='operation'",
@@ -3108,7 +3244,11 @@ test("expired operation recovery preserves backfill progress across scheduler cy
         )
         .first<{ cursor: string; generation: number }>();
     await expireSource(store, now + 1);
-    assert.equal(JSON.parse((await readCursor())!.cursor).mode, "backfill");
+    assert.equal(
+      JSON.parse((await readCursor())!.cursor).mode,
+      "forward",
+      "maintenance invalidates context; only the next leased poll resets policy",
+    );
     const seen: (string | undefined)[] = [];
     const pages = fetcher(async (_url, init) => {
       const request = JSON.parse(String(init?.body));
@@ -3150,8 +3290,9 @@ test("expired operation recovery preserves backfill progress across scheduler cy
     assert.deepEqual(seen, [undefined, "recovery-page-2", "recovery-page-3"]);
     assert.equal(JSON.parse((await readCursor())!.cursor).mode, "forward");
     assert.ok((await work(state, "op-1", "operation"))!.expires_at > now);
+    await finishBaseline(store, source, now + 300_008, now + 300_008);
     const completed = await readCursor();
-    await expireSource(store, now + 9);
+    await expireSource(store, now + 300_009);
     assert.deepEqual(await readCursor(), completed);
     for (let operation = 0; operation < 3; operation++)
       await rereadOperation(
@@ -3162,10 +3303,10 @@ test("expired operation recovery preserves backfill progress across scheduler cy
             url.pathname === "/v1/operations/op-1/qsos" ? [qso] : [],
           ),
         ),
-        now + 300_010 + operation,
+        now + 600_010 + operation,
       );
     assert.ok(
-      (await pendingContacts(store, source, 40, now + 300_013)).some(
+      (await pendingContacts(store, source, 40, now + 600_013)).some(
         (contact) => contact.id === "qso-1",
       ),
       "the operation on the final recovery page becomes usable again",
@@ -3184,12 +3325,13 @@ test("older operation snapshot cannot replace newer sync rows and conflicting se
       notes: "newer source version",
       syncedAtMillis: 300,
     };
-    await pollSource(
+    await pollBaselinePage(
       store,
       source,
       fetcher(async () => response([op], [latest])),
       now,
     );
+    await finishBaseline(store, source, now);
     await rereadOperation(
       store,
       source,
@@ -3243,12 +3385,13 @@ test("payload expiry retains version evidence so an older reread cannot resurrec
       notes: "latest before expiry",
       syncedAtMillis: 300,
     };
-    await pollSource(
+    await pollBaselinePage(
       store,
       source,
       fetcher(async () => response([op], [latest])),
       now,
     );
+    await finishBaseline(store, source, now);
     await rereadOperation(
       store,
       source,
@@ -3323,12 +3466,13 @@ test("explicit destination routing avoids phantom books and preserves adopted as
     const original = await store.connection("a", "destination");
     const other = await store.connection("a", "other-book");
     assert.ok(original && other);
-    await pollSource(
+    await pollBaselinePage(
       store,
       source,
       fetcher(async () => response([], [loose])),
       now,
     );
+    await finishBaseline(store, source, now);
     const [first] = await pendingContacts(store, source, 40, now + 1);
     assert.ok(first);
     await observeContact(store, source, first, now + 1, [original]);
@@ -3411,12 +3555,13 @@ test("a new-destination backfill uses its own cursor and preserves ongoing forwa
   const state = await setup();
   const { store, source, now, mf } = state;
   try {
-    await pollSource(
+    await pollBaselinePage(
       store,
       source,
       fetcher(async () => response([], [loose])),
       now,
     );
+    await finishBaseline(store, source, now);
     const forward = await store
       .statement(
         "SELECT cursor,generation FROM cursors WHERE tenant='a' AND connection='source' AND stream='sync'",
@@ -3520,12 +3665,13 @@ test("a refused source cursor parks prepared work, preserves history, and restar
   const state = await setup();
   const { store, source, now, mf } = state;
   try {
-    await pollSource(
+    await pollBaselinePage(
       store,
       source,
       fetcher(async () => response([], [loose])),
       now,
     );
+    await finishBaseline(store, source, now);
     const [contact] = await pendingContacts(store, source, 40, now + 1);
     assert.ok(contact);
     await observeContact(store, source, contact, now + 1);
@@ -3605,9 +3751,12 @@ test("a refused source cursor parks prepared work, preserves history, and restar
       JSON.parse(gap.cursor).previous,
       JSON.parse(oldCursor ?? "null"),
     );
-    const lease = await store.claim("a", "delivery:destination", now + 3);
+    const policy = await sourceReadPolicy(store, "a", "source");
+    assert.ok(policy);
+    const recoveryAt = Math.max(now + 3, policy.started_at + 1);
+    const lease = await store.claim("a", "delivery:destination", recoveryAt);
     assert.ok(lease);
-    await assert.rejects(store.claimAttempt("a", attempt, lease, now + 3));
+    await assert.rejects(store.claimAttempt("a", attempt, lease, recoveryAt));
     assert.equal(
       (
         await store
@@ -3629,13 +3778,19 @@ test("a refused source cursor parks prepared work, preserves history, and restar
       store,
       source,
       fetcher(async () => response([], [loose])),
-      now + 4,
+      recoveryAt + 1,
     );
-    const [reconciled] = await pendingContacts(store, source, 40, now + 5);
+    await finishBaseline(store, source, recoveryAt + 1, recoveryAt + 1);
+    const [reconciled] = await pendingContacts(
+      store,
+      source,
+      40,
+      recoveryAt + 2,
+    );
     assert.ok(reconciled);
-    await observeContact(store, source, reconciled, now + 5);
+    await observeContact(store, source, reconciled, recoveryAt + 2);
     assert.equal(
-      await store.claimAttempt("a", attempt, lease, now + 5),
+      await store.claimAttempt("a", attempt, lease, recoveryAt + 2),
       true,
       "same exact payload may dispatch only after source revalidation",
     );
@@ -3651,7 +3806,7 @@ test("a refused source cursor parks prepared work, preserves history, and restar
         fetcher(async () => {
           throw new Error("network unavailable");
         }),
-        now + 6,
+        recoveryAt + 3,
       ),
     );
     assert.equal(
@@ -3672,12 +3827,13 @@ test("observing a newer destination input cancels only unsent payload and retain
   const state = await setup();
   const { store, source, now, mf } = state;
   try {
-    await pollSource(
+    await pollBaselinePage(
       store,
       source,
       fetcher(async () => response([], [loose])),
       now,
     );
+    await finishBaseline(store, source, now);
     const [first] = await pendingContacts(store, source, 40, now + 1);
     assert.ok(first);
     await observeContact(store, source, first, now + 1);
@@ -3767,12 +3923,13 @@ test("a first-seen forward tombstone reserves a historical UUID through later re
   const state = await setup();
   const { store, source, now, mf } = state;
   try {
-    await pollSource(
+    await pollBaselinePage(
       store,
       source,
       fetcher(async () => response([], [loose])),
       now,
     );
+    await finishBaseline(store, source, now);
     await pollSource(
       store,
       source,

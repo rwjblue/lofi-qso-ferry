@@ -165,7 +165,7 @@ export async function schedulerFixture() {
     }
     await state.store
       .statement(
-        "UPDATE connections SET config=? WHERE id='source'",
+        "UPDATE connections SET remote_identity='account-fixture',config=? WHERE id='source'",
         JSON.stringify({ accountId: "account-fixture" }),
       )
       .run();

@@ -226,25 +226,19 @@ function lotwDates(record: AdifRecord): string[] {
 }
 function ranges(input: HistoryInventoryInput): { range: Range; day: string }[] {
   const at = adifInstant(input.record);
-  if (input.destination.kind === "lotw")
-    return lotwDates(input.record).map((day) => {
-      const start = Math.floor(Date.parse(day) / (7 * DAY)) * 7 * DAY;
-      return {
-        range: { startDate: date(start), endDate: date(start + 6 * DAY) },
-        day,
-      };
-    });
-  const starts = [
-    ...new Set(
-      [at - QRZ_RADIUS, at + QRZ_RADIUS].map(
-        (day) => Math.floor(day / (7 * DAY)) * 7 * DAY,
-      ),
-    ),
-  ];
-  return starts.map((start) => ({
-    range: { startDate: date(start), endDate: date(start + 6 * DAY) },
-    day: date(at),
-  }));
+  const days =
+    input.destination.kind === "lotw"
+      ? lotwDates(input.record)
+      : [...new Set([date(at - QRZ_RADIUS), date(at + QRZ_RADIUS)])];
+  // Keep both date paths even when they share a weekly root: a split can put
+  // them in different leaves. The readers deduplicate the resolved leaves.
+  return days.map((day) => {
+    const start = Math.floor(Date.parse(day) / (7 * DAY)) * 7 * DAY;
+    return {
+      range: { startDate: date(start), endDate: date(start + 6 * DAY) },
+      day,
+    };
+  });
 }
 function splitChild(state: Manifest, day: string): Range | undefined {
   const children = state.children;

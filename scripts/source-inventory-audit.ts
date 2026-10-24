@@ -73,6 +73,8 @@ export interface InventoryCheckpoint {
   scopeDigest: string;
   startedAt: number;
   updatedAt: number;
+  /** Last parsed and accepted remote page; local-only resumes never advance it. */
+  lastRemoteReadAt?: number;
   pass: 1 | 2 | 3;
   passStartedAt: number;
   state: SyncState;
@@ -261,7 +263,10 @@ function validateState(state: SyncState, accountId: string, complete: boolean) {
 function validateCheckpoint(c: InventoryCheckpoint, accountId: string) {
   if (
     !c ||
-    Object.keys(c).sort().join(",") !==
+    Object.keys(c)
+      .filter((key) => key !== "lastRemoteReadAt")
+      .sort()
+      .join(",") !==
       "attempts,duplicateRows,expandedPages,ferryStable,first,haloStable,initial,lastStamps,pages,pass,passStartedAt,schema,scopeDigest,second,startedAt,state,tiedRows,updatedAt" ||
     c.schema !== 1 ||
     !hash(c.scopeDigest) ||
@@ -279,6 +284,11 @@ function validateCheckpoint(c: InventoryCheckpoint, accountId: string) {
     c.updatedAt < c.startedAt ||
     c.passStartedAt < c.startedAt ||
     c.passStartedAt > c.updatedAt ||
+    (c.lastRemoteReadAt !== undefined &&
+      (!stamp(c.lastRemoteReadAt) ||
+        c.lastRemoteReadAt < c.startedAt ||
+        c.lastRemoteReadAt > c.updatedAt ||
+        c.pages === 0)) ||
     c.attempts > MAX_ATTEMPTS ||
     c.pages > c.attempts ||
     typeof c.haloStable !== "boolean" ||
@@ -387,6 +397,8 @@ export async function advanceSourceInventoryAudit(options: {
     duplicateRows: 0,
     tiedRows: 0,
     expandedPages: 0,
+    emptyIncompleteOperations: false,
+    emptyIncompleteMembers: false,
     haloSnapshotStable: false,
     ferrySnapshotStable: false,
     checkpointSaved: false,
@@ -576,6 +588,7 @@ export async function advanceSourceInventoryAudit(options: {
       );
       allowedBody = undefined;
       checkTime();
+      const remoteReadAt = clock();
       const target =
         checkpoint.pass === 1 ? checkpoint.first : checkpoint.second;
       const next = new Map(target.map((r) => [key(r), r]));
@@ -586,6 +599,12 @@ export async function advanceSourceInventoryAudit(options: {
       let duplicates = 0;
       let ties = 0;
       let expanded = 0;
+      report.emptyIncompleteOperations =
+        !page.complete &&
+        !page.next.operations.complete &&
+        page.operations.length === 0;
+      report.emptyIncompleteMembers =
+        !page.complete && !page.next.qsos.complete && page.qsos.length === 0;
       for (const side of ["operations", "qsos"] as const) {
         if (page[side].length > MAX_PAGE_ROWS)
           throw new AuditStop("page_overflow");
@@ -636,6 +655,7 @@ export async function advanceSourceInventoryAudit(options: {
       const candidate: InventoryCheckpoint = {
         ...checkpoint,
         pages: checkpoint.pages + 1,
+        lastRemoteReadAt: remoteReadAt,
         state: page.next,
         lastStamps: last,
         duplicateRows: checkpoint.duplicateRows + duplicates,

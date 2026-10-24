@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { probeAllClientForwardReplay } from "../scripts/source-all-client-forward-probe.ts";
 import {
   advanceSourceInventoryAudit,
   type InventoryCheckpoint,
@@ -656,6 +657,77 @@ test("saved remote page metadata must retain integer application and server stam
       assert.equal(result.stopReason, "checkpoint_invalid");
       assert.equal(result.checkpointSaved, false);
       assert.equal(h.calls.length, before);
+    });
+  }
+});
+
+test("a completed local-only resume cannot refresh stale remote evidence for a forward probe", async () => {
+  const h = await fixture();
+  await advanceSourceInventoryAudit(h.options);
+  assert.equal(h.saved?.lastRemoteReadAt, NOW);
+  const fetched = h.calls.length;
+  h.setTime(NOW + 300001);
+  const resumed = await advanceSourceInventoryAudit({
+    ...h.options,
+    checkpoint: h.saved,
+  });
+  assert.equal(resumed.completedPasses, 2);
+  assert.equal(resumed.batchAttempts, 0);
+  assert.equal(h.saved?.updatedAt, NOW + 300001);
+  assert.equal(h.saved?.lastRemoteReadAt, NOW);
+  const result = await probeAllClientForwardReplay({
+    ...h.options,
+    loadBaseline: async () => {
+      assert(h.saved);
+      return structuredClone(h.saved);
+    },
+  });
+  assert.equal(result.stopReason, "baseline_expired");
+  assert.equal(result.readAttempts, 0);
+  assert.equal(h.calls.length, fetched);
+});
+
+test("active checkpoints without remote freshness migrate only after another validated page", async () => {
+  const h = await fixture();
+  let count = 0;
+  h.options.fetcher = async () => {
+    if (++count === 2) throw new VendorDeferredError(NOW + 300000);
+    return page();
+  };
+  await advanceSourceInventoryAudit(h.options);
+  const old = structuredClone(h.saved);
+  assert(old);
+  assert.equal(old.pass, 2);
+  delete old.lastRemoteReadAt;
+  h.setTime(NOW + 1);
+  const result = await advanceSourceInventoryAudit({
+    ...h.options,
+    checkpoint: old,
+  });
+  assert.equal(result.status, "observed_match");
+  assert.equal(result.batchAttempts, 1);
+  assert.equal(h.saved?.lastRemoteReadAt, NOW + 1);
+});
+
+test("empty incomplete diagnostics identify both refused sides without retaining their records", async (t) => {
+  for (const sides of ["operations", "qsos", "both"] as const) {
+    await t.test(sides, async () => {
+      const h = await fixture();
+      h.options.fetcher = async () =>
+        page([], [], {
+          meta: {
+            operations: { records_left: sides === "qsos" ? 0 : 1 },
+            qsos: { records_left: sides === "operations" ? 0 : 1 },
+          },
+        });
+      const result = await advanceSourceInventoryAudit(h.options);
+      assert.equal(result.stopReason, "empty_incomplete_page");
+      assert.equal(result.emptyIncompleteOperations, sides !== "qsos");
+      assert.equal(result.emptyIncompleteMembers, sides !== "operations");
+      assert.equal(result.pages, 0);
+      assert.equal(result.completedPasses, 0);
+      assert.equal(h.saved?.lastRemoteReadAt, undefined);
+      assert.equal(h.saved?.first.length, 0);
     });
   }
 });

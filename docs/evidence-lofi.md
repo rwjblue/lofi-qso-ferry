@@ -4,7 +4,7 @@ Initial adapter review: 2026-10-22, before live requests. The dated observations
 below record subsequent read-only vendor evidence; fixture results alone do not
 establish server compatibility or production coverage.
 
-Current checkpoint, 2026-10-24 09:05 UTC: the production all-client baseline,
+Current checkpoint, 2026-10-24 09:21 UTC: the production all-client baseline,
 forward drain and quarantine handoff completed at **06:35:44.881 UTC**. The policy
 is `ready`, with all 218 operations and 4,282 QSO-stream rows (4,500 retained rows)
 witnessed in the current epoch and zero unseen retained rows. There are 4,130
@@ -31,8 +31,8 @@ The failed batch lasted 42 ms; the later SELECT observed D1 14 ms past proof
 creation and 47 ms behind the Worker at that SELECT's start. This supports a
 clock-ordering hypothesis without identifying the failed predicate inside the
 transaction. The failure is reproducible in a cloud Worker, not only Node. A
-bounded pre-mint database-clock check is under investigation; proof timestamps,
-expiry and the atomic guards must remain unchanged.
+bounded pre-mint database-clock check is now committed locally; proof timestamps,
+expiry and the atomic guards remain unchanged.
 
 The temporary preview was disposed. Independent before/after checks confirmed
 the original production Worker, all three asset hashes and seven closed export
@@ -42,6 +42,35 @@ because bundle comments depended on the working directory; pinning the build
 directory fixed that check without changing the Worker bundle. A separate
 timestamp-group response-bound fix is also awaiting final signing/deployment.
 Current evidence must be refreshed before any write.
+
+At **09:20:14 UTC**, a separately reviewed remote comparison applied only the
+committed clock-admission proof and coordinator modules over the exact deployed
+`02e3dc89` base. It completed one collection and one final drain, covering two
+positive dependencies and no events, then minted one proof in one successful
+atomic batch. The source verification helper took 2.163 seconds, 53 database calls and 78
+statements. Ordinary guarded source/proof checkpoints, leases and budget
+accounting were permitted; no export, staging, attempt or cutover was made.
+
+The runtime clock check observed D1 9 ms beyond the original creation timestamp
+on its first SELECT. No second check or timer wait was needed, and every proof
+binding remained unchanged. This verifies the new admission path in cloud
+execution; it does not demonstrate live negative-clock catch-up or uniquely
+identify the earlier failure's cause. A controlled real-D1 regression separately
+reproduces a 40 ms lag and verifies successful admission with original times,
+expiry and dependencies. The fix allows at most two clock/lease reads and one
+wait within a 500 ms admission deadline, also bounded by the original phase,
+proof and lease expiry. A late database response cannot authorize a late mint;
+the unchanged atomic guards still reject intervening changes or expiry.
+
+Fresh QRZ reads found an empty neighborhood for this exact contact and proof,
+which remained current after the final check at **09:20:40.895 UTC**, with 271,806
+ms remaining. See [the QRZ evidence](evidence-qrz.md#current-read-only-readiness-observations-2026-10-24-utc).
+The temporary comparison was disposed and production remained on its existing
+version with matching assets and seven closed controls. It is an explicitly
+unreleased two-module composition, not a traffic deployment, scheduled-run or
+capacity result. The source timestamp-expansion collector change was not part
+of this comparison. All 1,233 tests and the full local release check passed for the combined
+unreleased changes. Signing and production release remain outstanding.
 
 The protocol references are [Sidecar's browser registration and operation reads](https://github.com/rwjblue/qso-sidecar/blob/c502cecd068a6a4330afd94458e5636fa17f3a51/src/lofi.rs), [HaLo's transport](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/extensions/sync/ham2k-lofi/src/index.ts), and [its sync engine](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/packages/halo_core/lib/src/sync/sync_engine.dart). These are client implementation evidence; public server retention and replay guarantees were not found.
 

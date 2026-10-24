@@ -251,6 +251,25 @@ successful INSERT/readback acceptance. Proofs expire and ordinary source progres
 can invalidate them, so a future write must obtain current evidence through the
 normal guarded path. No export was authorized or attempted.
 
+At **09:20:40.895 UTC**, the same-contact check passed again after source proof
+creation in a remote Cloudflare comparison containing the committed clock fix.
+The source composition and its limits are recorded in [the source evidence](evidence-lofi.md).
+The subsequent QRZ read ran through a protected host harness using the exact
+deployed adapter. One targeted FETCH,
+one STATUS and one covering FETCH completed an empty neighborhood with zero
+exact identities in 2.537 seconds. The inner probe used 37 database queries;
+including outer current-proof and safety checks, the wrapper used 45 queries
+and three normal budget reservations.
+
+The exact cloud-created proof passed before QRZ and after the final gate/safety
+checks, with 271,806 ms remaining. Source/dependency, destination, credentials
+and book scope stayed current. Seven export controls were closed before and
+after; attempts, cutovers and stage guards remained zero. The QRZ phase made no
+source, cursor, ledger, proof, cache or staging writes and no vendor mutation.
+This closes the bounded cloud-proof/QRZ-read check for one contact; release,
+fresh evidence at any future write and actual INSERT/readback acceptance remain
+outstanding. The owner's keep-disabled instruction continues to apply.
+
 ## ADIF and template profile
 
 [ADIF 3.1.6](https://adif.org/316/ADIF_316.htm) defines ordinary ADI string fields as ASCII; international string fields require ADX. Ferry's ADI serializer rejects non-ASCII data rather than transliterating, dropping it or claiming QRZ UTF-8 support. Final normalized lengths include both CR and LF. NOTES preserves line breaks as CRLF; COMMENT/QSLMSG collapse whitespace. Literal `<EOR>`, `&`, `+`, `=` and `%` inside field values survive local framing and form encoding. Parsing preserves four- versus six-digit times.

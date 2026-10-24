@@ -1,7 +1,7 @@
 # LoTW actual-contact preflight evidence
 
-Updated **2026-10-24 08:15 UTC**. Production exports remain disabled. This page
-records an unsigned, offline check of one actual retained contact. The
+Updated **2026-10-24 09:21 UTC**. Production exports remain disabled. This page
+records an unsigned snapshot check and a later fresh query for one actual contact. The
 [signing evidence](evidence-signing.md) separately documents synthetic signatures,
 released TQSL source and local Worker compatibility; the
 [certificate checks](lotw-certificates.md) explain the preflight limits.
@@ -47,11 +47,34 @@ eight-character requirement on other contacts. Historical lower-precision grids
 remain separate association-review holds and are never silently truncated or
 adopted because outbound signing supports more precision.
 
+## Fresh scoped read
+
+At **09:20:55.938 UTC**, one bounded LoTW query for the pinned contact completed
+with zero records through a protected host harness. The helper reproduced the
+original snapshot selection, then
+checked current source versions, exact fields, route, destination and credentials
+before reserving budget, before transport and after the response. Date, station
+and worked-call scope, full framing, declared count and every returned identity
+were validated defensively around the exact deployed adapter. The fresh response
+reported absence with stable scope; no source identity or lower-precision history
+was adopted or changed.
+
+The run made one vendor read and 41 database queries: 40 reads and one ordinary
+shared-budget reservation. Seven controls were closed before and after, with the
+final check at **09:21:02.621 UTC**. Attempts, cutovers and stage guards stayed zero.
+No signing, source/proof/cache/ledger changes, upload or vendor mutation occurred.
+This provides finite destination absence evidence for that observation. It does
+not establish current certificate status, a LoTW source-proof authorization mode,
+first-insert eligibility, signature or ARRL upload/readback acceptance. The LoTW
+helper did not assert a source proof; the earlier same-contact cloud proof was
+checked through the separate QRZ phase. Future LoTW delivery must perform its own
+current proof and complete fresh checks under its separately reviewed policy.
+
 ## Remaining acceptance boundary
 
-This packet reports `sourceExportProofVerified`, `freshVendorChecksComplete`,
-`arrlUploadAcceptanceVerified` and `writesAuthorized` as false. It supplies
-actual-contact field/certificate-date compatibility evidence only. Before a
+Both diagnostic packets report `sourceExportProofVerified`, `freshVendorChecksComplete`,
+`arrlUploadAcceptanceVerified` and `writesAuthorized` as false. Together they supply
+field/certificate-date compatibility and a finite scoped absence observation. Before a
 future LoTW trial, the normal path still needs current source proof and complete
 dependency checks, fresh destination absence or a reviewed exact association,
 current certificate status, explicit contact/destination scope and authorization.
@@ -65,7 +88,7 @@ source-boundary authorization mode, so the QRZ result and a per-contact source
 proof cannot turn on LoTW or assert the global source-boundary contract. Keep
 `SOURCE_BOUNDARY_VERIFIED=false` and the export controls closed until an appropriate
 LoTW policy and scoped acceptance procedure have been reviewed. No signature,
-upload, gate change or ARRL acceptance claim follows from this offline check.
+upload, gate change or ARRL acceptance claim follows from these checks.
 
 ## Separate LoTW first-insert plan
 
@@ -99,9 +122,8 @@ empty subsequent readback cannot authorize resubmission. See ARRL's
 [submission contract](https://lotw.arrl.org/lotw-help/developer-submit-qsos/).
 QRZ release and acceptance remain the first rollout milestone.
 
-The response-validation change passed the full 1,216-test release check, including
-formatting, lint, types and the Worker bundle. A later diagnostic-category addition
-passed six focused tests and typecheck; the final files also passed scoped lint
-and formatting. The change is committed locally but not pushed or deployed while
-1Password signing remains unavailable. No authorization flag or delivery policy
-changed.
+The combined unreleased changes, including response validation, diagnostic
+categories and source clock admission, passed all **1,233 tests** and the full
+release check: formatting, lint, types and the Worker bundle. The changes are
+committed locally but not pushed or deployed while 1Password signing remains
+unavailable. No authorization flag or delivery policy changed.

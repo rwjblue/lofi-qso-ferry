@@ -8,10 +8,13 @@ The separate, default-disabled QRZ first-insert capability is deployed. It retai
 mandatory source proofs while excluding source-wide cutovers, no-query inference,
 LoTW, replacement and corrections. It remains disabled. The policy-aware review
 audit and bounded 100-record baseline pages are deployed in `02e3dc89b99a`.
-Production baseline/handoff completed at 06:35:44.881 UTC. A protected diagnostic
-minted a current source proof and verified fresh QRZ absence for the same contact
-at 08:12:53. Final collector deployment, scheduled Worker validation, vendor write
-acceptance and sustained capacity remain outstanding.
+Production baseline/handoff completed at 06:35:44.881 UTC. At 09:20, a temporary
+cloud comparison with the committed clock fix minted a source proof; a protected
+host check verified fresh QRZ absence for that same contact and current proof.
+A subsequent LoTW query also returned an empty scoped report. Final fix deployment,
+scheduled Worker validation, vendor write acceptance and sustained capacity
+remain outstanding. The combined unreleased fixes pass all 1,233 tests and the
+full local release check; signing remains blocked on 1Password.
 
 Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
 at 06:09:06 UTC as Worker `da7b7b70-6b7e-4cab-b9f6-f4b88f38390d`, at 100% traffic.
@@ -107,16 +110,18 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    signing and checks, then repeat collection/drain and complete scheduled Worker
    validation. A 09:05 cloud Worker diagnostic reproduced the atomic proof
    rejection after successful collection/drain; later predicates all passed.
-   Clock ordering remains the leading hypothesis, with a bounded admission fix
-   under investigation. The diagnostic follows the normal coordinator's context
+   The bounded admission fix is committed locally and passed a 09:20 cloud
+   comparison: one proof batch succeeded with all original times and guards.
+   That sample needed one clock read and no wait; controlled tests separately
+   verify catch-up under lag. Release the fix and distinguish this comparison
+   from scheduled production validation. The diagnostic follows normal context
    refresh order, while retaining strict current eligibility and proof checks
    before QRZ. Its earlier zero-candidate precheck was too restrictive; that
    result did not establish a new runtime defect. See the
    [dated source evidence](docs/evidence-lofi.md).
    The existing scheduled path skips proof creation while exports are disabled;
-   simply waiting for another cron run cannot validate it. Use a separately
-   bounded cloud-runtime diagnostic without opening export gates, and distinguish
-   that result from normal production scheduling and capacity evidence.
+   simply waiting for another cron run cannot validate it. The bounded cloud
+   comparison kept gates closed and does not establish scheduling or capacity.
    Full-account purge, retention and replay guarantees remain unproved; keep
    `SOURCE_BOUNDARY_VERIFIED=false`.
 2. **Authority separation implemented and deployed.** The independent
@@ -127,11 +132,11 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    corrections. Keep `SOURCE_BOUNDARY_VERIFIED=false`; universal UUID, tombstone
    and purge guarantees remain unproved. This completes the permission split,
    not vendor write acceptance or general source-boundary authority.
-3. **Preserve and refresh the joint QRZ evidence.** The 08:12:53 diagnostic
-   completed source collection/drain/mint, then targeted, book-verification and
-   covering reads for that same contact. Its exact proof remained current after
-   the empty neighborhood check. This verifies one bounded read path, with no
-   events in its two-dependency closure. Refresh the exact contact's evidence
+3. **Preserve and refresh the joint QRZ evidence.** The 09:20 cloud comparison
+   completed source collection/drain/mint, followed by protected host targeted,
+   book-verification and covering reads for the same contact. Its exact proof remained current after
+   the empty neighborhood check, with 271,806 ms remaining. This verifies one
+   bounded read path, with no events in its two-dependency closure. Refresh the exact contact's evidence
    before any future authorized write. Minute-only history,
    ambiguous associations and lower-precision locations remain review holds.
 4. **Prepare a trial packet; do not execute it under the current instruction.**
@@ -153,8 +158,9 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    recommended, not an owner-pilot gate; manual operator recovery is documented.
    The [unsigned LoTW preflight](docs/evidence-lotw.md) passed actual projected fields and stored
    certificate/date compatibility for one retained contact. It remains held at
-   first-insert classification, with no fresh LoTW absence or upload acceptance.
-   QRZ's mode excludes LoTW; define and review separate LoTW authority before its
+   first-insert classification. A fresh scoped LoTW query at 09:20:55 returned
+   zero records with stable context, but established no signing or upload
+   acceptance. QRZ's mode excludes LoTW; define separate LoTW authority before its
    trial while keeping the global source-boundary gate closed. The
    [LoTW implementation sequence](docs/evidence-lotw.md#separate-lotw-first-insert-plan)
    starts with strict response-scope validation, then separate immutable

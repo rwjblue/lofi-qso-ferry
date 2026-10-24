@@ -1,7 +1,7 @@
 # Implementation progress
 
 Current checkpoint, 2026-10-24 UTC; independent QRZ first-insert authority and
-bounded 100-record source baseline complete; one joint source/QRZ check passed:
+bounded 100-record source baseline complete; cloud source/QRZ and LoTW reads passed:
 
 Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
 at 06:09:06 UTC as Worker `da7b7b70-6b7e-4cab-b9f6-f4b88f38390d`, at 100% traffic.
@@ -24,6 +24,22 @@ The 06:35:43–06:36:10 run resumed normal reconciliation: 62 contact turns and
 deferrals before the `database_budget` stop. It made 871 D1 calls containing
 2,179 statements; database wall time was 24.125 seconds. These are processing
 turns and classifications, not unique completed contacts or sustained capacity.
+
+At **09:20–09:21 UTC**, a temporary cloud comparison with the two committed
+clock-admission modules minted one current source proof. Fresh QRZ reads then
+found an empty neighborhood for that same contact; its exact proof was still
+current after final checks, with 271,806 ms remaining. A separate, complete LoTW
+query for the pinned contact returned zero records with stable scope. All seven
+controls stayed closed, and attempts, cutovers, stage guards and vendor mutations
+stayed zero. The comparison was disposed without changing production traffic.
+
+The new clock check admitted the original proof after one database read, with D1
+9 ms past creation; no timer wait occurred in this sample. Deterministic tests
+separately reproduce a 40 ms lag and verify catch-up without changing evidence or
+retrying a batch. The fix passed 43 focused checks and independent review. The combined unreleased
+changes then passed all **1,233 tests** and the full release check: formatting,
+lint, types and the Worker build. This is an unreleased two-module comparison over
+`02e3dc89`, not scheduled production validation or vendor upload acceptance.
 
 At **08:12:53 UTC**, exact deployed source code minted a current source proof
 and observed fresh QRZ absence for the **same contact**. One positive collection
@@ -626,9 +642,9 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 
 ## Next action and rollout boundaries
 
-1. Complete signing and deployment of the reviewed collector fix with exports closed. The all-client baseline/handoff completed at 06:35:44.881 UTC; the 08:12 diagnostic created a current immutable proof and verified fresh QRZ absence for the same contact. Repeat on the final release, including remaining Worker-path validation; preserve exact dependency, scope, generation and expiry guards.
+1. Complete signing and deployment of the reviewed collector, clock-admission and LoTW response-validation fixes with exports closed. The baseline/handoff is complete; the 09:20 two-module cloud comparison created a current proof, followed by protected host checks of fresh QRZ absence for the same contact. Repeat on the final release, including remaining scheduled Worker-path validation; preserve exact dependency, scope, generation and expiry guards.
 2. Keep the implemented authority split closed. Default-off QRZ first-insert mode excludes source-wide cutovers, no-query inference, LoTW, replacement and corrections. `SOURCE_BOUNDARY_VERIFIED` remains false: complete inventories and finite positive samples do not establish universal tombstone or purge guarantees.
-3. Prepare the exact QRZ first-write review packet using the successful 08:12 joint observation as evidence of the read path. Refresh its expiring source proof and vendor checks before any later authorized write. Historical precision, location and routing holds need explicit evidence; cron does not approve them. LoTW unsigned field/certificate compatibility passed one snapshot sample, but fresh absence, separate authority and upload acceptance remain open.
+3. Prepare the exact QRZ first-write review packet using the successful 09:20 cloud-source/host-QRZ observation as evidence of the read path. Refresh its expiring source proof and vendor checks before any later authorized write. Historical precision, location and routing holds need explicit evidence; cron does not approve them. LoTW unsigned field/certificate compatibility and a fresh scoped absence query passed for one contact; current rechecking, separate authority and upload/readback acceptance remain open.
 4. Prepare the exact first-write packet read-only in the [rollout checklist](docs/rollout-checklist.md), preserving the verified 08:14 UTC current-schema SQL backup, including its first source proof, and refreshing it if needed before external changes. Off-device key storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account.
 5. Keep exports disabled. The latest instruction supersedes the earlier one- or two-contact trial authorization; no actual trial may run until the owner changes that instruction and all current proof/vendor checks pass.
 

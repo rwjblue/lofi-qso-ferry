@@ -28,20 +28,14 @@ export function recordBirth(
   )
     throw new Error("invalid_source_birth");
   return store.statement(
-    `INSERT OR IGNORE INTO source_births(tenant,source,qso,phase,first_seen_at,first_cursor_generation,first_stream) SELECT ?,?,?,CASE WHEN ?='sync' AND ?='forward' AND NOT EXISTS(SELECT 1 FROM source_work WHERE tenant=? AND source=? AND id=? AND kind='qso') THEN 'forward_new' ELSE 'history' END,?,?,? WHERE EXISTS(SELECT 1 FROM connections WHERE tenant=? AND id=? AND kind='lofi' AND status='active')`,
+    `INSERT OR IGNORE INTO source_births(tenant,source,qso,phase,first_seen_at,first_cursor_generation,first_stream) SELECT ?1,?2,?3,CASE WHEN ?4='sync' AND ?5='forward' AND NOT EXISTS(SELECT 1 FROM source_work WHERE tenant=?1 AND source=?2 AND id=?3 AND kind='qso') AND (NOT EXISTS(SELECT 1 FROM source_read_policies WHERE tenant=?1 AND source=?2) OR EXISTS(SELECT 1 FROM source_read_policy_ready WHERE tenant=?1 AND source=?2 AND completed_sync_generation<?6)) THEN 'forward_new' ELSE 'history' END,?7,?6,?4 WHERE EXISTS(SELECT 1 FROM connections WHERE tenant=?1 AND id=?2 AND kind='lofi' AND status='active')`,
     tenant,
     source,
     qso,
     stream,
     oldSyncMode,
-    tenant,
-    source,
-    qso,
-    now,
     cursorGeneration,
-    stream,
-    tenant,
-    source,
+    now,
   );
 }
 interface CursorRow {
@@ -149,7 +143,7 @@ export async function establishCutovers(
     const kind = predatesInventory ? "initial_inventory" : "destination_rescan";
     const result = await store
       .statement(
-        `INSERT OR IGNORE INTO source_cutovers(tenant,source,destination,epoch,inventory_epoch,source_generation,source_cursor,evidence_kind,evidence_generation,evidence_cursor,created_at) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM connections WHERE tenant=? AND id=? AND kind='lofi' AND status='active') AND EXISTS(SELECT 1 FROM connections WHERE tenant=? AND id=? AND kind IN('qrz','lotw') AND status='active') AND EXISTS(SELECT 1 FROM cursors WHERE tenant=? AND connection=? AND stream='sync' AND generation=? AND cursor=? AND json_extract(cursor,'$.mode')='forward') AND EXISTS(SELECT 1 FROM cursors WHERE tenant=? AND connection=? AND stream='context' AND generation=? AND cursor=? AND json_extract(cursor,'$.complete')=1 AND json_extract(cursor,'$.syncComplete')=1) AND (?='initial_inventory' AND EXISTS(SELECT 1 FROM source_inventory_epochs e JOIN connections d ON d.tenant=e.tenant AND d.id=? WHERE e.tenant=? AND e.source=? AND e.epoch=? AND d.created_at<=e.started_at) OR ?='destination_rescan' AND EXISTS(SELECT 1 FROM cursors WHERE tenant=? AND connection=? AND stream=? AND generation=? AND cursor=? AND json_extract(cursor,'$.rescanComplete')=1))`,
+        `INSERT OR IGNORE INTO source_cutovers(tenant,source,destination,epoch,inventory_epoch,source_generation,source_cursor,evidence_kind,evidence_generation,evidence_cursor,created_at) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM connections WHERE tenant=? AND id=? AND kind='lofi' AND status='active') AND EXISTS(SELECT 1 FROM connections WHERE tenant=? AND id=? AND kind IN('qrz','lotw') AND status='active') AND EXISTS(SELECT 1 FROM cursors WHERE tenant=? AND connection=? AND stream='sync' AND generation=? AND cursor=? AND json_extract(cursor,'$.mode')='forward') AND EXISTS(SELECT 1 FROM cursors WHERE tenant=? AND connection=? AND stream='context' AND generation=? AND cursor=? AND json_extract(cursor,'$.complete')=1 AND json_extract(cursor,'$.syncComplete')=1) AND (?='initial_inventory' AND EXISTS(SELECT 1 FROM source_inventory_epochs e JOIN connections d ON d.tenant=e.tenant AND d.id=? WHERE e.tenant=? AND e.source=? AND e.epoch=? AND d.created_at<=e.started_at) OR ?='destination_rescan' AND EXISTS(SELECT 1 FROM cursors WHERE tenant=? AND connection=? AND stream=? AND generation=? AND cursor=? AND json_extract(cursor,'$.rescanComplete')=1)) AND NOT EXISTS(SELECT 1 FROM source_read_policies policy WHERE policy.tenant=? AND policy.source=? AND NOT EXISTS(SELECT 1 FROM source_read_policy_ready ready WHERE ready.tenant=policy.tenant AND ready.source=policy.source AND ready.sync_generation=? AND ready.sync_cursor=?))`,
         source.tenant,
         source.id,
         destination.id,
@@ -184,6 +178,10 @@ export async function establishCutovers(
         `rescan:${destination.id}`,
         rescan?.generation ?? 0,
         rescan?.cursor ?? "",
+        source.tenant,
+        source.id,
+        sync.generation,
+        sync.cursor,
       )
       .run();
     established += result.meta.changes;
@@ -198,7 +196,7 @@ export async function proveNewAfterCutover(
   return Boolean(
     await store
       .statement(
-        `SELECT 1 proven FROM source_births b JOIN source_cutovers c ON c.tenant=b.tenant AND c.source=b.source JOIN connections s ON s.tenant=b.tenant AND s.id=b.source JOIN connections d ON d.tenant=c.tenant AND d.id=c.destination JOIN cursors p ON p.tenant=b.tenant AND p.connection=b.source AND p.stream='sync' JOIN cursors context ON context.tenant=b.tenant AND context.connection=b.source AND context.stream='context' WHERE b.tenant=? AND b.source=? AND b.qso=? AND c.destination=? AND b.phase='forward_new' AND b.first_stream='sync' AND b.first_cursor_generation>c.source_generation AND p.generation>=b.first_cursor_generation AND json_extract(p.cursor,'$.mode')='forward' AND json_extract(context.cursor,'$.complete')=1 AND json_extract(context.cursor,'$.syncComplete')=1 AND s.kind='lofi' AND s.status='active' AND d.kind IN('qrz','lotw') AND d.status='active'`,
+        `SELECT 1 proven FROM source_births b JOIN source_cutovers c ON c.tenant=b.tenant AND c.source=b.source JOIN connections s ON s.tenant=b.tenant AND s.id=b.source JOIN connections d ON d.tenant=c.tenant AND d.id=c.destination JOIN cursors p ON p.tenant=b.tenant AND p.connection=b.source AND p.stream='sync' JOIN cursors context ON context.tenant=b.tenant AND context.connection=b.source AND context.stream='context' WHERE b.tenant=? AND b.source=? AND b.qso=? AND c.destination=? AND b.phase='forward_new' AND b.first_stream='sync' AND b.first_cursor_generation>c.source_generation AND p.generation>=b.first_cursor_generation AND json_extract(p.cursor,'$.mode')='forward' AND json_extract(context.cursor,'$.complete')=1 AND json_extract(context.cursor,'$.syncComplete')=1 AND s.kind='lofi' AND s.status='active' AND d.kind IN('qrz','lotw') AND d.status='active' AND NOT EXISTS(SELECT 1 FROM source_read_policies policy WHERE policy.tenant=b.tenant AND policy.source=b.source AND NOT EXISTS(SELECT 1 FROM source_read_policy_ready ready JOIN source_read_contact_membership member ON member.tenant=ready.tenant AND member.source=ready.source WHERE ready.tenant=b.tenant AND ready.source=b.source AND ready.completed_sync_generation<b.first_cursor_generation AND member.qso=b.qso))`,
         key.tenant,
         key.source,
         key.qso,

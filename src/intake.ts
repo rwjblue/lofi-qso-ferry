@@ -17,12 +17,6 @@ import {
 } from "./projection.ts";
 import { selectReconciliationWork } from "./reconciliation-work.ts";
 import {
-  ensureSourceReadPolicy,
-  resetSourceReadPolicy,
-  sourceReadPolicy,
-  type SourceReadPolicy,
-} from "./source-read-policy.ts";
-import {
   canonical,
   type Envelope,
   open,
@@ -30,6 +24,13 @@ import {
   seal,
   sha256,
 } from "./security.ts";
+import { recordSourcePresence } from "./source-presence-store.ts";
+import {
+  ensureSourceReadPolicy,
+  resetSourceReadPolicy,
+  type SourceReadPolicy,
+  sourceReadPolicy,
+} from "./source-read-policy.ts";
 import type { Connection, Lease, Ledger, Store } from "./store.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
 import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
@@ -362,6 +363,8 @@ export async function pollSource(
       vendorNow,
     );
     let page: SyncPage;
+    // Includes any admission/authentication delay, never the later commit time.
+    const requestStartedAt = now + Math.max(0, Date.now() - startedAt);
     try {
       page = await session.client.syncPage(
         state,
@@ -428,6 +431,7 @@ export async function pollSource(
             priority,
             replayDestination,
             policy?.epoch,
+            stream === "sync" ? requestStartedAt : undefined,
           )),
         );
       }
@@ -1320,6 +1324,7 @@ async function sourceStatements(
   incomingPriority: VendorPriority = "background",
   replayDestination?: string | null,
   policyEpoch?: string,
+  positiveObservedAt?: number,
 ): Promise<D1PreparedStatement[]> {
   const id = String(raw.uuid);
   const syncedAt = Number(raw.syncedAtMillis);
@@ -1342,6 +1347,18 @@ async function sourceStatements(
   );
   // A null expected revision means an insert compare-and-set.
   const statements: D1PreparedStatement[] = [guard.sql];
+  const presence = () => {
+    if (policyEpoch && positiveObservedAt !== undefined)
+      statements.push(
+        recordSourcePresence(
+          store,
+          connection,
+          { kind, id, revision, syncedAtMillis: syncedAt },
+          policyEpoch,
+          positiveObservedAt,
+        ),
+      );
+  };
   const seen = (current = true) => {
     if (epoch)
       statements.push(
@@ -1368,6 +1385,7 @@ async function sourceStatements(
           syncedAt,
         ),
       );
+    if (current) presence();
     statements.push(
       store.statement("DELETE FROM source_write_guards WHERE id=?", guard.id),
     );
@@ -1487,6 +1505,7 @@ async function sourceStatements(
       ),
     );
   }
+  presence();
   statements.push(
     store.statement("DELETE FROM source_write_guards WHERE id=?", guard.id),
   );

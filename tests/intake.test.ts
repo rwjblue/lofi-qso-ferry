@@ -106,6 +106,7 @@ async function setup() {
       "0024_identity_mapping_overlap.sql",
       "0025_source_read_policy.sql",
       "0026_source_read_guards.sql",
+      "0027_source_presence.sql",
     ])
       await applyMigration(state.db, file);
   } catch (error) {
@@ -963,7 +964,7 @@ test("full forward pages prefetch bounded metadata without splitting the atomic 
   );
   const checkpoints = measured.calls.filter((c) => c.method === "batch");
   assert.equal(checkpoints.length, 1);
-  assert.equal(checkpoints[0].statements, 1308);
+  assert.equal(checkpoints[0].statements, 1508);
   t.diagnostic(
     `full forward page: ${measured.calls.length} database calls, ${checkpoints[0].statements} statements in one atomic checkpoint`,
   );

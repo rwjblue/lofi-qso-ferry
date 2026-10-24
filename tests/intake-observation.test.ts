@@ -32,6 +32,7 @@ async function setup(count = 4) {
     "0018_reconciliation_work.sql",
     "0025_source_read_policy.sql",
     "0026_source_read_guards.sql",
+    "0027_source_presence.sql",
   ])
     await applyMigration(state.db, file);
   const { store } = state;

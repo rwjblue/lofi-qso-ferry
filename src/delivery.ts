@@ -11,6 +11,7 @@ import {
 } from "./identity-claims.ts";
 import { type IntakeContact, pendingContacts } from "./intake.ts";
 import { LotwClient, observeLotwContact } from "./lotw.ts";
+import { checkLotwFirstInsertHistory } from "./lotw-first-insert.ts";
 import { type Contact, isTestCallsign, isTestContact } from "./projection.ts";
 import {
   mergeQrzCorrection,
@@ -37,6 +38,7 @@ import {
   attemptSourceExportProofCurrent,
   attemptSourceExportProofGuard,
   loadCurrentSourceExportProof,
+  lotwFreshInsertCurrent,
   qrzFreshInsertCurrent,
   type SourceExportAuthorization,
   type SourceExportAuthorizationMode,
@@ -64,6 +66,7 @@ export interface DeliveryGates {
   liveWriteAuthorized: boolean;
   sourceBoundaryVerified: boolean;
   qrzFreshInsertsEnabled?: boolean;
+  lotwFreshInsertsEnabled?: boolean;
   allowedQsoIds?: string[] | null;
   allowedDestinationIds?: string[] | null;
 }
@@ -170,19 +173,17 @@ export interface DeliveryResult {
   reason?: string;
   attemptId?: string;
 }
-const enabled = (gates: DeliveryGates) =>
-  gates.exportsEnabled &&
-  gates.liveWriteAuthorized &&
-  gates.sourceBoundaryVerified;
-/** A fresh QRZ capability never asserts source-wide replay or LoTW authority. */
+/** Each fresh capability is vendor-specific and grants no source-wide authority. */
 export function deliveryMode(
   gates: DeliveryGates,
   kind: "qrz" | "lotw",
 ): SourceExportAuthorizationMode | null {
   if (!gates.exportsEnabled || !gates.liveWriteAuthorized) return null;
   if (gates.sourceBoundaryVerified) return "source_boundary";
-  return kind === "qrz" && gates.qrzFreshInsertsEnabled === true
-    ? "qrz_fresh_insert"
+  if (kind === "qrz" && gates.qrzFreshInsertsEnabled === true)
+    return "qrz_fresh_insert";
+  return kind === "lotw" && gates.lotwFreshInsertsEnabled === true
+    ? "lotw_fresh_insert"
     : null;
 }
 function modeEnabled(
@@ -194,7 +195,10 @@ function modeEnabled(
     gates.liveWriteAuthorized &&
     (mode === "source_boundary"
       ? gates.sourceBoundaryVerified
-      : mode === "qrz_fresh_insert" && gates.qrzFreshInsertsEnabled === true)
+      : mode === "qrz_fresh_insert"
+        ? gates.qrzFreshInsertsEnabled === true
+        : mode === "lotw_fresh_insert" &&
+          gates.lotwFreshInsertsEnabled === true)
   );
 }
 function scoped(
@@ -211,13 +215,33 @@ function scoped(
       gates.allowedDestinationIds.includes(key.destination))
   );
 }
-function freshInsertPayload(payload: PreparedPayload): boolean {
+function freshInsertPayload(
+  payload: PreparedPayload,
+  mode: SourceExportAuthorizationMode,
+  key: LedgerKey,
+  generation: string,
+): boolean {
+  if (mode === "source_boundary") return true;
+  if (mode === "qrz_fresh_insert")
+    return (
+      payload.kind === "qrz" &&
+      payload.operation === "insert" &&
+      payload.mappedLogId === null &&
+      payload.priorIdentityEvidenceId === undefined
+    );
   return (
-    payload.kind === "qrz" &&
-    payload.operation === "insert" &&
-    payload.mappedLogId === null &&
-    payload.priorIdentityEvidenceId === undefined
+    payload.kind === "lotw" &&
+    payload.contact.id === key.qso &&
+    payload.contact.generation === generation &&
+    payload.members.length === 1 &&
+    payload.members[0].id === key.qso &&
+    payload.members[0].generation === payload.contact.generation
   );
+}
+function freshInsertUnavailable(mode: SourceExportAuthorizationMode): string {
+  return mode === "lotw_fresh_insert"
+    ? "lotw_fresh_insert_unavailable"
+    : "qrz_fresh_insert_unavailable";
 }
 async function lotwAttemptIdentity(
   station: LotwStation,
@@ -728,12 +752,19 @@ export async function prepareDue(
   if (!authorizationMode)
     return { state: "blocked", reason: "source_replay_boundary_unverified" };
   const freshInsertCurrent = async () =>
-    authorizationMode !== "qrz_fresh_insert" ||
+    authorizationMode === "source_boundary" ||
     (modeEnabled(gates, authorizationMode) &&
       scoped(gates, key, true) &&
-      (await qrzFreshInsertCurrent(store, key)));
+      (await (authorizationMode === "qrz_fresh_insert"
+        ? qrzFreshInsertCurrent(store, key)
+        : lotwFreshInsertCurrent(store, key))) &&
+      modeEnabled(gates, authorizationMode) &&
+      scoped(gates, key, true));
   if (!(await freshInsertCurrent()))
-    return { state: "blocked", reason: "qrz_fresh_insert_unavailable" };
+    return {
+      state: "blocked",
+      reason: freshInsertUnavailable(authorizationMode),
+    };
   const sourceProof = deps.sourceProof;
   if (!sourceProof)
     return { state: "blocked", reason: "source_export_proof_unavailable" };
@@ -960,7 +991,7 @@ export async function prepareDue(
       ...(priorIdentityEvidenceId ? { priorIdentityEvidenceId } : {}),
     };
   } else if (connection.kind === "lotw") {
-    if (!enabled(gates))
+    if (!modeEnabled(gates, authorizationMode))
       return { state: "blocked", reason: "exports_disabled_before_signing" };
     const config = JSON.parse(connection.config) as LotwConfig;
     const routes = (
@@ -1035,9 +1066,38 @@ export async function prepareDue(
           priority: deps.priority,
           now: currentTime(),
         })(input, init),
-      exportsEnabled: enabled(gates),
+      exportsEnabled: modeEnabled(gates, authorizationMode),
     });
-    if (credential.query) {
+    if (authorizationMode === "lotw_fresh_insert") {
+      if (!credential.query)
+        return {
+          state: "blocked",
+          reason: "lotw_query_required_for_fresh_insert",
+        };
+      try {
+        const history = await checkLotwFirstInsertHistory(
+          { credentials: credential.query, station, contact: lotwContact },
+          {
+            fetcher: (input, init) =>
+              vendorFetch(store, "lotw", deps.fetcher, {
+                priority: deps.priority,
+                now: currentTime(),
+              })(input, init),
+          },
+        );
+        if (history.state !== "empty")
+          return {
+            state: "blocked",
+            reason: "lotw_fresh_insert_history_present",
+          };
+      } catch (error) {
+        if (error instanceof VendorDeferredError) throw error;
+        return {
+          state: "blocked",
+          reason: "lotw_fresh_insert_history_unavailable",
+        };
+      }
+    } else if (credential.query) {
       const report = await client.query({
         startDate: lotwContact.date,
         endDate: lotwContact.date,
@@ -1118,6 +1178,13 @@ export async function prepareDue(
       };
     if (!(await sourceProofCurrent()))
       return { state: "blocked", reason: "source_export_proof_unavailable" };
+    if (!(await freshInsertCurrent()))
+      return {
+        state: "blocked",
+        reason: freshInsertUnavailable(authorizationMode),
+      };
+    if (!modeEnabled(gates, authorizationMode))
+      return { state: "blocked", reason: "exports_disabled_before_signing" };
     const signingAt = currentTime();
     if (!certificateCurrentlyValid(selected, signingAt))
       return {
@@ -1153,9 +1220,12 @@ export async function prepareDue(
       return { state: "blocked", reason: "source_export_proof_unavailable" };
     if (
       !(await freshInsertCurrent()) ||
-      (authorizationMode === "qrz_fresh_insert" && !freshInsertPayload(payload))
+      !freshInsertPayload(payload, authorizationMode, key, contact.generation)
     )
-      return { state: "blocked", reason: "qrz_fresh_insert_unavailable" };
+      return {
+        state: "blocked",
+        reason: freshInsertUnavailable(authorizationMode),
+      };
     attemptId = await store.stage(
       key,
       contact.generation,
@@ -1175,9 +1245,13 @@ export async function prepareDue(
   } catch (error) {
     if (
       error instanceof Error &&
-      error.message.includes("QRZ fresh insert unavailable")
+      (error.message.includes("QRZ fresh insert unavailable") ||
+        error.message.includes("LoTW fresh insert unavailable"))
     )
-      return { state: "blocked", reason: "qrz_fresh_insert_unavailable" };
+      return {
+        state: "blocked",
+        reason: freshInsertUnavailable(authorizationMode),
+      };
     if (
       error instanceof Error &&
       error.message.includes("source export proof unavailable")
@@ -1328,11 +1402,21 @@ export async function dispatchAttempt(
     };
   const operationAuthorized = () =>
     modeEnabled(gates, authorizationMode) &&
-    scoped(gates, key, authorizationMode === "qrz_fresh_insert") &&
-    (authorizationMode !== "qrz_fresh_insert" ||
-      (data.connection.kind === "qrz" && freshInsertPayload(data.payload)));
+    scoped(gates, key, authorizationMode !== "source_boundary") &&
+    (authorizationMode === "source_boundary" ||
+      (data.connection.kind ===
+        (authorizationMode === "qrz_fresh_insert" ? "qrz" : "lotw") &&
+        freshInsertPayload(
+          data.payload,
+          authorizationMode,
+          key,
+          data.attempt.generation,
+        )));
   if (!operationAuthorized())
-    return { state: "blocked", reason: "qrz_fresh_insert_unavailable" };
+    return {
+      state: "blocked",
+      reason: freshInsertUnavailable(authorizationMode),
+    };
   const proofCheckedAt = currentTime();
   const proofExpiresAt = await store
     .statement(
@@ -1605,6 +1689,7 @@ export async function dispatchAttempt(
             : "uncertain";
       }
     } else {
+      const payload = data.payload;
       const credential = await store.private<LotwCredential>(
         tenant,
         data.attempt.destination,
@@ -1617,11 +1702,60 @@ export async function dispatchAttempt(
       }
       let authorizeTransport: (() => Promise<boolean>) | undefined;
       const transport: typeof fetch = async (input, init) => {
-        if (new URL(String(input)).pathname === "/lotw/upload") {
+        const url = new URL(String(input));
+        const fresh = authorizationMode === "lotw_fresh_insert";
+        const upload = url.pathname === "/lotw/upload";
+        // A narrow capability may use only the adapter's two read endpoints or
+        // the exact single-artifact upload. No other mutation can bypass this hook.
+        if (
+          fresh &&
+          !upload &&
+          !(
+            url.origin === "https://lotw.arrl.org" &&
+            !url.hash &&
+            !url.username &&
+            !url.password &&
+            ["/lotwuser/lotwreport.adi", "/lotw/crl"].includes(url.pathname) &&
+            (init?.method ?? "GET") === "GET" &&
+            init?.redirect === "manual"
+          )
+        ) {
           mutationBlocked = true;
+          throw new UnsentAuthorizationError();
+        }
+        if (upload) {
+          mutationBlocked = true;
+          let requestCurrent = () => true;
+          if (fresh) {
+            const form = init?.body;
+            const file = form instanceof FormData ? form.get("upfile") : null;
+            requestCurrent = () =>
+              String(input) === "https://lotw.arrl.org/lotw/upload" &&
+              init?.method === "POST" &&
+              init.redirect === "manual" &&
+              init.body === form &&
+              form instanceof FormData &&
+              [...form.keys()].length === 1 &&
+              form.getAll("upfile").length === 1 &&
+              form.get("upfile") === file &&
+              file instanceof File &&
+              file.name === "lofi-qso-ferry.tq8" &&
+              file.type === "application/octet-stream" &&
+              file.size > 0 &&
+              file.size <= 512_000;
+            if (
+              !requestCurrent() ||
+              !(file instanceof File) ||
+              b64(new Uint8Array(await file.arrayBuffer())) !== payload.tq8
+            )
+              throw new UnsentAuthorizationError();
+          }
           if (
+            !requestCurrent() ||
             !authorizeTransport ||
             !(await authorizeTransport()) ||
+            !operationAuthorized() ||
+            !requestCurrent() ||
             !certificate ||
             !certificateCurrentlyValid(certificate, currentTime()) ||
             currentTime() >= Math.min(proofExpiresAt, lease.expires_at)
@@ -1641,6 +1775,36 @@ export async function dispatchAttempt(
           })(input, init),
         exportsEnabled: true,
       });
+      if (authorizationMode === "lotw_fresh_insert") {
+        const holdUnsent = async (reason: string): Promise<DeliveryResult> => {
+          await store.retryUnsent(tenant, id, lease, reason, currentTime());
+          return { state: "retry_scheduled", attemptId: id, reason };
+        };
+        if (!credential.query)
+          return await holdUnsent("lotw_query_required_for_fresh_insert");
+        let history: Awaited<ReturnType<typeof checkLotwFirstInsertHistory>>;
+        try {
+          history = await checkLotwFirstInsertHistory(
+            {
+              credentials: credential.query,
+              station: data.payload.station,
+              contact: data.payload.contact,
+            },
+            {
+              fetcher: (input, init) =>
+                vendorFetch(store, "lotw", transport, {
+                  priority: deps.priority,
+                  now: currentTime(),
+                })(input, init),
+            },
+          );
+        } catch (error) {
+          if (error instanceof VendorDeferredError) throw error;
+          return await holdUnsent("lotw_fresh_insert_history_unavailable");
+        }
+        if (history.state !== "empty")
+          return await holdUnsent("lotw_fresh_insert_history_present");
+      }
       const certificateVersion = data.payload.certificateVersion;
       const certificate = (
         credential.signingCredentials ??
@@ -1698,7 +1862,7 @@ export async function dispatchAttempt(
       )
         return await retireUnsentProof();
       if (
-        !enabled(gates) ||
+        !operationAuthorized() ||
         beforeSubmit?.status !== "active" ||
         beforeSubmit.credential_version !== data.attempt.credential_version ||
         (await store.connection(tenant, data.attempt.source))?.status !==
@@ -1724,6 +1888,8 @@ export async function dispatchAttempt(
           "credential",
         ))
       ) {
+        if (authorizationMode === "lotw_fresh_insert")
+          return await retryBlockedTransport();
         await store.resolve(tenant, id, lease, "rejected", null, currentTime());
         return {
           state: "rejected",
@@ -1736,7 +1902,7 @@ export async function dispatchAttempt(
           data.attempt.destination,
         );
         return (
-          enabled(gates) &&
+          operationAuthorized() &&
           certificateCurrentlyValid(certificate, currentTime()) &&
           current?.status === "active" &&
           current.credential_version === data.attempt.credential_version &&
@@ -1755,7 +1921,9 @@ export async function dispatchAttempt(
             key,
             sourceContext,
             currentTime(),
-          ))
+          )) &&
+          (authorizationMode !== "lotw_fresh_insert" ||
+            (await lotwFreshInsertCurrent(store, key, id)))
         );
       };
       const result = await client.submit(unb64(data.payload.tq8), {

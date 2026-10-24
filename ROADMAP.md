@@ -4,17 +4,39 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-24 UTC)
 
-**Priority update, 08:16 EDT:** investigate and correct systematic historical
-matching holds before preparing the first-export packet. The current histogram
+**Priority update, 08:51 EDT:** matching corrections are deployed; finish the
+separate QRZ historical association policy before the first-export packet. The
+08:16 EDT investigation histogram
 attributes 2,858 of 2,957 LoTW ambiguities to compatible lower grid precision;
 QRZ has 1,578 minute-only-time holds and 1,853 generic identity failures.
-These are not established duplicate-contact counts. A narrow LoTW grid-compatible
-association correction is validated locally. An offline audit attributes 87 of
+These are not established duplicate-contact counts. The narrow LoTW grid-compatible
+association correction is deployed with exports disabled. An offline audit attributes 87 of
 93 frequency holds to a kHz conversion artifact; its correction preserves six
 genuine finer-precision holds. QRZ needs a distinct historical
 association path and source/remote uniqueness checks. See the
 [matching investigation](docs/reconciliation-investigation.md#precision-matching-investigation-2026-10-24).
 Exports remain disabled.
+
+The matching corrections deployed read-only at **2026-10-24 08:51 EDT** as signed revision
+`ba8c982a0b67b97e354f1bcb4acc8efe50729097`, Worker `6b07bcf7-ac24-4bcb-abf4-be43766c8938` at 100% traffic.
+All **1,353 tests** and required release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40094384509).
+Independent readback confirms all eight export controls closed, healthy HTTPS
+and matching assets. There was no migration or vendor write. The grid-compatible
+LoTW association, exact decimal frequency conversion and valid numeric zone
+comparison are now available to normal reconciliation. Their policy version wakes
+held work once; the 2,858 grid and 87 artifact-related frequency counts describe
+the investigation cohorts, not a claim that every row has already reconciled.
+
+The first matching-release cron completed **12:55:44–12:57:13 UTC** with
+147 contact turns, 262 destination classifications and **99 LoTW adoptions** in
+88.756 seconds. It stopped at the database budget: 878 D1 calls, 5,018 statements
+and 80.687 seconds of database wall time. Three affected-contact errors and 21
+deferrals remain; this sample does not establish sustained capacity. The 12:58:08
+snapshot has 479 LoTW adoptions and identity claims (up from 380), with no uncovered
+mapped identities, export attempts, cutovers or temporary stage guards. Matching
+policy version 2 is active. QRZ remains held for the separate association work.
+
+### Earlier first-insert safeguards release (12f636b3)
 
 Signed revision `12f636b312c9192b755188faf06d66171d485da5` deployed read-only at **2026-10-24 07:59 EDT**
 (`2026-10-24T11:59:10.901859Z`), as Worker `bd6ff427-351d-463c-9b7d-4395e256117d` at 100% traffic.
@@ -184,7 +206,8 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    the empty neighborhood check, with 271,806 ms remaining. This verifies one
    bounded read path, with no events in its two-dependency closure. Refresh the exact contact's evidence
    before any future authorized write. Minute-only history,
-   ambiguous associations and lower-precision locations remain review holds.
+   ambiguous associations and incompatible/unknown locations remain review holds.
+   Valid nested LoTW grids now use guarded historical association.
 4. **Prepare a trial packet; do not execute it under the current instruction.**
    The latest instruction to keep exports disabled supersedes the earlier one-
    or two-contact trial authorization. No actual trial may run until the owner

@@ -1,6 +1,6 @@
 # LoTW actual-contact preflight evidence
 
-Updated **2026-10-24 07:59 EDT**. Production exports remain disabled. This page
+Updated **2026-10-24 08:51 EDT**. Production exports remain disabled. This page
 records an unsigned snapshot check and a later fresh query for one actual contact. The
 [signing evidence](evidence-signing.md) separately documents synthetic signatures,
 released TQSL source and local Worker compatibility; the
@@ -43,9 +43,10 @@ signature acceptance or ARRL processing.
 
 The eight-character grid belongs to this contact. Ferry preserves each contact's
 supported four-, six- or eight-character grid; this result imposes no
-eight-character requirement on other contacts. Historical lower-precision grids
-remain separate association-review holds and are never silently truncated or
-adopted because outbound signing supports more precision.
+eight-character requirement on other contacts. The deployed historical matcher now accepts valid nested 4/6/8-character grids
+for a unique exact contact identity when every other current comparison agrees.
+Both original grids and durable ownership remain intact. This association does
+not establish exact full-grid upload acceptance; strict readback remains separate.
 
 ## Fresh scoped read
 
@@ -179,3 +180,15 @@ certificate check or vendor request occurred. No source/QRZ proof was refreshed.
 Fresh three-day history and ARRL acceptance therefore remain open. Use current
 eligible metadata for the next bounded packet; do not relax the selection checks
 or treat this stop as destination absence.
+
+## Matching correction release
+
+The matching corrections deployed read-only at **2026-10-24 08:51 EDT** as signed revision
+`ba8c982a0b67b97e354f1bcb4acc8efe50729097`, Worker `6b07bcf7-ac24-4bcb-abf4-be43766c8938` at 100% traffic.
+All **1,353 tests** and required release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40094384509).
+Independent readback confirms all eight export controls closed, healthy HTTPS
+and matching assets. There was no migration or vendor write. The grid-compatible
+LoTW association, exact decimal frequency conversion and valid numeric zone
+comparison are now available to normal reconciliation. Their policy version wakes
+held work once; the 2,858 grid and 87 artifact-related frequency counts describe
+the investigation cohorts, not a claim that every row has already reconciled.

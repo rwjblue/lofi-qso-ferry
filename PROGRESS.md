@@ -1,5 +1,26 @@
 # Implementation progress
 
+The matching corrections deployed read-only at **2026-10-24 08:51 EDT** as signed revision
+`ba8c982a0b67b97e354f1bcb4acc8efe50729097`, Worker `6b07bcf7-ac24-4bcb-abf4-be43766c8938` at 100% traffic.
+All **1,353 tests** and required release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40094384509).
+Independent readback confirms all eight export controls closed, healthy HTTPS
+and matching assets. There was no migration or vendor write. The grid-compatible
+LoTW association, exact decimal frequency conversion and valid numeric zone
+comparison are now available to normal reconciliation. Their policy version wakes
+held work once; the 2,858 grid and 87 artifact-related frequency counts describe
+the investigation cohorts, not a claim that every row has already reconciled.
+
+The first matching-release cron completed **12:55:44–12:57:13 UTC** with
+147 contact turns, 262 destination classifications and **99 LoTW adoptions** in
+88.756 seconds. It stopped at the database budget: 878 D1 calls, 5,018 statements
+and 80.687 seconds of database wall time. Three affected-contact errors and 21
+deferrals remain; this sample does not establish sustained capacity. The 12:58:08
+snapshot has 479 LoTW adoptions and identity claims (up from 380), with no uncovered
+mapped identities, export attempts, cutovers or temporary stage guards. Matching
+policy version 2 is active. QRZ remains held for the separate association work.
+
+### Earlier first-insert safeguards release (12f636b3)
+
 Signed revision `12f636b312c9192b755188faf06d66171d485da5` deployed read-only at **2026-10-24 07:59 EDT**
 (`2026-10-24T11:59:10.901859Z`), as Worker `bd6ff427-351d-463c-9b7d-4395e256117d` at 100% traffic.
 All **1,338 tests** and required release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40090915890).
@@ -692,7 +713,7 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 
 1. Signed release `12f636b3` has deployed the reviewed collector, clock-admission and LoTW fixes with all eight controls closed. The baseline/handoff is complete; the 09:20 two-module cloud comparison created a current proof, followed by protected host checks of fresh QRZ absence for the same contact. Repeat on the final release, including remaining scheduled Worker-path validation; preserve exact dependency, scope, generation and expiry guards.
 2. Keep the implemented authority split closed. Default-off QRZ first-insert mode excludes source-wide cutovers, no-query inference, LoTW, replacement and corrections. `SOURCE_BOUNDARY_VERIFIED` remains false: complete inventories and finite positive samples do not establish universal tombstone or purge guarantees.
-3. Prepare the exact QRZ first-write review packet using the successful 09:20 cloud-source/host-QRZ observation as evidence of the read path. Refresh its expiring source proof and vendor checks before any later authorized write. Historical precision, location and routing holds need explicit evidence; cron does not approve them. LoTW unsigned field/certificate compatibility and a fresh scoped absence query passed for one contact; the separate authority and repeated checks are deployed and verified disabled; fresh three-day evidence and live upload/readback acceptance remain open.
+3. Prepare the exact QRZ first-write review packet using the successful 09:20 cloud-source/host-QRZ observation as evidence of the read path. Refresh its expiring source proof and vendor checks before any later authorized write. Compatible LoTW grid precision and numeric formatting can now resolve through normal reconciliation. QRZ minute-only identity, incompatible location and routing holds still need the separate association policy or corrected evidence. LoTW unsigned field/certificate compatibility and a fresh scoped absence query passed for one contact; the separate authority and repeated checks are deployed and verified disabled; fresh three-day evidence and live upload/readback acceptance remain open.
 4. Prepare the exact first-write packet read-only in the [rollout checklist](docs/rollout-checklist.md), preserving the verified 11:48 UTC pre-`0032` SQL backup and refreshing it if needed before external changes. Off-device key storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account.
 5. Keep exports disabled. The latest instruction supersedes the earlier one- or two-contact trial authorization; no actual trial may run until the owner changes that instruction and all current proof/vendor checks pass.
 

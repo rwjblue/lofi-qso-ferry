@@ -2,6 +2,26 @@
 
 ## Precision matching investigation (2026-10-24)
 
+The matching corrections deployed read-only at **2026-10-24 08:51 EDT** as signed revision
+`ba8c982a0b67b97e354f1bcb4acc8efe50729097`, Worker `6b07bcf7-ac24-4bcb-abf4-be43766c8938` at 100% traffic.
+All **1,353 tests** and required release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40094384509).
+Independent readback confirms all eight export controls closed, healthy HTTPS
+and matching assets. There was no migration or vendor write. The grid-compatible
+LoTW association, exact decimal frequency conversion and valid numeric zone
+comparison are now available to normal reconciliation. Their policy version wakes
+held work once; the 2,858 grid and 87 artifact-related frequency counts describe
+the investigation cohorts, not a claim that every row has already reconciled.
+
+
+The first matching-release cron completed **12:55:44–12:57:13 UTC** with
+147 contact turns, 262 destination classifications and **99 LoTW adoptions** in
+88.756 seconds. It stopped at the database budget: 878 D1 calls, 5,018 statements
+and 80.687 seconds of database wall time. Three affected-contact errors and 21
+deferrals remain; this sample does not establish sustained capacity. The 12:58:08
+snapshot has 479 LoTW adoptions and identity claims (up from 380), with no uncovered
+mapped identities, export attempts, cutovers or temporary stage guards. Matching
+policy version 2 is active. QRZ remains held for the separate association work.
+
 The 08:16 EDT production reason histogram identifies a systematic matching-policy
 problem. `history_ambiguous` combines competing identities with ordinary differences
 in recorded precision. It must not be interpreted as a count of duplicate contacts
@@ -77,6 +97,95 @@ timestamp precision, exclude competing source and remote candidates, and reserve
 the historical association durably without granting insert/correction authority.
 The generic identity category and incomplete field evidence remain investigation
 work. No production flag or held row was changed by the histogram query.
+
+### Published vendor rules and revised implementation plan (2026-10-24)
+
+The owner requested vendor-standard time tolerances and accepts a valid shorter
+historical grid as a subset of the more precise LoFi grid. Research changes the
+next slice from same-minute-only matching to the published **±30-minute** windows.
+
+| Service and purpose                                                                      | Published rules                                                                                                                                                                      |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [QRZ confirmation](https://www.qrz.com/docs/logbook30/confirmations-how)                 | Same two calls, UTC timestamps within ±30 minutes, same band and primary mode; submodes use their parent. Other fields may matter for awards.                                        |
+| [QRZ own-log ADIF duplicates](https://www.qrz.com/docs/logbook30/adif-import)            | Matching callsigns, mode and band within ±30 minutes. Import replaces duplicates except confirmed records. The API's replacement contract is different.                              |
+| [LoTW confirmation](https://lotw.arrl.org/lotw-help/frequently-asked-questions/)         | Reciprocal signing calls, starts within 30 minutes, same band, exact mode or mode group; satellite records require matching satellite and SAT.                                       |
+| [LoTW logger reconciliation](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/) | Compare date/time, band and worked call; modes may have been mapped. ARRL suggests mode only when needed to resolve multiple local matches, without defining a local time tolerance. |
+| [eQSL confirmation](https://www.eqsl.cc/qslcard/FAQDisplay.cfm?Topic=1058)               | Its official FAQ permits time differences up to ±1 hour. This is a separate service's confirmation policy, not Ferry's selected window.                                              |
+
+Implement a historical-only ±30-minute candidate policy, including adjacent UTC
+dates and recorded minute intervals. Keep exact raw times and modes and require
+uniqueness in both source-to-remote and remote-to-source directions; no closest-time
+tie-break. Frequency, location detail and mode mapping are not interchangeable
+with durable upload identity. Report any supplied contradictory location field.
+The [ADIF grid definition](https://adif.org/316/ADIF_316.htm#GridSquare) permits
+2/4/6/8-character locators, so the next shared historical location helper includes
+valid two-character containing cells as well as the deployed 4/6/8 precision policy.
+New exports retain all supported source precision.
+
+The broader policy needs a bounded opaque source comparison index with current
+body/context/policy coverage, and separate durable historical remote ownership.
+Reverse uniqueness must inspect the window around each remote candidate, which
+can reach approximately 60 minutes from the original source. Widen LoTW's retained
+inventory across day/week boundaries before relying on those candidates. Keep
+outbound claims, first-insert absence, upload receipts and corrections on their
+existing exact contracts. QRZ's API guide does not establish the import page's
+replacement rules for API writes. These remain implementation tasks, not claims
+that ±30-minute production adoption is already active.
+
+### Next QRZ association slice
+
+Treat a four-digit time as its UTC minute interval and retain the original value.
+Require a unique compatible source-to-remote association in both directions before
+recording a match. An exact candidate plus a competing coarse-time candidate must
+remain held. A selected processing batch alone cannot establish source uniqueness.
+
+Build a bounded, incrementally maintained source comparison index tied to current
+source policy, body incarnations, projection version and operation/event context.
+Its opaque keys should locate possible competitors without retaining another copy
+of private logbook fields. Unknown or stale possible competitors prevent an
+association; incomplete retained history prevents any absence claim.
+
+Reserve the actual historical QRZ LOGID independently of the exact-second outbound
+identity namespace, preserving tenant/destination scope and ownership through
+retention, reconnects and source edits. The existing mapping-uniqueness constraint
+and competing-owner quarantine remain additional defenses. Never manufacture `00`
+seconds to fit the outbound claim helper.
+
+Separate association evidence from full projection agreement. Preserve minute and
+grid precision and missing/conflicting field explanations. An association can
+establish that history is already present while corrections, replacement, insert
+authority and upload acceptance still require their own current checks. Validate
+new-source arrivals, context changes, competing source UUIDs, duplicate LOGIDs,
+partial inventories, midnight boundaries and concurrent claims before rollout.
+
+An offline prototype over the newer backup projected 3,833 QRZ-routed sources
+and read 24 retained QRZ pages. Among 2,610 usable distinct remote records, it
+found 2,012 conditionally compatible one-to-one pairs in both directions; 1,948
+also retained their saved source generation. Every pair needs minute-level
+association, and 814 additionally use nested grids. This is evidence that an
+interval-based association design can address a substantial part of the backlog.
+It is not permission to adopt these pairs: three source records were unprojectable,
+44 remote rows were unusable, and retained coverage was incomplete. Unknown
+possible competitors must be scoped and checked before runtime uniqueness can be
+established. No vendor request or production write occurred.
+
+The follow-up localized those unknowns using only independently valid worked
+callsigns and UTC-minute scopes, with station, band, mode and route left unknown.
+All three unprojectable sources and 44 excluded remote rows retained that partial
+scope; none overlapped the 2,012 compatible pairs or their 1,948 unchanged-source
+subset. The remote exclusions came from the prototype's deliberately narrow mode
+set, not an assertion that the vendor records were invalid. This supports checking
+unknown competitors within affected cohorts instead of blocking every contact
+because an unrelated projection failed. Runtime-fenced uniqueness and authority
+remain unproved by an offline retained subset. Five focused prototype tests pass.
+
+A separate static LoTW reproduction also found that normalizing an unrelated
+unsupported-mode neighbor can block an otherwise exact match. That finding is
+tracked separately from the deployed grid/frequency corrections; its production
+prevalence has not been established. Any fix must isolate clearly unrelated
+neighbors without treating unknown overlapping mode evidence as absence.
+
+## Earlier investigation (2026-10-23)
 
 Investigation date: 2026-10-23. Production revision at investigation start:
 `634517d0`. Exports remain disabled. This report separates observed evidence,

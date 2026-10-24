@@ -1,11 +1,13 @@
 # Capacity plan
 
-The QRZ historical association integration is implemented and focused-tested, with
-full combined checks and deployment pending. Its 20-contact fixture costs **178
-cohort / 282 whole-tick D1 RPCs**, versus the previous 65 cohort RPCs. This is a
-known regression to optimize, not a capacity claim. Production remains at the
-verified `0dad1031` checkpoint with all eight export controls closed; see the
-[pending integration measurements](#historical-comparison-index-integration--release-pending).
+The QRZ historical association integration is deployed in `6ff685a7`, with all
+**1,429 tests** and required checks passing. All eight export controls remain
+closed. Production index coverage completed for 4,141 ordinary contacts; the first
+post-index run adopted 39 QRZ records with zero attempt turns, and initialized-key
+backup/restore verification passed. Its 20-contact fixture costs **178 cohort /
+282 whole-tick D1 RPCs**, versus the previous 65 cohort RPCs. This is a known
+regression to optimize, not a capacity claim; see the
+[deployed integration and measurements](#historical-comparison-index-integration--deployed).
 
 Earlier source-readiness checkpoint, 2026-10-24 UTC: baseline/drain/quarantine completed at 06:35:44
 for all 4,500 retained rows. At 08:12:53, a protected exact-deployed-code diagnostic
@@ -766,13 +768,55 @@ precision policy, exception review and the existing
 scoped canary authorization and observed results. Capacity work itself does not
 provide that authorization or evidence.
 
-## Historical comparison index integration — release pending
+## Historical comparison index integration — deployed
 
+Signed revision `6ff685a7f4991dec0fd0b368552233330bf692bf` deployed at
+**2026-10-24 15:59:23.445021 UTC** as Worker
+`aa64f26f-e2b7-4638-8e04-542854a912b0`, at 100% traffic. All **1,429 tests** and
+required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40108165167).
+Independent verification at **15:59:42.503 UTC** confirmed 33 migrations through
+`0034`, all eight export controls closed, healthy HTTPS and matching browser assets.
 The opaque source index, reverse comparison and association-only QRZ integration
-are implemented and focused-tested. Full combined checks, deployment of `0033`/
-`0034`, production backfill and the first completed reconciliation run remain
-pending. These bounds preserve correctness under incomplete coverage; they do
-not establish import completion time or sustained capacity.
+are active. Production index coverage completed at **16:02:36.319 UTC**: all
+**4,141** ordinary contacts were published, with zero dirty, rebuilding or unknown
+entries and one initialized tenant key. The first post-index run and the
+initialized-key backup/restore verification subsequently passed as described below.
+
+Four protected index-maintenance invocations completed 35 passes and reported 3,441
+publications. They took **41.834 seconds** in total and used **224 D1 RPCs / 7,150
+statements**, with zero held rows and no vendor calls or source, ledger or attempt
+writes; only index/state writes were permitted. Concurrent cron reported 1,000 rows
+examined and 900 publications. These CAS publication counters can overlap and must
+not be summed as distinct contacts; the final unique index count was 4,141. This
+measures the initial backfill of this approximately 4,000-contact retained source
+inventory, not a 200,000-contact import, historical reconciliation completion or
+sustained throughput.
+
+The first new scheduled run, **16:00:42.898–16:02:17.635 UTC**, preceded index
+completion. It processed 105 contact turns and 89 classifications, with zero
+adoptions, errors or deferrals, using **610 D1 RPCs / 4,474 statements** in
+94.737 seconds (91.754 seconds of D1 wall time). It is not a post-coverage adoption
+sample. At **16:03:00.447 UTC**, independent checks verified the index shape,
+matching policy v4 and all 13 checks, with one initialized key and zero dirty,
+rebuilding, unknown or missing index entries.
+
+The first post-index run, **16:05:42.889–16:06:38.147 UTC**, processed **82 contact
+turns / 74 classifications / 39 QRZ adoptions**, with zero attempt turns, errors
+or deferrals. It took **55.258 seconds**, including **52.291 seconds of D1 wall
+time**, and reported **916 D1 RPCs / 3,039 statements**, 25 inventory fetches and
+54 cache hits. It stopped at `database_budget`. This confirms guarded historical
+adoption on the deployed release; it is neither a steady-state capacity sample
+nor a measured speedup over a comparable workload.
+
+At **16:07:37.591 UTC**, all 13 aggregate checks passed: 39 QRZ mappings had matching
+owners, association markers and write blocks, with zero orphaned mappings,
+unreserved owners or missing blocks. All 4,141 index entries were present with
+zero dirty, rebuilding, unknown or missing entries. All 3,327 LoTW exact claims
+were covered, and QRZ outbound claims remained zero. Ordinary retention had
+legitimately archived 36 resolved source bodies, leaving 4,464 retained bodies and
+zero unexplained missing bodies; the opaque index survived those archives.
+Eight closed controls, healthy HTTPS and matching assets were reconfirmed at
+**16:07:02.175 UTC**. No vendor writes or production restore occurred.
 
 The weak worked-call/UTC-minute lookup uses three D1 RPCs and keyed
 `(tenant, key_id, bucket_hash)` searches. A real-D1 regression with 4,000 unrelated
@@ -798,17 +842,79 @@ restored; ordinary retention preserves known opaque buckets, holding only releva
 unavailable competitors. A legacy archived row without a published bucket needs
 normal upstream replay before it can be localized safely.
 
+### Local lookup scale experiment (2026-10-24)
+
+A protected local Miniflare/D1 experiment ran the actual
+`lookupSourceHistoricalIndex` implementation and migrations at `737eeca3`, using
+a real encrypted candidate, stable tenant key and guarded backfill publication.
+Unrelated opaque index rows belonged to a **paused synthetic source**, matching
+the existing 4,000-row regression. They did not represent complete active-source
+coverage or retained bodies for 200,000 contacts. Five native lookups per scale gave:
+
+| Unrelated index rows | RPCs / SQL per lookup | Candidate rows read | Median elapsed | Maximum elapsed |
+| -------------------: | --------------------: | ------------------: | -------------: | --------------: |
+|                4,000 |                 3 / 3 |                 127 |      17.245 ms |       19.995 ms |
+|              200,000 |                 3 / 3 |                 127 |      18.976 ms |       49.468 ms |
+
+Both plans used the full `(tenant, key_id, bucket_hash)` seek without scanning
+the index. Native metadata covered only the candidate `all()` statement;
+the two `first()` calls do not expose metadata. Separate replays of all three
+SELECTs read **133 rows** at each scale (3 state/key + 127 candidates + 3 guard).
+Those replay calls and timings are excluded from the native lookup measurements.
+
+Fixture construction was measured separately: schema plus the real candidate
+took 1.538 seconds, 4,000 synthetic rows took 22.624 ms, and adding the remaining
+196,000 took 1.390 seconds. This is metadata fixture construction, **not** a full
+cryptographic source import or backfill. The complete experiment took 5.303 seconds.
+The 200,000-row database occupied 81.7 MB; final Node RSS was 436 MB. Node RSS is
+not the combined Node/workerd peak, and these are local resource observations.
+
+Real published partial call-only, minute-only and fully unknown records remained
+in their relevant candidate sets. A dense cohort of 128 exact records plus one
+unknown returned `candidate_bound` with no candidate rows, still using three RPCs;
+its separate all-SELECT replay read 455 rows. Activating the paused dirty source
+invalidated the captured guard and held the next lookup as `index_incomplete`.
+
+This supports bounded keyed lookup behavior at the tested index sizes. It does
+not establish 200,000-contact active coverage, source ingestion, remote D1 latency,
+complete historical reconciliation or end-to-end throughput. No production or
+vendor calls were made, and no request limit or export permission changed.
+
+### Next reductions in comparison cost
+
+The next small change should combine the source bucket SELECT and its existing
+index guard in one D1 batch, preserving both results and all later commit guards.
+That should remove one RPC per reverse lookup; the 20-contact saving is an
+estimate until measured. A larger bounded reverse-comparison batch can then
+share tenant key/coverage reads, source headers, and exact body incarnations
+across at most 20 routes. Each route must retain its own candidate set,
+128-candidate/256-dependency/4 MiB limits and commit guard; unavailable or unknown
+competitors must remain holds. Shared operation/event projection must use the
+same source context and body versions. Test singleton/batch parity, overflow,
+archived competitors, source activation, key/body/context changes and stale
+adoption races before claiming a throughput improvement.
+
 ### Comparison-key backup and rotation
 
 Each tenant has a stable random HMAC secret encrypted in
 `source_historical_state.key_envelope`. Initialization and rewrap use CAS; changing
 the active KEK does not replace the secret or churn buckets. Preserve the full
 state table and encrypted envelopes in backups, and verify restoration after key
-initialization. The protected predeployment audit has 4,141 ordinary retained
-contacts, no missing/archived bodies, and an isolated `0033`/`0034` rehearsal that
-preserves all 2,336 destination claims with clean integrity/foreign-key checks and
-repeated recovery quarantine. It does not yet include proof of live initialized
-index-key restoration.
+initialization. The final **15:33 UTC** protected predeployment backup/rehearsal
+included 4,141 ordinary retained contact bodies and preserved all **3,176**
+destination claims through isolated `0033`/`0034` application, with clean
+integrity/foreign-key checks and repeated recovery quarantine.
+
+The **16:07 UTC** post-deployment protected backup contained **35,325,311 bytes**
+and all 33 migrations. Isolated restoration, integrity/foreign-key checks, three
+credential decryptions and repeated recovery quarantine passed. The initialized
+tenant comparison key decrypted and matched its key ID; all 4,141 index rows,
+39 historical owners and 39 association markers survived quarantine. All 36
+legitimately archived-body checks passed, with zero attempts or cutovers. A
+**16:08:10.506 UTC** comparison verified that all 3,176 full predeployment claim
+rows, including `created_at`, were unchanged: the post-backup had 3,327 claims,
+151 additions and zero missing prior claims. This was isolated restore validation,
+not a production restore.
 
 Retain old KEKs until every retained comparison-key envelope, including inactive
 tenants, is rewrapped. Existing `private_data` rotation does not enumerate these

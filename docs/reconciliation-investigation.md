@@ -1,14 +1,23 @@
 # Reconciliation exceptions and capacity
 
-## QRZ association integration — release pending
+## QRZ association integration — deployed 6ff685a7
 
-The wider QRZ historical matcher is implemented and focused-tested locally, with
-full combined checks and deployment still pending. Migrations `0033`/`0034` and the
-runtime integration add opaque source comparison buckets, dirty/coverage barriers,
-bounded reverse-source projection, durable book-scoped LOGID ownership and
-association-only stage/dispatch guards. Every historical QRZ adoption through this
-path, including exact-time matches, retains that write restriction. Exact Ferry
-receipt/readback behavior and outbound precision are unchanged.
+Signed revision `6ff685a7f4991dec0fd0b368552233330bf692bf` deployed at
+**2026-10-24 15:59:23.445021 UTC**, Worker
+`aa64f26f-e2b7-4638-8e04-542854a912b0` at 100% traffic. All **1,429 tests** and
+required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40108165167).
+All **33 migrations through `0034`** are installed. Independent verification at
+**15:59:42.503 UTC** confirmed healthy HTTPS, all three matching asset hashes and
+all **eight export controls closed**.
+
+The wider QRZ historical matcher now uses opaque source comparison buckets,
+dirty/coverage barriers, bounded reverse-source projection, durable book-scoped
+LOGID ownership and association-only stage/dispatch guards. Every historical QRZ
+adoption through this path, including exact-time matches, retains that write
+restriction. Exact Ferry receipt/readback behavior and outbound precision are
+unchanged. Initial retained-source index backfill, the first live QRZ associations,
+ownership verification and the postdeployment backup checks are complete. Export
+readiness and full backlog reconciliation remain separate unfinished work.
 
 This addresses precision-driven false holds without choosing the nearest record
 or ignoring competitors. Minute intervals and ±30-minute candidates must be unique
@@ -22,13 +31,69 @@ attempts or vendor writes, but costs **178 cohort D1 RPCs / 282 whole-tick RPCs*
 versus the earlier 65 cohort RPCs. Reverse comparison alone measured 120 RPCs,
 160 statements and 2,919 rows read for 20 one-contact cohorts, with zero writes.
 These are bounded correctness/cost measurements, not a throughput improvement or
-200,000-contact capacity result. See [capacity and key lifecycle](capacity-plan.md#historical-comparison-index-integration--release-pending).
+200,000-contact capacity result. See [capacity and key lifecycle](capacity-plan.md#historical-comparison-index-integration--deployed).
 
-The protected backup audit found 4,141 ordinary retained nondeleted contacts with
-zero missing or archived bodies. Isolated pending-migration rehearsal preserved
-2,336 destination claims and passed integrity, foreign-key and repeated quarantine
-checks. Production index coverage, ownership and the first completed new-release
-cron still need verification. Keep all eight export controls closed.
+The final **15:33:54 UTC** protected predeployment backup audit found 4,141
+ordinary retained nondeleted contacts with zero missing or archived bodies. The
+isolated migration rehearsal preserved all **3,176 exact destination claims** and
+passed integrity, foreign-key and repeated quarantine checks, superseding the
+older 2,336-claim checkpoint.
+
+At **16:02:36.319 UTC**, the retained-source index contained **4,141 published
+ordinary-contact rows**, zero dirty or unknown-scope rows, no unfinished rebuild
+and one initialized tenant key. Four bounded maintenance invocations reported
+3,441 publications; the first new-release cron reported 900. These reports may
+overlap and must not be summed as unique rows. Manual maintenance reported zero
+held rows and made no source-payload, ledger, attempt or vendor writes. This is
+current retained index coverage, not upstream universal completeness or export
+authority.
+
+The first new-release run, **16:00:42.898–16:02:17.635 UTC**, examined 1,000 index
+rows and reported 900 publications with zero held rows. It processed 105 contact
+turns and 89 destination classifications, with **zero adoptions, errors or
+deferrals**, before index completion. Its 94.737 seconds included 610 D1 calls,
+4,474 statements and 91.754 seconds of D1 wall time. At **16:03:00.447 UTC**, the
+aggregate verification passed all 13 checks, including policy version 4 and index
+readiness.
+
+The post-index **16:05:42.889–16:06:38.147 UTC** run processed 82 contact turns,
+74 destination classifications and **39 adoptions**, with zero attempt turns,
+errors or deferrals. It stopped at `database_budget` after 55.258 seconds, with
+916 D1 calls, 3,039 statements, 52.291 seconds of D1 wall time, 25 inventory fetches
+and 54 cache hits. This verifies normal guarded association, not sustained capacity.
+
+At **16:07:37.591 UTC**, all 13 aggregate checks passed: the 4,141-row index had no
+dirty, rebuilding, unknown-scope or missing rows; all **39 QRZ mappings** had
+permanent owners, association markers and write blocks, with no orphan or
+unreserved mapping and no missing block. All **3,327 LoTW exact claims** remained
+covered, while QRZ outbound exact-identity claims stayed zero. The **16:07:37.728
+UTC** route snapshot was:
+
+| Destination | Mapped | Ambiguous | Mismatched | Pending | Adoption conflicts |
+| ----------- | -----: | --------: | ---------: | ------: | -----------------: |
+| QRZ         |     39 |     3,359 |         16 |     419 |                  0 |
+| LoTW        |  3,327 |         7 |        161 |     338 |                  0 |
+
+Each destination has 3,833 routes; these are overlapping destination counts, not
+disjoint contacts. Held and pending rows are ongoing reconciliation work, not a
+finished manual-exception queue. All eight closed controls, HTTPS and asset hashes
+were reverified at **16:07:02.175 UTC**. Attempts, cutovers and vendor writes stayed
+zero.
+
+The **16:07 UTC** postdeployment backup is **35,325,311 bytes**, with all 33
+migrations. Isolated restore decrypted all three active credentials and the one
+initialized tenant comparison key, verified its key ID, and passed integrity,
+foreign-key and repeated-quarantine checks. All 4,141 index rows and 39 QRZ
+owners/markers survived. **4,464 retained source bodies plus 36 legitimate resolved
+archives** account for all 4,500 source rows; archived-body validation passed with
+zero unexplained missing bodies. At **16:08:10.506 UTC**, exact pre/post comparison
+confirmed all **3,176 predeployment claims**, including creation timestamps,
+unchanged among 3,327 postdeployment claims: **151 additions, zero losses**. No
+production restore occurred.
+
+Broader LoTW adoption, full reconciliation review, current first-write source and
+vendor proofs, global source completeness and 200,000-contact capacity remain
+open. Keep all eight export controls closed.
 
 ## Precision matching investigation (2026-10-24)
 
@@ -172,7 +237,7 @@ claim. The audit made zero vendor calls or production writes.
 
 This investigation required a separate QRZ historical-association path. Appending
 seconds would fabricate precision, and the outbound identity-claim helper correctly
-rejects four-digit times. The pending integration preserves the actual LOGID and
+rejects four-digit times. The deployed integration preserves the actual LOGID and
 timestamp precision, excludes competing source and remote candidates, and reserves
 the association durably without granting insert/correction authority.
 The generic identity category and incomplete field evidence remain investigation
@@ -201,8 +266,8 @@ unique local association and exact upload identity as explicit separate contract
 rather than claiming every logger adopts any contact inside a common tolerance.
 
 The historical-only ±30-minute candidate policy handles adjacent UTC dates and
-recorded minute intervals, retaining original times and modes. The pending QRZ
-integration now consumes it only after source-to-remote and remote-to-source
+recorded minute intervals, retaining original times and modes. The deployed QRZ
+integration consumes it only after source-to-remote and remote-to-source
 uniqueness; there is no closest-time tie-break. Frequency and location comparisons
 cannot remove an identity competitor merely to obtain a unique result. Supplied
 contradictory or missing location fields remain visible as holds. The
@@ -211,7 +276,7 @@ contradictory or missing location fields remain visible as holds. The
 truncating source or remote values. Exact upload identity and receipts remain
 separate from historical association.
 
-### QRZ association implementation awaiting release
+### QRZ association implementation (deployed)
 
 The weak index stores opaque worked-call/UTC-minute buckets for every retained
 ordinary QSO work state. It publishes only under exact source/body CAS and uses
@@ -230,9 +295,9 @@ remain additional defenses. No `00` seconds or delivery receipt are manufactured
 
 Focused regressions exercise source arrivals, cross-source conflicts, body/context
 changes, minute/midnight boundaries, unknown projection, retention, key rewrap,
-concurrent claims and edited associations. Full release checks, migration and
-read-only production observation remain pending. LoTW still needs wider retained
-coverage across UTC day/week boundaries and separate adoption integration. QRZ's
+concurrent claims and edited associations. Full release checks and migration are
+complete; normal read-only QRZ association and ownership are verified. LoTW still
+needs wider retained coverage across UTC day/week boundaries and separate adoption integration. QRZ's
 API guide does not establish the import page's replacement rules for API writes;
 this release creates no replacement, absence or export authority.
 

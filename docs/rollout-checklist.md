@@ -8,12 +8,58 @@ replaced, deleted or uploaded during this implementation work.
 
 ## Current evidence (2026-10-24)
 
-The wider QRZ historical association implementation and focused regressions are
-complete locally; combined release checks and deployment are pending. The last
-verified production release is `0dad1031` below. All new-path QRZ adoptions are
+Signed revision `6ff685a7f4991dec0fd0b368552233330bf692bf` deployed at
+**2026-10-24 15:59:23.445021 UTC**, Worker
+`aa64f26f-e2b7-4638-8e04-542854a912b0` at 100% traffic. All **1,429 tests** and
+required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40108165167).
+All **33 migrations through `0034`** are installed. Independent verification at
+**15:59:42.503 UTC** confirmed healthy HTTPS, all three matching asset hashes and
+all **eight export controls closed**.
+
+The wider QRZ historical matcher, bounded reverse-source comparison and durable
+book-scoped LOGID ownership are deployed. All new-path QRZ adoptions are
 association-only, including exact-time matches; they cannot authorize later writes.
-The pending release does not finish broader LoTW matching, first-write acceptance
-or sustained capacity. All eight export controls remain closed.
+Exact Ferry delivery receipts and outbound precision remain unchanged. At
+**16:02:36.319 UTC**, all **4,141 retained ordinary-contact index rows** were
+published, with zero dirty rows, unknown scopes or unfinished rebuilds. The
+**16:07:37.591 UTC** verification passed all 13 checks and confirmed **39 QRZ
+association-only mappings**, each with a permanent owner, association marker and
+write block; none were orphaned, unreserved or missing a block. All **3,327 LoTW
+exact claims** remain covered; QRZ outbound exact-identity claims remain zero.
+The eight closed controls, HTTPS and asset hashes were reverified at
+**16:07:02.175 UTC**. No export attempt, cutover or vendor write occurred.
+
+This release does not finish broader LoTW adoption, full reconciliation review,
+first-write acceptance, global source completeness or sustained 200,000-contact
+capacity. Held and pending route counts are ongoing reconciliation work, not a
+finished queue of manual exceptions.
+
+The first new-release run, **16:00:42.898–16:02:17.635 UTC**, processed 105 contact
+turns and 89 destination classifications, with zero adoptions, errors or deferrals.
+It took 94.737 seconds and 610 D1 calls/4,474 statements, including 91.754 seconds
+of D1 wall time. It examined 1,000 index rows and reported 900 publications with
+zero held rows, before the index completed. The **16:03:00.447 UTC** aggregate
+verification passed all 13 checks, including policy version 4 and index readiness.
+These observations do not establish finished reconciliation or sustained capacity.
+
+After index completion, the **16:05:42.889–16:06:38.147 UTC** run made 82 contact
+turns, 74 destination classifications and **39 adoptions**, with zero attempt
+turns, errors or deferrals. It stopped at `database_budget` after 55.258 seconds:
+916 D1 calls, 3,039 statements and 52.291 seconds of D1 wall time, with 25 inventory
+fetches and 54 cache hits. At 16:07:37.728 UTC, QRZ's 3,833 routes included 39 mapped,
+3,359 ambiguous, 16 mismatched and 419 pending; LoTW had 3,327 mapped, seven
+ambiguous, 161 mismatched and 338 pending. Neither destination had an adoption
+conflict in this snapshot.
+
+The **16:07 UTC** postdeployment backup contains **35,325,311 bytes** and all 33
+migrations. Its isolated restore decrypted three active credentials and the one
+initialized comparison key, verified the key ID, and passed integrity, foreign-key
+and repeated-quarantine checks. All 4,141 index rows and 39 QRZ owners/markers were
+preserved. The 4,464 retained source bodies plus 36 legitimate resolved archives
+account for all 4,500 source rows, with no unexplained missing bodies. At
+**16:08:10.506 UTC**, an exact comparison confirmed that all **3,176 predeployment
+claims**, including creation timestamps, remain unchanged among 3,327 postdeployment
+claims; 151 were added and none were lost. No production restore occurred.
 
 ### Previous verified release (0dad1031)
 
@@ -211,24 +257,38 @@ LoTW associations; unresolved identity, location and route conflicts remain held
 | LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Unique exact-identity LoTW records with valid nested grids now associate without rewriting source or remote fields. Live ARRL upload acceptance remains unproved.                              |
 | First vendor writes       | The latest instruction to keep exports disabled supersedes the earlier one- or two-contact trial authorization. No write or actual trial may occur until the owner changes that instruction. The authority split is deployed. Exact scope, successful current source proof, fresh vendor evidence and backup remain required. |
 
-## Verify the pending QRZ association release
+## Verify the deployed QRZ association release
 
-- [ ] Complete full combined release checks and record the exact signed revision,
-  Worker version, migrations `0033`/`0034`, HTTPS/assets and eight closed controls.
-- [ ] Confirm the protected backup and isolated migration rehearsal preserve
-  existing ownership. The current rehearsal covers 4,141 ordinary retained contacts,
-  zero missing/archived bodies and 2,336 destination claims, with clean integrity,
-  foreign-key and repeated recovery-quarantine checks.
-- [ ] Observe bounded index backfill and dirty/coverage barriers on the new release;
-  incomplete or unavailable relevant coverage must remain held. Verify the first
-  completed cron's association counts, ownership and fixed hold reasons, with zero
-  attempts, cutovers or vendor mutations.
-- [ ] Back up and restore-check the initialized tenant comparison-key envelopes.
-  Retain their old KEKs until every retained envelope, including inactive tenants,
-  has been rewrapped; ordinary `private_data` rotation does not cover this table.
-- [ ] Record real D1 cost and queue progress. The 20-contact fixture uses 178 cohort
-  RPCs / 282 whole-tick RPCs versus the previous 65 cohort RPCs; it is not sustained
-  throughput or 200,000-contact capacity evidence.
+- [x] Full combined release checks passed: 1,429 tests; signed revision
+  `6ff685a7`, Worker `aa64f26f-e2b7-4638-8e04-542854a912b0`, all 33 migrations,
+  healthy HTTPS, matching assets and eight closed controls verified.
+- [x] The final **15:33:54 UTC** protected predeployment backup and isolated
+  migration rehearsal cover 4,141 ordinary retained contacts, zero missing or
+  archived bodies and **3,176 exact destination claims preserved**, with clean
+  integrity, foreign-key and repeated recovery-quarantine checks. This supersedes
+  the earlier 2,336-claim rehearsal; it is not a postdeployment comparison.
+- [x] Initial retained-source index backfill completed at **16:02:36.319 UTC**:
+  4,141 published rows, zero dirty or unknown-scope rows, no unfinished rebuild and
+  one initialized tenant key. Four bounded maintenance invocations reported 3,441
+  publications; the first cron reported 900. Those reports can overlap and must
+  not be added as unique rows. Manual maintenance made no source-payload, ledger,
+  attempt or vendor writes. Coverage and unavailable-body guards remain required.
+- [x] Post-index reconciliation produced 39 QRZ associations. At 16:07:37.591 UTC,
+  all 39 mappings had permanent owners, markers and write blocks, with no coverage
+  gaps; attempts, cutovers and vendor mutations remained zero.
+- [x] The 16:07 UTC postdeployment backup restored in isolation and validated its
+  initialized comparison-key envelope/key ID, three credentials, all 4,141 index
+  rows, 39 owners/markers and 36 legitimate archived bodies. Integrity, foreign-key
+  and repeated quarantine checks passed. Retain old KEKs until every retained
+  envelope, including inactive tenants, is rewrapped; ordinary `private_data`
+  rotation does not cover the comparison-key table.
+- [x] Exact pre/post claim comparison retained all 3,176 original rows, including
+  creation timestamps, unchanged; 3,327 postdeployment rows include 151 additions
+  and zero losses.
+- [ ] Establish sustained throughput and finish queue review. The observed
+  post-index run used 916 D1 calls in 55.258 seconds and stopped at the database
+  budget. The 20-contact fixture uses 178 cohort RPCs / 282 whole-tick RPCs versus
+  the previous 65 cohort RPCs. Neither establishes 200,000-contact capacity.
 
 These checks authorize no writes. Historical association preserves existing
 records; fresh source proofs, current vendor evidence and a changed owner
@@ -241,15 +301,15 @@ Keep every export control closed while doing this work, including the deployed d
 birth evidence, current context and destination reservations; clearing counts or
 forcing a contact into an eligible state is not reconciliation.
 
-| Outcome                                                          | Next action                                                                                                         | Can scheduled work resolve it?                                                                                                                                                                                                                                 |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Inventory/context pending                                        | Let bounded reads finish; diagnose persistent vendor failures and expired or missing dependencies.                  | Yes, when the dependency is obtainable and retries succeed.                                                                                                                                                                                                    |
-| Waiting for current source verification                          | Obtain fresh exact QSO/base/event observations and a complete final canonical drain under the ordinary budget.      | Proof creation is skipped while exports are disabled. Once explicitly authorized, complete subsets and later singleton turns can progress; a budget-limited singleton receives an exact-version ten-minute delay. More than three collection reads stays held. |
-| QRZ minute-only or nonunique identity                            | After the pending release, require complete current coverage, bidirectional uniqueness and durable LOGID ownership. | Minute precision alone can resolve through guarded association; actual competing or unknown relevant candidates remain held.                                                                                                                                   |
-| QRZ/LoTW shorter historical grid versus more precise source grid | Use each vendor's guarded historical association policy; keep full-grid upload receipt verification exact.          | Yes, when the remaining identity, location and ownership checks pass; neither grid value is truncated.                                                                                                                                                         |
-| Other location mismatch                                          | Compare exact station fields and authoritative source context. Keep the hold until the discrepancy is understood.   | Only a meaningful source/remote correction can change the evidence.                                                                                                                                                                                            |
-| Missing or ambiguous route                                       | Select the intended station/book/account coverage.                                                                  | No; the scheduler cannot invent destination coverage.                                                                                                                                                                                                          |
-| Test or invalid contact                                          | Tests stay excluded; correct an invalid real source record through its normal source application.                   | Test exclusion is intentional. Invalid source data needs a correction.                                                                                                                                                                                         |
+| Outcome                                                          | Next action                                                                                                       | Can scheduled work resolve it?                                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inventory/context pending                                        | Let bounded reads finish; diagnose persistent vendor failures and expired or missing dependencies.                | Yes, when the dependency is obtainable and retries succeed.                                                                                                                                                                                                    |
+| Waiting for current source verification                          | Obtain fresh exact QSO/base/event observations and a complete final canonical drain under the ordinary budget.    | Proof creation is skipped while exports are disabled. Once explicitly authorized, complete subsets and later singleton turns can progress; a budget-limited singleton receives an exact-version ten-minute delay. More than three collection reads stays held. |
+| QRZ minute-only or nonunique identity                            | Require complete current coverage, bidirectional uniqueness and durable LOGID ownership on the deployed path.     | Minute precision alone can resolve through guarded association; actual competing or unknown relevant candidates remain held.                                                                                                                                   |
+| QRZ/LoTW shorter historical grid versus more precise source grid | Use each vendor's guarded historical association policy; keep full-grid upload receipt verification exact.        | Yes, when the remaining identity, location and ownership checks pass; neither grid value is truncated.                                                                                                                                                         |
+| Other location mismatch                                          | Compare exact station fields and authoritative source context. Keep the hold until the discrepancy is understood. | Only a meaningful source/remote correction can change the evidence.                                                                                                                                                                                            |
+| Missing or ambiguous route                                       | Select the intended station/book/account coverage.                                                                | No; the scheduler cannot invent destination coverage.                                                                                                                                                                                                          |
+| Test or invalid contact                                          | Tests stay excluded; correct an invalid real source record through its normal source application.                 | Test exclusion is intentional. Invalid source data needs a correction.                                                                                                                                                                                         |
 
 A narrow first-export trial does not require approving every historical exception.
 Its selected contacts must have complete current context, unambiguous routing,

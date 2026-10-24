@@ -4,22 +4,73 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-24 UTC)
 
-The QRZ historical association integration is implemented and focused-tested;
-full combined release checks, deployment of migrations `0033`/`0034`, and the first
-production backfill/reconciliation observations are pending. Its bounded opaque
+Signed revision `6ff685a7f4991dec0fd0b368552233330bf692bf` deployed read-only at
+**2026-10-24 15:59:23.445021 UTC**, deployment
+`6fee8987-3084-4519-809e-e4c943b9a524` at 100% traffic. Worker
+`aa64f26f-e2b7-4638-8e04-542854a912b0` was created at
+`2026-10-24T15:59:22.49107Z`. All **1,429 tests** and required release checks passed
+in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40108165167).
+Independent verification at **15:59:42.503 UTC** confirmed all **eight export
+controls closed**, healthy HTTPS, matching hashes for all three assets and all
+33 migrations through `0034`. No vendor writes occurred.
+
+The QRZ historical association integration is now deployed. Index backfill completed
+at **16:02:36.319 UTC**: all **4,141** retained ordinary contacts are published, with
+zero dirty, rebuilding or unknown entries and one initialized tenant key. Four
+bounded manual invocations and scheduled work contributed; overlapping publication
+counters are not added to derive that unique total. Manual backfill had zero held
+entries and no source, ledger, attempt or vendor writes. The index and policy
+version 4 passed all 13 aggregate checks at **16:03:00.447 UTC**.
+Its bounded opaque
 source index, reverse-source uniqueness and durable LOGID ownership support
 minute-precision/±30-minute association without inventing seconds. Every QRZ
 historical adoption through the new path is association-only, including exact-time
 matches. Existing exact Ferry receipt/readback paths remain separate and unchanged.
 
-Before calling the rollout complete, verify index coverage, ownership and write
-fences, all eight closed export controls, and zero export activity on the deployed
-revision. Preserve encrypted tenant comparison keys and wrapping KEKs in backups.
+The first completed scheduled run, **16:00:42.898–16:02:17.635 UTC**, ended before
+index completion. It reported 105 contact turns, 89 destination classifications,
+zero adoptions/errors/deferrals, and 1,000 index entries examined / 900 published /
+zero held. Its 610 D1 RPCs / 4,474 statements took 94.737 seconds, including 91.754
+seconds of database wall time. This initial run did not establish post-backfill
+adoption or sustained capacity.
+
+The first post-index run, **16:05:42.889–16:06:38.147 UTC**, made **39 adoptions**
+from 82 contact turns / 74 destination classifications, with zero attempt turns,
+errors or deferrals. It stopped at `database_budget` after 55.258 seconds,
+916 D1 RPCs / 3,039 statements and 52.291 seconds of database wall time; inventory
+used 25 fetches and 54 cache hits. At **16:07:37.591 UTC**, all 13 aggregate checks
+passed: 39 QRZ mappings/owners/association markers/write blocks, no unreserved or
+orphaned ownership or missing blocks, all 4,141 index entries published and
+covered, and all 3,327 LoTW exact claims covering their mappings. QRZ outbound
+claims, attempts, cutovers, proofs, pins and temporary write guards remain zero.
+Thirty-six source bodies were legitimately archived after both routes resolved;
+4,464 remain, with zero unexplained missing bodies.
+
+At **16:07:37.728 UTC**, QRZ has 3,833 routes: 39 mapped, 3,359 ambiguous,
+16 mismatches, 419 pending and zero conflicts. LoTW has 3,327 mapped, seven
+ambiguous, 161 mismatches and 338 pending. These remaining holds are not yet a
+proven manual exception queue. Neither this sample nor published index coverage
+establishes sustained capacity, universal upstream completeness or first-insert
+absence.
+
+The postdeployment backup started at **16:07:07 UTC** and verified 35,325,311 bytes
+with all 33 migrations. Isolated restore, integrity/foreign-key checks, three
+credential decryptions and repeated quarantine passed, preserving the decrypted,
+HMAC-ID-validated tenant index key, 4,141 index rows and 39 owners/association
+markers. All 36 archived-body checks passed; attempts/cutovers remain zero.
+The **16:08:10.506 UTC** comparison preserved all 3,176 predeployment claims
+across every one of their seven fields, including `created_at`: 3,327 postdeployment
+claims, 151 additions, zero missing or changed. Preserve both backups and the
+wrapping KEKs. No production restore or vendor write occurred.
+
+QRZ deployment, index, ownership and backup verification are complete for this
+rollout. All eight closed controls, HTTPS and assets were reconfirmed at
+**16:07:02.175 UTC**. Exports remain disabled.
 The 20-contact fixture's **178 cohort / 282 whole-tick D1 RPCs**, up from 65 cohort
 RPCs, is a known cost to reduce; no 200,000-contact capacity is established.
 LoTW's wider adoption and fresh first-write acceptance evidence remain outstanding.
 See [the integration contract](docs/bootstrap.md#historical-association-and-vendor-matching)
-and [release acceptance](docs/rollout-checklist.md#verify-the-pending-qrz-association-release).
+and [release acceptance](docs/rollout-checklist.md#verify-the-deployed-qrz-association-release).
 
 ### Previous verified release (0dad1031)
 
@@ -228,7 +279,7 @@ Timestamp/grid precision, routing and source-validity holds still require review
 Core feature paths, owner enrollment and service linking are implemented. The next milestone is a safe one- or two-user export trial; the full large-scale capacity plan follows separately. Production remains read-only. Linking credentials and waiting for cron do not establish export readiness. See the [personal acceptance checklist](docs/rollout-checklist.md) for exact prerequisites and the first-write packet.
 Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-character LoTW signing and the aggregate source audit are implemented, tested and deployed. Claims protect adoption, preparation and dispatch across cancellation, uncertainty, source edits and payload expiry. Historical precision holds and live vendor acceptance remain separate.
 
-The [QRZ association rollout](docs/bootstrap.md#historical-association-and-vendor-matching) is implemented and focused-tested, with full release checks and deployment pending. Verify bounded index backfill, bidirectional uniqueness, durable ownership and association-only stage/dispatch restrictions on the deployed revision before interpreting the remaining ambiguity count as a manual exception queue. Broader LoTW adoption still needs retained coverage across UTC day/week boundaries and its own guarded integration. Neither historical association nor source-index coverage establishes absence, universal upstream completeness or export permission.
+The [QRZ association rollout](docs/bootstrap.md#historical-association-and-vendor-matching) is deployed in `6ff685a7` and its index, 39 live association-only adoptions, durable ownership, write blocks and postdeployment backup are verified. Remaining holds still need normal reconciliation and review before they can be classified as manual exceptions. Broader LoTW adoption still needs retained coverage across UTC day/week boundaries and its own guarded integration. Neither historical association nor source-index coverage establishes absence, universal upstream completeness or export permission.
 1. **Repeat per-contact source verification on the deployed release.** The production baseline,
    forward drain and quarantine handoff are complete: all 4,500 retained rows
    were witnessed, with 4,130 contacts eligible for reconciliation. The immutable
@@ -264,7 +315,7 @@ The [QRZ association rollout](docs/bootstrap.md#historical-association-and-vendo
    book-verification and covering reads for the same contact. Its exact proof remained current after
    the empty neighborhood check, with 271,806 ms remaining. This verifies one
    bounded read path, with no events in its two-dependency closure. Refresh the exact contact's evidence
-   before any future authorized write. The pending QRZ integration can resolve
+   before any future authorized write. The deployed QRZ integration can resolve
    minute-only history only with complete current coverage and unique ownership;
    competing associations and incompatible/unknown locations remain held.
    Valid nested QRZ/LoTW grids now use guarded historical association.
@@ -273,13 +324,14 @@ The [QRZ association rollout](docs/bootstrap.md#historical-association-and-vendo
    or two-contact trial authorization. No actual trial may run until the owner
    changes that instruction and the remaining evidence checks pass.
    The proposed sequence remains QRZ first, then LoTW. Both contact and destination allowlists must be
-   exact, so LoTW remains excluded during QRZ work. The protected 12:29 UTC
-   production backup contains the current 31-migration schema, all 4,500 source
-   bodies, 7,666 destination rows and the then-current 380 identity claims.
-   Isolated restore, integrity/foreign-key checks, all three credential decryptions
-   and repeated recovery quarantine passed. The 11:48 backup and pre-`0032`
-   rehearsal remain historical evidence. Preserve both snapshots and refresh the
-   backup before external changes if needed to capture subsequent adoptions.
+   exact, so LoTW remains excluded during QRZ work. The final protected predeployment
+   backup verified at 15:33:54 UTC retains the previous 31-migration schema and all
+   3,176 exact claims; its isolated migration rehearsal preserves those claims.
+   The verified 16:07 UTC postdeployment backup includes the 33-migration schema,
+   validated tenant comparison key and durable historical ownership. Every prior
+   claim is preserved exactly, with 151 additions. Preserve it and refresh before
+   later external changes if needed. The 12:29 and 11:48 backups remain historical
+   evidence; preserve them alongside the newer snapshots.
    Earlier restore rehearsals
    remain recorded in the deployment history. Preserve each contact's
    actual 4/6/8-character grid. No
@@ -426,8 +478,8 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 - [x] Without LoTW read access, leave prior history unverified and permit only live records proven new after the source cutover. Expose incomplete coverage rather than treating it as absence.
 - [x] Match read-only historical identities at the same whole-second precision as PoLo/HaLo while preserving raw source milliseconds and fingerprints. Keep outbound preparation stricter than historical lookup.
 - [x] Implement and test adoption collision quarantine for both the untransmitted adopted owner and contender, preserving the identity reservation and blocking later edit exports.
-- [x] Implement and focused-test the QRZ ±30-minute/minute-precision association path with opaque source indexing, bounded reverse comparison, book-scoped LOGID ownership and permanent association-only stage/dispatch restrictions. Full release checks and deployment are pending; exact receipt verification remains unchanged.
-- [ ] Verify migrations `0033`/`0034`, current index coverage and read-only association outcomes after deployment, including unchanged ownership and zero export attempts. Retain and restore-test encrypted tenant comparison keys with their wrapping KEKs.
+- [x] Implement and deploy the QRZ ±30-minute/minute-precision association path with opaque source indexing, bounded reverse comparison, book-scoped LOGID ownership and permanent association-only stage/dispatch restrictions. Release `6ff685a7` passed all 1,429 tests and required checks; exact receipt verification remains unchanged.
+- [x] Verify the deployed `0033`/`0034` migration, complete 4,141-row retained index, 39 live QRZ associations with permanent ownership/write blocks and zero export attempts. The postdeployment isolated restore preserves the validated tenant key, ownership/association markers and every predeployment exact claim through repeated quarantine. Full history reconciliation and sustained capacity remain open.
 - [ ] Extend LoTW retained time coverage across UTC day/week boundaries and integrate broader historical matching with its own ownership/capability guards.
 - [x] Implement indexed due-work selection and versioned destination checks. Stable review holds retry after 24 hours and incomplete reconciliation checks after five minutes; ambiguous-empty QRZ partitions share a separate fifteen-minute read cooldown. Relevant source/context/route/credential/policy changes invalidate the affected checks. Retention-only refreshes preserve holds.
 - [x] Implement shared encrypted four-hour history partitions with QRZ base/catch-up paging, LoTW date-range splitting, scoped/fenced commits and bounded local candidate lookup. Cached absence does not authorize export; a fresh targeted prewrite check remains required.

@@ -1,6 +1,6 @@
 # Adopting existing QRZ and LoTW history
 
-Status: implemented v1 contract; complete owner-history and source-boundary verification remain gated. See [rollout checklist](rollout-checklist.md). Bootstrap first inventories and adopts existing contacts without remote writes. After reconciliation, contacts whose current identity is demonstrably absent become eligible for automatic backfill through normal delivery. Adoption itself must not re-upload existing history, regenerate its comments, reset confirmations, or re-sign every QSO.
+Status: guarded QRZ historical association is deployed in `6ff685a7`; all eight export controls remain closed. Broader LoTW association and universal source-boundary verification remain separate work. See [rollout checklist](rollout-checklist.md). Bootstrap first inventories and adopts existing contacts without remote writes. Any later first insert requires explicit export authorization, a current source proof and the normal fresh destination checks. Adoption itself must not re-upload existing history, regenerate its comments, reset confirmations, or re-sign every QSO.
 
 QRZ and LoTW reconcile independently. A QSO can be adopted at QRZ while LoTW remains unavailable. Exceptions affect the relevant record and destination; they do not hold up unrelated live logging.
 
@@ -35,10 +35,21 @@ Validate ADIF framing and `APP_LoTW_NUMREC`; errors can be HTML. Keep `APP_LoTW_
 
 Use the vendor's published matching rules to discover historical candidates, then require a unique, one-to-one association with durable ownership. QRZ documents ±30 minutes, callsigns, band and primary mode for confirmations and ADIF import duplicates. LoTW confirms reciprocal callsigns on the same band within 30 minutes, using exact mode or its mode group and matching satellite/SAT where applicable. See the [published rules and implementation plan](reconciliation-investigation.md#published-vendor-rules-and-revised-implementation-plan-2026-10-24). Normalize case and documented aliases; retain callsign suffixes and original remote modes. A confirmation rule does not establish an API replacement or upload identity.
 
-The QRZ integration described below is implemented and focused-tested, with full
-combined release checks and deployment pending. The previous verified release is
-`0dad1031`; this section does not claim that the new migrations or matcher are
-already active in production.
+The QRZ integration described below is deployed at signed revision
+`6ff685a7f4991dec0fd0b368552233330bf692bf`, following all **1,429 tests** and
+required checks in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40108165167).
+Worker `aa64f26f-e2b7-4638-8e04-542854a912b0` deployed at **15:59:23.445021 UTC**
+on 2026-10-24, at 100% traffic. Independent **15:59:42.503 UTC** verification
+confirmed 33 migrations through `0034`, eight closed export controls, healthy
+HTTPS and matching assets. At **16:02:36.319 UTC**, all **4,141** ordinary contacts
+had published index entries, with zero dirty, rebuilding or unknown entries and
+one initialized tenant key. The first post-index scheduled run at
+**16:05:42.889–16:06:38.147 UTC** adopted 39 QRZ records with zero attempt turns,
+errors or deferrals. At **16:07:37.591 UTC**, all 39 mappings had durable owners,
+association markers and write blocks, with no orphaned or unreserved mapping or
+missing block. Index coverage remained complete after 36 resolved source bodies
+were legitimately archived. All eight controls remained closed; this establishes
+read-only adoption, not export acceptance or sustained capacity.
 
 Retain timestamp precision. [ADIF permits both HHMM and HHMMSS](https://adif.org/316/ADIF_316.htm#Time).
 A minute-only value represents an interval, not invented `00` seconds. The new QRZ
@@ -99,25 +110,34 @@ An unpublished pre-index archive remains dirty until normal source replay suppli
 its raw record for one guarded restoration/publication. The random tenant HMAC
 secret is encrypted separately from source bodies and rewrapped without changing
 buckets. Preserve its envelope and required KEKs in backups; see the
-[key lifecycle and measured cost](capacity-plan.md#historical-comparison-index-integration--release-pending).
+[key lifecycle and measured cost](capacity-plan.md#historical-comparison-index-integration--deployed).
 An unreadable index key leaves coverage dirty while canonical source intake can
 continue; SQL/schema/CAS errors are not converted into successful coverage.
 
-Focused tests cover interrupted backfill, stale publication, legacy writes,
-retention/KEK changes, late arrivals, cross-source conflicts, midnight intervals,
-context changes, concurrent ownership, source edits and direct stage/dispatch
-attempts. Full combined checks and deployed backfill/association observations are
-still required. Broader LoTW adoption must extend retained coverage across UTC
-day/week boundaries before a separate rollout. No historical association supplies
-first-insert absence, a current source proof or write permission.
+Passing focused and full release checks cover interrupted backfill, stale
+publication, legacy writes, retention/KEK changes, late arrivals, cross-source
+conflicts, midnight intervals, context changes, concurrent ownership, source edits
+and direct stage/dispatch attempts. Production index coverage and the first 39
+association-only QRZ adoptions are verified. The 16:07 UTC post-deployment backup
+passed isolated restoration, credential decryption, integrity/foreign-key and
+repeated-quarantine checks, preserving the initialized comparison key, all 4,141
+index rows and 39 owners/markers. All 3,176 predeployment claim rows were unchanged;
+151 additions brought the total to 3,327, with none missing. See the
+[capacity and backup observations](capacity-plan.md#historical-comparison-index-integration--deployed).
+Broader LoTW adoption must extend retained coverage across UTC day/week boundaries
+before a separate rollout.
+No historical association supplies first-insert absence, a current source proof
+or write permission.
 
 Two source UUIDs must not silently claim one remote record. Remote records without a source match remain untouched. Never fabricate source UUIDs for remote history or upload a marker merely to establish ownership.
 
 ### Remaining LoTW time-window association work
 
-This sequence is planned, not implemented. It extends historical recognition only;
-it does not change exact Ferry receipts, signing, first-insert absence checks or
-export permissions. Keep all export controls closed during implementation.
+The coverage-only step has an isolated, independently reviewed patch with **100
+history tests passing**; it is not applied to the primary checkout or deployed.
+Broader LoTW ownership and adoption remain planned. This sequence extends historical
+recognition only; it does not change exact Ferry receipts, signing, first-insert
+absence checks or export permissions. Keep all export controls closed.
 
 LoTW's [QSL matching rules](https://lotw.arrl.org/lotw-help/frequently-asked-questions/#datamatch)
 compare reciprocal submissions within 30 minutes, on the same band, with matching
@@ -129,9 +149,10 @@ these can create another QSO. The [download contract](https://lotw.arrl.org/lotw
 allows mapped modes and `APP_LOTW_MODE` without `MODE`, but supplies no documented
 stable per-QSO identifier. Neither download timestamps nor a hash of the observed
 fields should be presented as such an identifier.
-1. **Complete bounded neighboring-date coverage.** Update
-   `src/history-inventory.ts` and its tests before changing adoption. Derive required
-   UTC dates from the precision-aware source interval plus the 30-minute window.
+1. **Integrate the reviewed neighboring-date coverage patch.** Apply the isolated
+   `src/history-inventory.ts` and test changes only in a separately checked release,
+   before changing adoption. Derive required UTC dates from the precision-aware
+   source interval plus the 30-minute window.
    Resolve each date through its weekly root and split children independently;
    deduplicate a shared leaf and retain at most two leaf guards. Both singleton and
    batch paths must include neighboring-day candidates, with a combined maximum of
@@ -147,14 +168,31 @@ fields should be presented as such an identifier.
    exact LoTW identity claims. Store an internal association reference and encrypted
    original LoTW identity evidence in a separate namespace; never manufacture
    seconds or put a coarse/mode-group identity into `ledger.remote_id` or exact
-   outbound claims. Add durable overlap reservations scoped to the verified logical
-   query account, including connection aliases. Compare time intervals and known
-   mode equivalence conservatively; nearest-match or tuple-hash equality is not
-   sufficient ownership. Bridge retained encrypted `lotw_identity` evidence from
-   existing exact receipts/adoptions, including archived source owners. Unrecoverable
-   or incomplete relevant ownership coverage stays held. Legacy/direct receipt
-   writes must update or dirty that coverage, and atomic reservation must fence its
-   clock. Acceptance: competing owners, concurrent claims, precision/mode changes,
+   outbound claims. Use conservative overlap reservations scoped to the tenant and
+   exact station callsign across every LoTW destination, preserving callsign suffixes.
+   This is Ferry's collision policy, not a claim of a globally unique ARRL record
+   identifier. Keep the verified query account as the inventory/access scope, not
+   the ownership namespace: prior signing-only `station:<call>:<dxcc>` receipts
+   must still exclude a second owner after query credentials create or reconnect a
+   `query:<username>` destination. Do not guess username aliases. Compare time
+   intervals and known mode equivalence conservatively; nearest-match or tuple-hash
+   equality is not sufficient ownership. Bridge retained encrypted `lotw_identity`
+   evidence from existing exact receipts/adoptions, including archived source owners
+   and signing-only destinations. Enumerate all retained identities, mappings,
+   claims and attempts with a bounded persisted cursor, including inactive owners;
+   the 50-record identity review helper cannot establish complete coverage. Verify
+   each encrypted tuple against its owner-hash prefix and original exact hash.
+   Hash-only, missing or unreadable relevant evidence stays an explicit hold.
+
+   Before broader adoption activates, require an exact-identity bridge reservation
+   at stage, new mapping and dispatch. Its immutable pin must bind owner, payload
+   identity, station namespace and coverage epoch/clock. Older writers without that
+   pin cannot create mappings or dispatch; dirtying coverage after a write alone
+   cannot protect an association already committed. Actual submitted/uncertain
+   receipt recovery must still record the vendor outcome and maintain or dirty
+   coverage atomically. Preserve existing legacy write holds. Atomic historical
+   reservation must recheck the same coverage clock.
+   Acceptance: competing owners, concurrent claims, precision/mode changes,
    aliases, archived owners, unreadable evidence, interrupted backfill and old-worker
    writes. Unrelated indexed cohorts must remain bounded and able to proceed.
 

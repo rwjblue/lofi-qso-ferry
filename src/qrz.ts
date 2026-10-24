@@ -934,6 +934,17 @@ function lowerTimePrecision(source: AdifRecord, remote: AdifRecord): boolean {
     return false;
   }
 }
+function normalizedZone(
+  value: string | undefined,
+  maximum: number,
+): number | null {
+  // ADIF PositiveInteger permits leading zeroes, but not signs or decimals.
+  if (!value || /[^0-9]/.test(value)) return null;
+  const zone = Number(value);
+  return Number.isSafeInteger(zone) && zone >= 1 && zone <= maximum
+    ? zone
+    : null;
+}
 function operatingEvidenceMismatch(
   source: AdifRecord,
   remote: AdifRecord,
@@ -965,7 +976,24 @@ function operatingEvidenceMismatch(
     "MY_CQ_ZONE",
     "MY_ITU_ZONE",
     "MY_IOTA",
-  ])
+  ]) {
+    if (field === "MY_CQ_ZONE" || field === "MY_ITU_ZONE") {
+      if (!Object.hasOwn(source, field)) continue;
+      const maximum = field === "MY_CQ_ZONE" ? 40 : 90;
+      const local = normalizedZone(source[field], maximum);
+      const observed = normalizedZone(remote[field], maximum);
+      if (local === null || observed === null)
+        return {
+          state: "history_ambiguous",
+          reason: `Operating location ${field} is invalid or unavailable`,
+        };
+      if (local !== observed)
+        return {
+          state: "history_mismatch",
+          reason: `Operating location ${field} differs or is absent`,
+        };
+      continue;
+    }
     if (
       source[field] &&
       (source[field] ?? "").toUpperCase() !==
@@ -975,6 +1003,7 @@ function operatingEvidenceMismatch(
         state: remote[field] ? "history_mismatch" : "history_ambiguous",
         reason: `Operating location ${field} differs or is absent`,
       };
+  }
   return null;
 }
 /** Cleanup is deliberately unavailable until the duplicate/deletion contract is live-proven. */

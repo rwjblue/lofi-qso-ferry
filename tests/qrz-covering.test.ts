@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { type AdifRecord, serializeAdifRecord } from "../src/adif.ts";
-import { QrzClient, QrzError } from "../src/qrz.ts";
+import {
+  QrzClient,
+  type QrzCoveringReadOptions,
+  QrzError,
+} from "../src/qrz.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
 
 const source = {
@@ -86,6 +90,79 @@ test("exactly full covering pages require a valid unchanged overlap page instead
   assert.equal(result.pages, 2);
   assert.match(h.requests[1], /AFTERLOGID:757,/);
   assert.equal(h.requests.length, 2);
+});
+
+test("explicit known-positive covering reads accept 35 days while retaining the narrower target", async () => {
+  const h = client([
+    () =>
+      response([
+        row(1, { QSO_DATE: "20261001" }),
+        row(2, { QSO_DATE: "20261104" }),
+      ]),
+  ]);
+  const target: [string, string] = ["2026-10-22", "2026-10-28"];
+  const cover: [string, string] = ["2026-10-01", "2026-11-04"];
+  const result = await h.client.readCoveringRange({
+    ...options,
+    target,
+    cover,
+  });
+  assert.deepEqual(result.target, target);
+  assert.deepEqual(result.cover, cover);
+  assert.equal(result.records.length, 2);
+  assert.equal(
+    result.records.filter(
+      (record) =>
+        record.QSO_DATE >= "20261022" && record.QSO_DATE <= "20261028",
+    ).length,
+    0,
+  );
+  assert.equal(result.pages, 1);
+  assert.match(h.requests[0], /BETWEEN:2026-10-01\+2026-11-04$/);
+  assert(!("absence" in result));
+});
+
+test("explicit covers require containment, at most 35 days and no expansion option before transport", async () => {
+  const invalid: Partial<QrzCoveringReadOptions>[] = [
+    { cover: ["2026-10-01", "2026-11-05"] },
+    { cover: ["2026-10-28", "2026-10-22"] },
+    { cover: ["2026-10-23", "2026-10-28"] },
+    { cover: ["2026-10-01", "2026-10-27"] },
+    { cover: ["2026-02-30", "2026-10-28"] },
+    { cover: ["2026-10-01", "2026-11-04"], expandDays: 0 },
+    { cover: ["2026-10-01", "2026-11-04"], expandDays: 7 },
+  ];
+  for (const changes of invalid) {
+    const h = client([]);
+    await assert.rejects(
+      h.client.readCoveringRange({
+        ...options,
+        target: ["2026-10-22", "2026-10-28"],
+        ...changes,
+      }),
+      QrzError,
+    );
+    assert.equal(h.requests.length, 0);
+  }
+});
+
+test("explicit covers validate every outer record against the cover and station", async () => {
+  for (const record of [
+    row(1, { QSO_DATE: "20260930" }),
+    row(1, { QSO_DATE: "20261105" }),
+    row(1, { QSO_DATE: "20261001", STATION_CALLSIGN: "K0OTHER" }),
+    row(1, { QSO_DATE: "20261001", CALL: " " }),
+  ]) {
+    const h = client([() => response([record])]);
+    await assert.rejects(
+      h.client.readCoveringRange({
+        ...options,
+        cover: ["2026-10-01", "2026-11-04"],
+      }),
+      QrzError,
+    );
+    assert.equal(h.requests.length, 1);
+  }
 });
 
 test("covering pagination accepts globally sparse ordered IDs and removes only the exact overlap", async () => {

@@ -190,6 +190,8 @@ export interface QrzCoveringReadOptions {
   stationCallsign: string;
   /** One fixed covering range per call; seven adds seven days on each side. */
   expandDays?: 0 | 7;
+  /** Caller-selected known-positive cover, at most 35 days; excludes expandDays. */
+  cover?: [string, string];
   shouldContinue?: () => boolean;
   deadlineAt?: number;
   now?: () => number;
@@ -463,6 +465,7 @@ export class QrzClient {
       end < start ||
       end - start > 6 * day ||
       (expansion !== 0 && expansion !== 7) ||
+      (options.cover !== undefined && options.expandDays !== undefined) ||
       !/^[A-Za-z0-9/.-]{1,64}$/.test(options.stationCallsign) ||
       !Number.isSafeInteger(startedAt) ||
       (options.deadlineAt !== undefined &&
@@ -470,10 +473,19 @@ export class QrzClient {
     )
       throw new QrzError("protocol", "Invalid QRZ covering read scope");
     const date = (at: number) => new Date(at).toISOString().slice(0, 10);
-    const cover: [string, string] = [
-      validDate(date(start - expansion * day)),
-      validDate(date(end + expansion * day)),
-    ];
+    const cover: [string, string] = options.cover
+      ? [validDate(options.cover[0]), validDate(options.cover[1])]
+      : [
+          validDate(date(start - expansion * day)),
+          validDate(date(end + expansion * day)),
+        ];
+    if (
+      (options.cover !== undefined && options.cover.length !== 2) ||
+      cover[0] > target[0] ||
+      cover[1] < target[1] ||
+      Date.parse(cover[1]) - Date.parse(cover[0]) > 34 * day
+    )
+      throw new QrzError("protocol", "Invalid QRZ covering read scope");
     const deadlineAt = Math.min(
       options.deadlineAt ?? startedAt + 60_000,
       startedAt + 60_000,

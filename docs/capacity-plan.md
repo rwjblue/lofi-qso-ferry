@@ -1,6 +1,13 @@
 # Capacity plan
 
-Current status, 2026-10-24 UTC:
+Current status, 2026-10-24 UTC: baseline/drain/quarantine completed at 06:35:44
+for all 4,500 retained rows. At 08:12:53, a protected exact-deployed-code diagnostic
+minted one source proof and verified fresh QRZ absence for the same contact, using
+two source and three QRZ reads. That bounded sample does not establish sustained
+capacity or scheduled Worker/write acceptance. The collector refinement remains
+awaiting signing/deployment, and all export controls remain closed.
+
+Release and earlier throughput observations:
 
 Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
 at 06:09:06 UTC as Worker `da7b7b70-6b7e-4cab-b9f6-f4b88f38390d`, at 100% traffic.
@@ -9,7 +16,7 @@ Independent 06:09:17–18 checks confirm healthy service, matching hashes for al
 three assets and all seven export controls closed. Health reports no active
 export mode and `sourceBoundaryVerified:false`. All 30 migrations through `0031`
 are applied. The 380 LoTW identity claims have no uncovered mappings; attempts,
-cutovers, proofs, pins and temporary guards remain zero. All 4,500 source bodies
+cutovers, proofs, pins and temporary guards were zero at release. All 4,500 source bodies
 have incarnations, and 2,155 positive observations have no future or partial metadata.
 At 06:13:06, the all-client policy remains in backfill with 218 operations and
 2,950 QSO-stream records in the current epoch, zero ready sources and zero eligible
@@ -637,13 +644,13 @@ remains held; incremental collection across turns is future work. These changes
 raise neither shared vendor budgets nor positive-proof collection page sizes, and
 do not open any gate. Canonical baseline page sizing is a separate change above.
 
-Production baseline/drain/quarantine handoff is now observed. A fresh QRZ absence
-check also completed for one candidate at 07:38:44. Before live acceptance, select
-the exact source/contact/destination cohort, establish a current source proof and
-repeat fresh destination checks for that same contact. The protected
-04:25 UTC backup passed an isolated restore with 28 migrations plus `0030`,
-integrity/foreign-key checks, three current credential decryptions and repeated
-quarantine, preserving 380 claims and zero attempts/cutovers. No external write
+Production baseline/drain/quarantine handoff is observed. The 08:12:53 protected
+diagnostic also minted a current proof and verified fresh QRZ absence for the same
+contact. Before live acceptance, refresh those expiring checks for the exact
+source/contact/destination cohort. The protected 08:14 UTC backup passed isolated
+restore with all 30 migrations, integrity/foreign-key checks, three current
+credential decryptions and repeated quarantine, preserving 380 claims, one source
+proof and its retention row, and zero attempts/cutovers. No external write
 has occurred. Exact small-cohort acceptance, 100-account steady-state capacity and
 200,000-contact end-to-end completion remain unproved; later work includes
 incremental evidence collection, pacing and separately measured larger source pages.

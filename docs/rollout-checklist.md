@@ -31,26 +31,32 @@ deferrals before the `database_budget` stop. It made 871 D1 calls containing
 2,179 statements; database wall time was 24.125 seconds. These are processing
 turns and classifications, not unique completed contacts or sustained capacity.
 
-Fresh selected-contact source proof remains unverified. The 06:43 and 06:54
-protected diagnostics collected current dependencies and completed a final drain,
-then rolled back at `proof_cohort_count`. Exact post-rollback predicates passed;
-measured local/D1 clock differences are a hypothesis, not a confirmed production
-cause. A later read stopped at the collector's 25-record response ceiling.
-The prepared fix requests 25 records but accepts bounded timestamp groups up to
-100 per stream, with whole-page validation and unchanged proof/request limits.
-Its initial commit is signed and pushed; the final refinement is committed locally
-and awaiting 1Password signing. All **1,184 tests** and required local checks pass.
-Neither collector change is deployed yet.
+At **08:12:53 UTC**, exact deployed source code minted a current source proof
+and observed fresh QRZ absence for the **same contact**. One positive collection
+and a final canonical drain covered two dependencies, with no events. QRZ used
+one targeted FETCH, one STATUS book verification and one complete covering FETCH.
+Strict keyed eligibility and the exact proof passed again after QRZ and closed-gate
+verification, with 291,986 ms of proof lifetime remaining. Attempts, stage guards,
+cutovers and vendor mutations stayed zero.
 
-At **07:38:44 UTC**, a fresh QRZ check established an empty neighborhood for one
-eligible candidate using one targeted FETCH, one STATUS book verification and one
-complete covering FETCH. Exact local scope and dependencies remained stable.
-This is current observed absence for that contact, not a source proof or permission
-to insert. Repeat fresh QRZ checks alongside the same contact's successful source
-proof before any later authorized write. The earlier 06:55 candidate had a nearby
-record and remains unsuitable for absence-based insertion. All seven export
-controls remain closed; attempts, stage guards, cutovers and vendor mutations
-remain zero. The owner's keep-disabled instruction still applies.
+This was a protected Node diagnostic against real source services and production
+D1, not scheduled Worker or upload acceptance. The original proof guards and the
+deployed 25-record response bound were unchanged. One diagnostic clock-admission
+SELECT required no explicit wait and observed D1 49 ms past proof creation; its
+extra I/O delays minting, so the earlier clock-failure hypothesis remains unproved.
+The evidence expires and must be refreshed before any future authorized write.
+
+The prepared collector fix requests 25 records but accepts bounded timestamp
+groups up to 100 per stream, with whole-page validation and unchanged proof/request
+limits. Its initial commit is signed and pushed; the final refinement is committed
+locally and awaiting 1Password signing. All **1,184 tests** and required local
+checks pass. Neither collector change is deployed yet.
+
+The earlier 07:38:44 QRZ-only check observed absence without a source proof;
+the 08:12:53 combined observation above closes that evidence gap for one sample.
+The 06:55 candidate had a nearby record and remains unsuitable for absence-based
+insertion. No historical association or precision hold was waived. All seven
+export controls remain closed, and the owner's keep-disabled instruction applies.
 
 The initial larger-page runs preserved the saved cursor and existing request
 limits. Their variable page counts and D1 latency are recorded in the
@@ -87,14 +93,14 @@ Source review separately includes eight test contacts and one blocked contact.
 Waiting for cron advances available inventory and retry work; it does not approve
 ambiguous identities, lower-precision locations or missing routes.
 
-| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                                             |
-| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed.                    |
-| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                                                 |
-| Source boundary           | Two inventories and a bounded forward sample match Ferry. Production baseline/handoff is ready with all 4,500 retained rows witnessed. The live proof mint still fails `proof_cohort_count` after collection/drain; successful current proof and fresh vendor evidence remain required. Global purge/replay guarantees remain unproved. |
-| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                                                |
-| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Historical lower-precision associations and live ARRL acceptance remain unproved.                                                                                                                        |
-| First vendor writes       | The latest instruction to keep exports disabled supersedes the earlier one- or two-contact trial authorization. No write or actual trial may occur until the owner changes that instruction. The authority split is deployed. Exact scope, successful current source proof, fresh vendor evidence and backup remain required.           |
+| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                                   |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed.          |
+| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                                       |
+| Source boundary           | Production baseline/handoff is ready with all 4,500 retained rows witnessed. At 08:12:53, a protected diagnostic minted a current proof and verified fresh QRZ absence for the same contact. Scheduled Worker validation remains open; expiring evidence must be refreshed. Global purge/replay guarantees remain unproved.   |
+| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                                      |
+| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Historical lower-precision associations and live ARRL acceptance remain unproved.                                                                                                              |
+| First vendor writes       | The latest instruction to keep exports disabled supersedes the earlier one- or two-contact trial authorization. No write or actual trial may occur until the owner changes that instruction. The authority split is deployed. Exact scope, successful current source proof, fresh vendor evidence and backup remain required. |
 
 ## Finish reconciliation and review exceptions
 
@@ -181,7 +187,8 @@ The [first CI run](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/400555
 was cancelled after a leaked `workerd` process; [replacement CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40057488314)
 passed, and `ce238cdcfea7` deployed at 03:28:48 UTC with all six gates closed.
 Production baseline/drain/quarantine completion was observed at 06:35:44.881 UTC;
-the live proof-mint failure described above remains unresolved.
+one exact source proof plus same-contact QRZ absence was verified at 08:12:53.
+The earlier clock-failure hypothesis and scheduled Worker validation remain open.
 The transitional policy fences are dormant where no policy row exists; main
 exports must require current ready policy membership for each exporting source.
 Fresh-positive collection, canonical witness storage, completed-drain markers,
@@ -206,15 +213,24 @@ enforced separation from the global cutover/no-query effects described above,
 then current evidence for the exact scope. The proposed order remains QRZ first,
 followed by LoTW. Keep private contact details out of repository documentation.
 
-A fresh protected production SQL backup was verified at **07:56:18 UTC on
+A fresh protected production SQL backup was verified at **08:14:29 UTC on
 2026-10-24** with all 30 installed migrations and no pending migration applied.
 Isolated restore, integrity/foreign-key checks, all three credential decryptions
 and repeated quarantine passed. The snapshot preserves 4,500 source rows, 380
-permanent identity claims and zero attempts, cutovers or proofs. The exact deployed
-release and all seven closed controls were rechecked at 07:56:04. The SQL hash,
+permanent identity claims, one source proof and its retention row, and zero
+attempts/cutovers. Repeated quarantine preserved the nonempty immutable proof and
+retention row; nonempty attempt-proof pins were not exercised. The exact deployed
+release and all seven closed controls were rechecked at 08:13:50. The SQL hash,
 pre-export Time Travel bookmark and verification manifest remain in protected
 storage outside Git. No production restore or vendor mutation occurred. Preserve
 the backup and key; refresh them before external changes when state warrants it.
+
+The [08:15 unsigned LoTW preflight](evidence-lotw.md) validated one actual
+contact's projected fields and stored certificate/date fit in that snapshot.
+Its LoTW route remains `inventory_pending`, with `first_insert_candidate=0`.
+No fresh LoTW read, signature or upload occurred. Separate LoTW authorization
+work is required because the QRZ first-insert mode excludes it; keep the global
+source-boundary gate closed while defining that policy.
 
 The earlier protected production SQL backup was verified at **04:25:27 UTC on
 2026-10-24**, before the mandatory-proof release. Its isolated restore passed all

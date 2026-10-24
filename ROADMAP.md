@@ -8,9 +8,10 @@ The separate, default-disabled QRZ first-insert capability is deployed. It retai
 mandatory source proofs while excluding source-wide cutovers, no-query inference,
 LoTW, replacement and corrections. It remains disabled. The policy-aware review
 audit and bounded 100-record baseline pages are deployed in `02e3dc89b99a`.
-Production baseline/handoff completed at 06:35:44.881 UTC. The live source-proof
-mint failure and sustained capacity remain outstanding. Fresh QRZ absence was
-observed for one candidate at 07:38:44; joint source/vendor readiness remains open.
+Production baseline/handoff completed at 06:35:44.881 UTC. A protected diagnostic
+minted a current source proof and verified fresh QRZ absence for the same contact
+at 08:12:53. Final collector deployment, scheduled Worker validation, vendor write
+acceptance and sustained capacity remain outstanding.
 
 Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only
 at 06:09:06 UTC as Worker `da7b7b70-6b7e-4cab-b9f6-f4b88f38390d`, at 100% traffic.
@@ -34,26 +35,32 @@ deferrals before the `database_budget` stop. It made 871 D1 calls containing
 2,179 statements; database wall time was 24.125 seconds. These are processing
 turns and classifications, not unique completed contacts or sustained capacity.
 
-Fresh selected-contact source proof remains unverified. The 06:43 and 06:54
-protected diagnostics collected current dependencies and completed a final drain,
-then rolled back at `proof_cohort_count`. Exact post-rollback predicates passed;
-measured local/D1 clock differences are a hypothesis, not a confirmed production
-cause. A later read stopped at the collector's 25-record response ceiling.
-The prepared fix requests 25 records but accepts bounded timestamp groups up to
-100 per stream, with whole-page validation and unchanged proof/request limits.
-Its initial commit is signed and pushed; the final refinement is committed locally
-and awaiting 1Password signing. All **1,184 tests** and required local checks pass.
-Neither collector change is deployed yet.
+At **08:12:53 UTC**, exact deployed source code minted a current source proof
+and observed fresh QRZ absence for the **same contact**. One positive collection
+and a final canonical drain covered two dependencies, with no events. QRZ used
+one targeted FETCH, one STATUS book verification and one complete covering FETCH.
+Strict keyed eligibility and the exact proof passed again after QRZ and closed-gate
+verification, with 291,986 ms of proof lifetime remaining. Attempts, stage guards,
+cutovers and vendor mutations stayed zero.
 
-At **07:38:44 UTC**, a fresh QRZ check established an empty neighborhood for one
-eligible candidate using one targeted FETCH, one STATUS book verification and one
-complete covering FETCH. Exact local scope and dependencies remained stable.
-This is current observed absence for that contact, not a source proof or permission
-to insert. Repeat fresh QRZ checks alongside the same contact's successful source
-proof before any later authorized write. The earlier 06:55 candidate had a nearby
-record and remains unsuitable for absence-based insertion. All seven export
-controls remain closed; attempts, stage guards, cutovers and vendor mutations
-remain zero. The owner's keep-disabled instruction still applies.
+This was a protected Node diagnostic against real source services and production
+D1, not scheduled Worker or upload acceptance. The original proof guards and the
+deployed 25-record response bound were unchanged. One diagnostic clock-admission
+SELECT required no explicit wait and observed D1 49 ms past proof creation; its
+extra I/O delays minting, so the earlier clock-failure hypothesis remains unproved.
+The evidence expires and must be refreshed before any future authorized write.
+
+The prepared collector fix requests 25 records but accepts bounded timestamp
+groups up to 100 per stream, with whole-page validation and unchanged proof/request
+limits. Its initial commit is signed and pushed; the final refinement is committed
+locally and awaiting 1Password signing. All **1,184 tests** and required local
+checks pass. Neither collector change is deployed yet.
+
+The earlier 07:38:44 QRZ-only check observed absence without a source proof;
+the 08:12:53 combined observation above closes that evidence gap for one sample.
+The 06:55 candidate had a nearby record and remains unsuitable for absence-based
+insertion. No historical association or precision hold was waived. All seven
+export controls remain closed, and the owner's keep-disabled instruction applies.
 
 The initial larger-page runs preserved the saved cursor and existing request
 limits. Their variable page counts and D1 latency are recorded in the
@@ -92,14 +99,18 @@ Timestamp/grid precision, routing and source-validity holds still require review
 
 Core feature paths, owner enrollment and service linking are implemented. The next milestone is a safe one- or two-user export trial; the full large-scale capacity plan follows separately. Production remains read-only. Linking credentials and waiting for cron do not establish export readiness. See the [personal acceptance checklist](docs/rollout-checklist.md) for exact prerequisites and the first-write packet.
 Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-character LoTW signing and the aggregate source audit are implemented, tested and deployed. Claims protect adoption, preparation and dispatch across cancellation, uncertainty, source edits and payload expiry. Historical precision holds and live vendor acceptance remain separate.
-1. **Finish current per-contact source verification.** The production baseline,
+1. **Release and repeat per-contact source verification.** The production baseline,
    forward drain and quarantine handoff are complete: all 4,500 retained rows
    were witnessed, with 4,130 contacts eligible for reconciliation. The immutable
-   proof mint still fails its atomic guard. Preserve that guard while testing the
-   measured clock-admission hypothesis. Deploy the reviewed timestamp-expansion
-   collector fix after final signing and checks, then repeat the exact dependency
-   collection and final drain. No current proof has been established by these
-   diagnostics. See the [dated source evidence](docs/evidence-lofi.md).
+   proof mint succeeded for one contact at 08:12:53 under its original atomic
+   guard. Deploy the reviewed timestamp-expansion collector fix after final
+   signing and checks, then repeat collection/drain and complete scheduled Worker
+   validation. The local/D1 clock-admission hypothesis remains unproved. The
+   diagnostic now follows the normal coordinator's context
+   refresh order, while retaining strict current eligibility and proof checks
+   before QRZ. Its earlier zero-candidate precheck was too restrictive; that
+   result did not establish a new runtime defect. See the
+   [dated source evidence](docs/evidence-lofi.md).
    Full-account purge, retention and replay guarantees remain unproved; keep
    `SOURCE_BOUNDARY_VERIFIED=false`.
 2. **Authority separation implemented and deployed.** The independent
@@ -109,13 +120,13 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    It cannot grant source-wide cutovers, no-query inference, LoTW, replacements or
    corrections. Keep `SOURCE_BOUNDARY_VERIFIED=false`; universal UUID, tombstone
    and purge guarantees remain unproved. This completes the permission split,
-   not successful live proof minting or vendor acceptance.
-3. **Pair observed QRZ absence with a current source proof.** The 07:38:44
-   production diagnostic completed targeted, book-verification and covering reads
-   and found an empty neighborhood for one eligible contact. This verifies the
-   deployed fresh fallback for that observation; cached metadata only selected
-   where to read. Recheck the same exact contact after successful source proof
-   collection and before any future authorized write. Minute-only history,
+   not vendor write acceptance or general source-boundary authority.
+3. **Preserve and refresh the joint QRZ evidence.** The 08:12:53 diagnostic
+   completed source collection/drain/mint, then targeted, book-verification and
+   covering reads for that same contact. Its exact proof remained current after
+   the empty neighborhood check. This verifies one bounded read path, with no
+   events in its two-dependency closure. Refresh the exact contact's evidence
+   before any future authorized write. Minute-only history,
    ambiguous associations and lower-precision locations remain review holds.
 4. **Prepare a trial packet; do not execute it under the current instruction.**
    The latest instruction to keep exports disabled supersedes the earlier one-
@@ -123,17 +134,22 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    changes that instruction and the remaining evidence checks pass.
    The proposed sequence remains QRZ first, then LoTW. Both contact and destination allowlists must be
    exact, so LoTW remains excluded during QRZ work. A fresh protected production
-   SQL backup was verified at 07:56 UTC: isolated restore with all 30 installed
+   SQL backup was verified at 08:14 UTC: isolated restore with all 30 installed
    migrations and no pending migration, integrity/foreign-key checks, three credential
-   decryptions and repeated quarantine passed, preserving 380 claims and zero
-   attempts/cutovers/proofs. Preserve its evidence and
+   decryptions and repeated quarantine passed, preserving 380 claims, one source
+   proof and its retention row, and zero attempts/cutovers. Preserve its evidence and
    refresh it if needed before external changes. Earlier restore rehearsals
    remain recorded in the deployment history. Preserve each contact's
    actual 4/6/8-character grid. No
-   source or vendor write has occurred. Record exact readback and deployed
+   external logbook entry has been changed. Record exact readback and deployed
    signing evidence, close gates after the trial, and review before expansion.
    Replacement and old-record deletion can remain disabled. A second passkey is
    recommended, not an owner-pilot gate; manual operator recovery is documented.
+   The [unsigned LoTW preflight](docs/evidence-lotw.md) passed actual projected fields and stored
+   certificate/date compatibility for one retained contact. It remains held at
+   first-insert classification, with no fresh LoTW absence or upload acceptance.
+   QRZ's mode excludes LoTW; define and review separate LoTW authority before its
+   trial while keeping the global source-boundary gate closed.
 5. **Expand automatic coverage and prove capacity.** Source policy and fresh
    positive evidence must protect main exports, not only the trial. Then review
    historical associations and broaden the scopes deliberately. Measure queue
@@ -245,7 +261,7 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 - [x] Coalesce destination-relevant changes per contact. Set the default quiet period to 30 minutes and poll every five minutes; expose a 20–60-minute setting.
 - [x] Preserve temporary source/context data only where necessary for delayed delivery or reread limitations. An operation edit can trigger a bounded reread; a template edit cannot.
 - [x] Batch source-page metadata/checkpoint access and share operation/event ciphertext reads within a bounded contact batch; validate atomic rollback and complete projection locally.
-- [x] Implement immutable short-lived source proofs, mandatory staging/dispatch pins and post-admission validation. The release is deployed with 1,131 tests passing. Production baseline/handoff is complete; live proof minting still fails `proof_cohort_count`, and scoped vendor acceptance remains outstanding.
+- [x] Implement immutable short-lived source proofs, mandatory staging/dispatch pins and post-admission validation. The release is deployed with 1,131 tests passing. Production baseline/handoff is complete; the 08:12 diagnostic minted a current proof and verified same-contact QRZ absence. Scheduled Worker validation and scoped vendor write acceptance remain outstanding.
 - [x] Separate default-off QRZ first-insert authority from global source-boundary effects, with immutable mode pins, structural history guards and final exact-request validation. Deployed with all seven controls closed; live acceptance remains outstanding.
 - [x] Verify bounded 100-record canonical baseline pages in production, including saved-cursor continuation and completed baseline/drain/quarantine handoff. Noncanonical and handoff page sizes remain unchanged.
 - [ ] Measure sustained source throughput and reduce redundant passes where the source contract permits; baseline completion is not capacity acceptance.

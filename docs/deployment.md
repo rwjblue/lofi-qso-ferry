@@ -4,11 +4,11 @@ Verified 2026-10-24 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). T
 
 Current readiness: the source baseline/drain/quarantine handoff completed at
 06:35:44.881 UTC, covering all 4,500 retained rows with zero unseen members. The
-live source-proof diagnostic still fails the atomic `proof_cohort_count` guard.
-A collector timestamp-expansion fix is committed but awaiting final signing and
-deployment. At 07:38:44, a fresh three-read QRZ check established an empty
-neighborhood for one eligible contact. A successful source proof and repeat joint
-fresh checks remain outstanding. All seven controls remain closed, with zero
+08:12:53 diagnostic minted a current source proof and established fresh QRZ
+absence for the same contact under unchanged guards. A collector timestamp-
+expansion fix is committed but awaiting final signing and deployment. Scheduled
+Worker validation and actual vendor write acceptance remain outstanding; the
+joint evidence expires and must be refreshed. All seven controls remain closed, with zero
 export attempts, stage guards, cutovers or vendor mutations.
 
 | Resource                 | Current value                                                                                                     |
@@ -59,6 +59,15 @@ The reported startup is deployment evidence, not per-request billed CPU or peak 
 
 ## Current-schema backup verification (2026-10-24, 07:56 UTC)
 
+A second backup completed at **08:14:29.433 UTC**, after the successful joint
+source/QRZ check. The 31,870,982-byte snapshot passed the same 30-migration,
+integrity, foreign-key, three-credential and repeated-quarantine checks below.
+It preserves one immutable source proof and one retention row, alongside 380
+identity claims and zero attempts, cutovers or attempt-proof pins. This exercises
+nonempty source-proof/retention preservation, but not nonempty attempt-proof pins.
+The private manifest retains its SQL hash and pre-export bookmark. Gates, assets
+and deployed version were rechecked at 08:13:50; no production restore occurred.
+
 At 07:56:04 UTC, independent version, deployment, health and asset readback
 confirmed the same deployed release at 100% traffic and all seven controls closed.
 A new protected SQL export completed and passed isolated verification at
@@ -106,26 +115,32 @@ deferrals before the `database_budget` stop. It made 871 D1 calls containing
 2,179 statements; database wall time was 24.125 seconds. These are processing
 turns and classifications, not unique completed contacts or sustained capacity.
 
-Fresh selected-contact source proof remains unverified. The 06:43 and 06:54
-protected diagnostics collected current dependencies and completed a final drain,
-then rolled back at `proof_cohort_count`. Exact post-rollback predicates passed;
-measured local/D1 clock differences are a hypothesis, not a confirmed production
-cause. A later read stopped at the collector's 25-record response ceiling.
-The prepared fix requests 25 records but accepts bounded timestamp groups up to
-100 per stream, with whole-page validation and unchanged proof/request limits.
-Its initial commit is signed and pushed; the final refinement is committed locally
-and awaiting 1Password signing. All **1,184 tests** and required local checks pass.
-Neither collector change is deployed yet.
+At **08:12:53 UTC**, exact deployed source code minted a current source proof
+and observed fresh QRZ absence for the **same contact**. One positive collection
+and a final canonical drain covered two dependencies, with no events. QRZ used
+one targeted FETCH, one STATUS book verification and one complete covering FETCH.
+Strict keyed eligibility and the exact proof passed again after QRZ and closed-gate
+verification, with 291,986 ms of proof lifetime remaining. Attempts, stage guards,
+cutovers and vendor mutations stayed zero.
 
-At **07:38:44 UTC**, a fresh QRZ check established an empty neighborhood for one
-eligible candidate using one targeted FETCH, one STATUS book verification and one
-complete covering FETCH. Exact local scope and dependencies remained stable.
-This is current observed absence for that contact, not a source proof or permission
-to insert. Repeat fresh QRZ checks alongside the same contact's successful source
-proof before any later authorized write. The earlier 06:55 candidate had a nearby
-record and remains unsuitable for absence-based insertion. All seven export
-controls remain closed; attempts, stage guards, cutovers and vendor mutations
-remain zero. The owner's keep-disabled instruction still applies.
+This was a protected Node diagnostic against real source services and production
+D1, not scheduled Worker or upload acceptance. The original proof guards and the
+deployed 25-record response bound were unchanged. One diagnostic clock-admission
+SELECT required no explicit wait and observed D1 49 ms past proof creation; its
+extra I/O delays minting, so the earlier clock-failure hypothesis remains unproved.
+The evidence expires and must be refreshed before any future authorized write.
+
+The prepared collector fix requests 25 records but accepts bounded timestamp
+groups up to 100 per stream, with whole-page validation and unchanged proof/request
+limits. Its initial commit is signed and pushed; the final refinement is committed
+locally and awaiting 1Password signing. All **1,184 tests** and required local
+checks pass. Neither collector change is deployed yet.
+
+The earlier 07:38:44 QRZ-only check observed absence without a source proof;
+the 08:12:53 combined observation above closes that evidence gap for one sample.
+The 06:55 candidate had a nearby record and remains unsuitable for absence-based
+insertion. No historical association or precision hold was waived. All seven
+export controls remain closed, and the owner's keep-disabled instruction applies.
 
 Canonical all-client backfill now requests up to 100 records per stream with
 strict response, preparation and atomic checkpoint bounds. A deterministic size

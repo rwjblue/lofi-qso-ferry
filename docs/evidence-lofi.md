@@ -4,19 +4,22 @@ Initial adapter review: 2026-10-22, before live requests. The dated observations
 below record subsequent read-only vendor evidence; fixture results alone do not
 establish server compatibility or production coverage.
 
-Current checkpoint, 2026-10-24 07:39 UTC: the production all-client baseline,
+Current checkpoint, 2026-10-24 08:15 UTC: the production all-client baseline,
 forward drain and quarantine handoff completed at **06:35:44.881 UTC**. The policy
 is `ready`, with all 218 operations and 4,282 QSO-stream rows (4,500 retained rows)
 witnessed in the current epoch and zero unseen retained rows. There are 4,130
-contacts eligible for reconciliation processing, not authorized exports. The live
-selected-contact proof diagnostic still fails at `proof_cohort_count` after
-collection and final drain. A separate timestamp-group response bound also
-prevented collection. Its prepared fix is awaiting final signing/deployment;
-all seven export controls remain closed.
+contacts eligible for reconciliation processing, not authorized exports. At
+08:12:53, the exact deployed coordinator collected two required positives,
+completed a qualifying drain and minted a current proof for one contact. Fresh
+QRZ reads found an empty neighborhood for that same contact, with strict
+eligibility and the proof current afterward. This was a protected Node harness
+against production D1, not scheduled Worker or upload acceptance; see
+[the QRZ observation](evidence-qrz.md#current-read-only-readiness-observations-2026-10-24-utc).
 
-A separate fresh QRZ check observed an empty neighborhood at 07:38:44. It did
-not run source collection or mint a proof. Joint same-contact readiness remains
-outstanding; see [the QRZ observation](evidence-qrz.md#current-read-only-readiness-observations-2026-10-24-utc).
+The earlier atomic mint failures remain relevant diagnostic history; their clock
+hypothesis is not confirmed by this successful sample. A separate timestamp-group
+response-bound fix is awaiting final signing/deployment. All seven export
+controls remain closed, and current evidence must be refreshed before any write.
 
 The protocol references are [Sidecar's browser registration and operation reads](https://github.com/rwjblue/qso-sidecar/blob/c502cecd068a6a4330afd94458e5636fa17f3a51/src/lofi.rs), [HaLo's transport](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/extensions/sync/ham2k-lofi/src/index.ts), and [its sync engine](https://github.com/ham2k/halo/blob/299564ccc433a42f4093c415420559288253cbf6/packages/halo_core/lib/src/sync/sync_engine.dart). These are client implementation evidence; public server retention and replay guarantees were not found.
 
@@ -386,8 +389,9 @@ current per-contact proofs and excludes source-wide cutovers, no-query inference
 LoTW, replacement and corrections while the global source gate remains closed.
 All seven production controls are verified closed. These observations are not
 a global retention guarantee, and neither the probes nor the new mode's deployment
-authorizes a vendor write. Baseline completion is now observed; successful current
-proof minting and fresh exact-contact vendor evidence remain outstanding.
+authorizes a vendor write. Baseline completion is observed; the later 08:12
+diagnostic below also establishes one current proof and fresh same-contact QRZ
+observation, without establishing global boundary authority.
 
 The 06:09 UTC release added bounded 100-record canonical baseline pages under
 the unchanged shared request budget. Production completed backfill, a forward
@@ -453,3 +457,66 @@ hold; Ferry never truncates them or fabricates a continuation cursor. The four
 actual requests, reserved final drain, 120-second deadline and exact proof
 requirements remain unchanged. Deployment and a fresh same-contact check are
 still required at this checkpoint.
+
+### Diagnostic admission correction (2026-10-24, 08:08 UTC)
+
+Two SELECT-only attempts found no candidate under the diagnostic's original
+precheck. Query-only analysis of the verified 07:56 backup identified the exact
+cause: all 430 structurally eligible QRZ rows were due and passed policy membership,
+retained-body, credential and operation checks, but their ledger context versions
+lagged the current context cursor. This is not evidence of a new runtime export
+defect. Normal reconciliation refreshes the projection before export eligibility;
+the deployed source coordinator also observes the refreshed projection after its
+final drain and before atomic proof creation.
+
+A protected diagnostic now admits one deterministic structural/current-member key
+as a source-verification hint, tolerating only that old ledger-context mismatch.
+It invokes the unchanged deployed coordinator under the normal cycle lease and
+request budget. The original strict keyed selector and exact current proof must
+pass after the refresh and again before QRZ; there is no candidate fallback.
+This mode omits cache ranking, so its selected contact may have a QRZ neighbor.
+It neither relaxes a runtime proof condition nor grants export authority.
+
+The adapter passed 92 offline cases, strict TypeScript and independent review.
+The 08:08:08 metadata-only plan selected one contact with two source dependencies,
+zero events and no cached witnesses, using 12 SELECT statements and no vendor
+request or write. The isolated checkout is pinned to deployed `02e3dc89`; its
+generated assets matched production at 08:09:57 with all seven controls closed.
+The 08:10:50 verification attempt respected the scheduled worker's cycle lease
+and stopped at `cycle_busy`, before any vendor request or proof attempt.
+
+An unsigned LoTW preflight against the same protected backup also found no
+candidate satisfying its current-context precheck. It made one local SELECT and
+no signature, vendor request or production write. This supplies no additional
+certificate compatibility or ARRL acceptance evidence.
+
+### Successful joint source/QRZ observation (2026-10-24, 08:12 UTC)
+
+After the scheduled worker released its lease, the exact-deployed diagnostic
+completed at **08:12:53.743 UTC**. One collection request supplied the two required
+QSO/base dependencies, with no events; one final canonical drain qualified the
+closure. The unchanged coordinator reloaded dependencies, refreshed the normal
+ledger projection and minted an immutable proof in its original atomic batch.
+Strict keyed eligibility passed after that refresh. Source verification used
+53 D1 calls containing 78 statements, including eight mutating calls for ordinary
+lease, budget, checkpoint, observation and proof operations, and took 8.650 seconds.
+No proof guard was relaxed, and the deployed request/response bound remained 25.
+
+The diagnostic clock-admission option made one clock/lease SELECT, observed D1
+49 ms after the immutable creation time and required no explicit wait. That extra
+I/O itself delays minting. This success does not establish that the earlier
+failures were clock skew, or whether the scheduled Worker needs a clock change.
+
+Only after strict keyed eligibility and the exact current proof passed did the
+same process query QRZ. One targeted FETCH, one STATUS book verification and one
+complete covering FETCH found zero neighborhood records and zero exact identities.
+Final scope remained stable. After another independent closed-gate attestation,
+the original keyed eligibility and proof remained current at **08:12:53.735 UTC**,
+with 291,986 ms of proof lifetime remaining. All seven controls stayed closed;
+attempts, cutovers, stage guards and vendor mutations stayed zero.
+
+This is a successful expiring same-contact read-path observation, not an upload
+test, event-bearing closure sample or global retention guarantee. The protected
+08:14:29 backup preserves the new proof and its retention row and passed isolated
+restore plus repeated quarantine. The later unsigned LoTW snapshot check is
+recorded separately in [LoTW evidence](evidence-lotw.md).

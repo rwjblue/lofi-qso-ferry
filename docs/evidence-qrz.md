@@ -164,8 +164,10 @@ failure. The implementation deployed read-only at 01:59 UTC. Its first new
 scheduled run completed at 02:02:16 UTC; the 02:03:58 aggregate found one complete
 cover after matching base/verification reads of 98 surrounding records and zero
 records in the original target. No attempt or cutover was created. This verifies
-one automatic cache completion in production. Remaining gaps, fresh live
-pre-write checks and real insert/readback acceptance remain unverified.
+one automatic cache completion in production. At that checkpoint, remaining
+gaps, fresh live pre-write checks and real insert/readback acceptance were still
+unverified. The later bounded fresh-read observations are recorded below;
+actual INSERT/readback acceptance remains outstanding.
 
 ### Current read-only readiness observations (2026-10-24 UTC)
 
@@ -207,11 +209,47 @@ normal QRZ budget reservations. All seven controls were closed before and after;
 attempts, cutovers and stage guards remained zero. No source, ledger, cache,
 proof or vendor mutation occurred.
 
-This is fresh absence evidence for that observation, not a successful source
-proof or export approval. A joint same-contact source/vendor packet is still
-outstanding, and destination evidence must be refreshed before a future write.
+This was fresh absence evidence for that observation, without a successful source
+proof or export approval. A joint same-contact source/vendor packet was still
+outstanding at 07:38, and destination evidence must be refreshed before a future write.
 The 06:55 neighboring-record candidate remains unsuitable for absence-based
 insertion; the later result does not resolve that historical exception.
+
+At **08:12:53 UTC**, a protected Node diagnostic completed the source-proof and
+QRZ neighborhood checks for the **same contact**. Its runtime imports came from
+the exact deployed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11`, associated
+with Worker version `da7b7b70-6b7e-4cab-b9f6-f4b88f38390d`. This exercised the
+deployed implementation through the diagnostic harness and real D1/vendor reads;
+it was not an execution of the Worker's mutation path.
+
+The source check covered two exact dependencies and zero events. One collection
+read and one qualifying final canonical drain produced one current immutable
+source proof. Normal guarded source, ledger-observation and proof checkpoints
+were permitted, together with leases and shared request-budget accounting;
+there were no staging, attempt, cutover or vendor-export writes. The source
+phase used two network reads, 53 database calls and 78 SQL statements. The
+diagnostic clock-admission check preserved the original proof bindings and
+required no wait. Strict candidate selection ran after normal context refresh;
+neither a stale admission hint nor cached destination absence supplied authority.
+
+The subsequent QRZ check used one targeted FETCH, one STATUS book verification
+and one complete covering FETCH. It observed zero neighborhood records and zero
+exact identity matches, with the normal matcher reporting
+`missing_current_identity` / `no_candidates`. Fallback completed with stable
+source/dependency, destination, credential and book scope. The QRZ phase used
+three network reads and 37 database queries, including three ordinary request
+budget reservations; it made no source, cursor, ledger, cache, proof or staging
+writes.
+
+The proof was current immediately before the QRZ check and again after the final
+gate/safety checks at **08:12:53.735 UTC**, with about 292 seconds remaining at
+that observation. All seven export controls stayed closed; attempts, cutovers
+and stage guards remained zero. This establishes one bounded same-contact
+source-proof/empty-neighborhood observation. It does not establish a persistent
+permission, source-wide purge or replay guarantees, QRZ duplicate semantics, or
+successful INSERT/readback acceptance. Proofs expire and ordinary source progress
+can invalidate them, so a future write must obtain current evidence through the
+normal guarded path. No export was authorized or attempted.
 
 ## ADIF and template profile
 

@@ -129,13 +129,13 @@ HaLo's ordinary QSON export is not a complete independent membership source. Its
 The new [source replay probe](../scripts/source-replay-probe.ts) provides three pure interfaces:
 - `haloOperationManifestQuery(operationId)` returns a parameterized SQLite SELECT for one base operation and at most 101 member rows. The extra member makes an oversized operation reject rather than silently truncate. It reads only identity, membership, deletion/event/sync flags and revision/server timestamps, never raw QSON fields. This query is for the independent HaLo database, not Ferry D1.
 - `haloOperationManifest(rows, capturedAt)` validates that metadata in memory. The protected runner must not log the returned manifest. It includes at most 100 members, and the probe rejects unsynced rows, snapshots older than five minutes, or an operation identity mismatch.
-- `probeOperationReplay({ credentials, accountId, operationId, loadManifest, fetcher, now? })` verifies the existing account, then attempts two complete operation-QSO reads. `fetcher` must be the existing shared-budget transport; the probe does not create another quota. Its outer allowlist permits only those GET routes, rejects renewal/registration and all POSTs, and limits the run to four read attempts, 25 rows per page and 120 seconds. It serializes each in-memory page state and recreates the client between pages. No production checkpoint, source state or credential is written. The protected runner rereads the independent manifest after both passes to detect local changes.
+- `probeOperationReplay({ credentials, accountId, operationId, loadManifest, fetcher, now? })` verifies the existing account, then attempts two complete operation-QSO reads. `fetcher` must be the existing shared-budget transport; the probe does not create another quota. The default transport permits only those GET routes and rejects renewal/registration and all POSTs. An explicit `observeBaseOperation` option instead brackets the member reads with two account-checked, read-only `/v1/sync` requests for the newest 25 base operations. That option permits only the exact metadata-only request shape, with no mutation arrays or production cursors. Both modes retain the four-attempt, 25-row/page and 120-second bounds. A target outside the bounded base window is unobserved, never absent. The probe serializes each in-memory page state and recreates the client between pages. No production checkpoint, source state or credential is written. The protected runner rereads the independent manifest after both passes to detect local changes.
 
 The returned report contains only fixed counts, booleans, elapsed time and allowlisted stop reasons. A complete pair of identical server reads still reports a discrepancy if an independently known event, contact or tombstone is missing. Conflicting duplicate UUIDs, changed versions, membership drift and changed local snapshots remain visible. Partial pages, cooldowns, request/time limits and missing revision stamps cannot produce `observed_match`. Errors never include response text, URLs, UUIDs or credentials. Synthetic coverage is in [source-replay-probe.test.ts](../tests/source-replay-probe.test.ts), including SQLite snapshot membership, deletion/purge omissions, timestamp ties, partial/expired reads, account/authentication failures and redaction.
 
 The smallest live plan is one already-synced, non-test operation with no more than 25 total members, preferably containing both an event and an ordinary tombstone: one account read and two operation reads, with a fourth read available only for an unexpected continuation page. The runner must first select it from protected metadata and approve this exact plan against the shared background budget. A larger operation, an independently known purge, or a shadow forward window needs a separately reviewed request plan; the probe cannot expand itself. No live request was made while implementing this tool.
 
-This can establish recent observed member/version agreement for an exact operation and falsify omissions. It explicitly reports `serverBaseOperationObserved: false`, `unknownHistoricalPurgesExcluded: false`, and `sourceBoundaryVerified: false`. The operation-QSO endpoint does not prove that its base operation still exists or is unchanged, and identical rereads cannot prove delivery of unknown historical purges. A personal UUID trial could use this as one part of a narrowly scoped freshness proof, alongside a fresh base-operation read, independent current source review, destination uniqueness and the existing commit/dispatch fences. It does not justify changing the global replay-boundary gate. Any future per-UUID trial authorization must bind its own evidence, versions and short validity window rather than relabeling this observation as a general retention guarantee.
+This can establish recent observed member/version agreement for an exact operation and falsify omissions. The GET-only mode reports `serverBaseOperationObserved: false`; the optional base mode sets it only after observing the selected operation twice. Both retain `unknownHistoricalPurgesExcluded: false` and `sourceBoundaryVerified: false`. The operation-QSO endpoint alone does not prove that its base operation still exists or is unchanged, and identical rereads cannot prove delivery of unknown historical purges. Base comparisons separately count flag, application-revision and server-stamp differences; overlapping differences still count once in the aggregate per observation. A personal UUID trial could use this as one part of a narrowly scoped freshness proof, alongside a fresh base-operation read, independent current source review, destination uniqueness and the existing commit/dispatch fences. It does not justify changing the global replay-boundary gate. Any future per-UUID trial authorization must bind its own evidence, versions and short validity window rather than relabeling this observation as a general retention guarantee.
 
 ### Observed local and live comparisons
 
@@ -151,3 +151,92 @@ no deleted or purged members, duplicates or timestamp ties. No source mutation
 or production cursor write occurred. This adds observed event membership/version
 agreement; it does not establish event edits/deletes through forward sync,
 base-operation freshness, purge retention or a general replay guarantee.
+
+### Current server positives and base-operation checks (2026-10-24 UTC)
+
+The thirteen additional Ferry contacts all belong to one present, nondeleted,
+non-test operation. Its independent local base exists but has no members. Three
+local daily database snapshots also contain none of these contacts, and the
+client's stored sync markers report a completed full sync with no remaining
+backfill cursors. Those markers do not prove that this local copy is exhaustive.
+
+At 00:19:49 UTC, the protected GET-only probe checked the account and read that
+operation completely twice. All thirteen retained Ferry contacts were present
+and unchanged in both server reads. There were no missing, changed, unstable or
+unknown-version retained suspects, and both local and retained before/after
+snapshots remained stable. The independent local expected set still had zero
+members, so the probe correctly reports thirteen unexpected members and a
+discrepancy. Retained suspects are a separate comparison input: adding them does
+not rewrite the independent expected set or turn the result into a match.
+Source mutations and cursor writes were zero. This resolves whether the extra
+Ferry contacts currently exist on the server; HaLo's local omission remains
+unexplained and supplies no deletion instruction.
+
+The opt-in base mode was then exercised with an explicit four-read plan: a
+read-only sync window, two complete member reads and a second read-only sync
+window. An initial candidate was outside the newest 25 base rows; the probe
+stopped after one read as incomplete instead of expanding its scope. At
+00:25:26 UTC a current-window candidate was observed twice. All 23 independent
+members matched both reads, with no events, missing/unexpected/changed members,
+duplicates, ties or unknown versions. The server base was stable between reads,
+but disagreed with the independent local base in both observations. That result
+remained a discrepancy at that checkpoint. No source mutation or production
+cursor write occurred.
+
+At 00:58:58 UTC a four-read follow-up compared the same independent local
+manifest, the fresh server base bodies and Ferry's retained base revision before
+and after the probe. All 23 members again matched both complete reads, with zero
+missing, unexpected, changed or unknown-version members. The local/server base
+differences were exclusively server timestamps: deletion flags and application
+revisions agreed. Ferry's exact base-body revision hash and server timestamp
+matched both fresh server observations, and its stored revision, timestamp and
+deletion state stayed unchanged. The independent local snapshot was also stable.
+This establishes current Ferry/server base agreement for this one operation and
+isolates its local discrepancy to HaLo's stored server timestamp. The independent
+comparison still correctly reports a discrepancy; neither the local manifest nor
+the report was rewritten. Four network reads, zero source mutations and zero
+cursor writes occurred. This sample does not establish completeness for all
+operations, forward delivery or historical purge exclusion.
+
+Maintainer implementation notes in HALO-557 describe ordinary web deletion as
+an integer `deleted: 1` tombstone with a newer server sync stamp, potentially
+without a new application timestamp. Two additional intake regressions cover
+contact and operation deletion under that pattern, equal-server-stamp conflicts,
+cancellation of prepared work, and retention of dispatched uncertainty and
+permanent identity claims. Existing intake behavior passes those checks.
+
+The maintainer decision in HALO-683 describes hard deletion without tombstones
+as intentional for test-only purges, with orphaned test records on another
+device tolerated. This explains the conflicting client comments as design
+intent; it does not verify the currently deployed server revision or provide a
+general tombstone-retention guarantee. Nor does test-only eligibility prove that
+each removed record was always a test: a real operation could change into test
+status before purging, leaving another client with stale eligible-looking data
+if it misses that transition. Unknown non-test historical deletions, forward
+replay, cursor aging and source-wide base/context completeness still need evidence.
+All source-boundary authority flags remain closed.
+
+The [forward replay probe](../scripts/source-forward-probe.ts) implements two
+known-positive forward reads using independent operation/QSO server watermarks
+and `anyClient: false`. Its input requires independently verified account and
+reader identity, a last-writer client key different from Ferry for each known
+record, and fresh before/after manifests. A local synced flag cannot substitute
+for writer evidence. The probe permits only the exact metadata-only sync body,
+denies renewal, shares the injected vendor budget, and never checkpoints a read.
+It limits the run to four attempts, 25 records per stream/page, 100 retained
+metadata records per pass and 120 seconds. Input windows are at most 24 hours
+old; independent manifests are at most five minutes old. Empty, partial,
+changed, missing, unknown-version or unknown-writer evidence cannot pass.
+Incidental records are compared separately and never turn the known sample into
+an account-wide membership claim. All write, boundary, membership and historical
+purge-exclusion flags stay false. Its 68 focused tests and independent review
+passed. No live forward probe has run: independently verified writer provenance
+or a separately authorized controlled edit is still required.
+
+The existing global source gate also permits source-wide cutover creation; a
+UUID allowlist does not narrow that effect. A future limited pilot cannot simply
+rename these observations as a global retention guarantee. Any distinct scoped
+proof mechanism needs its own reviewed preparation/dispatch enforcement, exact
+source/contact/destination and revision bindings, short validity, existing
+ownership fences, and exclusion of source-wide cutovers and no-query fallbacks.
+That mechanism is not implemented or authorized by these diagnostic probes.

@@ -1,6 +1,48 @@
 # Implementation progress
 
-Current checkpoint, 2026-10-24 00:00 UTC: signed revision
+Current checkpoint, 2026-10-24 01:06 UTC: signed revision
+`4fefd2ae3941f68cd07af22743df478a95976a5c` is deployed as Worker
+`7bffe640-e86d-4d54-bb7c-24ca6ded7cd2` at 100% traffic. The release adds bounded
+QRZ covering reads, correct neighborhood date bounds across UTC midnight,
+source replay comparisons for retained suspects and fresh base operations, and
+a known-positive forward replay probe. Ordinary web-deletion regressions retain
+delivery cancellation, uncertainty and permanent identity fences.
+All **829 tests** and required checks passed in
+[release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40046763351).
+Focused regressions and static/build checks also passed locally; the full local
+run was not completed after a Miniflare fixture-setup transport failure. The
+bounded fixture repair passed its focused rerun and the full CI suite.
+
+Independent 01:07 UTC checks confirmed all five export gates closed, healthy
+service, matching assets and all twenty-three migrations through `0024`.
+There are 380 LoTW claims and zero uncovered mappings, attempts, cutovers,
+legacy holds or temporary guards. No migration was needed. No source mutation
+or vendor write was performed by the probes or this release.
+
+Two complete fresh LoFi reads found all thirteen additional Ferry contacts
+unchanged; HaLo's local omission remains unexplained. A separate four-read
+sample matched all 23 members and Ferry's exact base-body revision hash and
+server timestamp against both remote observations. Its local discrepancy was
+only HaLo's stored server stamp. These samples establish current agreement for
+the observed records, not source-wide completeness or historical purge exclusion.
+See the [source evidence](docs/evidence-lofi.md#current-server-positives-and-base-operation-checks-2026-10-24-utc).
+
+At 01:09 UTC a fresh QRZ 35-day covering read returned 467 records over two
+complete pages, with zero records in one seven-day pending gap. Book, credentials
+and target scope remained valid. This resolves the failed-empty-response problem
+for that observation without adopting cached evidence or changing ledger state.
+The other gaps and fresh pre-write coverage still need validation.
+
+Next: integrate bounded QRZ coverage with normal history verification and commit
+fences; obtain independent writer provenance for the bounded forward probe and
+resolve cursor/retention and source-completeness evidence; then review an exact
+contact/destination trial packet. Automatic QRZ fallback is not integrated.
+The global source gate remains closed, including its source-wide cutover effect.
+The trial must preserve each contact's actual 4/6/8-character grid. Exports stay
+disabled, and no first-write trial is authorized. See the [roadmap](ROADMAP.md)
+and [rollout checklist](docs/rollout-checklist.md).
+
+Previous checkpoint, 2026-10-24 00:00 UTC: signed revision
 `32e25b0ebc4d2ef5716bc3e60e166561a5b0931a` is deployed as Worker
 `076adec3-eeb7-4dc9-bcd8-f6b04ce75318` at 100% traffic. The release adds fixed,
 redacted QRZ read diagnostics and a guarded fifteen-minute retry delay for

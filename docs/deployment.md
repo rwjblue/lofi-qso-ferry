@@ -6,17 +6,17 @@ Verified 2026-10-24 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). T
 | ------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                           |
 | Worker                   | `lofi-qso-ferry`, environment `production`                                                                      |
-| Deployed source revision | `32e25b0ebc4d2ef5716bc3e60e166561a5b0931a`                                                                      |
-| Worker version           | `076adec3-eeb7-4dc9-bcd8-f6b04ce75318`, created `2026-10-24T00:00:54.853485Z`                                   |
-| Deployment               | `b36c626b-6385-4ed3-8c36-ad6ba79719f7`, `2026-10-24T00:00:56.727949Z`, 100% of traffic                          |
+| Deployed source revision | `4fefd2ae3941f68cd07af22743df478a95976a5c`                                                                      |
+| Worker version           | `7bffe640-e86d-4d54-bb7c-24ca6ded7cd2`, created `2026-10-24T01:06:53.020342Z`                                   |
+| Deployment               | `7621c76b-2486-4d8a-bc7f-f6356cc19101`, `2026-10-24T01:06:53.954408Z`, 100% of traffic                          |
 | Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                                   |
 | Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                                |
-| Migrations               | All 23 migrations through `0024_identity_mapping_overlap`; independently verified at `2026-10-24T00:01:17.348Z` |
+| Migrations               | All 23 migrations through `0024_identity_mapping_overlap`; independently verified at `2026-10-24T01:07:37.122Z` |
 | Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                               |
 | Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                            |
 | Schedule                 | `*/5 * * * *`                                                                                                   |
 | Alternate origins        | workers.dev and version previews disabled                                                                       |
-| Artifact                 | 1,800.85 KiB raw / 348.25 KiB gzip; reported startup 29 ms                                                      |
+| Artifact                 | 1,805.84 KiB raw / 349.52 KiB gzip; reported startup 31 ms                                                      |
 
 The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
 
@@ -40,13 +40,54 @@ ROLLOUT_QSO_IDS_JSON=[]
 - Session endpoint returns unauthenticated state with `signupAllowed=false`. The public landing shows an invite-only notice and passkey sign-in; the signup form is hidden. A live uninvited signup probe returned 403 before proof creation or sending.
 - Following the invitation link stays at `/join`, serves the app without the asset-canonicalization redirect, reveals invited enrollment and focuses its email field. Both confirmation inputs expose six-digit numeric/one-time-code attributes.
 - Remote settings independently confirm every closed gate, exact origin/RP, dedicated D1 and sender allowlist. Production local-mailbox and alternate workers.dev endpoints return 404. Email-content previews remain disabled, and no secrets were rotated.
-- The current readiness release passes **675 tests**, formatting, lint, both TypeScript checks and the Worker build locally and in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40041632962). Earlier release-specific CI results and browser/Worker evidence remain in the dated sections below; they do not substitute for current production measurements.
+- The current readiness release passes **829 tests** and required checks in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40046763351). Focused QRZ/source/deletion regressions, formatting, lint, both TypeScript checks and the Worker build also pass locally. A full local run stopped after a Miniflare transport failure during an unrelated test fixture's oversized setup batch; the bounded fixture repair passed its focused rerun and the full CI suite. Earlier release-specific results and browser/Worker evidence remain in the dated sections below; they do not substitute for current production measurements.
 - Read-only remote D1 probes verified that the invite task must use query results, rather than bulk-file import summaries, to establish an exact email/deadline grant. Existing OAuth includes Email Sending write access. No real invitation grant/send was performed; CLI sends still require recipient-specific delivery confirmation.
 - The initial deployment delivered one real verification message to the owner's inbox through the same native provider path; only fixed delivery metadata was inspected. That smoke test enrolled no production account and initially observed zero account/connection/ledger/attempt rows. These are historical counts, not a claim about subsequent personal use. New branded mail was rendered/tested locally; email-client/device autofill remains unverified.
 
 The reported startup is deployment evidence, not per-request billed CPU or peak memory. No representative monthly workload/cost has been measured. Physical and synced passkey behavior remains for the owner to verify at this permanent origin. See [rollout acceptance](rollout-checklist.md) for the remaining vendor checks.
 
-## QRZ retry and readiness evidence (2026-10-24)
+## Source and QRZ evidence tooling (2026-10-24, 01:06 UTC)
+
+Signed source `4fefd2ae3941f68cd07af22743df478a95976a5c` deployed with all five
+export gates closed. All 829 tests and required checks passed in release CI;
+focused local tests and static/build checks passed. The guarded deployment found
+no migration to apply. Independent checks at 01:07:32 UTC confirmed the exact
+Worker at 100% traffic, healthy service and matching assets. The 01:07:37 UTC
+database audit confirmed all twenty-three migrations, 380 LoTW ownership claims,
+zero uncovered mappings, and zero attempts, cutovers, legacy holds or temporary
+guards. No source mutation or vendor write was performed by these diagnostics.
+
+The release adds bounded QRZ covering reads, fixes neighborhood date bounds at
+both UTC-midnight edges, extends source replay comparison to retained suspects
+and fresh base operations, and adds a known-positive forward replay probe.
+Ordinary web-deletion regressions preserve cancellation and durable ownership
+fences. The forward probe still needs independently verified last-writer evidence
+before live execution; automatic QRZ covering fallback is not integrated.
+
+Fresh LoFi observations confirmed all thirteen additional Ferry contacts on the
+server. A separate four-read sample matched all 23 members and Ferry's exact
+base-body revision and server timestamp; HaLo differed only in its local server
+timestamp. These observations do not establish global source completeness,
+forward delivery or historical deletion retention. See the [source packet](evidence-lofi.md#current-server-positives-and-base-operation-checks-2026-10-24-utc)
+and [QRZ packet](evidence-qrz.md#bounded-covering-reads-2026-10-24-utc).
+
+At 01:09:35 UTC a protected QRZ probe completed a fresh 35-day cover in two pages:
+467 records, zero in its seven-day pending target, stable book/credential/scope
+checks and three vendor reads including STATUS. It changed no ledger, cache or
+cursor state. This demonstrates one successful gap observation; automatic history
+fallback, other gaps and fresh pre-write coverage still need work.
+
+At 01:07 UTC, QRZ retained 3,493 ambiguous and 340 inventory-pending rows. LoTW
+retained 380 adopted, 2,957 ambiguous, 161 mismatched and 335 inventory-pending
+rows. Destination counts overlap and cannot be summed into unique contacts.
+The 01:05 invocation started before deployment and is not evidence for the new
+Worker. The older 00:40 invocation still lacks a completion record; its default
+zero counters are not measured work. Later completed runs establish continued
+processing. This telemetry row does not own a source lease; retained provider
+logs are the follow-up for its unknown outcome. Bundle size is 1,805.84 KiB raw / 349.52 KiB gzip, with 31 ms reported
+startup; these do not establish production signing cost or sustained capacity.
+
+## QRZ retry and readiness evidence (2026-10-24, 00:00 UTC)
 
 Signed source `32e25b0ebc4d2ef5716bc3e60e166561a5b0931a` deployed at 00:00 UTC
 with all gates closed. All **675 tests** and required checks passed locally and

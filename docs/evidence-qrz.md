@@ -69,6 +69,80 @@ or holds exceeding fifteen minutes/cache expiry. The settled 00:07:15 UTC audit
 confirmed zero export attempts. No coverage or adoption was inferred from these
 failures; the sample verifies deployed cooldown persistence, not QRZ absence.
 
+### Bounded covering reads (2026-10-24 UTC)
+
+`QrzClient.readCoveringRange` can gather independent successful coverage around
+a target of at most seven days. It permits either a seven-day expansion on each
+side or an explicit containing range of at most 35 days, selected using nearby
+positive history. It retains at most four FETCH attempts, a sixty-second deadline,
+two MiB per response and two MiB of retained canonical records. Every page must
+contain a positive record, valid station/date/identity fields and ascending
+LOGIDs. Since `AFTERLOGID` is documented as inclusive, continuation requests
+repeat the last LOGID and require its entire canonical record to be unchanged.
+Only that verified overlap is removed. A successful short page completes the
+observation; failures, missing/changed anchors and limits return no partial
+inventory. The caller must separately verify book identity and current scope.
+This is an observed covering read, not a snapshot token or write authorization.
+
+The neighborhood query now includes the same full 30-minute-59-second radius
+used by its record filter when calculating UTC date bounds. Regression tests
+cover both midnight edges so minute precision cannot exclude an adjacent date.
+
+At 00:26:02 UTC a protected diagnostic verified the configured book with STATUS
+and attempted one expanded covering FETCH around a pending range. It returned
+the same ambiguous empty-selection failure. Only two vendor reads occurred;
+there were no vendor, ledger, cache or cursor mutations. The first selector did
+not fully validate the cached partition's current scope/expiry, so this is a
+response observation, not evidence for current pending work. A metadata-only
+follow-up found four pending ranges with nearby populated cached ranges; the
+nearest range gaps were one, eight, fifteen and twenty-two days. This suggests
+a deterministic cover containing a known positive range, subject to current
+scope/expiry checks and unchanged resource bounds. Cached positives choose the
+read range; only fresh successful reads could supply coverage evidence.
+
+At 00:35:18 UTC the stricter metadata selector found 33 current scoped partitions:
+four pending and 29 positive. It verified active account/source/destination,
+unrevoked current credentials, unexpired retained pages, the exact history-scope
+hash and book date boundaries. No row failed those checks. Each pending range
+had a positive-range cover within 35 days (14, 21, 28 and 35 days); the selected
+positive cached partition contained 98 records. No vendor request or application
+state mutation was made by this selector. The protected live runner separately
+requires STATUS book verification, fresh positive records inside that range,
+and unchanged target/positive scope and credentials after the read.
+
+This selection did not remain available. At 00:57:15 UTC the current selector
+found four pending and sixteen positive partitions, but none of the positive
+ranges could cover a pending target within 35 days. It stopped before any vendor
+call. At 01:03:15 UTC an additional metadata-only audit permitted expired positive
+metadata solely as a range hint, while retaining current scope/credential checks
+and an unexpired target. Thirteen current positives and three expired hints
+remained, again with no candidate within 35 days. These are cache-lifecycle
+observations, not QRZ response failures or evidence that records disappeared.
+No vendor calls or ledger/cache/cursor writes occurred in either check.
+
+At 01:09:35 UTC a one-shot directional probe succeeded. It selected the nearest
+current same-scope positive range as a direction hint, then read one containing
+35-day range within the verified book boundaries. The hint itself lay outside
+that range and supplied no retained evidence. STATUS verified the book; two
+complete positive FETCH pages supplied 467 unique records, with an unchanged
+inclusive continuation anchor. Zero records fell inside the seven-day pending
+target. The fresh cover completed in 5.853 seconds; the run used three vendor
+reads in total. Current target scope, book configuration and destination
+credential version remained unchanged after the read. No source-boundary or
+write authority was granted, and vendor/ledger/cache/cursor mutations were zero.
+
+This establishes successful observed coverage containing one pending gap, rather
+than inferring absence from QRZ's ambiguous `FAIL`. It is a finite observation,
+not a snapshot or proof for the other pending ranges. No repeated expansion or
+retry loop was used. The result was not imported into production history state.
+
+Automatic reconciliation fallback is not connected to this primitive. Neither
+the failed expanded probe nor retry expiry establishes QRZ absence. Successful
+covering reads still need the normal history verification, source/generation
+and adoption fences, and a fresh pre-write duplicate check. Integrate a bounded,
+resumable fallback under those existing guards, validate the other pending gaps,
+and separately establish fresh pre-write coverage before any trial write.
+
 ## ADIF and template profile
 
 [ADIF 3.1.6](https://adif.org/316/ADIF_316.htm) defines ordinary ADI string fields as ASCII; international string fields require ADX. Ferry's ADI serializer rejects non-ASCII data rather than transliterating, dropping it or claiming QRZ UTF-8 support. Final normalized lengths include both CR and LF. NOTES preserves line breaks as CRLF; COMMENT/QSLMSG collapse whitespace. Literal `<EOR>`, `&`, `+`, `=` and `%` inside field values survive local framing and form encoding. Parsing preserves four- versus six-digit times.

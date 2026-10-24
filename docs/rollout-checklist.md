@@ -9,18 +9,19 @@ replaced, deleted or uploaded during this implementation work.
 ## Current evidence (2026-10-24 UTC)
 
 The owner has enrolled and linked LoFi, QRZ and LoTW. Signed source
-`32e25b0ebc4d2ef5716bc3e60e166561a5b0931a` deployed read-only as Worker
-`076adec3-eeb7-4dc9-bcd8-f6b04ce75318` at 00:00 UTC. All **675 tests** and required
-checks passed locally; [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40041632962) also passed.
-Live checks at 00:01 UTC confirmed twenty-three migrations, healthy service,
+`4fefd2ae3941f68cd07af22743df478a95976a5c` deployed read-only as Worker
+`7bffe640-e86d-4d54-bb7c-24ca6ded7cd2` at 01:06 UTC. All **829 tests** and required
+checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40046763351);
+focused tests and static/build checks also passed locally.
+Live checks at 01:07 UTC confirmed twenty-three migrations, healthy service,
 matching assets and all five gates closed. There are 380 LoTW identity claims
 with zero uncovered mappings; attempts, cutovers, legacy holds and temporary
-guards remain zero. The release adds a guarded fifteen-minute retry delay for
-ambiguous QRZ empty selections, independent source replay comparison and a
-read-only exact-contact trial audit. These safeguards do not establish QRZ
-absence or clear the backlog. The first new run recorded four bounded QRZ
-partition holds, 265 contact turns and zero adoptions. The settled 00:07 UTC
-audit retained zero attempts, cutovers and uncovered mappings. See
+guards remain zero. The release adds bounded QRZ covering reads and UTC-midnight
+date fixes, current source-base comparison and a known-positive forward replay
+probe. Automatic covering fallback is not integrated, and the forward probe
+requires independent writer evidence before live execution. The earlier guarded
+fifteen-minute QRZ retry holds remain; they do not establish absence or clear the
+backlog. No new migration was needed. See
 [deployment evidence](deployment.md).
 
 The earlier read-only D1 snapshot at **2026-10-23 21:53:13 UTC** contains zero export attempts and
@@ -84,10 +85,25 @@ merely to bypass a safety check.
 The later [independent comparison and live replay](evidence-lofi.md#observed-local-and-live-comparisons)
 found every local HaLo UUID in Ferry and matched two ordinary tombstones across
 two complete operation reads. A separate repeated operation probe matched ten
-members, including four events. Thirteen additional Ferry contacts are absent from
-the local database and its QSO backups; their cause is unresolved. Purged records,
-forward event/contact changes, base-operation freshness, cursor aging and server retention still need
-evidence. No deletion or source repair was inferred from the local difference.
+members, including four events. On 2026-10-24 at 00:19 UTC, two complete server
+reads found all thirteen additional Ferry contacts unchanged; HaLo's local
+omission remains unexplained. At 00:58 UTC a four-read probe matched 23 members
+twice and confirmed that Ferry's exact base-body revision hash and server stamp
+matched both fresh server reads. HaLo's local base differed only in its server
+stamp. See the [current source observations](evidence-lofi.md#current-server-positives-and-base-operation-checks-2026-10-24-utc).
+Purged records, forward event/contact changes, source-wide context completeness,
+cursor aging and server retention still need evidence. The bounded forward
+probe is implemented but still needs independently verified writer provenance
+before a live run. No deletion or source repair was inferred from local differences.
+
+QRZ absence work now has a bounded covering-read primitive and UTC-midnight
+neighborhood regressions. At 01:09 UTC a fresh 35-day cover returned 467 records
+across two complete pages, with zero records inside one seven-day pending gap.
+Book and target scope stayed valid through the read. This is observed coverage
+for one gap; automatic fallback and fresh pre-write coverage are not integrated,
+and the other pending ranges remain unverified. Integrate the bounded read path
+with normal history verification and commit fences. Cached metadata may select
+a range but cannot supply fresh evidence. See the [QRZ evidence](evidence-qrz.md#bounded-covering-reads-2026-10-24-utc).
 
 ## First-export trial packet
 
@@ -112,8 +128,9 @@ does not impose eight-character grids on other users or contacts.
    passkey cannot be reconstructed. Record and review any such recovery, revoke
    lost credentials and sessions, and preserve tenant/connection ownership.
 2. Select one genuine new source UUID, then freeze its source/operation generation,
-   exact timestamp and projected station/contact fields. Prefer a normal contact
-   that exercises fractional time and the actual eight-character station grid.
+   exact timestamp and projected station/contact fields. Preserve its actual
+   source grid (4/6/8 characters); exercise fractional time and eight-character
+   precision when naturally present in the selected contact.
 3. Name every routed destination: the exact QRZ book and LoTW account, with the
    relevant station/certificate and date coverage. The existing UUID allowlist
    applies across **all routed destinations**; it is not a destination allowlist.

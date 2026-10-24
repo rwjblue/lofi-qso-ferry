@@ -6,9 +6,15 @@ import {
   deliveryMode,
   dispatchAttempt,
   prepareDue,
+  QrzEmptyObservationScope,
   reconcileAttempt,
 } from "../src/delivery.ts";
+import { observeContact, pollSource } from "../src/intake.ts";
 import { QrzClient } from "../src/qrz.ts";
+import {
+  loadCurrentSourcePresenceScope,
+  loadSourceExportSnapshots,
+} from "../src/source-export-proofs.ts";
 import type { Store } from "../src/store.ts";
 import { schedulerFixture } from "./runtime-fixtures.ts";
 import { mintFixtureSourceProofs } from "./source-proof-fixtures.ts";
@@ -73,6 +79,107 @@ async function fixture(t: TestContext) {
     h.store.statement(`SELECT count(*) AS n FROM ${table}`).first<number>("n");
   return { ...h, contact, sourceProof, key, prepare, state, count };
 }
+
+async function emptyObservation(h: Awaited<ReturnType<typeof fixture>>) {
+  const scope = new QrzEmptyObservationScope(h.store);
+  const read = await scope.read(
+    {
+      key: h.key(),
+      contact: h.contact,
+      source: (await h.store.connection("a", "source"))!,
+      destination: (await h.store.connection("a", "destination"))!,
+    },
+    { apiKey: "synthetic-qrz" },
+    { fetcher: h.fetcher },
+  );
+  assert(read.observation);
+  return { scope, observation: read.observation };
+}
+
+test("same-turn QRZ absence skips only preparation; a final neighbor still prevents INSERT", async (t) => {
+  const h = await fixture(t);
+  const { scope, observation } = await emptyObservation(h);
+  t.after(() => scope.close());
+  assert.equal(h.calls.qrzReads, 1);
+  const prepared = await prepareDue(h.store, h.key(), h.contact, fresh, {
+    fetcher: h.fetcher,
+    sourceProof: h.sourceProof,
+    qrzEmptyObservation: observation,
+  });
+  assert.equal(prepared.state, "prepared");
+  assert(prepared.attemptId);
+  assert.equal(
+    h.calls.qrzReads,
+    1,
+    "preparation consumed the actual empty scan",
+  );
+  scope.close();
+  h.qrzRecords.push({
+    ...h.initial,
+    TIME_ON: "120030",
+    APP_QRZLOG_LOGID: "501",
+  });
+  const result = await dispatchAttempt(
+    h.store,
+    "a",
+    prepared.attemptId,
+    fresh,
+    {
+      fetcher: h.fetcher,
+      qrzEmptyObservation: observation,
+    },
+  );
+  assert.equal(result.state, "rejected");
+  assert.equal(
+    h.calls.qrzReads,
+    2,
+    "dispatch cannot consume a preparation capability",
+  );
+  assert.equal(h.calls.qrzWrites, 0);
+  assert.notEqual(await h.state(prepared.attemptId), "uncertain");
+});
+
+test("same-turn QRZ absence cannot replace a current post-drain source proof", async (t) => {
+  const h = await fixture(t);
+  const { scope, observation } = await emptyObservation(h);
+  t.after(() => scope.close());
+  const missing = await prepareDue(h.store, h.key(), h.contact, fresh, {
+    fetcher: h.fetcher,
+    qrzEmptyObservation: observation,
+  });
+  assert.equal(missing.reason, "source_export_proof_unavailable");
+  // A real canonical drain changes the proof's captured source generation.
+  await pollSource(
+    h.store,
+    (await h.store.connection("a", "source"))!,
+    async () =>
+      Response.json({
+        account: { uuid: "account-fixture" },
+        qsos: [],
+        operations: [],
+        meta: { qsos: { records_left: 0 }, operations: { records_left: 0 } },
+      }),
+  );
+  const source = (await h.store.connection("a", "source"))!;
+  const currentScope = await loadCurrentSourcePresenceScope(h.store, source);
+  assert(currentScope);
+  const [refreshed] = await loadSourceExportSnapshots(h.store, currentScope, [
+    "q1",
+  ]);
+  assert(refreshed);
+  await observeContact(h.store, source, refreshed.contact, Date.now(), [
+    (await h.store.connection("a", "destination"))!,
+  ]);
+  const stale = await prepareDue(h.store, h.key(), refreshed.contact, fresh, {
+    fetcher: h.fetcher,
+    sourceProof: h.sourceProof,
+    qrzEmptyObservation: observation,
+  });
+  assert.equal(stale.reason, "source_export_proof_unavailable");
+  assert.equal(h.calls.qrzReads, 1);
+  assert.equal(h.calls.qrzWrites, 0);
+  assert.equal(await h.count("attempts"), 0);
+});
 
 test("fresh QRZ capability requires common consent and never grants LoTW or boundary authority", () => {
   assert.equal(deliveryMode(fresh, "qrz"), "qrz_fresh_insert");

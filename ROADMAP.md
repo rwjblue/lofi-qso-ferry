@@ -30,9 +30,18 @@ one-page model. These counts establish demand, not production completion rate.
 
 At 100 users × 100 new contacts/day, even four requests/contact exceeds the
 current total application budget before maintenance or retries. Background
-backfill has a smaller allowance. The next small optimization is to reuse the
-immediate history observation during preparation while retaining a new duplicate
-query before every INSERT. Then evaluate bounded earlier covering reads and
+backfill has a smaller allowance. The first small optimization is implemented
+locally, **not deployed**: reuse the immediate history observation during
+preparation while retaining a new duplicate query before every INSERT. An
+independent native comparison measures **4→3** requests for one direct-empty
+contact, **9→7** for three candidates/two INSERTs and **10→7** for one
+ambiguous-empty fallback. Current source proofs, ownership and dispatch/recovery
+checks remain mandatory. All **1,628 tests** and the full local check pass.
+A separate 20-candidate fallback probe exposed history reads consuming all
+24 background QRZ requests before dispatch: two attempts prepared, zero INSERTs.
+Bound fresh negative-history admission and protect final-query headroom before
+broader backfill; retain the larger positive historical-matching cohort. Then
+evaluate bounded earlier covering reads and
 LoTW batches, with per-contact ownership, proofs and uncertain-result recovery
 preserved. No quota increase or production capacity is claimed. The
 [capacity plan](docs/capacity-plan.md#qrz-first-insert-request-demand--exact-f2c-local-measurement)

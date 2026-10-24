@@ -849,9 +849,15 @@ test("fresh QRZ first-insert mode proves and inserts an unmapped contact with th
   await h.store
     .statement("UPDATE connections SET status='active' WHERE id='lotw'")
     .run();
+  const readsBefore = h.calls.qrzReads;
   const result = await tick(h.env, h.fetcher);
   assert.equal(result.errors, 0);
   assert.equal(h.calls.qrzWrites, 1);
+  assert.equal(
+    h.calls.qrzReads - readsBefore,
+    2,
+    "reconciliation and dispatch each read; preparation reuses the same-turn empty result",
+  );
   assert.equal(h.calls.lotwUploads, 0);
   assert.equal(await h.count("attempts"), 1);
   assert.equal(await h.count("source_export_proofs"), 1);

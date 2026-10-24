@@ -89,6 +89,8 @@ export interface DeliveryDependencies {
   >;
   /** Immutable, current evidence from the post-collection canonical drain. */
   sourceProof?: SourceExportAuthorization;
+  /** Single-use empty scan from this source turn; never valid for dispatch. */
+  qrzEmptyObservation?: QrzEmptyObservation;
 }
 /** An injected test origin cannot freeze expiry while asynchronous work runs. */
 function deliveryClock(origin?: number): () => number {
@@ -555,6 +557,191 @@ export function qrzNeighborhoodFallback(
     },
   };
 }
+
+export interface QrzEmptyObservation {
+  readonly scope: QrzEmptyObservationScope;
+  readonly token: object;
+}
+type QrzObservationInput = {
+  key: LedgerKey;
+  contact: Contact;
+  source: Connection;
+  destination: Connection;
+};
+function qrzObservationSourceConfig(config: string) {
+  const value = JSON.parse(config);
+  // The mandatory canonical drain updates only this diagnostic timestamp.
+  // Every other source setting and every destination setting remains bound.
+  delete value.lastSuccessfulPollAt;
+  return canonical(value);
+}
+const qrzObservationConnection = (connection: Connection, source = false) => ({
+  tenant: connection.tenant,
+  id: connection.id,
+  kind: connection.kind,
+  status: connection.status,
+  remoteIdentity: connection.remote_identity,
+  credentialVersion: connection.credential_version,
+  config: source
+    ? qrzObservationSourceConfig(connection.config)
+    : connection.config,
+});
+function qrzObservationInput(input: QrzObservationInput) {
+  const {
+    contextGeneration: _context,
+    reconciliationVersion: _queue,
+    ...projection
+  } = input.contact as IntakeContact;
+  const binding = canonical({
+    key: input.key,
+    projection,
+    record: structuredContactAdif(input.contact),
+    source: qrzObservationConnection(input.source, true),
+    destination: qrzObservationConnection(input.destination),
+  });
+  // Large source contexts still use normal reads; they are not retained here.
+  return new TextEncoder().encode(binding).byteLength <= 64 * 1024
+    ? binding
+    : undefined;
+}
+/** A bounded source-turn capability, not a cache shared between invocations. */
+export class QrzEmptyObservationScope {
+  #open = true;
+  #issued = 0;
+  readonly #store: Store;
+  #observations = new WeakMap<object, { binding: string; expiresAt: number }>();
+  constructor(store: Store) {
+    this.#store = store;
+  }
+
+  close() {
+    this.#open = false;
+    this.#observations = new WeakMap();
+  }
+
+  async #credentials(input: QrzObservationInput, now: number) {
+    return this.#store
+      .statement(
+        `SELECT sp.envelope source_envelope,sp.created_at source_created_at,sp.expires_at source_expires_at,
+          dp.envelope destination_envelope,dp.created_at destination_created_at,dp.expires_at destination_expires_at
+         FROM accounts a JOIN connections s ON s.tenant=a.id JOIN connections d ON d.tenant=a.id
+         JOIN private_data sp ON sp.tenant=s.tenant AND sp.connection=s.id AND sp.id=s.credential_version AND sp.kind='credential'
+         JOIN private_data dp ON dp.tenant=d.tenant AND dp.connection=d.id AND dp.id=d.credential_version AND dp.kind='credential'
+         WHERE a.id=? AND a.status='active' AND s.id=? AND s.kind='lofi' AND s.status='active' AND s.remote_identity IS ? AND s.credential_version=? AND json_remove(s.config,'$.lastSuccessfulPollAt')=json_remove(?,'$.lastSuccessfulPollAt')
+          AND d.id=? AND d.kind='qrz' AND d.status='active' AND d.remote_identity IS ? AND d.credential_version=? AND d.config=?
+          AND sp.revoked_at IS NULL AND (sp.expires_at IS NULL OR sp.expires_at>?)
+          AND dp.revoked_at IS NULL AND (dp.expires_at IS NULL OR dp.expires_at>?)`,
+        input.key.tenant,
+        input.source.id,
+        input.source.remote_identity,
+        input.source.credential_version,
+        input.source.config,
+        input.destination.id,
+        input.destination.remote_identity,
+        input.destination.credential_version,
+        input.destination.config,
+        now,
+        now,
+      )
+      .first<{ destination_envelope: string }>();
+  }
+
+  /** Only a real, complete guarded scan can issue an empty observation. */
+  async read(
+    input: QrzObservationInput,
+    credential: QrzCredential,
+    deps: DeliveryDependencies = {},
+  ) {
+    input = structuredClone(input);
+    const apiKey = credential.apiKey;
+    if (!this.#open || !apiKey)
+      throw new QrzError("blocked", "QRZ observation scope unavailable");
+    const captured = qrzObservationInput(input);
+    const time = deliveryClock(deps.now);
+    const expiresAt = time() + 60_000;
+    const before =
+      captured && this.#issued < 20
+        ? await this.#credentials(input, time())
+        : null;
+    if (!this.#open)
+      throw new QrzError("blocked", "QRZ observation scope unavailable");
+    const records = await new QrzClient(apiKey, {
+      fetch: vendorFetch(this.#store, "qrz", deps.fetcher ?? fetch, {
+        priority: deps.priority,
+        now: deps.now,
+      }),
+      neighborhoodFallback: qrzNeighborhoodFallback(
+        this.#store,
+        input.source,
+        input.destination,
+        time,
+      ),
+    }).findNeighborhood(structuredContactAdif(input.contact));
+    let observation: QrzEmptyObservation | undefined;
+    if (
+      records.length === 0 &&
+      captured !== undefined &&
+      before !== null &&
+      input.key.tenant === input.source.tenant &&
+      input.key.tenant === input.destination.tenant &&
+      input.key.source === input.source.id &&
+      input.key.destination === input.destination.id &&
+      input.key.qso === input.contact.id &&
+      this.#open &&
+      time() < expiresAt &&
+      canonical(await this.#credentials(input, time())) === canonical(before) &&
+      this.#open &&
+      time() < expiresAt
+    ) {
+      const binding = await sha256(canonical([captured, before, apiKey]));
+      if (!this.#open || time() >= expiresAt || this.#issued >= 20)
+        return { records, observation };
+      const token = Object.freeze({});
+      this.#observations.set(token, {
+        binding,
+        expiresAt,
+      });
+      this.#issued++;
+      observation = Object.freeze({ scope: this, token });
+    }
+    return { records, observation };
+  }
+
+  static async consume(
+    observation: QrzEmptyObservation | undefined,
+    store: Store,
+    input: QrzObservationInput,
+    credential: QrzCredential,
+    now: () => number,
+  ): Promise<boolean> {
+    if (!observation) return false;
+    const scope = observation.scope;
+    if (
+      typeof scope !== "object" ||
+      scope === null ||
+      !(#observations in scope) ||
+      scope.#store !== store
+    )
+      return false;
+    const entry = scope.#observations.get(observation.token);
+    scope.#observations.delete(observation.token);
+    if (!entry || !scope.#open || now() >= entry.expiresAt) return false;
+    // Capture primitives before the metadata await; callers cannot change the
+    // query identity while a database operation is in flight.
+    input = structuredClone(input);
+    const captured = qrzObservationInput(input);
+    if (captured === undefined) return false;
+    const apiKey = credential.apiKey;
+    const current = await scope.#credentials(input, now());
+    const binding = await sha256(canonical([captured, current, apiKey]));
+    return (
+      scope.#open &&
+      now() < entry.expiresAt &&
+      current !== null &&
+      binding === entry.binding
+    );
+  }
+}
 function qrzClient(
   store: Store,
   credential: QrzCredential,
@@ -966,7 +1153,19 @@ export async function prepareDue(
           )
         ).run();
       }
-    } else if ((await client.findNeighborhood(record)).length)
+    } else if (
+      !(
+        authorizationMode === "qrz_fresh_insert" &&
+        (await QrzEmptyObservationScope.consume(
+          deps.qrzEmptyObservation,
+          store,
+          { key, contact, source, destination: connection },
+          credential,
+          currentTime,
+        ))
+      ) &&
+      (await client.findNeighborhood(record)).length
+    )
       return {
         state: "blocked",
         reason: "qrz_fresh_absence_check_found_candidate",

@@ -1,13 +1,14 @@
 import { purgeAuth } from "./auth.ts";
 import { establishCutovers, proveNewAfterCutover } from "./cutover.ts";
 import { type DatabaseMetrics, measuredDatabase } from "./database-metrics.ts";
-import type { DeliveryGates } from "./delivery.ts";
+import type { DeliveryGates, QrzEmptyObservation } from "./delivery.ts";
 import {
   cancelStalePreparedSourceProof,
   contactReconciliationAdif,
   deliveryMode,
   dispatchAttempt,
   prepareDue,
+  QrzEmptyObservationScope,
   qrzNeighborhoodFallback,
   reconcileAttempt,
   refreshConfirmations,
@@ -346,6 +347,7 @@ async function reconcileContact(
   priority: VendorPriority,
   vendorNow: number | undefined,
   metrics: ThroughputMetrics,
+  emptyObservations?: QrzEmptyObservationScope,
 ) {
   const key: LedgerKey = {
     tenant: source.tenant,
@@ -384,6 +386,7 @@ async function reconcileContact(
   let remote = inventory.records;
   let readAccess = inventory.readAccess;
   let freshCheckComplete = false;
+  let emptyObservation: QrzEmptyObservation | undefined;
   if (
     inventory.state === "ready" &&
     remote.length === 0 &&
@@ -410,15 +413,30 @@ async function reconcileContact(
       );
     }
     if (destination.kind === "qrz" && raw?.apiKey) {
-      remote = await new QrzClient(raw.apiKey, {
-        fetch: vendorFetch(store, "qrz", fetcher, { priority, now: vendorNow }),
-        neighborhoodFallback: qrzNeighborhoodFallback(
-          store,
-          source,
-          destination,
-          vendorNow,
-        ),
-      }).findNeighborhood(record);
+      if (
+        emptyObservations &&
+        routeDeliveryMode(gates, key.qso, destination) === "qrz_fresh_insert"
+      ) {
+        const read = await emptyObservations.read(
+          { key, contact, source, destination },
+          { apiKey: raw.apiKey },
+          { fetcher, priority, now: vendorNow },
+        );
+        remote = read.records;
+        emptyObservation = read.observation;
+      } else
+        remote = await new QrzClient(raw.apiKey, {
+          fetch: vendorFetch(store, "qrz", fetcher, {
+            priority,
+            now: vendorNow,
+          }),
+          neighborhoodFallback: qrzNeighborhoodFallback(
+            store,
+            source,
+            destination,
+            vendorNow,
+          ),
+        }).findNeighborhood(record);
       readAccess = true;
       freshCheckComplete = true;
     } else if (destination.kind === "lotw" && raw?.query) {
@@ -511,6 +529,7 @@ async function reconcileContact(
       now,
       contact.reconciliationVersion,
     );
+    if (outcome.state === "missing_current_identity") return emptyObservation;
   }
 }
 /** Bounded read-only cohorts share evidence, while each mutation keeps its own fence. */
@@ -1181,7 +1200,11 @@ export async function tick(
         !attemptedPolls.has(sourceKey));
     let polled = false;
     const prepareExportCohort = async (
-      routes: { contact: IntakeContact; destination: Connection }[],
+      routes: {
+        contact: IntakeContact;
+        destination: Connection;
+        qrzEmptyObservation?: QrzEmptyObservation;
+      }[],
       destinations: Connection[],
       finished: Map<string, IntakeContact>,
       priorBudgetHolds: Set<string>,
@@ -1386,6 +1409,11 @@ export async function tick(
             const prepared = await prepareDue(store, key, item.contact, gates, {
               ...deps,
               priority,
+              qrzEmptyObservation: routes.find(
+                (route) =>
+                  route.contact.id === item.contact.id &&
+                  route.destination.id === destination.id,
+              )?.qrzEmptyObservation,
               sourceProof: {
                 proofId: item.proofId,
                 scope,
@@ -1575,7 +1603,11 @@ export async function tick(
       const exportRoutes: {
         contact: IntakeContact;
         destination: Connection;
+        qrzEmptyObservation?: QrzEmptyObservation;
       }[] = [];
+      // One bounded projection cohort (at most20), closed before leaving this
+      // turn. Nothing survives into another source turn or scheduled invocation.
+      const emptyObservations = new QrzEmptyObservationScope(store);
       const finished = new Map<string, IntakeContact>();
       const budgetBackoffs = new Map<string, number>();
       const historyTurns = new Map<string, Promise<void>>();
@@ -1646,8 +1678,9 @@ export async function tick(
             const destination = candidates[0];
             const preparing = false;
             try {
-              await historyTurn(destination, contact, () =>
-                measure("history", () =>
+              let qrzEmptyObservation: QrzEmptyObservation | undefined;
+              await historyTurn(destination, contact, async () => {
+                qrzEmptyObservation = await measure("history", () =>
                   reconcileContact(
                     store,
                     source,
@@ -1659,15 +1692,20 @@ export async function tick(
                     priority,
                     clock,
                     throughput,
+                    emptyObservations,
                   ),
-                ),
-              );
+                );
+              });
               if (expired()) break;
               // Read-only adoption must retain its actual history diagnosis.
               // Closed rollout gates are global status, not a contact failure.
               if (!exportsEffective(gates)) continue;
               if (routeDeliveryMode(gates, contact.id, destination) !== null)
-                exportRoutes.push({ contact, destination });
+                exportRoutes.push({
+                  contact,
+                  destination,
+                  qrzEmptyObservation,
+                });
             } catch (error) {
               diagnostics.record(
                 error,
@@ -1753,6 +1791,7 @@ export async function tick(
             budgetBackoffs,
           );
       } finally {
+        emptyObservations.close();
         // An edit during the shared drain has a newer version; the ordinary CAS
         // leaves that work awake instead of parking it with this older turn.
         for (const contact of finished.values())

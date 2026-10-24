@@ -340,8 +340,9 @@ All measured QRZ admissions were background priority, subject to both the shared
 The fake vendor returned unambiguous successful empty selections. The separate
 live-observed ambiguous-empty path needs targeted FETCH, STATUS and a complete
 positive covering FETCH for each neighborhood; with one covering page, the three
-current neighborhoods plus INSERT imply **10 requests/contact**. That is a static
-request model, not a measured ten-request tick. Generic FAIL is never absence.
+current neighborhoods plus INSERT imply **10 requests/contact**. This was a
+static model in the 23:00 experiment; the later comparison below measures that
+path directly. Generic FAIL is never absence.
 
 At 100 users × 100 new contacts/day, even the optimistic measured four-request
 path needs **40,000 requests/day**, or **138.889 per five minutes**. The current
@@ -360,6 +361,75 @@ created no approval. Its protected aggregate receipt is
 `ferry-qrz-demand-f2c-xyqyje03/result.json`. The separately authorized
 [first live QRZ acceptance trial](qrz-pilot.md) remains the priority; the larger
 usage target is not a new prerequisite for that singleton trial.
+
+### Immediate preparation reuse — local implementation, not deployed
+
+The first reduction below is implemented in this source revision and independently
+reviewed; production remains exact `f2c41cb3` with all eight controls closed.
+Only an actual complete empty scan can issue an invocation-local observation.
+The successfully applied historical classification passes it to immediate
+unmapped `qrz_fresh_insert` preparation. Each opaque observation is single-use,
+expires within 60 seconds of the original read and is closed in `finally`.
+A cohort retains at most 20 compact hashes; inputs above 64 KiB use the existing
+fresh preparation read. Store, complete stable contact projection, account,
+credential envelopes, API key and configuration bindings must agree. Only the
+source's diagnostic `lastSuccessfulPollAt` is excluded: the mandatory final
+canonical drain updates it without changing account or routing semantics.
+
+Preparation still requires its current post-drain source proof and every
+existing stage guard. Dispatch and recovery are unchanged, including the new
+final neighborhood check before each INSERT. Missing, stale or mismatched
+observations use the existing preparation path; they cannot authorize a send.
+Nine native token/race/bounds cases, the 19-case fresh-delivery suite and two
+scheduler cases pass, including stale proof rejection and a late neighbor
+preventing INSERT. The full local `mise run check` passes **1,628 tests**, formatting,
+lint, both TypeScript checks and the Worker dry build.
+
+The **23:25:07.633 UTC** independent local-D1 comparison uses the same fixture,
+quiet period, budgets, completed work and fake-vendor behavior on the baseline
+and modified runtime. It additionally measures the real ambiguous-empty fallback
+control flow, rather than extrapolating its request count:
+
+| Work completed                                  | QRZ requests, baseline → modified | D1 RPC / SQL, baseline → modified |
+| ----------------------------------------------- | --------------------------------- | --------------------------------- |
+| One direct-empty contact, one fake INSERT       | 4 → 3                             | 217/290 → 216/289                 |
+| Three direct-empty candidates, two fake INSERTs | 9 → 7                             | 307/435 → 307/435                 |
+| One ambiguous-empty contact, one fake INSERT    | 10 → 7                            | 232/305 → 226/299                 |
+
+LoFi remains three requests per case. All cases have zero errors, denied
+reservations or inventory fetches; the fallback still performs fresh STATUS and
+complete positive coverage at history and dispatch. The protected comparison
+packet is `ferry-qrz-demand-reuse-f3rvvjrp`, with runtime/fixture and artifact
+hashes. An earlier modified-tree run saved no requests because the normal drain
+changed the diagnostic timestamp; its result remains separate. These are local
+request-demand measurements, not live vendor acceptance, production latency or
+sustained capacity. Deployment is deferred until the frozen first-QRZ acceptance
+work is complete; no export authority or limit changed.
+
+### Open larger-cohort admission issue
+
+At **23:41:45.958 UTC**, a separate local-D1 probe used 20 quiet-due unmapped
+candidates, warm inventory and the real ambiguous-empty fallback control flow.
+History consumed all **24 background QRZ requests**: eight targeted FETCHes,
+eight STATUS calls and eight covering FETCHes. Two normal attempts were prepared,
+but both final duplicate queries were denied; the raw trace contains **zero
+INSERTs**. There were 14 denied admissions, 12 reported tick deferrals, zero
+errors, three LoFi requests and **570 D1 RPCs / 922 SQL statements**. No production
+call or write occurred.
+
+The protected packet `ferry-qrz-demand-cohort20-erogu1f4` preserves the one-tick
+measurement. Code inspection identifies a recurrence risk: the work and history
+memos become due again after roughly five minutes, while the next canonical poll
+invalidates the prepared attempts' proofs before background dispatch. This is
+an inference from scheduling, not an observed multi-tick result.
+
+Before broader backfill, bound fresh negative-history admission and preserve
+request headroom for final queries and INSERTs. Keep positive historical matching
+available across the larger cohort. A fresh allowance must not refill on every
+outer round, and tests must include multiple sources, later rounds and next-tick
+fairness. A fixed two-scan allowance alone cannot guarantee headroom when a
+neighborhood takes its maximum bounded reads or other work shares the quota.
+This follow-up remains unimplemented and does not block the singleton trial.
 
 ## First scheduled run of `12f636b3`
 
@@ -1053,9 +1123,10 @@ may have occurred, retain the exact artifact and reconcile every member without
 blind resubmission. An upload receipt does not prove every member was observed.
 Share certificate validation only within its validated scope and dispatch turn.
 
-#### Planned QRZ request reduction
+#### QRZ request reduction stages
 
-No part of this reduction is implemented. Preserve the final write-adjacent
+Stage 1 is implemented locally as measured above; stage 2 remains planned.
+Preserve the final write-adjacent
 duplicate query, immutable attempt and all after-budget source-proof, credential,
 book, scope, lease, identity/ownership and exact request-body checks.
 1. **Reuse the immediate history observation during preparation.** Return a
@@ -1070,8 +1141,9 @@ book, scope, lease, identity/ownership and exact request-body checks.
    persist/reuse it across invocations, corrections or unresolved attempts.
    `dispatchAttempt` still performs its own new neighborhood query. The best
    direct-empty path falls **4→3 requests/contact**, and the one-page fallback
-   path **10→7**. Three requests would consume 30,000/day at the target load,
-   leaving just 4,560/day for all other demand; this is an unmeasured design model.
+   path **10→7**, as measured in the eligible local fixtures above. Three
+   requests/contact would consume 30,000/day at the target load, leaving just
+   4,560/day for all other demand; sustained operation at that load is unmeasured.
 2. **Share earlier same-book planning coverage only when useful.** A bounded
    group may share one fresh STATUS and complete positive cover when the same
    valid range contains every target. Keep existing date/page/byte/deadline bounds
@@ -1084,8 +1156,9 @@ book, scope, lease, identity/ownership and exact request-body checks.
    later cover-first strategy could avoid known-doomed targeted FETCHes, but
    still needs fresh complete coverage per write and its own measurement.
 
-Acceptance requires native scheduler tests measuring the proposed 4→3 and 10→7
-fast paths without budget changes. A neighbor added after the reused observation
+The first local stage has native measurements for the 4→3 and 10→7 fast paths
+without budget changes. Its negative regression cases must remain passing.
+A neighbor added after the reused observation
 must stop the final INSERT. Source changes during final drain, expired observations
 or proofs, and late credential/book/template/route/mapping/claim changes must hold
 or use the existing guarded read. Cross-contact/book reuse, prior-invocation tokens

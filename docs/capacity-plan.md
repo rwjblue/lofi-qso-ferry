@@ -1,14 +1,51 @@
 # Capacity plan
 
-The QRZ historical association integration and lookup/coverage follow-up are
-deployed in `9aeab582`, with all **1,485 tests** and required checks passing. All
-eight export controls remain closed. Production index coverage completed for
+The QRZ historical association integration, lookup/coverage follow-up and fixed
+scope diagnostics are deployed in `c4f51de8`, with all **1,488 tests** and required
+checks passing. All eight export controls remain closed. Production index coverage completed for
 4,141 ordinary contacts on the earlier `6ff685a7` release; the dated adoption and
 initialized-key backup/restore receipts are retained below. The current
 20-contact fixture costs **158 cohort / 262 whole-tick D1 RPCs**, versus 178/282
 before the lookup change and the earlier 65 cohort RPCs. Further reduction remains
 necessary; these fixtures are not a capacity claim. See the
 [deployed integration and measurements](#historical-comparison-index-integration--deployed).
+
+## Current diagnostic release and bounded run — c4f51de8
+
+Signed `c4f51de8` deployed at **2026-10-24 17:28:57.761108 UTC**, after
+[full release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40114936899).
+Independent **17:33:39.140 UTC** checks confirmed the sole deployment, eight
+closed controls, active KEK version 1, healthy HTTPS and matching assets. All 33
+migrations through `0034` are unchanged. See the [release receipt](deployment.md#fixed-history-scope-diagnostics-release-c4f51de8).
+
+| First completed c4f cron, 17:30:42.737–17:31:25.276 UTC |                   Observation |
+| ------------------------------------------------------- | ----------------------------: |
+| Contact turns / classifications / adoptions             |                100 / 110 / 72 |
+| Errors / deferrals / attempt turns                      |                     0 / 0 / 0 |
+| Elapsed / D1 wall / reported SQL time                   | 42.539 s / 41.624 s / 6.863 s |
+| D1 RPCs / SQL statements                                |                   856 / 3,675 |
+| Inventory fetches / cache hits                          |                       3 / 107 |
+| Stop reason                                             |             `database_budget` |
+
+The release changes fixed diagnostic labels only. No new taxonomy failure was
+observed in this run; neither its shorter duration nor zero errors establishes a
+causal speedup, resolution of prior failures or sustained capacity. At
+**17:33:38 UTC**, all 13 aggregate checks passed: 797 QRZ associations with complete
+owners/markers/write blocks, 4,141 clean index rows, 3,327 covered LoTW exact claims,
+778 legitimate archives and 3,722 retained bodies with no unexplained gaps. Attempts,
+cutovers, proofs and pins were zero. The latest verified 33-migration backup is
+still the dated 17:04:57 UTC receipt below; no later backup is implied.
+
+Two separate changes remain **undeployed**: the bounded LoTW ownership-evidence
+foundation (20 focused foundation/store cases plus four selected delivery/recovery
+cases) still needs its exact-receipt write bridge and adoption integration; its
+copied immutable envelopes require original KEKs until guarded rewrap exists.
+The partition-local read-retry patch passes 81 focused retry/history/failure cases
+and retains only prior valid pages, without advancing coverage after failures.
+It is not part of c4f or these run metrics.
+Neither change establishes active 200,000-contact coverage or export authority.
+
+### Previous lookup and coverage release — 9aeab582
 
 Signed `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at
 **2026-10-24 17:04:38.163667 UTC** as Worker
@@ -948,7 +985,7 @@ verified; 4,047 source bodies remain, with no unexplained missing bodies. Attemp
 cutovers, proofs, pins and temporary guards were zero. This is before the first
 completed new-runtime cron. The last completed 17:00 old-runtime run had five
 adoptions and 53 affected-contact errors; neither is evidence of this release's
-performance. See the [current deployment receipt](deployment.md#lookup-and-coverage-release-verification-9aeab582).
+performance. See the [dated deployment receipt](deployment.md#lookup-and-coverage-release-verification-9aeab582).
 
 The first completed new-runtime cron, **17:05:42.632–17:07:16.980 UTC**, processed
 **80 contact turns / 47 classifications / 38 adoptions**, with zero attempt turns
@@ -956,7 +993,7 @@ or deferrals. It stopped at `deadline` after **94.348 seconds**, using **552 D1
 RPCs / 2,407 SQL statements / 92.033 seconds D1 wall time**, six inventory fetches
 and 42 cache hits. Two diagnostic events affected 15 contacts: missing ADIF time
 affected one; generic history-scope mismatch affected 14. Their causes remain
-unresolved; the separate category-refinement patch is not deployed. At
+unresolved at this checkpoint; category refinement was deployed later in c4f. At
 **17:07:28.689 UTC**, QRZ had 500 associations/owners and the index remained clean.
 Of 2,765 ambiguous routes, 2,760 lacked a current-generation memo and five had
 explicit post-index remote competitors; 103 were mismatched and 465 pending.

@@ -2,12 +2,13 @@
 
 Verified 2026-10-24 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
 
-Signed revision `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at
-**2026-10-24 17:04:38.163667 UTC**, Worker `950c081c-03b4-455f-8e31-b579fec56788`
-at 100% traffic. All **1,485 tests** and required release checks passed in
-[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40112629290).
-Independent version, HTTPS and asset checks at **17:04:50.692 UTC** confirm all
-**eight export controls closed**. All 33 migrations through `0034` are installed.
+Signed revision `c4f51de821d7d5867a19b1710fc188659b9d3771` deployed at
+**2026-10-24 17:28:57.761108 UTC**, Worker `7666c159-2a0b-463b-a08b-69295d8653a6`
+at 100% traffic. All **1,488 tests** and required release checks passed in
+[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40114936899).
+Independent checks at **17:29:39.187 UTC**, reconfirmed at **17:33:39.140 UTC**,
+verified all **eight export controls closed**, active KEK version 1, healthy HTTPS
+and matching assets. All 33 migrations through `0034` are unchanged.
 
 QRZ reconciliation now uses the **±30-minute historical association path** with
 an opaque source comparison index, current bidirectional uniqueness, permanent
@@ -29,9 +30,9 @@ Exports remain disabled; no first-write trial is authorized by this release.
 | ------------------------ | ------------------------------------------------------------------------------------------------- |
 | Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                             |
 | Worker                   | `lofi-qso-ferry`, environment `production`                                                        |
-| Deployed source revision | `9aeab582149baa8af8fd6db8cc9cc318b2bc3739`                                                        |
-| Worker version           | `950c081c-03b4-455f-8e31-b579fec56788`, created `2026-10-24T17:04:37.205834Z`                     |
-| Deployment               | `f4213a4e-e67e-4ef8-8581-41196f47f14f`, `2026-10-24T17:04:38.163667Z`, 100% of traffic            |
+| Deployed source revision | `c4f51de821d7d5867a19b1710fc188659b9d3771`                                                        |
+| Worker version           | `7666c159-2a0b-463b-a08b-69295d8653a6`, created `2026-10-24T17:28:55.896048Z`                     |
+| Deployment               | `05e67989-f6bb-4a41-9ea9-d8c1a53d5a30`, `2026-10-24T17:28:57.761108Z`, 100% of traffic            |
 | Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                     |
 | Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                  |
 | Migrations               | All 33 migrations through `0034_historical_associations`; independently verified after deployment |
@@ -39,11 +40,50 @@ Exports remain disabled; no first-write trial is authorized by this release.
 | Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled              |
 | Schedule                 | `*/5 * * * *`                                                                                     |
 | Alternate origins        | workers.dev and version previews disabled                                                         |
-| Artifact                 | 1,992.86 KiB raw / 389.79 KiB gzip; reported startup 25 ms                                        |
+| Artifact                 | 1,993.49 KiB raw / 389.92 KiB gzip; reported startup 26 ms                                        |
 
 The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
 
+## Fixed history-scope diagnostics release (c4f51de8)
+
+This release distinguishes missing identity, missing station, wrong station and
+out-of-partition date failures using fixed categories. The validation predicates,
+retained evidence, matching and export permissions are unchanged; invalid reports
+still fail closed. No migration or vendor mutation occurred. The partition-local
+retry patch and LoTW ownership foundation are separate, undeployed work.
+
+The first completed cron, **17:30:42.737–17:31:25.276 UTC**, processed 100 contact
+turns, 110 classifications and 72 adoptions, with zero errors, deferrals or attempt
+turns. It stopped at `database_budget` after 42.539 seconds: 856 D1 RPCs, 3,675 SQL
+statements, 41.624 seconds D1 wall time and 6.863 seconds reported SQL time; three
+inventory fetches and 107 cache hits. No new category appeared in this sample.
+This is not evidence that diagnostic wording fixed prior failures or improved
+sustained throughput.
+
+At **17:33:38 UTC**, all 13 aggregate checks passed: 797 QRZ mappings had matching
+owners/markers/write blocks with no gaps; all 4,141 index rows were clean; all
+3,327 LoTW exact claims were covered. There were 778 legitimate source archives,
+3,722 retained bodies and no unexplained missing bodies. Attempts, cutovers,
+proofs and pins were zero. The **17:34:16.158 UTC** fixed-query aggregate recorded
+797 mapped / 2,432 ambiguous / 135 mismatched / 469 pending QRZ routes. Of the
+ambiguous routes, 2,423 had no current-generation memo; nine post-index checks
+reported eight remote-competitor holds and one location-detail hold.
+The aggregate helper's expected-version labels are not attestation; the independent
+17:33:39.140 UTC receipt establishes the deployed Worker and closed controls.
+
+The **17:04:57 UTC** backup and exact ownership-preservation checks below remain
+the latest verified recovery receipt. The schema remains at 33 migrations; those
+backup counts are not a claim to include later adoptions. Exports remain disabled.
+
 ## Lookup and coverage release verification (9aeab582)
+
+Signed `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at
+**17:04:38.163667 UTC** as Worker `950c081c-03b4-455f-8e31-b579fec56788`
+(created 17:04:37.205834 UTC), deployment `f4213a4e-e67e-4ef8-8581-41196f47f14f`,
+at 100% traffic. All **1,485 tests** and required checks passed in
+[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40112629290).
+Initial independent verification was at **17:04:50.692 UTC**. The bundle was
+1,992.86 KiB raw / 389.79 KiB gzip, with reported startup of 25 ms.
 
 The first deployment attempt stopped at the D1 migrations API error `7403`, before
 changing the Worker. A read-only migrations recheck succeeded with nothing to

@@ -8,6 +8,29 @@ replaced, deleted or uploaded during this implementation work.
 
 ## Current evidence (2026-10-24)
 
+Signed `c4f51de821d7d5867a19b1710fc188659b9d3771` deployed at **17:28:57.761108 UTC**,
+Worker `7666c159-2a0b-463b-a08b-69295d8653a6`, at 100% traffic. All **1,488 tests**
+and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40114936899).
+Independent **17:33:39.140 UTC** verification confirmed eight closed controls,
+active KEK version 1, healthy HTTPS and matching assets. All 33 migrations remain
+installed. Fixed scope diagnostics do not change report acceptance or export authority.
+
+The first completed c4f cron made **72 adoptions**, with zero errors, deferrals or
+attempt turns, during **17:30:42.737–17:31:25.276 UTC**. At 17:33:38 UTC, all 13
+aggregate checks passed: 797 QRZ mappings had complete owners/markers/write blocks,
+4,141 index rows were clean, and 3,327 LoTW exact claims remained covered. The 778
+legitimate archives and 3,722 bodies had no unexplained gaps; attempts, cutovers,
+proofs and pins were zero. This bounded sample neither resolves earlier failures
+nor establishes a diagnostic-change speedup, sustained capacity or write acceptance.
+The latest recovery receipt remains the dated 17:04:57 UTC backup below. See the
+[current release receipt](deployment.md#fixed-history-scope-diagnostics-release-c4f51de8).
+
+Keep exports disabled. The retry patch and LoTW ownership foundation are not deployed;
+broader LoTW adoption, fresh trial evidence and explicit future authorization remain
+separate requirements.
+
+### Previous lookup and coverage release (9aeab582)
+
 Signed revision `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at
 **17:04:38.163667 UTC** as Worker `950c081c-03b4-455f-8e31-b579fec56788`, at 100%
 traffic after all **1,485 tests** and required checks passed in

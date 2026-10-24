@@ -1,13 +1,46 @@
 # Implementation progress
 
-## Inventory failure diagnostics — implemented, deployment pending
+## Current production — inventory diagnostics (c4f51de8)
 
-Four fixed categories now distinguish missing identity/station, wrong station
-and out-of-partition date. The validation order and whole-page rejection remain
-unchanged. Independent review, all 68 history/diagnostic tests, types, lint and
-format checks pass; full release CI and deployment remain pending. The deployed
-`9aeab582` release below still emits the generic scope category. Broader LoTW
-ownership/classifier work remains separate; all export controls stay closed.
+Signed `c4f51de821d7d5867a19b1710fc188659b9d3771` deployed at
+**17:28:57.761108 UTC**, Worker `7666c159-2a0b-463b-a08b-69295d8653a6`, deployment
+`05e67989-f6bb-4a41-9ea9-d8c1a53d5a30` at 100% traffic. All **1,488 tests** and
+release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40114936899).
+The **17:33:39.140 UTC** independent attestation confirmed all eight closed
+controls, HTTPS/assets and active KEK 1. All 33 migrations through `0034` remain.
+Fixed inventory error categories add detail without changing matching decisions.
+
+The first cron, **17:30:42.737–17:31:25.276 UTC**, made 100 contact turns,
+110 classifications and 72 adoptions, with zero errors/deferrals/attempt turns.
+It stopped at the database budget after 42.539 seconds and 856 RPCs / 3,675 SQL
+statements. This is one sample, not proof of a causal speedup or resolved errors.
+All 13 aggregate checks passed at **17:33:38.015 UTC**: 797 QRZ owners/markers/
+write blocks cover all mappings, the 4,141-row index is clean, 3,327 LoTW claims
+cover their mappings, and 778 legitimate archives plus 3,722 retained bodies
+account for source storage. Attempts/cutovers/proofs/pins/temp guards are zero.
+At **17:34:16 UTC**, QRZ has 2,432 ambiguous, 135 mismatched and 469 pending routes;
+2,423 ambiguous labels lack a current-generation memo. Nine post-index checks
+report eight remote competitors and one location-detail hold. This is ongoing
+reconciliation, not completed exception review or export readiness.
+
+## Next patches — implemented, release checks pending
+
+The observation-only LoTW ownership foundation adds migration `0035`, permanent
+owner/input metadata and encrypted exact evidence across old/inactive/reconnected
+destinations. Twenty foundation/Store cases and four delivery/recovery cases pass.
+An isolated rehearsal on the verified 17:04:57 backup preserved all 58 prior tables,
+3,327 claims and 462 owners/markers through migration; repeated quarantine
+preserved all new registry tables. Production has not applied this migration.
+The registry grants no adoption/write authority. Staging/dispatch/mapping bridges
+and the broader LoTW classifier remain next; copied evidence still needs its
+referenced KEKs until a bounded rewrap path exists.
+
+Partition-local failed-read retry now suppresses later unsent cohorts for at most
+15 minutes, without saving failed evidence or advancing a cursor. All 81 focused
+cases and independent review pass. Combined validation passes 161 history/Store/
+foundation cases plus the mixed-history integration, preserving 158 cohort /
+262 total RPCs and 1,176 statements. Types, lint, format and Worker build pass;
+full release CI and deployment remain pending. All exports stay disabled.
 
 ## Comparison and coverage follow-up — deployed read-only
 

@@ -1,5 +1,40 @@
 # Reconciliation exceptions and capacity
 
+## Current fixed scope diagnostics — deployed c4f51de8
+
+Signed `c4f51de8` deployed at **2026-10-24 17:28:57.761108 UTC**, after all
+**1,488 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40114936899).
+The independent **17:33:39.140 UTC** receipt confirmed the sole Worker deployment,
+eight closed controls, active KEK version 1, healthy HTTPS and matching assets.
+All 33 migrations are unchanged; [release and recovery evidence](deployment.md#fixed-history-scope-diagnostics-release-c4f51de8)
+retains the prior backup and dated release observations.
+
+Missing identity, missing station, wrong station and out-of-partition dates now
+have separate fixed codes: `history_identity_missing`, `history_station_missing`,
+`history_station_mismatch` and `history_date_outside_partition`. These reveal the
+failing validation branch without exposing record values. The predicates remain
+unchanged, and no failed page becomes retained evidence or absence.
+
+The first completed c4f cron, **17:30:42.737–17:31:25.276 UTC**, processed 100 turns,
+110 classifications and 72 adoptions with zero errors, deferrals or attempt turns.
+It used 856 RPCs / 3,675 statements in 42.539 seconds (41.624 seconds D1 wall time,
+6.863 seconds reported SQL time), with three inventory fetches and 107 cache hits,
+then stopped at the database budget. No new taxonomy failure was observed; this
+sample does not resolve prior scope errors or attribute a speedup to diagnostic strings.
+
+The **17:34:16.158 UTC** fixed-query snapshot has **797 mapped / 2,432 ambiguous /
+135 mismatched / 469 pending** QRZ routes. Of the ambiguous routes, 2,423 have no
+current-generation memo; the nine post-index checks contain eight remote-competitor
+holds and one location-detail hold. Do not treat stale persisted outcomes as a
+completed exception census. At **17:33:38 UTC**, all 13 aggregate checks passed:
+797 complete owners/markers/write blocks, 4,141 clean index rows, 3,327 covered
+LoTW claims, 778 legitimate archives and 3,722 bodies with no unexplained gaps.
+Attempts, cutovers, proofs and pins were zero. Expected runtime labels in aggregate
+output are not attestation; the separate release receipt supplies that evidence.
+
+The bounded partition-retry patch and LoTW ownership foundation remain undeployed.
+No export permission, exact receipt rule or historical matching policy changed.
+
 ## Lookup and coverage follow-up — deployed 9aeab582
 
 Signed `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at

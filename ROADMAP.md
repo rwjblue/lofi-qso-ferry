@@ -4,15 +4,63 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ## Next milestones (2026-10-24 UTC)
 
-### Inventory failure diagnostics — implemented, deployment pending
+### Current production — inventory diagnostics (c4f51de8)
 
-Split the generic partition-scope failure into fixed missing-identity,
-missing-station, wrong-station and out-of-partition-date categories. Validation
-order, whole-page rejection, retained evidence and matching decisions are
-unchanged. Independent review, all 68 history/diagnostic tests, types, lint and
-format checks pass; full release CI and deployment remain pending. This improves
-diagnosis of the recent held reads; it does not establish their cause or authorize
-exports.
+Signed revision `c4f51de821d7d5867a19b1710fc188659b9d3771` deployed at
+**2026-10-24 17:28:57.761108 UTC**, Worker
+`7666c159-2a0b-463b-a08b-69295d8653a6`, deployment
+`05e67989-f6bb-4a41-9ea9-d8c1a53d5a30` at 100% traffic. All **1,488 tests** and
+release checks passed in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40114936899).
+Independent verification at **17:33:39.140 UTC** confirmed all eight controls
+closed, healthy HTTPS, matching assets and active KEK version 1. Production still
+has 33 migrations through `0034`.
+
+Fixed categories distinguish missing identity/station, wrong station and
+out-of-partition dates; matching and rejection behavior are unchanged. The first
+cron, **17:30:42.737–17:31:25.276 UTC**, made 100 contact turns, 110 classifications
+and 72 adoptions, with zero errors, deferrals or attempt turns. It used 856 D1
+RPCs / 3,675 statements in 42.539 seconds and stopped at the database budget.
+This sample establishes neither a causal speedup nor the cause of older errors.
+
+All 13 aggregate checks passed at **17:33:38.015 UTC**: 797 QRZ mappings have
+owners, association markers and write blocks without gaps; the 4,141-row index is
+clean; 3,327 LoTW claims cover their mappings; and all 778 missing source bodies
+are legitimate resolved archives, with 3,722 bodies retained. Attempts, cutovers,
+proofs, pins and temporary guards remain zero. The **17:34:16 UTC** QRZ snapshot
+has 2,432 ambiguous / 135 mismatched / 469 pending routes. Of the ambiguous labels,
+2,423 lack a current-generation memo; nine have post-index checks (eight remote
+competitors and one location-detail hold). Memo timing does not prove current
+canonical projection or exact policy provenance. The earlier backup and proof
+receipts below keep their original scope.
+
+### Next implementation — ownership foundation and bounded retries
+
+Migration `0035` and an observation-only LoTW registry preserve encrypted exact
+identity evidence across inactive, signing-only and reconnected destinations.
+Lookups use tenant plus exact station callsign and bounded opaque buckets; missing
+or unreadable evidence holds coverage. Results explicitly require a later write
+bridge and grant no adoption or export authority. Twenty foundation/Store cases
+and four delivery/recovery cases passed. A rehearsal on the verified 17:04:57
+backup installed 34 migrations locally, preserved all 58 prior tables, 3,327
+claims and 462 owners/markers, and preserved the new registry through repeated
+quarantine. Production has not applied `0035`. Retain every KEK referenced by
+copied evidence until its separate bounded rewrap path is implemented.
+
+A second patch gives actually sent failed history reads a partition-local retry
+delay of at most 15 minutes, clipped to the original expiry. Failed responses add
+no page evidence or cursor progress; later cohorts wait without duplicate failure
+events. Auth, vendor deferrals, scope/lease commit guards and split behavior remain
+unchanged. All 81 focused history/diagnostic cases passed. Together, the patches
+pass 161 history/Store/foundation cases plus the mixed-history integration case,
+with unchanged 158 cohort / 262 whole-tick RPCs and 1,176 statements. Types, lint,
+format and Worker build pass. Full release CI and deployment remain pending.
+
+Next, bind immutable LoTW attempt identities to renewable current ownership
+checks at staging, dispatch and new mapping. Exact self-writes and multi-contact
+cohorts must remain safe; preserve actual submitted/uncertain receipt recovery.
+Only then wire broader LoTW association into reconciliation. Full exception
+review, first-write acceptance and sustained capacity remain open. Exports stay
+disabled.
 
 ### Comparison and coverage follow-up — deployed read-only
 

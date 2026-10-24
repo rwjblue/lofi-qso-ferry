@@ -1,6 +1,29 @@
 # Adopting existing QRZ and LoTW history
 
-Status: guarded QRZ historical association and the lookup/coverage follow-up are deployed in `9aeab582`; all eight export controls remain closed. Broader LoTW association and universal source-boundary verification remain separate work. See [rollout checklist](rollout-checklist.md). Bootstrap first inventories and adopts existing contacts without remote writes. Any later first insert requires explicit export authorization, a current source proof and the normal fresh destination checks. Adoption itself must not re-upload existing history, regenerate its comments, reset confirmations, or re-sign every QSO.
+Status: guarded QRZ historical association, the lookup/coverage follow-up and fixed scope diagnostics are deployed in `c4f51de8`; all eight export controls remain closed. Broader LoTW association and universal source-boundary verification remain separate work. See [rollout checklist](rollout-checklist.md). Bootstrap first inventories and adopts existing contacts without remote writes. Any later first insert requires explicit export authorization, a current source proof and the normal fresh destination checks. Adoption itself must not re-upload existing history, regenerate its comments, reset confirmations, or re-sign every QSO.
+
+## Current diagnostic release — c4f51de8
+
+Signed `c4f51de8` deployed at **2026-10-24 17:28:57.761108 UTC**, after all
+**1,488 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40114936899).
+Independent **17:33:39.140 UTC** verification confirmed the sole Worker deployment,
+eight closed controls, active KEK version 1, healthy HTTPS and matching assets.
+All 33 migrations through `0034` are unchanged. This release only distinguishes
+fixed history-scope failure categories; it does not accept previously invalid
+reports or change matching/export authority. See the [current deployment receipt](deployment.md#fixed-history-scope-diagnostics-release-c4f51de8).
+
+The first completed c4f cron, **17:30:42.737–17:31:25.276 UTC**, processed 100
+contact turns, 110 classifications and 72 adoptions, with zero errors, deferrals
+or attempt turns. No new scope category occurred in this sample; it does not
+resolve the earlier failures or establish a speedup caused by diagnostic wording.
+At **17:33:38 UTC**, all 13 aggregate checks passed: 797 QRZ mappings had complete
+owner/marker/write-block coverage, the 4,141-row index was clean, and 3,327 LoTW
+exact claims remained covered. The 778 legitimate archives and 3,722 retained
+source bodies had no unexplained gaps; attempts, cutovers, proofs and pins were zero.
+The latest verified backup remains the dated **17:04:57 UTC** 33-migration receipt
+below, not a backup of these later counts. Exports remain disabled.
+
+### Previous lookup and coverage release — 9aeab582
 
 Signed follow-up `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at
 **2026-10-24 17:04:38.163667 UTC** as Worker
@@ -186,6 +209,14 @@ or write permission.
 Two source UUIDs must not silently claim one remote record. Remote records without a source match remain untouched. Never fabricate source UUIDs for remote history or upload a marker merely to establish ownership.
 
 ### Remaining LoTW time-window association work
+
+A separate **undeployed** ownership-evidence foundation has passed 20 focused
+foundation/store cases and four selected LoTW delivery/recovery cases. It has no
+adoption or write authority. The exact-receipt write bridge and association-only
+integration below remain necessary. Its immutable copied evidence envelopes
+currently require retaining their original KEKs; an envelope-only guarded rewrap
+must precede retirement of those keys. Its proposed migration `0035` is not
+installed, and the tests do not establish production coverage.
 
 The coverage-only step in signed `07b26b8b` is **deployed in `9aeab582`**. Its 100 prior
 history cases plus 22 QRZ coverage regressions all pass. Broader LoTW ownership

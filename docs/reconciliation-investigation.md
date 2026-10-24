@@ -1,5 +1,63 @@
 # Reconciliation exceptions and capacity
 
+## Lookup and coverage follow-up — deployed 9aeab582
+
+Signed `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at
+**2026-10-24 17:04:38.163667 UTC**, Worker
+`950c081c-03b4-455f-8e31-b579fec56788`, at 100% traffic after all **1,485 tests**
+and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40112629290).
+Independent 17:04:50.692 UTC verification confirmed all eight controls closed,
+healthy HTTPS/assets and all 33 migrations. The [deployment receipt](deployment.md#lookup-and-coverage-release-verification-9aeab582)
+records recovery and ownership preservation; prior dated evidence below is unchanged.
+
+The exact index guard now shares a native batch with candidate selection: two
+RPCs for the same three statements. The unchanged 20-contact fixture uses
+**158 cohort / 262 whole-tick RPCs / 1,176 SQL statements**, versus 178/282 on
+`6ff685a7`. This is a measured local RPC reduction, not sustained production
+speedup or 200,000-contact capacity. See [the scale repeat and remaining costs](capacity-plan.md#lookup-and-coverage-follow-up--deployed-9aeab582).
+
+LoTW now retains both required neighboring UTC date paths, but its broader
+classifier and durable historical ownership remain future work. QRZ resolves both
+date paths through accepted retained split manifests; four native-D1 regressions
+failed before and passed after. QRZ has no split writer, and this fix has not
+established the cause of live scope failures. The separate fixed-category scope
+telemetry patch is not in this release. Exact receipts, historical write blocks
+and all export permissions are unchanged.
+
+At **17:05:22.396 UTC**, all 13 aggregate checks passed: 4,141 clean published index
+rows, 462 QRZ mappings with owners/markers/write blocks and no gaps, 3,327 covered
+LoTW exact claims, and 453 legitimate archives plus 4,047 retained source bodies.
+Attempts, cutovers, proofs, pins and temporary guards were zero. The contemporaneous
+QRZ route counts were 462 mapped / 2,810 ambiguous / 100 mismatched / 461 pending;
+LoTW had 3,327 / 7 / 160 / 339, with zero adoption conflicts for either vendor.
+This predates the first completed new-runtime cron. The completed 17:00 old-runtime
+run's five adoptions and 53 affected-contact errors are not new-release performance.
+
+The first completed `9aeab582` cron, **17:05:42.632–17:07:16.980 UTC**, processed
+80 turns, 47 classifications and **38 adoptions**, with zero attempt turns or
+deferrals. It used 552 RPCs / 2,407 SQL statements in 94.348 seconds (92.033 seconds
+D1 wall time), with six inventory fetches and 42 cache hits, then stopped at the
+deadline. Two diagnostic events affected 15 contacts: missing ADIF time affected
+one, and generic history-scope mismatch affected 14. These causes remain unresolved;
+the planned fixed categories will distinguish the scope branch without accepting
+invalid evidence. At **17:07:28.689 UTC**, QRZ had 500 associations/owners and the
+index remained clean. Of 2,765 ambiguous routes, 2,760 lacked a current-generation
+memo and five had explicit post-index remote competitors; 103 routes were
+mismatched and 465 pending. This is bounded progress, not steady-state capacity.
+Final **17:08:02.184 UTC** attestation reconfirmed the same sole deployment, eight
+closed controls, active KEK version 1 and healthy matching assets.
+
+The 17:04:57 UTC backup passed isolated restore and twice quarantine, preserving
+the comparison key, 4,141 index rows and 462 owners/markers. Exact comparison at
+17:05:22.514 UTC retained all 3,327 prior claims and 39 prior owners/markers,
+including creation timestamps, with 423 owner/marker additions and no losses.
+No production restore or vendor mutation occurred.
+
+The **16:53 UTC** source-proof/empty-QRZ diagnostic remains useful dated evidence
+for one contact on frozen `6ff685a7` modules. It was a finite Node/D1 observation,
+not execution of the later Worker or write acceptance, and cannot supply lasting
+absence or export authority. Keep every export control closed.
+
 ## QRZ association integration — deployed 6ff685a7
 
 Signed revision `6ff685a7f4991dec0fd0b368552233330bf692bf` deployed at

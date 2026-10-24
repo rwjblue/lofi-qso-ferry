@@ -1,5 +1,88 @@
 # Implementation progress
 
+## Comparison and coverage follow-up — deployed read-only
+
+Four signed commits through `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed
+at **2026-10-24 17:04:38.163667 UTC** as Worker
+`950c081c-03b4-455f-8e31-b579fec56788`, deployment
+`f4213a4e-e67e-4ef8-8581-41196f47f14f` at 100% traffic.
+All **1,485 tests** and required checks passed in
+[release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40112629290).
+Independent verification at **17:04:50.692 UTC** confirmed healthy HTTPS,
+matching assets and all **eight export controls closed**. This release excludes
+permanent historical write blocks from
+first-insert audit suggestions, combines the unchanged source-index candidate and
+guard SELECTs in one D1 batch, and retains both required UTC date paths through
+LoTW and accepted QRZ split inventory. Broader LoTW adoption is still separate.
+
+Focused checks passed: 42 source-index/reverse/service cases, 122 history cases,
+and all 11 audit cases, plus formatting, lint, types and the Worker build. The
+20-contact fixture falls from 178 to **158 cohort RPCs** and 282 to **262 whole-tick
+RPCs**, with the same 1,176 statements and guarded outcomes. This is a measured
+local reduction; sustained production capacity remains unverified.
+
+At **17:05:22.396 UTC**, all 13 aggregate checks passed: 33 migrations through
+`0034`, 4,141 clean published index rows, 462 QRZ mappings with permanent owners,
+association markers and write blocks, and all 3,327 LoTW exact mappings covered
+by claims. There were no ownership gaps, attempts, cutovers, proofs, pins or
+temporary write guards. All 453 missing ordinary bodies were legitimate resolved
+archives; 4,047 retained bodies account for the remaining source rows.
+
+The protected **17:04:57 UTC** backup retained 33,946,884 bytes and passed isolated
+restore, integrity/foreign-key checks, three credential decryptions, tenant-key
+decryption/HMAC-ID validation and repeated quarantine. Exact comparison at
+**17:05:22.514 UTC** preserved all 3,327 prior claims and all 39 prior owners and
+markers, including creation timestamps; 423 owners/markers were added and none
+changed or disappeared. No production restore or vendor mutation occurred.
+
+The **17:05:22 UTC** snapshot has QRZ 462 mapped / 2,810 ambiguous / 100 mismatched /
+461 pending routes; LoTW has 3,327 / 7 / 160 / 339, with zero adoption conflicts.
+It precedes the first completed new-release cron and is not a sustained capacity
+result or completed exception review. The separate fixed-category history-error
+patch and broader LoTW ownership foundation are not deployed in this revision.
+
+The first completed new-release cron, **17:05:42.632–17:07:16.980 UTC**, made
+80 contact turns, 47 classifications and 38 adoptions, with zero attempt turns
+or deferrals. Its 15 affected-contact errors came from two diagnostic events:
+missing time evidence affected one contact and generic partition-scope rejection
+affected 14. Those contacts remain held; the old generic scope counter cannot
+identify the cause. The run stopped at its deadline after 94.348 seconds,
+552 D1 RPCs / 2,407 statements and 92.033 seconds of database wall time. This
+unequal workload does not establish a production speedup.
+
+At **17:07:28.689 UTC**, QRZ has 500 associations/owners, 2,765 ambiguous labels,
+103 mismatches and 465 pending routes. Of the ambiguous labels, 2,760 lack a
+current-ledger-generation memo; five have post-index checks identifying remote
+competitors. These hints still do not prove current canonical projection or exact
+matching-policy provenance. The index remains clean and attempts/cutovers remain
+zero. Continue fresh revisits, diagnose the fixed inventory failures, and complete
+the LoTW ownership/write bridges before enabling its broader classifier.
+Independent verification at **17:08:02.184 UTC** reconfirmed the same sole Worker,
+all eight closed controls, active KEK version 1, HTTPS and matching asset hashes.
+
+The **16:27:05 UTC** aggregate separates processing backlog from established
+exceptions: QRZ has 221 associations and 3,114 ambiguous labels; 3,110 ambiguous
+routes lack a current-ledger-generation memo, while four have post-index checks
+identifying competing remote records. Most labels still need a current revisit.
+Memo time alone does not prove current canonical projection or exact policy
+provenance. The index remains clean; attempts, cutovers and stage guards are zero.
+
+A current-release SELECT-only planner succeeded at **16:34:42 UTC** for one fixed
+contact, with two source dependencies and no events. Both destination metadata
+checks passed, including zero historical write blocks. It made no source/vendor
+requests, observations, proofs, stages or attempts. The same fixed contact then
+passed the bounded source-proof and QRZ-read composition at **16:53:05.833 UTC**
+against deployed `6ff685a7`: two normal source reads (dependency collection and
+final canonical drain), two dependencies/no events, one immutable proof batch,
+and three QRZ reads (targeted FETCH, STATUS and covering FETCH). The final proof,
+route, credentials, ownership and eight closed controls remained current; QRZ
+returned a complete empty neighborhood. No signing, staging, attempts, cutovers
+or vendor mutations occurred. This finite host diagnostic used separately hashed
+runtime/audit code; it is neither scheduled Worker execution nor write-acceptance
+evidence. The proof had 287,448 ms remaining at the final check and must be renewed
+for a future write; it grants no export authority or global source-completeness
+claim.
+
 ## QRZ historical association integration — deployed and verified read-only
 
 Signed revision `6ff685a7f4991dec0fd0b368552233330bf692bf` deployed read-only at

@@ -1,13 +1,24 @@
 # Capacity plan
 
-The QRZ historical association integration is deployed in `6ff685a7`, with all
-**1,429 tests** and required checks passing. All eight export controls remain
-closed. Production index coverage completed for 4,141 ordinary contacts; the first
-post-index run adopted 39 QRZ records with zero attempt turns, and initialized-key
-backup/restore verification passed. Its 20-contact fixture costs **178 cohort /
-282 whole-tick D1 RPCs**, versus the previous 65 cohort RPCs. This is a known
-regression to optimize, not a capacity claim; see the
+The QRZ historical association integration and lookup/coverage follow-up are
+deployed in `9aeab582`, with all **1,485 tests** and required checks passing. All
+eight export controls remain closed. Production index coverage completed for
+4,141 ordinary contacts on the earlier `6ff685a7` release; the dated adoption and
+initialized-key backup/restore receipts are retained below. The current
+20-contact fixture costs **158 cohort / 262 whole-tick D1 RPCs**, versus 178/282
+before the lookup change and the earlier 65 cohort RPCs. Further reduction remains
+necessary; these fixtures are not a capacity claim. See the
 [deployed integration and measurements](#historical-comparison-index-integration--deployed).
+
+Signed `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at
+**2026-10-24 17:04:38.163667 UTC** as Worker
+`950c081c-03b4-455f-8e31-b579fec56788`, at 100% traffic after
+[full release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40112629290).
+Independent **17:04:50.692 UTC** checks confirmed eight closed controls, healthy
+HTTPS and matching assets, with all 33 migrations through `0034` installed.
+The same 20-contact fixture saves 20 RPCs, with unchanged SQL count and guards.
+The LoTW coverage-only change and QRZ retained-split correction pass all **122
+history tests**; neither enables broader LoTW adoption or exports.
 
 Earlier source-readiness checkpoint, 2026-10-24 UTC: baseline/drain/quarantine completed at 06:35:44
 for all 4,500 retained rows. At 08:12:53, a protected exact-deployed-code diagnostic
@@ -818,14 +829,38 @@ zero unexplained missing bodies; the opaque index survived those archives.
 Eight closed controls, healthy HTTPS and matching assets were reconfirmed at
 **16:07:02.175 UTC**. No vendor writes or production restore occurred.
 
-The weak worked-call/UTC-minute lookup uses three D1 RPCs and keyed
+The **16:27 UTC** production aggregate reached 221 QRZ associations, still with
+zero attempts or exports. Of 3,114 persisted ambiguous QRZ outcomes, 3,110 lacked
+a memo for the current ledger generation; these are not evidence that the new
+reverse comparison rejected those current versions. The qualified post-index
+outcomes included four remote-competitor ambiguities and 57 mismatches (56 plus
+one in the aggregate categories). A protected **16:34 UTC** readiness plan found
+one candidate with two source dependencies and no events, without source or
+destination HTTP requests.
+That plan collected neither a source proof nor fresh QRZ absence evidence.
+
+At **2026-10-24 16:53:05.833 UTC**, the protected same-contact Node/D1 diagnostic
+completed against frozen `6ff685a7` modules and the attested `aa64f26f` deployment.
+It used **two source reads** (collection plus final drain), **two dependencies / zero
+events**, one original atomic proof batch and **three QRZ reads** (targeted,
+STATUS and successful covering fallback). The neighborhood was complete and
+empty; strict final candidate, current-proof, audit, eight-control and zero-attempt
+safety checks passed. It took **16.247 seconds / 110 D1 RPCs / 136 SQL statements**,
+with **287,448 ms** of proof lifetime remaining at the final check. Normal guarded
+source/proof checkpoints occurred, with no credential renewals, staging, attempts
+or vendor mutations. This is one finite diagnostic observation, not Worker
+execution, write acceptance, sustained throughput or export authority. Its proof
+can expire or be invalidated by subsequent source progress; it also does not
+verify execution of the later `9aeab582` runtime deployment.
+
+In deployed `6ff685a7`, the weak worked-call/UTC-minute lookup uses three D1 RPCs and keyed
 `(tenant, key_id, bucket_hash)` searches. A real-D1 regression with 4,000 unrelated
 rows reads fewer than 140 rows for one candidate without scanning source
 ciphertexts. Reverse comparison caps each cohort at 128 candidate QSOs, 256 distinct
 retained dependencies and 4 MiB of ciphertext. Twenty one-contact mixed-week reverse
 cohorts measured **120 RPCs / 160 statements / 2,919 rows read**, with zero writes.
 
-The complete 20-contact/two-destination fixture uses **178 cohort D1 RPCs / 282
+The deployed baseline's complete 20-contact/two-destination fixture uses **178 cohort D1 RPCs / 282
 whole-tick RPCs**, compared with **65 cohort RPCs** before reverse proof integration.
 It verifies 20 QRZ associations and zero attempts/vendor writes. The extra key,
 coverage, projection and commit checks are a measured cost; shared bounded metadata
@@ -880,12 +915,79 @@ not establish 200,000-contact active coverage, source ingestion, remote D1 laten
 complete historical reconciliation or end-to-end throughput. No production or
 vendor calls were made, and no request limit or export permission changed.
 
+### Lookup and coverage follow-up — deployed 9aeab582
+
+Four signed commits form deployed `9aeab582`; all 1,485 release tests and required
+checks passed:
+- `dd544316` makes durable historical write blocks visible in metadata-only trial
+  audits, including original routes and same-book aliases.
+- `805952c6` combines the candidate SELECT and unchanged index guard in one native
+  D1 batch: **two RPCs for the same three SQL statements**. All later commit guards
+  remain mandatory. Forty-two source-index/reverse/service cases pass, including
+  pre/post-batch races, incomplete coverage, unavailable keys and overflow.
+- `07b26b8b` adds LoTW precision-aware neighboring-date coverage, resolving both
+  weekly/split paths and retaining at most two complete current leaf guards.
+  It changes neither the LoTW classifier nor ownership or exact receipt rules.
+- `9aeab582` preserves both QRZ UTC date paths until split-leaf resolution, with
+  the existing ±30m59s radius and shared 512-candidate bound. Four native-D1
+  regressions fail before and pass after; all 122 history cases pass. QRZ currently
+  has no split writer, and production has no split QRZ partitions. This corrects
+  accepted retained-manifest coverage, not a demonstrated live scope-error cause.
+
+The identical 20-contact fixture now measures **158 cohort / 262 whole-tick RPCs /
+1,176 SQL statements**, versus **178 / 282** on `6ff685a7`. Twenty standalone reverse
+cohorts use **100 RPCs / 160 statements**, versus 120 RPCs. Native metadata now
+includes the guard SELECTs: 2,979 reported rows versus 2,919 reflects 60 newly
+visible rows, not changed SQL work. These are local fixture results, not a
+production speedup or sustained-capacity result.
+
+The **17:05:22.396 UTC** production verification passed all 13 checks: 4,141 clean
+published index rows, 462 QRZ mappings with permanent owners/markers/write blocks
+and no gaps, and 3,327 covered LoTW exact claims. All 453 legitimate archives were
+verified; 4,047 source bodies remain, with no unexplained missing bodies. Attempts,
+cutovers, proofs, pins and temporary guards were zero. This is before the first
+completed new-runtime cron. The last completed 17:00 old-runtime run had five
+adoptions and 53 affected-contact errors; neither is evidence of this release's
+performance. See the [current deployment receipt](deployment.md#lookup-and-coverage-release-verification-9aeab582).
+
+The first completed new-runtime cron, **17:05:42.632–17:07:16.980 UTC**, processed
+**80 contact turns / 47 classifications / 38 adoptions**, with zero attempt turns
+or deferrals. It stopped at `deadline` after **94.348 seconds**, using **552 D1
+RPCs / 2,407 SQL statements / 92.033 seconds D1 wall time**, six inventory fetches
+and 42 cache hits. Two diagnostic events affected 15 contacts: missing ADIF time
+affected one; generic history-scope mismatch affected 14. Their causes remain
+unresolved; the separate category-refinement patch is not deployed. At
+**17:07:28.689 UTC**, QRZ had 500 associations/owners and the index remained clean.
+Of 2,765 ambiguous routes, 2,760 lacked a current-generation memo and five had
+explicit post-index remote competitors; 103 were mismatched and 465 pending.
+This is one workload sample, not a controlled speedup or sustained-capacity result.
+Final **17:08:02.184 UTC** attestation reconfirmed the same sole deployment, eight
+closed controls, active KEK version 1 and healthy matching HTTPS assets.
+
+A separate protected repeat used the actual optimized implementation, whose
+durable commit is `805952c6` and source-file SHA-256 is
+`c3adff23561447feaf0f1f69b67c8c55f337ed8ced8ece2bd0ba9ba5eed18f9a`.
+It retained the earlier experiment's real candidate/key/publication and paused
+synthetic filler design. Five native samples per scale measured:
+
+| Unrelated index rows | RPCs / SQL | Median local lookup | Maximum local lookup |
+| -------------------: | ---------: | ------------------: | -------------------: |
+|                4,000 |      2 / 3 |           13.442 ms |            20.107 ms |
+|              200,000 |      2 / 3 |           14.795 ms |            18.517 ms |
+
+The full-key seek is unchanged. Native batch metadata reports **130 rows**
+(127 candidate-query + 3 guard-query); a separate replay including state/key still
+reads **133 rows**. Partial/unknown buckets remain candidates, dense 129-row
+cohorts hold without truncation, and source activation invalidates the old guard.
+The five-sample timings are separate local runs, not a controlled remote-latency
+comparison with the original `737eeca3` experiment above. Paused synthetic filler
+does not establish 200,000 active-source coverage, import/backfill or end-to-end
+reconciliation capacity. No production or vendor calls were made.
+
 ### Next reductions in comparison cost
 
-The next small change should combine the source bucket SELECT and its existing
-index guard in one D1 batch, preserving both results and all later commit guards.
-That should remove one RPC per reverse lookup; the 20-contact saving is an
-estimate until measured. A larger bounded reverse-comparison batch can then
+After the deployed one-RPC reduction is measured in production, a larger bounded
+reverse-comparison batch can
 share tenant key/coverage reads, source headers, and exact body incarnations
 across at most 20 routes. Each route must retain its own candidate set,
 128-candidate/256-dependency/4 MiB limits and commit guard; unavailable or unknown
@@ -895,6 +997,16 @@ archived competitors, source activation, key/body/context changes and stale
 adoption races before claiming a throughput improvement.
 
 ### Comparison-key backup and rotation
+
+The latest **17:04:57 UTC** postdeployment backup contains **33,946,884 bytes** and
+33 migrations. Isolated restore decrypted the initialized comparison key and all
+three current credentials, verified the HMAC key ID, and passed integrity/FK and
+twice-quarantine checks. All 4,141 index rows, 462 owners/markers and 453 legitimate
+archives were verified, with no attempts, cutovers, proofs or pins. Exact comparison
+at **17:05:22.514 UTC** preserved all 3,327 claims and 39 owners/markers from the
+prior 16:07 backup, including creation timestamps; 423 owners/markers were added,
+with no changed or missing prior row. This recovery check supplies no export
+authority, and no production restore or vendor mutation occurred.
 
 Each tenant has a stable random HMAC secret encrypted in
 `source_historical_state.key_envelope`. Initialization and rewrap use CAS; changing

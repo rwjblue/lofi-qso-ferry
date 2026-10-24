@@ -1,6 +1,39 @@
 # Adopting existing QRZ and LoTW history
 
-Status: guarded QRZ historical association is deployed in `6ff685a7`; all eight export controls remain closed. Broader LoTW association and universal source-boundary verification remain separate work. See [rollout checklist](rollout-checklist.md). Bootstrap first inventories and adopts existing contacts without remote writes. Any later first insert requires explicit export authorization, a current source proof and the normal fresh destination checks. Adoption itself must not re-upload existing history, regenerate its comments, reset confirmations, or re-sign every QSO.
+Status: guarded QRZ historical association and the lookup/coverage follow-up are deployed in `9aeab582`; all eight export controls remain closed. Broader LoTW association and universal source-boundary verification remain separate work. See [rollout checklist](rollout-checklist.md). Bootstrap first inventories and adopts existing contacts without remote writes. Any later first insert requires explicit export authorization, a current source proof and the normal fresh destination checks. Adoption itself must not re-upload existing history, regenerate its comments, reset confirmations, or re-sign every QSO.
+
+Signed follow-up `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at
+**2026-10-24 17:04:38.163667 UTC** as Worker
+`950c081c-03b4-455f-8e31-b579fec56788`, at 100% traffic. All **1,485 tests** and
+required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40112629290).
+Independent **17:04:50.692 UTC** verification confirmed all eight controls closed,
+healthy HTTPS and matching assets; all 33 migrations through `0034` remain installed.
+It adds audit visibility for permanent write
+blocks (`dd544316`), one fewer index-lookup RPC (`805952c6`), LoTW neighboring-date
+coverage only (`07b26b8b`), and QRZ retained-split date-path correctness (`9aeab582`).
+All 122 focused history cases passed before the full release checks. Broader LoTW
+matching/ownership and all export acceptance remain separate work; dated `6ff685a7`
+observations below retain their original scope.
+
+At **17:05:22.396 UTC**, all 13 aggregate checks passed: 4,141 clean published
+index rows, 462 QRZ mappings with permanent owners/markers/write blocks and no
+gaps, and 3,327 covered LoTW exact claims. All 453 resolved archives were verified;
+4,047 source bodies remain, with no unexplained missing bodies. Attempts, cutovers,
+proofs, pins and temporary guards were zero. This snapshot precedes the first
+completed new-runtime cron. The **17:04:57 UTC** backup passed key/credential
+decryption, integrity/FK and twice-quarantine checks. Exact comparison preserved
+all 3,327 prior claims and 39 prior owners/markers unchanged, including creation
+timestamps; 423 owners/markers were added. See the
+[current deployment and recovery receipt](deployment.md#lookup-and-coverage-release-verification-9aeab582).
+
+The first completed `9aeab582` cron, **17:05:42.632–17:07:16.980 UTC**, made 38
+adoptions with zero attempt turns or deferrals. Fifteen affected-contact errors
+remain: one missing ADIF time and 14 generic history-scope mismatches; their causes
+are unresolved. At **17:07:28.689 UTC**, QRZ had 500 associations/owners and the
+4,141-row index remained clean. This bounded progress does not establish sustained
+capacity or export acceptance.
+The same sole release and all eight closed controls, health/assets and active KEK
+version 1 were reconfirmed at **17:08:02.184 UTC**.
 
 QRZ and LoTW reconcile independently. A QSO can be adopted at QRZ while LoTW remains unavailable. Exceptions affect the relevant record and destination; they do not hold up unrelated live logging.
 
@@ -50,6 +83,27 @@ association markers and write blocks, with no orphaned or unreserved mapping or
 missing block. Index coverage remained complete after 36 resolved source bodies
 were legitimately archived. All eight controls remained closed; this establishes
 read-only adoption, not export acceptance or sustained capacity.
+
+At **16:27 UTC**, the production aggregate had 221 QRZ associations and zero
+attempts/exports. Most persisted ambiguous outcomes were not rechecked evidence
+for the current ledger generation: 3,110 of 3,114 lacked a current-generation
+memo. Qualified post-index outcomes included four remote-competitor ambiguities
+and 57 mismatches. A protected **16:34 UTC** plan selected one two-dependency,
+zero-event candidate without source or destination HTTP requests; it did not
+establish a current source proof or fresh QRZ absence.
+
+At **2026-10-24 16:53:05.833 UTC**, a protected Node/D1 diagnostic using frozen
+`6ff685a7` modules established a current source proof and a complete empty QRZ
+neighborhood for the same selected contact. Two source reads covered collection
+and the final drain for two dependencies and zero events; one original proof
+batch committed. Three QRZ reads covered the targeted query, STATUS and successful
+covering fallback. Strict final candidate, proof, audit and eight-control checks
+passed, with 287,448 ms of proof lifetime remaining. Normal guarded source/proof
+checkpoints occurred; there were no renewals, attempts, staging or vendor mutations.
+This finite observation is already transient. It does not demonstrate Worker
+execution, write acceptance or export authority, and does not verify execution of
+the later `9aeab582` deployment. Fresh checks remain mandatory before any future authorized
+trial.
 
 Retain timestamp precision. [ADIF permits both HHMM and HHMMSS](https://adif.org/316/ADIF_316.htm#Time).
 A minute-only value represents an interval, not invented `00` seconds. The new QRZ
@@ -124,8 +178,8 @@ repeated-quarantine checks, preserving the initialized comparison key, all 4,141
 index rows and 39 owners/markers. All 3,176 predeployment claim rows were unchanged;
 151 additions brought the total to 3,327, with none missing. See the
 [capacity and backup observations](capacity-plan.md#historical-comparison-index-integration--deployed).
-Broader LoTW adoption must extend retained coverage across UTC day/week boundaries
-before a separate rollout.
+The deployed `9aeab582` follow-up implements the LoTW UTC day/week coverage prerequisite;
+broader LoTW adoption still needs its separate ownership and classifier integration.
 No historical association supplies first-insert absence, a current source proof
 or write permission.
 
@@ -133,9 +187,9 @@ Two source UUIDs must not silently claim one remote record. Remote records witho
 
 ### Remaining LoTW time-window association work
 
-The coverage-only step has an isolated, independently reviewed patch with **100
-history tests passing**; it is not applied to the primary checkout or deployed.
-Broader LoTW ownership and adoption remain planned. This sequence extends historical
+The coverage-only step in signed `07b26b8b` is **deployed in `9aeab582`**. Its 100 prior
+history cases plus 22 QRZ coverage regressions all pass. Broader LoTW ownership
+and adoption remain planned. This sequence extends historical
 recognition only; it does not change exact Ferry receipts, signing, first-insert
 absence checks or export permissions. Keep all export controls closed.
 
@@ -149,11 +203,9 @@ these can create another QSO. The [download contract](https://lotw.arrl.org/lotw
 allows mapped modes and `APP_LOTW_MODE` without `MODE`, but supplies no documented
 stable per-QSO identifier. Neither download timestamps nor a hash of the observed
 fields should be presented as such an identifier.
-1. **Integrate the reviewed neighboring-date coverage patch.** Apply the isolated
-   `src/history-inventory.ts` and test changes only in a separately checked release,
-   before changing adoption. Derive required UTC dates from the precision-aware
-   source interval plus the 30-minute window.
-   Resolve each date through its weekly root and split children independently;
+1. **Preserve the deployed coverage-only prerequisite.** `src/history-inventory.ts`
+   derives required UTC dates from the precision-aware source interval plus the
+   30-minute window. It resolves each date through its weekly root and split children independently;
    deduplicate a shared leaf and retain at most two leaf guards. Both singleton and
    batch paths must include neighboring-day candidates, with a combined maximum of
    512 records. A missing, partial, blocked or expired leaf yields no complete
@@ -162,6 +214,12 @@ fields should be presented as such an identifier.
    one split root; shared-leaf reuse; failed second-leaf races; combined overflow;
    and singleton/batch parity. Minute intervals must remain intervals, including
    ambiguous overlap at the 30-minute boundary.
+
+   The companion QRZ change carries both dates through accepted split manifests,
+   preserving its existing ±30m59s radius, shared-leaf deduplication, at most two
+   guards and combined 512-candidate cap. Native same-week and Thursday-boundary
+   tests fail before and pass after. There is no current QRZ split writer or live
+   split partition, so this is not evidence of the live QRZ scope-error cause.
 
 2. **Add separate historical ownership and an exact-receipt bridge.** Use an
    additive migration and bounded helper, preserving the existing QRZ tables and

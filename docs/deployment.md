@@ -2,11 +2,11 @@
 
 Verified 2026-10-24 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
 
-Signed revision `6ff685a7f4991dec0fd0b368552233330bf692bf` deployed at
-**2026-10-24 11:59 EDT**, Worker `aa64f26f-e2b7-4638-8e04-542854a912b0`
-at 100% traffic. All **1,429 tests** and required release checks passed in
-[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40108165167).
-Independent version, HTTPS and asset checks at **15:59:42 UTC** confirm all
+Signed revision `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at
+**2026-10-24 17:04:38.163667 UTC**, Worker `950c081c-03b4-455f-8e31-b579fec56788`
+at 100% traffic. All **1,485 tests** and required release checks passed in
+[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40112629290).
+Independent version, HTTPS and asset checks at **17:04:50.692 UTC** confirm all
 **eight export controls closed**. All 33 migrations through `0034` are installed.
 
 QRZ reconciliation now uses the **±30-minute historical association path** with
@@ -17,18 +17,21 @@ are association-only; source edits and reconnects cannot authorize vendor writes
 Valid nested 2/4/6/8-character grids preserve original precision. Exact Ferry
 receipt verification is unchanged. Broader LoTW adoption remains separate work.
 
-Source-index backfill, guarded QRZ associations and the current-schema backup
-are verified below. Remaining export readiness includes broader LoTW coverage and
-ownership, review of actual conflicts, and fresh exact source/vendor evidence.
+The follow-up reduces index lookup from three RPCs to two with unchanged SQL and
+guards, adds LoTW neighboring-date coverage, corrects QRZ retained-split date
+paths, and exposes durable write blocks in metadata audits. Source-index coverage,
+guarded QRZ associations and the current-schema backup are verified below.
+Remaining work includes broader LoTW classification/ownership, review of actual
+conflicts, and fresh exact source/vendor evidence.
 Exports remain disabled; no first-write trial is authorized by this release.
 
 | Resource                 | Current value                                                                                     |
 | ------------------------ | ------------------------------------------------------------------------------------------------- |
 | Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                             |
 | Worker                   | `lofi-qso-ferry`, environment `production`                                                        |
-| Deployed source revision | `6ff685a7f4991dec0fd0b368552233330bf692bf`                                                        |
-| Worker version           | `aa64f26f-e2b7-4638-8e04-542854a912b0`, created `2026-10-24T15:59:22.49107Z`                      |
-| Deployment               | `6fee8987-3084-4519-809e-e4c943b9a524`, `2026-10-24T15:59:23.445021Z`, 100% of traffic            |
+| Deployed source revision | `9aeab582149baa8af8fd6db8cc9cc318b2bc3739`                                                        |
+| Worker version           | `950c081c-03b4-455f-8e31-b579fec56788`, created `2026-10-24T17:04:37.205834Z`                     |
+| Deployment               | `f4213a4e-e67e-4ef8-8581-41196f47f14f`, `2026-10-24T17:04:38.163667Z`, 100% of traffic            |
 | Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                     |
 | Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                  |
 | Migrations               | All 33 migrations through `0034_historical_associations`; independently verified after deployment |
@@ -36,9 +39,71 @@ Exports remain disabled; no first-write trial is authorized by this release.
 | Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled              |
 | Schedule                 | `*/5 * * * *`                                                                                     |
 | Alternate origins        | workers.dev and version previews disabled                                                         |
-| Artifact                 | 1,990.72 KiB raw / 389.20 KiB gzip; reported startup 30 ms                                        |
+| Artifact                 | 1,992.86 KiB raw / 389.79 KiB gzip; reported startup 25 ms                                        |
 
 The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
+
+## Lookup and coverage release verification (9aeab582)
+
+The first deployment attempt stopped at the D1 migrations API error `7403`, before
+changing the Worker. A read-only migrations recheck succeeded with nothing to
+apply; the same guarded deployment then completed. No credentials or export
+controls changed. Independent attestation confirmed active KEK version 1 alongside
+the exact release, sole deployment, health and assets.
+
+At **17:05:22.396 UTC**, all 13 aggregate checks passed: **4,141 published index
+rows**, zero dirty/rebuilding/unknown entries, and **462 QRZ mappings**, each with
+a permanent owner, association marker and write block, with no gaps. All **3,327
+LoTW exact claims** covered their mappings. **453 legitimate archives / 4,047
+retained source bodies** accounted for all 4,500 source rows, with no unexplained
+missing bodies. Attempts, cutovers, diagnostic proofs, pins and temporary guards
+were zero.
+
+The **17:05:22.426 UTC** route snapshot was:
+
+| Destination | Mapped | Ambiguous | Mismatched | Pending | Adoption conflicts |
+| ----------- | -----: | --------: | ---------: | ------: | -----------------: |
+| QRZ         |    462 |     2,810 |        100 |     461 |                  0 |
+| LoTW        |  3,327 |         7 |        160 |     339 |                  0 |
+
+These checks precede the first completed new-runtime cron. They verify preserved
+state, not a measured production speedup or finished exception review. The latest
+completed 17:00 run used the old runtime; its five adoptions and 53 affected-contact
+errors must not be attributed to this release. The fixed-category scope telemetry
+patch and broader LoTW ownership/classification are not included in `9aeab582`.
+
+The first completed `9aeab582` cron ran **17:05:42.632–17:07:16.980 UTC**:
+80 contact turns, 47 classifications and **38 adoptions**, with zero attempt turns
+or deferrals. It stopped at the deadline after **94.348 seconds**, using **552 D1
+RPCs / 2,407 SQL statements**, 92.033 seconds of D1 wall time, six inventory fetches
+and 42 cache hits. Two diagnostic events affected 15 contacts: one missing ADIF
+time and 14 generic history-scope mismatches. Their causes remain unresolved.
+At **17:07:28.689 UTC**, QRZ had **500 associations/owners**, with the 4,141-row index
+still clean; 2,765 routes were ambiguous, 103 mismatched and 465 pending. Of those
+ambiguous outcomes, 2,760 lacked a current-generation memo and five had explicit
+post-index remote competitors. This single run is not sustained capacity or a
+controlled performance comparison. Runtime identity comes from independent release
+attestation, not the aggregate query's older matching-policy baseline label.
+Final **17:08:02.184 UTC** attestation reconfirmed the same sole Worker/deployment,
+all eight closed controls, active KEK version 1, healthy HTTPS and matching assets.
+
+The protected **17:04:57 UTC** postdeployment backup contains **33,946,884 bytes**
+and all 33 migrations. Isolated restore decrypted all three current credentials
+and the initialized comparison key, verified its HMAC key ID, and passed integrity,
+foreign-key and twice-quarantine checks. All 4,141 index rows, 462 owners/markers
+and 453 archived-body checks passed. No attempts, cutovers, proofs or pins were
+present. At **17:05:22.514 UTC**, exact comparison with the prior 16:07 backup
+preserved all **3,327 claim rows and 39 prior owners/markers**, including every
+field and creation timestamp; **423 owners/markers were added**, with no missing
+or changed prior rows. No production restore or vendor mutation occurred.
+
+Before this deployment, the **16:53:05.833 UTC** protected Node/D1 diagnostic on
+frozen `6ff685a7` modules established a current source proof and complete empty QRZ
+neighborhood for one contact. It used two source reads, two dependencies/no events,
+one original proof batch and three QRZ reads, with final proof/audit/closed-control
+checks passing. This transient observation does not verify execution of the new
+Worker, write acceptance or export authority. See [bootstrap evidence](bootstrap.md#historical-association-and-vendor-matching)
+and [capacity measurements](capacity-plan.md#lookup-and-coverage-follow-up--deployed-9aeab582).
 
 ## QRZ historical association release verification (6ff685a7)
 

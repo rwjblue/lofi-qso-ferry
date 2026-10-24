@@ -8,6 +8,47 @@ replaced, deleted or uploaded during this implementation work.
 
 ## Current evidence (2026-10-24)
 
+Signed revision `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at
+**17:04:38.163667 UTC** as Worker `950c081c-03b4-455f-8e31-b579fec56788`, at 100%
+traffic after all **1,485 tests** and required checks passed in
+[release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40112629290).
+Independent **17:04:50.692 UTC** verification confirmed eight closed controls,
+healthy HTTPS, matching assets and all 33 migrations through `0034`.
+
+The lookup now uses two RPCs for the same three SQL statements and unchanged
+guards. Both required UTC date paths survive history leaf resolution for LoTW and
+QRZ; LoTW broader matching/ownership remains unimplemented. Trial audits expose
+durable historical write blocks. Exact receipts and export permissions are unchanged.
+
+At **17:05:22.396 UTC**, all 13 aggregate checks passed: 4,141 published index rows
+with no dirty/rebuilding/unknown entries, 462 QRZ mappings with complete permanent
+ownership/marker/write-block coverage, 3,327 covered LoTW exact claims, and 453
+legitimate archives plus 4,047 retained source bodies. No attempts, cutovers,
+proofs, pins or temporary guards existed. This is before the first completed
+new-runtime cron, not sustained throughput or finished reconciliation.
+
+The **17:04:57 UTC** backup and **17:05:22.514 UTC** comparison passed isolated
+restore, key/credential decryption, integrity/FK and twice-quarantine checks.
+All 3,327 prior claims and 39 prior owners/markers were unchanged, including
+creation timestamps; 423 owners/markers were added, with zero losses. See the
+[full deployment receipt](deployment.md#lookup-and-coverage-release-verification-9aeab582).
+
+The first completed new-runtime cron, **17:05:42.632–17:07:16.980 UTC**, made 38
+adoptions with zero attempt turns or deferrals. Fifteen affected-contact errors
+remain (one missing ADIF time, 14 generic history-scope mismatches), with unresolved
+causes. At 17:07:28.689 UTC, QRZ had 500 associations/owners and the index remained
+clean. Most persisted ambiguous outcomes still lack a current-generation memo;
+these counts are not a completed manual-exception queue or sustained capacity.
+The same sole deployment, eight closed controls, active KEK version 1 and healthy
+matching assets were reconfirmed at **17:08:02.184 UTC**.
+
+The **16:53 UTC** same-contact source-proof/empty-QRZ diagnostic used the previous
+frozen `6ff685a7` modules. It was transient Node/D1 evidence, not new-Worker or
+write acceptance. The owner instruction remains keep exports disabled; fresh
+evidence and a changed instruction are required before any trial.
+
+### Previous QRZ integration release (6ff685a7)
+
 Signed revision `6ff685a7f4991dec0fd0b368552233330bf692bf` deployed at
 **2026-10-24 15:59:23.445021 UTC**, Worker
 `aa64f26f-e2b7-4638-8e04-542854a912b0` at 100% traffic. All **1,429 tests** and
@@ -257,7 +298,25 @@ LoTW associations; unresolved identity, location and route conflicts remain held
 | LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Unique exact-identity LoTW records with valid nested grids now associate without rewriting source or remote fields. Live ARRL upload acceptance remains unproved.                              |
 | First vendor writes       | The latest instruction to keep exports disabled supersedes the earlier one- or two-contact trial authorization. No write or actual trial may occur until the owner changes that instruction. The authority split is deployed. Exact scope, successful current source proof, fresh vendor evidence and backup remain required. |
 
-## Verify the deployed QRZ association release
+## Verify the deployed lookup and coverage follow-up
+
+- [x] Release `9aeab582`: 1,485 tests and required checks, sole Worker
+  `950c081c-03b4-455f-8e31-b579fec56788`, 33 migrations, healthy HTTPS/assets and
+  eight closed controls verified.
+- [x] Current index, permanent QRZ ownership/write blocks, LoTW exact claims and
+  archived-body coverage passed all 13 checks at 17:05:22.396 UTC.
+- [x] The 17:04:57 UTC backup and exact comparison preserve prior claim and
+  historical-owner/marker rows through isolated restore and repeated quarantine.
+- [x] Observe the first completed new-runtime cron: 38 adoptions, zero attempt
+  turns/deferrals and 15 affected-contact errors, whose causes remain unresolved.
+- [ ] Establish sustained progress and resolve recurring read failures. The
+  20-contact fixture saves 20 RPCs (158 cohort / 262 whole-tick), with the same
+  1,176 SQL statements; the first production run's 552 RPCs/94.348 seconds is not
+  a controlled speedup or 200,000-contact claim.
+- [ ] Complete broader LoTW ownership/classification and its separate three-day
+  first-insert evidence. Coverage-only changes grant no association or write authority.
+
+### Verified initial QRZ association release (6ff685a7)
 
 - [x] Full combined release checks passed: 1,429 tests; signed revision
   `6ff685a7`, Worker `aa64f26f-e2b7-4638-8e04-542854a912b0`, all 33 migrations,
@@ -287,7 +346,7 @@ LoTW associations; unresolved identity, location and route conflicts remain held
   and zero losses.
 - [ ] Establish sustained throughput and finish queue review. The observed
   post-index run used 916 D1 calls in 55.258 seconds and stopped at the database
-  budget. The 20-contact fixture uses 178 cohort RPCs / 282 whole-tick RPCs versus
+  budget. Its then-current 20-contact fixture used 178 cohort RPCs / 282 whole-tick RPCs versus
   the previous 65 cohort RPCs. Neither establishes 200,000-contact capacity.
 
 These checks authorize no writes. Historical association preserves existing
@@ -406,12 +465,14 @@ enforced separation from the global cutover/no-query effects described above,
 then current evidence for the exact scope. The proposed order remains QRZ first,
 followed by LoTW. Keep private contact details out of repository documentation.
 
-The latest protected backup was verified at **12:29 UTC on 2026-10-24**, with
-all 31 current migrations, 4,500 source bodies, 7,666 destination rows and the
-then-current 380 durable identity claims. Isolated restore, integrity/foreign-key
-checks, all three credential decryptions and repeated recovery quarantine passed.
-No production restore occurred. Preserve this current-schema snapshot and its key;
-refresh it before external changes if needed to capture subsequent adoptions.
+The latest protected backup, from **17:04:57 UTC on 2026-10-24**, contains all 33
+migrations, 4,141 index rows, 3,327 exact claims and 462 QRZ owners/markers.
+All 453 legitimate archives were verified; 4,047 source bodies remain retained.
+Isolated restore, integrity/FK checks, three credential decryptions, initialized
+comparison-key decryption/HMAC verification and twice quarantine passed. The
+prior 16:07 ownership sets were retained exactly. No production restore occurred.
+Preserve this current-schema snapshot and its required KEKs; refresh it before
+external changes if needed to capture subsequent adoptions.
 The dated snapshots below remain historical recovery evidence.
 
 A fresh protected production SQL backup was verified at **08:14:29 UTC on

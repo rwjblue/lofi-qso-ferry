@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isAdmin } from "../src/admin-access.ts";
 import { adminRoute } from "../src/admin.ts";
+import { isAdmin } from "../src/admin-access.ts";
 import type {
   AdminInvitationResult,
   AdminInvitations,
@@ -412,24 +412,31 @@ test("admin send budget is race resistant and lists are bounded with explicit tr
       1,
     );
     assert.equal(sent.length, 1);
-    await db.batch(
-      Array.from({ length: 101 }, (_, n) =>
-        db
-          .prepare(
-            "INSERT INTO invitations(email,invited_at,expires_at) VALUES(?,?,?)",
-          )
-          .bind(`list${n}@example.test`, n, n),
-      ),
-    );
-    await db.batch(
-      Array.from({ length: 101 }, (_, n) =>
-        db
-          .prepare(
-            "INSERT INTO admin_audit(id,actor,actor_email,action,email,at,status) VALUES(?,'admin','me@rwjblue.com','revoke',?,?,'revoked')",
-          )
-          .bind(`audit${n}`, `list${n}@example.test`, n),
-      ),
-    );
+    // Bound fixture setup requests during slow local Worker runs.
+    for (let start = 0; start < 101; start += 25) {
+      const rows = Array.from(
+        { length: Math.min(25, 101 - start) },
+        (_, offset) => start + offset,
+      );
+      await db.batch(
+        rows.map((n) =>
+          db
+            .prepare(
+              "INSERT INTO invitations(email,invited_at,expires_at) VALUES(?,?,?)",
+            )
+            .bind(`list${n}@example.test`, n, n),
+        ),
+      );
+      await db.batch(
+        rows.map((n) =>
+          db
+            .prepare(
+              "INSERT INTO admin_audit(id,actor,actor_email,action,email,at,status) VALUES(?,'admin','me@rwjblue.com','revoke',?,?,'revoked')",
+            )
+            .bind(`audit${n}`, `list${n}@example.test`, n),
+        ),
+      );
+    }
     const listing = (await (
       await request("/api/admin/invitations")
     ).json()) as AdminInvitations;

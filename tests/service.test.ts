@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { serializeAdifRecord } from "../src/adif.ts";
+import type { SourceRecord } from "../src/lofi.ts";
 import { tick } from "../src/service.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
-import { VendorDeferredError } from "../src/vendor-requests.ts";
 import { seed } from "./helpers.ts";
 import { FIXTURE_NOW, schedulerFixture } from "./runtime-fixtures.ts";
 
@@ -13,6 +13,98 @@ const key = (destination: string) => ({
   qso: "q1",
   destination,
 });
+
+// Export proofs use the database's actual clock. These delivery fixtures retain
+// server state across reads instead of consuming a change exactly once, allowing
+// targeted presence reads and the final canonical drain to observe real versions.
+async function exportSchedulerFixture() {
+  const h = await schedulerFixture();
+  const operations = new Map<string, SourceRecord>();
+  const qsos = new Map<string, SourceRecord>();
+  const fetcher: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/v1/sync") {
+      h.calls.sourceSync++;
+      for (const row of h.changes.operations.splice(0))
+        operations.set(String(row.uuid), row);
+      for (const row of h.changes.qsos.splice(0))
+        qsos.set(String(row.uuid), row);
+      const request = JSON.parse(String(init?.body)).meta.sync;
+      const page = (
+        rows: Map<string, SourceRecord>,
+        side: {
+          syncedSinceMillis?: number;
+          syncedUntilMillis?: number;
+          limit: number;
+        },
+      ) => {
+        const selected = [...rows.values()]
+          .filter((row) =>
+            side.syncedSinceMillis === undefined
+              ? Number(row.syncedAtMillis) < Number(side.syncedUntilMillis)
+              : Number(row.syncedAtMillis) > side.syncedSinceMillis,
+          )
+          .sort(
+            (a, b) =>
+              (side.syncedSinceMillis === undefined ? -1 : 1) *
+              (Number(a.syncedAtMillis) - Number(b.syncedAtMillis)),
+          );
+        return {
+          rows: selected.slice(0, side.limit),
+          remaining: Math.max(0, selected.length - side.limit),
+        };
+      };
+      const ops = page(operations, request.operations);
+      const contacts = page(qsos, request.qsos);
+      return Response.json({
+        account: { uuid: "account-fixture" },
+        operations: ops.rows,
+        qsos: contacts.rows,
+        meta: {
+          operations: { records_left: ops.remaining },
+          qsos: { records_left: contacts.remaining },
+        },
+      });
+    }
+    if (url.pathname === "/v1/operations/op-fixture/qsos") {
+      h.calls.reread++;
+      if (h.errors.reread) throw new Error("synthetic source reread outage");
+      return Response.json({
+        qsos: [...qsos.values()].filter(
+          (row) => row.operation === "op-fixture",
+        ),
+        meta: { qsos: { records_left: 0 } },
+      });
+    }
+    return h.fetcher(input, init);
+  };
+  const base = Date.now() - 46 * 60_000;
+  const run = async (minutes: number, transport = fetcher) => {
+    if (minutes > 36) {
+      // Make another scheduled turn available without aging source/proof facts
+      // into the future or rebinding a prepared attempt's immutable evidence.
+      await h.store
+        .statement("UPDATE reconciliation_work SET next_due_at=0,selected_at=0")
+        .run();
+      await h.store
+        .statement(
+          "UPDATE attempt_state SET due_at=0 WHERE state IN('prepared','submitted','uncertain')",
+        )
+        .run();
+      await h.store
+        .statement(
+          "UPDATE vendor_requests SET window_start=0,requests=0,background_requests=0",
+        )
+        .run();
+    }
+    return tick(
+      h.env,
+      transport,
+      minutes < 36 ? base + minutes * 60_000 : undefined,
+    );
+  };
+  return { ...h, fetcher, base, run };
+}
 
 test("scheduler refreshes certificate status without downloading trust roots", async () => {
   const h = await schedulerFixture();
@@ -511,26 +603,38 @@ test("unchanged adopted QRZ narrative and LoTW receive no work from source-note 
   }
 });
 test("operation-only location correction waits per-contact then preserves QRZ text and signs correct LoTW station", async () => {
-  const h = await schedulerFixture();
+  const h = await exportSchedulerFixture();
   try {
-    await tick(h.env, h.fetcher, FIXTURE_NOW);
+    await h.run(0);
     h.enable();
     h.operation.grid = "FN32BB";
     h.operation.syncedAtMillis = 200;
     h.changes.operations.push(h.operation);
-    await tick(h.env, h.fetcher, FIXTURE_NOW + 5 * 60000);
+    await h.run(5);
     for (const destination of ["destination", "lotw"]) {
       const row = (await h.store.ledger(key(destination)))!;
       assert.equal(row.state, "changed");
-      assert.equal(row.due_at, FIXTURE_NOW + 35 * 60000);
+      assert.equal(row.due_at, h.base + 35 * 60000);
     }
     assert.equal(await count(h, "attempts"), 0);
-    await tick(h.env, h.fetcher, FIXTURE_NOW + 20 * 60000);
+    await h.run(20);
     assert.equal(await count(h, "attempts"), 0);
-    const sent = await tick(h.env, h.fetcher, FIXTURE_NOW + 36 * 60000);
+    const sent = await h.run(36);
     assert.equal(sent.errors, 0);
     assert.equal(h.calls.qrzWrites, 1);
     assert.equal(h.calls.lotwUploads, 1);
+    assert.equal(
+      (
+        await h.store
+          .statement(
+            "SELECT count(*) AS pins,count(DISTINCT proof_id) AS proofs FROM attempt_source_export_proofs",
+          )
+          .first<{ pins: number; proofs: number }>()
+      )?.proofs,
+      1,
+      "both destinations pin the same refreshed source proof",
+    );
+    assert.equal(await count(h, "attempt_source_export_proofs"), 2);
     assert.equal(h.qrzMutations[0]!.MY_GRIDSQUARE, "FN32BB");
     assert.equal(h.qrzMutations[0]!.COMMENT, "Adopted narrative & + = 100%");
     assert.match(h.tq8Texts[0]!, /<GRIDSQUARE:6>FN32BB/);
@@ -542,8 +646,8 @@ test("operation-only location correction waits per-contact then preserves QRZ te
       (await h.store.ledger(key("destination")))!.narrative,
       "remote_preserved",
     );
-    assert.equal((await h.store.ledger(key("lotw")))!.state, "submitted");
-    await tick(h.env, h.fetcher, FIXTURE_NOW + 41 * 60000);
+    assert.equal((await h.store.ledger(key("lotw")))!.state, "observed");
+    await h.run(41);
     assert.equal((await h.store.ledger(key("lotw")))!.state, "observed");
     assert.equal((await h.store.ledger(key("lotw")))!.confirmed, 0);
     assert.equal(h.calls.lotwUploads, 1);
@@ -560,23 +664,23 @@ test("operation-only location correction waits per-contact then preserves QRZ te
   }
 });
 test("QRZ outage leaves LoTW corrections independent and visible for later QRZ recovery", async () => {
-  const h = await schedulerFixture();
+  const h = await exportSchedulerFixture();
   try {
-    await tick(h.env, h.fetcher, FIXTURE_NOW);
+    await h.run(0);
     h.enable();
     h.errors.qrz = true;
     h.operation.grid = "FN32BB";
     h.operation.syncedAtMillis = 200;
     h.changes.operations.push(h.operation);
-    await tick(h.env, h.fetcher, FIXTURE_NOW + 5 * 60000);
+    await h.run(5);
     assert.equal((await h.store.ledger(key("lotw")))!.state, "changed");
-    await tick(h.env, h.fetcher, FIXTURE_NOW + 36 * 60000);
+    await h.run(36);
     assert.equal(h.calls.qrzWrites, 0);
     assert.equal(h.calls.lotwUploads, 1);
-    assert.equal((await h.store.ledger(key("lotw")))!.state, "submitted");
+    assert.equal((await h.store.ledger(key("lotw")))!.state, "observed");
     assert((await h.store.ledger(key("destination")))!.reason);
     h.errors.qrz = false;
-    await tick(h.env, h.fetcher, FIXTURE_NOW + 41 * 60000);
+    await h.run(41);
     assert.equal(h.calls.qrzWrites, 1);
     assert.equal(h.calls.lotwUploads, 1);
   } finally {
@@ -629,7 +733,7 @@ test("an unproven source boundary cannot authorize backfill even with live-write
   }
 });
 test("no-query LoTW permits only a durably new forward UUID after cutover, including offline old dates", async () => {
-  const h = await schedulerFixture();
+  const h = await exportSchedulerFixture();
   try {
     const credential = await h.store.private<{ signingCredentials: unknown[] }>(
       "a",
@@ -648,7 +752,7 @@ test("no-query LoTW permits only a durably new forward UUID after cutover, inclu
         signingCredentials: credential.signingCredentials,
       })
     ).run();
-    await tick(h.env, h.fetcher, FIXTURE_NOW);
+    await h.run(0);
     assert.equal(
       (await h.store.ledger(key("lotw")))!.state,
       "historical_unverified",
@@ -656,7 +760,7 @@ test("no-query LoTW permits only a durably new forward UUID after cutover, inclu
     h.enable();
     h.env.ROLLOUT_QSO_IDS_JSON = '["q1","q2"]';
     h.env.ROLLOUT_DESTINATION_IDS_JSON = '["*"]';
-    await tick(h.env, h.fetcher, FIXTURE_NOW + 5 * 60000); // establish immutable cutoff before arrival
+    await h.run(5); // establish immutable cutoff before arrival
     const offline = {
       ...h.qso,
       uuid: "q2",
@@ -674,19 +778,19 @@ test("no-query LoTW permits only a durably new forward UUID after cutover, inclu
       syncedAtMillis: 300,
     };
     h.changes.qsos.push(offline);
-    await tick(h.env, h.fetcher, FIXTURE_NOW + 10 * 60000);
+    await h.run(10);
     const liveKey = { ...key("lotw"), qso: "q2" };
     assert.equal((await h.store.ledger(liveKey))!.state, "live_new");
     assert.equal(h.calls.lotwUploads, 0);
     h.qso.notes = "Historical correction stays unverified";
     h.qso.syncedAtMillis = 301;
     h.changes.qsos.push(h.qso);
-    await tick(h.env, h.fetcher, FIXTURE_NOW + 15 * 60000);
+    await h.run(15);
     assert.equal(
       (await h.store.ledger(key("lotw")))!.state,
       "historical_unverified",
     );
-    const result = await tick(h.env, h.fetcher, FIXTURE_NOW + 41 * 60000);
+    const result = await h.run(41);
     assert.equal(result.errors, 0);
     assert.equal(h.calls.lotwQueries, 0);
     assert.equal(h.calls.lotwUploads, 1);
@@ -951,7 +1055,7 @@ test("successive fair rounds drain live and historical attempts in one invocatio
 });
 
 test("live delivery progresses within bounded vendor and database turns", async () => {
-  const h = await schedulerFixture();
+  const h = await exportSchedulerFixture();
   const scopedReadback: typeof fetch = async (input, init) => {
     const response = await h.fetcher(input, init);
     const url = new URL(String(input));
@@ -964,7 +1068,7 @@ test("live delivery progresses within bounded vendor and database turns", async 
     );
   };
   try {
-    await tick(h.env, scopedReadback, FIXTURE_NOW);
+    await h.run(0, scopedReadback);
     await h.store
       .statement("UPDATE connections SET status='disabled' WHERE kind='qrz'")
       .run();
@@ -988,7 +1092,7 @@ test("live delivery progresses within bounded vendor and database turns", async 
         },
         syncedAtMillis: 200 + i,
       });
-    const observed = await tick(h.env, scopedReadback, FIXTURE_NOW + 5 * 60000);
+    const observed = await h.run(5, scopedReadback);
     assert.equal(observed.errors, 0);
     assert.equal(observed.contacts, 10);
     assert.equal(h.calls.lotwUploads, 0);
@@ -1000,7 +1104,7 @@ test("live delivery progresses within bounded vendor and database turns", async 
       ),
       10,
     );
-    const due = await tick(h.env, scopedReadback, FIXTURE_NOW + 36 * 60000);
+    const due = await h.run(36, scopedReadback);
     assert.equal(due.errors, 0);
     assert(["idle", "database_budget"].includes(due.stopReason));
     assert(h.calls.lotwUploads > 0);
@@ -1010,11 +1114,7 @@ test("live delivery progresses within bounded vendor and database turns", async 
     }
     let uploads = h.calls.lotwUploads;
     for (let turn = 1; turn <= 3 && h.calls.lotwUploads < 10; turn++) {
-      const resumed = await tick(
-        h.env,
-        scopedReadback,
-        FIXTURE_NOW + (36 + turn * 5) * 60000,
-      );
+      const resumed = await h.run(36 + turn * 5, scopedReadback);
       assert.equal(resumed.errors, 0);
       assert(h.calls.lotwUploads > uploads);
       uploads = h.calls.lotwUploads;
@@ -1082,8 +1182,8 @@ test("vendor cooldown pauses all of its work while other vendors continue", asyn
   }
 });
 
-test("saved historical uploads progress before inventory can exhaust the next background budget", async () => {
-  const h = await schedulerFixture();
+test("stale historical attempts are re-proved and dispatched in the next bounded background turn", async () => {
+  const h = await exportSchedulerFixture();
   try {
     h.enable();
     h.env.ROLLOUT_QSO_IDS_JSON = '["*"]';
@@ -1111,36 +1211,50 @@ test("saved historical uploads progress before inventory can exhaust the next ba
         },
         syncedAtMillis: 110 + i,
       });
-    assert.equal((await tick(h.env, h.fetcher, FIXTURE_NOW)).errors, 0);
-    const deferUploads: typeof fetch = async (input, init) => {
-      if (new URL(String(input)).pathname === "/lotw/upload")
-        throw new VendorDeferredError(FIXTURE_NOW + 41 * 60000);
-      return h.fetcher(input, init);
-    };
-    const due = await tick(h.env, deferUploads, FIXTURE_NOW + 36 * 60000);
+    assert.equal((await h.run(0)).errors, 0);
+    const busy = await h.store.claim("a", "delivery:lotw", Date.now(), 120_000);
+    assert(busy);
+    const due = await h.run(36);
     assert.equal(due.errors, 0);
-    assert(
-      await count(
-        h,
-        "attempt_state",
-        "state='prepared' AND priority='background'",
-      ),
-    );
+    assert.equal(h.calls.lotwUploads, 0);
+    const saved = (
+      await h.store
+        .statement(
+          "SELECT a.attempt,p.proof_id FROM attempt_state a JOIN attempt_source_export_proofs p ON p.tenant=a.tenant AND p.attempt=a.attempt WHERE a.state='prepared' AND a.priority='background'",
+        )
+        .all<{ attempt: string; proof_id: string }>()
+    ).results;
+    assert.equal(saved.length, 2);
+    await h.store.release(busy);
     const order: string[] = [];
     const observed: typeof fetch = async (input, init) => {
       const path = new URL(String(input)).pathname;
       if (
         path === "/lotw/crl" ||
         path === "/lotw/upload" ||
-        path === "/lotwuser/lotwreport.adi"
+        path === "/lotwuser/lotwreport.adi" ||
+        path === "/v1/sync"
       )
         order.push(path);
       return h.fetcher(input, init);
     };
-    const next = await tick(h.env, observed, FIXTURE_NOW + 41 * 60000);
+    const next = await h.run(41, observed);
     assert.equal(next.errors, 0);
-    assert.deepEqual(order.slice(0, 2), ["/lotw/crl", "/lotw/upload"]);
     assert(h.calls.lotwUploads > 0);
+    assert(
+      order.indexOf("/v1/sync") >= 0 &&
+        order.indexOf("/v1/sync") < order.indexOf("/lotw/upload"),
+    );
+    for (const previous of saved) {
+      const row = await h.store
+        .statement(
+          "SELECT a.state,p.proof_id FROM attempt_state a JOIN attempt_source_export_proofs p ON p.tenant=a.tenant AND p.attempt=a.attempt WHERE a.attempt=?",
+          previous.attempt,
+        )
+        .first<{ state: string; proof_id: string }>();
+      assert.equal(row?.state, "cancelled");
+      assert.equal(row?.proof_id, previous.proof_id);
+    }
     assert.equal(await count(h, "attempt_state", "priority='live'"), 0);
   } finally {
     await h.mf.dispose();

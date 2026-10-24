@@ -1,9 +1,9 @@
-import { measuredDatabase, type DatabaseMetrics } from "./database-metrics.ts";
-import { createFailureDiagnostics } from "./failure-diagnostics.ts";
-import { establishCutovers, proveNewAfterCutover } from "./cutover.ts";
-import { rotatePrivateData, purgeResolvedSource } from "./maintenance.ts";
 import { purgeAuth } from "./auth.ts";
+import { establishCutovers, proveNewAfterCutover } from "./cutover.ts";
+import { type DatabaseMetrics, measuredDatabase } from "./database-metrics.ts";
+import type { DeliveryGates } from "./delivery.ts";
 import {
+  cancelStalePreparedSourceProof,
   contactReconciliationAdif,
   dispatchAttempt,
   prepareDue,
@@ -11,7 +11,22 @@ import {
   reconcileAttempt,
   refreshConfirmations,
 } from "./delivery.ts";
-import type { DeliveryGates } from "./delivery.ts";
+import { createFailureDiagnostics } from "./failure-diagnostics.ts";
+import type {
+  HistoryInventoryInput,
+  HistoryInventoryResult,
+} from "./history-inventory.ts";
+import {
+  historyCandidates,
+  historyCandidatesBatch,
+  historyInventoryGuard,
+  pruneHistoryInventory,
+} from "./history-inventory.ts";
+import {
+  backfillLegacyQrzIdentity,
+  type IdentityBackfillResult,
+} from "./identity-backfill.ts";
+import type { IntakeContact } from "./intake.ts";
 import {
   expireSource,
   observeContact,
@@ -21,52 +36,96 @@ import {
   pollSource,
   rereadOperation,
 } from "./intake.ts";
-import {
-  historyCandidates,
-  historyCandidatesBatch,
-  historyInventoryGuard,
-  pruneHistoryInventory,
-} from "./history-inventory.ts";
-import {
-  finishReconciliationWork,
-  finishReconciliationWorkStatement,
-  reconciliationCheckStatement,
-  reconciliationPreflightBatch,
-  reconciliationPreflight,
-  recordReconciliationCheck,
-  syncReconciliationPolicy,
-} from "./reconciliation-work.ts";
-import type { IntakeContact } from "./intake.ts";
 import { LotwClient, LotwLoginError } from "./lotw.ts";
 import { refreshLotwCertificates } from "./lotw-maintenance.ts";
-import {
-  backfillLegacyQrzIdentity,
-  type IdentityBackfillResult,
-} from "./identity-backfill.ts";
+import { purgeResolvedSource, rotatePrivateData } from "./maintenance.ts";
 import type { Contact } from "./projection.ts";
 import { sourceFingerprint } from "./projection.ts";
 import { QrzClient, QrzError } from "./qrz.ts";
+import type {
+  HistoryAdoptionInput,
+  ReconciliationEvidence,
+} from "./reconcile.ts";
 import {
   adoptHistory,
   adoptHistoryBatch,
   classifyHistory,
 } from "./reconcile.ts";
-import type { HistoryAdoptionInput } from "./reconcile.ts";
-import type {
-  HistoryInventoryInput,
-  HistoryInventoryResult,
-} from "./history-inventory.ts";
-import type { ReconciliationEvidence } from "./reconcile.ts";
-import { keyring } from "./security.ts";
-import { Store } from "./store.ts";
-import type { Connection, LedgerKey } from "./store.ts";
+import {
+  finishReconciliationWork,
+  finishReconciliationWorkStatement,
+  reconciliationCheckStatement,
+  reconciliationPreflight,
+  reconciliationPreflightBatch,
+  recordReconciliationCheck,
+  syncReconciliationPolicy,
+} from "./reconciliation-work.ts";
 import {
   admitBackgroundSource,
-  backgroundSources,
   type BackgroundSource,
+  backgroundSources,
 } from "./scheduler-admission.ts";
-import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
+import { keyring } from "./security.ts";
+import { ensureSourceExportProofs } from "./source-export-coordinator.ts";
+import {
+  loadCurrentSourceExportProofs,
+  loadCurrentSourcePresenceScope,
+  loadSourceExportSnapshots,
+  purgeExpiredSourceExportProofs,
+  type SourceExportSnapshot,
+} from "./source-export-proofs.ts";
+import type { SourcePresenceScope } from "./source-presence-store.ts";
+import type { Connection, LedgerKey } from "./store.ts";
+import { Store } from "./store.ts";
 import type { VendorPriority } from "./vendor-requests.ts";
+import { VendorDeferredError, vendorFetch } from "./vendor-requests.ts";
+
+function uniqueRoutes(destinations: readonly Connection[], contact: Contact) {
+  return (["qrz", "lotw"] as const).flatMap((kind) => {
+    const matches = destinations.filter(
+      (destination) =>
+        destination.kind === kind && routeMatches(destination, contact),
+    );
+    return matches.length === 1 ? matches : [];
+  });
+}
+
+/** A single unavailable or oversized context must not strand its valid neighbors. */
+async function fittingSourceExportSnapshots(
+  store: Store,
+  scope: SourcePresenceScope,
+  qsos: readonly string[],
+  limit: number,
+  now: () => number,
+  expired: () => boolean,
+): Promise<SourceExportSnapshot[]> {
+  const first = qsos.slice(0, limit);
+  const together = await loadSourceExportSnapshots(store, scope, first, now());
+  if (together.length === first.length) return together;
+  const selected: string[] = [];
+  const dependencies = new Set<string>();
+  for (const qso of qsos.slice(0, 20)) {
+    if (expired() || selected.length >= limit) break;
+    const [snapshot] = await loadSourceExportSnapshots(
+      store,
+      scope,
+      [qso],
+      now(),
+    );
+    if (!snapshot) continue;
+    const next = new Set(dependencies);
+    for (const target of snapshot.targets)
+      next.add(JSON.stringify([target.kind, target.id]));
+    if (next.size > 64) continue;
+    selected.push(qso);
+    for (const key of next) dependencies.add(key);
+  }
+  // Reload the chosen subset together: independently loaded generations must
+  // never be assembled into a purported coherent snapshot.
+  return selected.length && !expired()
+    ? loadSourceExportSnapshots(store, scope, selected, now())
+    : [];
+}
 export function deliveryGates(env: Env): DeliveryGates {
   const scope = (value: string | undefined): string[] | null => {
     const parsed: unknown = JSON.parse(value || "[]");
@@ -813,6 +872,12 @@ export async function tick(
   const completedPolls = new Set<string>();
   const completedRescans = new Map<string, Set<string>>();
   const stoppedRereads = new Set<string>();
+  // Freshly prepared attempts share the existing round's dispatch allowance.
+  const attemptSlots: Record<VendorPriority, number> = {
+    live: 6,
+    background: 2,
+  };
+  const sourceProofAttempts = new Map<string, number>();
   const processSource = async (
     source: (typeof sources)[number],
     priority: VendorPriority,
@@ -843,6 +908,229 @@ export async function tick(
         source.sync_mode === "forward" &&
         !attemptedPolls.has(sourceKey));
     let polled = false;
+    const prepareExportCohort = async (
+      routes: { contact: IntakeContact; destination: Connection }[],
+      destinations: Connection[],
+      finished: Map<string, IntakeContact>,
+    ) => {
+      if (!exportsEffective(gates) || expired() || attemptSlots[priority] <= 0)
+        return;
+      const at = currentTime();
+      // History failures never enter this list. Re-read eligibility after every
+      // route's history turn, preserving quiet periods and unresolved outcomes.
+      const due = (
+        await store
+          .statement(
+            `SELECT l.qso,l.destination,l.generation FROM json_each(?1) candidate
+         JOIN ledger l ON l.tenant=?2 AND l.source=?3 AND l.qso=json_extract(candidate.value,'$.qso') AND l.destination=json_extract(candidate.value,'$.destination') AND l.generation=json_extract(candidate.value,'$.generation')
+         JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination AND d.status='active'
+         WHERE l.due_at<=?4 AND l.state IN('missing_current_identity','changed','live_new') AND l.provenance!='adoption_conflict'
+          AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=l.tenant AND a.source=l.source AND a.qso=l.qso AND a.destination=l.destination AND s.state NOT IN('delivered','observed','rejected','cancelled') AND (s.state!='prepared' OR EXISTS(SELECT 1 FROM attempt_source_export_proofs_current pin WHERE pin.tenant=s.tenant AND pin.attempt=s.attempt)))`,
+            JSON.stringify(
+              routes.map(({ contact, destination }) => ({
+                qso: contact.id,
+                destination: destination.id,
+                generation: contact.generation,
+              })),
+            ),
+            source.tenant,
+            source.id,
+            at,
+          )
+          .all<{ qso: string; destination: string; generation: string }>()
+      ).results;
+      if (!due.length || expired()) return;
+      const hold = async (reason: string, rows = due) => {
+        if (!rows.length) return;
+        await store.db.batch(
+          rows.map((row) =>
+            store.statement(
+              "UPDATE ledger SET reason=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND state IN('missing_current_identity','changed','live_new')",
+              reason,
+              source.tenant,
+              source.id,
+              row.qso,
+              row.destination,
+              row.generation,
+            ),
+          ),
+        );
+      };
+      const scope = await loadCurrentSourcePresenceScope(
+        store,
+        source,
+        currentTime(),
+      );
+      if (!scope) {
+        await hold("source_export_proof_unavailable");
+        return;
+      }
+      const snapshots = await fittingSourceExportSnapshots(
+        store,
+        scope,
+        [...new Set(due.map((row) => row.qso))],
+        Math.min(20, attemptSlots[priority]),
+        currentTime,
+        expired,
+      );
+      if (!snapshots.length || expired()) {
+        await hold("source_export_proof_unavailable");
+        return;
+      }
+      const selectedIds = new Set(snapshots.map(({ contact }) => contact.id));
+      await hold(
+        "source_export_proof_unavailable",
+        due.filter((row) => !selectedIds.has(row.qso)),
+      );
+      const cached = await loadCurrentSourceExportProofs(
+        store,
+        scope,
+        snapshots.map(({ contact }) => ({
+          qso: contact.id,
+          generation: contact.generation,
+          reconciliationVersion: contact.reconciliationVersion,
+        })),
+        currentTime(),
+      );
+      let ready: {
+        contact: IntakeContact;
+        proofId: string;
+        expiresAt: number;
+      }[];
+      if (
+        cached.length === snapshots.length &&
+        cached.every((proof) => proof !== null)
+      ) {
+        // Existing IDs are reused verbatim. No read, timestamp refresh or rebind.
+        ready = cached.flatMap((proof, index) =>
+          proof
+            ? [
+                {
+                  contact: snapshots[index].contact,
+                  proofId: proof.id,
+                  expiresAt: proof.expiresAt,
+                },
+              ]
+            : [],
+        );
+      } else {
+        const remainingRequests = 4 - (sourceProofAttempts.get(sourceKey) ?? 0);
+        if (remainingRequests <= 0) {
+          await hold("source_export_proof_request_budget");
+          result.deferred++;
+          return;
+        }
+        const cohort = await measure("sourceProof", () =>
+          ensureSourceExportProofs(
+            store,
+            scope,
+            snapshots.map(({ contact }) => contact.id),
+            lease,
+            {
+              rawFetcher: fetcher,
+              now: currentTime,
+              deadline: currentTime() + Math.max(0, deadline - Date.now()),
+              remainingRequests,
+              priority,
+              routedDestinations: (contact) =>
+                uniqueRoutes(destinations, contact),
+            },
+          ),
+        );
+        sourceProofAttempts.set(
+          sourceKey,
+          (sourceProofAttempts.get(sourceKey) ?? 0) + cohort.actualAttempts,
+        );
+        if (cohort.held) {
+          await hold(`source_export_proof_${cohort.held}`);
+          result.deferred++;
+          return;
+        }
+        // A new drain invalidated all old IDs. Only its refreshed contacts and
+        // newly minted proof IDs may reach preparation.
+        ready = cohort.ready;
+      }
+      const eligible = new Set(
+        due.map((row) => JSON.stringify([row.qso, row.destination])),
+      );
+      for (const item of ready) {
+        finished.set(item.contact.id, item.contact);
+        const reconciliationVersion = item.contact.reconciliationVersion;
+        if (reconciliationVersion === undefined) continue;
+        for (const destination of uniqueRoutes(destinations, item.contact)) {
+          if (expired() || attemptSlots[priority] <= 0) return;
+          if (!eligible.has(JSON.stringify([item.contact.id, destination.id])))
+            continue;
+          const key = {
+            tenant: source.tenant,
+            source: source.id,
+            qso: item.contact.id,
+            destination: destination.id,
+          };
+          try {
+            const prepared = await prepareDue(store, key, item.contact, gates, {
+              ...deps,
+              priority,
+              sourceProof: {
+                proofId: item.proofId,
+                scope,
+                reconciliationVersion,
+              },
+            });
+            if (prepared.state === "blocked")
+              await store
+                .statement(
+                  "UPDATE ledger SET reason=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND state IN('missing_current_identity','changed','live_new')",
+                  prepared.reason ?? "Delivery preparation requires review",
+                  key.tenant,
+                  key.source,
+                  key.qso,
+                  key.destination,
+                  item.contact.generation,
+                )
+                .run();
+            if (
+              prepared.state === "prepared" &&
+              prepared.attemptId &&
+              !expired()
+            ) {
+              // Dispatch while this source still has the qualifying generation,
+              // before the next canonical poll can invalidate its immutable pin.
+              attemptSlots[priority]--;
+              await dispatchAttempt(
+                store,
+                source.tenant,
+                prepared.attemptId,
+                gates,
+                {
+                  ...deps,
+                  priority,
+                  sourceContact: item.contact,
+                },
+              );
+              result.attempts++;
+            }
+          } catch (error) {
+            diagnostics.record(error, "preparation", destination.kind);
+            if (error instanceof VendorDeferredError) result.deferred++;
+            else {
+              result.errors++;
+              await store
+                .statement(
+                  "UPDATE ledger SET reason=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND state IN('missing_current_identity','changed','live_new')",
+                  reconciliationFailure(error, true),
+                  key.tenant,
+                  key.source,
+                  key.qso,
+                  key.destination,
+                  item.contact.generation,
+                )
+                .run();
+            }
+          }
+        }
+      }
+    };
     const processRetainedContacts = async (readyContextOnly = false) => {
       if (expired()) return 0;
       await establishCutovers(store, source, gates, currentTime());
@@ -851,7 +1139,11 @@ export async function tick(
         pendingContactBatch(
           store,
           source,
-          priority === "live" ? 1 : 20,
+          priority === "live"
+            ? exportsEffective(gates)
+              ? Math.max(1, Math.min(6, attemptSlots.live))
+              : 1
+            : 20,
           currentTime(),
           priority,
           undefined,
@@ -894,6 +1186,11 @@ export async function tick(
         result.deferred += processed.deferred;
         return batch.selected;
       }
+      const exportRoutes: {
+        contact: IntakeContact;
+        destination: Connection;
+      }[] = [];
+      const finished = new Map<string, IntakeContact>();
       const historyTurns = new Map<string, Promise<void>>();
       const historyTurn = async (
         destination: Connection,
@@ -963,7 +1260,7 @@ export async function tick(
               continue;
             }
             const destination = candidates[0];
-            let preparing = false;
+            const preparing = false;
             try {
               await historyTurn(destination, contact, () =>
                 measure("history", () =>
@@ -985,28 +1282,13 @@ export async function tick(
               // Read-only adoption must retain its actual history diagnosis.
               // Closed rollout gates are global status, not a contact failure.
               if (!exportsEffective(gates)) continue;
-              preparing = true;
-              const key = {
-                tenant: source.tenant,
-                source: source.id,
-                qso: contact.id,
-                destination: destination.id,
-              };
-              const prepared = await prepareDue(store, key, contact, gates, {
-                ...deps,
-                priority,
-              });
-              if (prepared.state === "blocked")
-                await store
-                  .statement(
-                    "UPDATE ledger SET reason=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND state IN('missing_current_identity','changed','live_new')",
-                    prepared.reason ?? "Delivery preparation requires review",
-                    key.tenant,
-                    key.source,
-                    key.qso,
-                    key.destination,
-                  )
-                  .run();
+              if (
+                (!gates.allowedQsoIds ||
+                  gates.allowedQsoIds.includes(contact.id)) &&
+                (!gates.allowedDestinationIds ||
+                  gates.allowedDestinationIds.includes(destination.id))
+              )
+                exportRoutes.push({ contact, destination });
             } catch (error) {
               diagnostics.record(
                 error,
@@ -1045,13 +1327,15 @@ export async function tick(
           if (error instanceof VendorDeferredError) result.deferred++;
           else result.errors++;
         } finally {
-          await finishReconciliationWork(
-            store,
-            source,
-            contact.id,
-            contact.reconciliationVersion,
-            currentTime(),
-          );
+          if (exportsEffective(gates)) finished.set(contact.id, contact);
+          else
+            await finishReconciliationWork(
+              store,
+              source,
+              contact.id,
+              contact.reconciliationVersion,
+              currentTime(),
+            );
         }
       };
       // Read-only background work can overlap database latency. Live work and
@@ -1074,7 +1358,27 @@ export async function tick(
       // Retain the cycle lease until all started work has settled, even if a
       // worker's final queue update fails outside the contact error handler.
       const failed = workers.find((worker) => worker.status === "rejected");
-      if (failed?.status === "rejected") throw failed.reason;
+      try {
+        if (failed?.status === "rejected") throw failed.reason;
+        if (
+          exportsEffective(gates) &&
+          exportRoutes.length &&
+          !expired() &&
+          attemptSlots[priority] > 0
+        )
+          await prepareExportCohort(exportRoutes, destinations, finished);
+      } finally {
+        // An edit during the shared drain has a newer version; the ordinary CAS
+        // leaves that work awake instead of parking it with this older turn.
+        for (const contact of finished.values())
+          await finishReconciliationWork(
+            store,
+            source,
+            contact.id,
+            contact.reconciliationVersion,
+            currentTime(),
+          );
+      }
       return batch.selected;
     };
     const processRescan = async () => {
@@ -1252,6 +1556,7 @@ export async function tick(
     return progress;
   };
   const processAttempts = async (priority: VendorPriority, limit: number) => {
+    limit = Math.min(limit, attemptSlots[priority]);
     if (limit === 0 || expired()) return 0;
     const now = currentTime();
     const attempts = (
@@ -1275,8 +1580,23 @@ export async function tick(
       if (expired()) break;
       const now = currentTime();
       turns++;
+      attemptSlots[priority]--;
       try {
         if (attempt.state === "prepared") {
+          if (
+            await cancelStalePreparedSourceProof(
+              store,
+              attempt.tenant,
+              attempt.attempt,
+              now,
+            )
+          ) {
+            // Cancellation used its bounded queue turn but performed no
+            // dispatch. Preserve the round's original transport allowance so
+            // a background source can refresh and replace it in this turn.
+            attemptSlots[priority]++;
+            continue;
+          }
           const source = await store.connection(attempt.tenant, attempt.source);
           if (source?.status !== "active") continue;
           const [contact] = await pendingContacts(
@@ -1345,6 +1665,8 @@ export async function tick(
   let passProgress = 0;
   while (!expired()) {
     result.rounds++;
+    attemptSlots.live = 6;
+    attemptSlots.background = 2;
     const round = sources.slice(sourceOffset, sourceOffset + 2);
     // Small contact turns leave request capacity for delivery. Poll live
     // changes before dispatch so newly observed edits can cancel stale bytes.
@@ -1387,7 +1709,10 @@ export async function tick(
       if (error instanceof VendorDeferredError) result.deferred++;
       else result.errors++;
     }
-  await measure("cleanup", () => purgeResolvedSource(store));
+  await measure("cleanup", async () => {
+    await purgeResolvedSource(store);
+    await purgeExpiredSourceExportProofs(store, currentTime());
+  });
   result.elapsedMs = Math.max(0, Date.now() - startedAt);
   result.stopReason =
     metered.metrics.calls >= 850

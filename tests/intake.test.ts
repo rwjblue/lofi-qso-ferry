@@ -26,6 +26,7 @@ import { sourceReadPolicy } from "../src/source-read-policy.ts";
 import { type Connection, Store } from "../src/store.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
+import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
 const at = 1792684800000;
 const op: SourceRecord = {
@@ -93,25 +94,27 @@ const fetcher =
   ): typeof fetch =>
   async (input, init) =>
     handler(new URL(String(input)), init);
-async function setup() {
+async function setup(currentSchema = false) {
   const state = await database();
   try {
-    for (const file of [
-      "0004_intake.sql",
-      "0005_cutover.sql",
-      "0009_vendor_requests.sql",
-      "0010_source_priority.sql",
-      "0018_reconciliation_work.sql",
-      "0023_outbound_identity_claims.sql",
-      "0024_identity_mapping_overlap.sql",
-      "0025_source_read_policy.sql",
-      "0026_source_read_guards.sql",
-      "0027_source_presence.sql",
-      "0028_source_export_proofs.sql",
-      "0033_source_historical_index.sql",
-      "0034_historical_associations.sql",
-    ])
-      await applyMigration(state.db, file);
+    if (currentSchema) await applyAdditionalMigrations(state.db);
+    else
+      for (const file of [
+        "0004_intake.sql",
+        "0005_cutover.sql",
+        "0009_vendor_requests.sql",
+        "0010_source_priority.sql",
+        "0018_reconciliation_work.sql",
+        "0023_outbound_identity_claims.sql",
+        "0024_identity_mapping_overlap.sql",
+        "0025_source_read_policy.sql",
+        "0026_source_read_guards.sql",
+        "0027_source_presence.sql",
+        "0028_source_export_proofs.sql",
+        "0033_source_historical_index.sql",
+        "0034_historical_associations.sql",
+      ])
+        await applyMigration(state.db, file);
   } catch (error) {
     await state.mf.dispose();
     throw error;
@@ -2057,7 +2060,8 @@ test("historical pages stay small while forward arrivals and edits retain live p
 });
 
 test("historical inventory baselines stay background until a forward correction arrives", async (t) => {
-  const state = await setup();
+  // This calls the current adoption reader, which includes all historical refs.
+  const state = await setup(true);
   const { store, source, now, mf } = state;
   t.after(() => mf.dispose());
   const absent = { ...loose, uuid: "absent" };

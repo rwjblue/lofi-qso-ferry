@@ -153,19 +153,42 @@ async function claimFixture(vendor: "qrz" | "lotw" = "qrz") {
       chosen = claim,
     ) => {
       const { generation, authorization } = current.get(proofKey(target))!;
+      const payload: PreparedPayload =
+        vendor === "lotw"
+          ? {
+              kind: "lotw",
+              tq8: "synthetic-signed-artifact",
+              station: { callsign: record.STATION_CALLSIGN, dxcc: 291 },
+              contact: {
+                id: target.qso,
+                generation,
+                call: record.CALL,
+                date: "2026-10-22",
+                time: "12:00:01Z",
+                band: record.BAND,
+                mode: record.MODE,
+                submode: record.SUBMODE,
+              },
+              certificateVersion: "v1",
+              configurationVersion: "fixture",
+              projectionHash: "hash",
+              members: [{ id: target.qso, generation }],
+              preparedAt: new Date().toISOString(),
+            }
+          : {
+              kind: "qrz",
+              record,
+              operation: "insert",
+              mappedLogId: null,
+              narrative: "template_bound",
+              projectionHash: "hash",
+              members: [{ id: target.qso, generation }],
+              preparedAt: new Date().toISOString(),
+            };
       return h.store.stage(
         target,
         generation,
-        {
-          kind: "qrz",
-          record,
-          operation: "insert",
-          mappedLogId: null,
-          narrative: "template_bound",
-          projectionHash: "hash",
-          members: [{ id: target.qso, generation }],
-          preparedAt: new Date().toISOString(),
-        } satisfies PreparedPayload,
+        payload,
         "v1",
         version,
         Date.now(),
@@ -239,7 +262,9 @@ test("competing stages atomically elect one source UUID across both vendors", as
               ) as PromiseRejectedResult
             ).reason,
           ),
-          /outbound identity claim conflict/,
+          vendor === "lotw"
+            ? /LoTW ownership unavailable|outbound identity claim conflict/
+            : /outbound identity claim conflict/,
         );
         assert.equal(
           (

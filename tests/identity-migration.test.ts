@@ -7,6 +7,7 @@ import {
   destinationIdentityClaim,
 } from "../src/identity-claims.ts";
 import { canonicalLotwIdentity, lotwRemoteIdentity } from "../src/reconcile.ts";
+import { canonical, randomToken, sha256 } from "../src/security.ts";
 import type { LedgerKey } from "../src/store.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
 
@@ -76,6 +77,75 @@ async function setup(vendor: "qrz" | "lotw") {
       return value;
     }
     async function stage(key: LedgerKey, record = remote) {
+      if (vendor === "lotw") {
+        // Exercise the actual 0023 transaction/guards as an old worker would.
+        // Current Store.stage requires the later 0036 ownership bridge, which
+        // is intentionally absent from this migration's historical schema.
+        const id = randomToken();
+        const payload = { kind: vendor, record };
+        const claim = await destinationIdentityClaim(vendor, record);
+        await h.db.batch([
+          h.store.statement(
+            "INSERT INTO stage_guards(id,tenant,source,qso,destination,generation,template_version,now,credential_version,identity_vendor,identity_hash,identity_source_version,identity_lotw_owner_id) VALUES(?,?,?,?,?,'g1',NULL,?,'v1','lotw',?,NULL,?)",
+            id,
+            key.tenant,
+            key.source,
+            key.qso,
+            key.destination,
+            NOW,
+            claim.hash,
+            `identity:${await sha256(canonical([key.source, key.qso]))}:${claim.hash}`,
+          ),
+          await h.store.putPrivate(
+            key.tenant,
+            key.destination,
+            id,
+            "outbox",
+            payload,
+            NOW + 7 * 86400_000,
+          ),
+          h.store.statement(
+            "INSERT INTO attempts SELECT ?,?,?,?,?,?,?,?,NULL,'v1',?,source_hash FROM ledger WHERE tenant=? AND source=? AND qso=? AND destination=?",
+            key.tenant,
+            id,
+            key.source,
+            key.qso,
+            key.destination,
+            "g1",
+            id,
+            await sha256(canonical(payload)),
+            NOW,
+            key.tenant,
+            key.source,
+            key.qso,
+            key.destination,
+          ),
+          h.store.statement(
+            "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at,priority) VALUES(?,?,'prepared',?,?,'live')",
+            key.tenant,
+            id,
+            NOW,
+            NOW,
+          ),
+          h.store.statement(
+            "INSERT INTO attempt_identity_claims(tenant,attempt,destination,vendor,identity_hash,source,qso,source_version) VALUES(?,?,?,'lotw',?,?,?,NULL)",
+            key.tenant,
+            id,
+            key.destination,
+            claim.hash,
+            key.source,
+            key.qso,
+          ),
+          h.store.statement(
+            "INSERT INTO attempt_events(tenant,attempt,state,at) VALUES(?,?,'prepared',?)",
+            key.tenant,
+            id,
+            NOW,
+          ),
+          h.store.statement("DELETE FROM stage_guards WHERE id=?", id),
+        ]);
+        return id;
+      }
       return h.store.stage(
         key,
         "g1",

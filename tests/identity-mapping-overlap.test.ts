@@ -230,9 +230,14 @@ test("current QRZ history adoption atomically clears only its exact reservation,
   const h = await setup("qrz");
   try {
     await h.migrate();
-    // Current reconciliation also checks durable LOGID ownership. The other
-    // cases deliberately retain the historical 0024 old-worker contract.
-    await applyMigration(h.db, "0034_historical_associations.sql");
+    // Current reconciliation reads the complete ledger/ownership schema. The
+    // other cases deliberately retain the historical 0024 old-worker contract.
+    for (const name of (
+      await readdir(new URL("../migrations/", import.meta.url))
+    )
+      .filter((name) => name.endsWith(".sql") && name > migration)
+      .sort())
+      await applyMigration(h.db, name);
     const key = await h.add("current");
     const outcome = classifyHistory(
       record,

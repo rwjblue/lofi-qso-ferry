@@ -340,6 +340,17 @@ test("strict collisions quarantine retained LOGID owners after identity edits, i
         : "same connection",
       async (t) => {
         const h = await fixture(t);
+        // This case calls today's adoption API after testing the independent
+        // QRZ schema above, so install its complete ownership/reference schema.
+        for (const name of (
+          await readdir(new URL("../migrations/", import.meta.url))
+        )
+          .filter(
+            (name) =>
+              name.endsWith(".sql") && name >= "0033_" && name !== MIGRATION,
+          )
+          .sort())
+          await applyMigration(h.db, name);
         const owner = await h.ledger();
         const record = {
           STATION_CALLSIGN: "W1AW",

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { contactReconciliationAdif } from "../src/delivery.ts";
+import { destinationIdentityClaim } from "../src/identity-claims.ts";
 import {
   type ContactObservation,
   observeContacts,
@@ -24,7 +26,7 @@ const syncResponse = (qsos: unknown[], operations: unknown[] = []) =>
     }),
   );
 
-async function setup(count = 4) {
+async function setup(count = 4, distinctWorkedCalls = false) {
   const state = await database();
   try {
     await applyAdditionalMigrations(state.db);
@@ -60,7 +62,7 @@ async function setup(count = 4) {
       freq: 14074,
       band: "20m",
       mode: "FT8",
-      their: { call: "W1AW" },
+      their: { call: distinctWorkedCalls ? `W${index + 1}AW` : "W1AW" },
       our: { stationCall: "N0CALL", grid: "FN31AA", dxccCode: 291 },
       notes: "initial notes",
       syncedAtMillis: 100 + index,
@@ -228,9 +230,17 @@ test("twenty observations share one metadata read and preserve tenant, narrative
 });
 
 test("a failed chunk rolls back edits and cancellation before isolated guarded retries", async (t) => {
-  const h = await setup();
+  // Independent contacts can own separate LoTW preparations. Near-time repeats
+  // to the same worked station would correctly conflict under the write bridge.
+  const h = await setup(4, true);
   t.after(() => h.mf.dispose());
   const { store, source, contacts, destinations, now } = h;
+  await (
+    await store.putPrivate("a", "lotw", "v1", "credential", {
+      certificate: "synthetic-fixture-certificate",
+      privateKey: "synthetic-fixture-key",
+    })
+  ).run();
   await observeContacts(
     store,
     source,
@@ -265,14 +275,36 @@ test("a failed chunk rolls back edits and cancellation before isolated guarded r
       await store.stage(
         key(snapshot.contact.id),
         snapshot.contact.generation,
-        { immutable: snapshot.contact.id },
+        {
+          kind: "lotw",
+          station: { callsign: snapshot.contact.stationCall, dxcc: 291 },
+          contact: {
+            call: snapshot.contact.call,
+            date: new Date(snapshot.contact.startAtMillis)
+              .toISOString()
+              .slice(0, 10),
+            time: `${new Date(snapshot.contact.startAtMillis)
+              .toISOString()
+              .slice(11, 19)}Z`,
+            band: snapshot.contact.band,
+            mode: snapshot.contact.mode,
+            submode: snapshot.contact.submode,
+          },
+          immutable: snapshot.contact.id,
+        },
         "v1",
         null,
         Date.now(),
         undefined,
         undefined,
         undefined,
-        undefined,
+        {
+          claim: await destinationIdentityClaim(
+            "lotw",
+            contactReconciliationAdif(snapshot.contact),
+          ),
+          sourceVersion: proofs.authorizations[index].reconciliationVersion,
+        },
         proofs.authorizations[index],
       ),
     );

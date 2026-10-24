@@ -185,6 +185,69 @@ test("unchanged current rows gain membership without replacing bodies; older rep
   assert.equal((await h.row("newer"))?.policy_seen_epoch, epoch);
 });
 
+test("exact canonical witnesses release only membership holds and never wake an older replay", async (t) => {
+  const h = await setup(t);
+  await h.poll();
+  await h.poll();
+  await h.poll();
+  await h.poll(
+    [contact("membership"), contact("unrelated"), contact("newer", 200)],
+    [],
+    0,
+    "repair",
+  );
+  const held = await pendingContactBatch(
+    h.store,
+    h.source,
+    20,
+    h.now + 1_300_000,
+  );
+  assert.equal(held.contacts.length, 0);
+  assert.equal(held.selected, 3);
+  for (const id of ["membership", "unrelated", "newer"]) {
+    assert.equal((await h.row(id))?.state, "blocked");
+    assert.equal(
+      (await h.row(id))?.reason,
+      "source_policy_membership_unavailable",
+    );
+  }
+  await h.store
+    .statement(
+      "UPDATE source_work SET reason='unsupported_mode' WHERE tenant='a' AND source='source' AND id='unrelated' AND kind='qso'",
+    )
+    .run();
+  const before = (await h.row("membership"))!;
+  await h.poll([
+    contact("membership"),
+    contact("unrelated"),
+    contact("newer", 100),
+  ]);
+  const epoch = (await h.policy())!.epoch;
+  const released = (await h.row("membership"))!;
+  assert.equal(released.policy_seen_epoch, epoch);
+  assert.equal(released.private_id, before.private_id);
+  assert.equal(released.state, "pending");
+  assert.equal(released.reason, null);
+  const unrelated = (await h.row("unrelated"))!;
+  assert.equal(unrelated.policy_seen_epoch, epoch);
+  assert.equal(unrelated.state, "blocked");
+  assert.equal(unrelated.reason, "unsupported_mode");
+  const stale = (await h.row("newer"))!;
+  assert.equal(stale.policy_seen_epoch, null);
+  assert.equal(stale.state, "blocked");
+  assert.equal(stale.reason, "source_policy_membership_unavailable");
+  const resumed = await pendingContactBatch(
+    h.store,
+    h.source,
+    20,
+    h.now + 1_600_000,
+  );
+  assert.deepEqual(
+    resumed.contacts.map((c) => c.id),
+    ["membership"],
+  );
+});
+
 test("quarantine is bounded, holds all record kinds, and cancels only linked prepared attempts", async (t) => {
   const h = await setup(t);
   const keys = Array.from(

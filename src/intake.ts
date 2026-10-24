@@ -1358,7 +1358,7 @@ async function sourceStatements(
     if (current && policyEpoch)
       statements.push(
         store.statement(
-          "UPDATE source_work SET policy_seen_epoch=?,state=CASE WHEN state='missing_from_inventory' THEN 'pending' ELSE state END,reason=CASE WHEN state='missing_from_inventory' THEN NULL ELSE reason END WHERE tenant=? AND source=? AND id=? AND kind=? AND revision=? AND synced_at=?",
+          "UPDATE source_work SET policy_seen_epoch=?,state=CASE WHEN state='missing_from_inventory' OR (state='blocked' AND reason='source_policy_membership_unavailable') THEN 'pending' ELSE state END,reason=CASE WHEN state='missing_from_inventory' OR (state='blocked' AND reason='source_policy_membership_unavailable') THEN NULL ELSE reason END WHERE tenant=? AND source=? AND id=? AND kind=? AND revision=? AND synced_at=?",
           policyEpoch,
           connection.tenant,
           connection.id,

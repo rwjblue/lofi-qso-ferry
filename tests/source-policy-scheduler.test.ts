@@ -6,8 +6,8 @@ import { sourceReadPolicy } from "../src/source-read-policy.ts";
 import { database, seed } from "./helpers.ts";
 import {
   applyAdditionalMigrations,
-  fixtureEnvironment,
   FIXTURE_NOW,
+  fixtureEnvironment,
 } from "./runtime-fixtures.ts";
 
 test("legacy forward sources establish their baseline in the background before live admission", async (t) => {
@@ -70,7 +70,7 @@ test("legacy forward sources establish their baseline in the background before l
   assert.equal(first.sources, 3);
   assert.equal(first.exportsEnabled, false);
   assert.deepEqual(requests, [
-    { forward: false, limit: 25, anyClient: true },
+    { forward: false, limit: 100, anyClient: true },
     { forward: true, limit: 25, anyClient: true },
     { forward: true, limit: 25, anyClient: true },
   ]);

@@ -1406,11 +1406,11 @@ test("read-only background history overlaps at most four contacts and preserves 
   }
 });
 
-test("twenty historical contacts share inventory and unchanged review holds stay quiet", async () => {
+test("twenty historical contacts share inventory and unchanged minute-time holds stay quiet", async () => {
   const h = await schedulerFixture();
   try {
     h.qrzRecords[0].TIME_ON = h.qrzRecords[0].TIME_ON!.slice(0, 4);
-    h.lotwRecords[0].MY_GRIDSQUARE = "FN31";
+    h.lotwRecords[0].TIME_ON = h.lotwRecords[0].TIME_ON!.slice(0, 4);
     for (let index = 1; index < 20; index++) {
       const call = `K1SCALE${index}`;
       h.changes.qsos.push({

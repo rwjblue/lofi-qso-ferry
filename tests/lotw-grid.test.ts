@@ -91,16 +91,21 @@ test("eight-character LoTW readback requires all eight characters even after con
   assert.equal(station.grid, "fn31pr12");
 });
 
-test("historical lower-precision grids remain review holds under the eight-character signing policy", () => {
+test("historical nested grids associate while eight-character upload verification stays exact", () => {
   for (const grid of ["FN31", "FN31PR"]) {
-    const result = classifyHistory(
-      source,
-      [{ ...source, MY_GRIDSQUARE: grid }],
-      evidence,
+    const remote = Object.freeze({ ...source, MY_GRIDSQUARE: grid });
+    const result = classifyHistory(source, [remote], evidence);
+    assert.equal(result.state, "adopted_existing");
+    assert.equal(result.remote, remote);
+    assert.equal(remote.MY_GRIDSQUARE, grid);
+    assert.equal(
+      observeLotwContact(station, contact, {
+        records: [remote],
+        receivedThrough: null,
+        complete: true,
+      }).state,
+      "projection_mismatch",
     );
-    assert.equal(result.state, "history_ambiguous");
-    assert.match(result.reason!, /lower MY_GRIDSQUARE precision/);
-    assert.equal(result.remote, undefined);
   }
   assert.equal(
     classifyHistory(

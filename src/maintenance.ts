@@ -1,5 +1,5 @@
-import { canonical, rewrap } from "./security.ts";
 import type { Envelope } from "./security.ts";
+import { canonical, rewrap } from "./security.ts";
 import type { Store } from "./store.ts";
 /** Interrupted rotation is safe: old KEKs remain readable and ciphertext stays fixed. */
 export async function rotatePrivateData(store: Store, limit = 50) {
@@ -36,7 +36,7 @@ export async function rotatePrivateData(store: Store, limit = 50) {
       );
       const update = await store
         .statement(
-          "UPDATE private_data SET envelope=? WHERE tenant=? AND connection=? AND id=? AND kind=? AND envelope=?",
+          "UPDATE private_data SET envelope=? WHERE tenant=? AND connection=? AND id=? AND kind=? AND envelope=? RETURNING id",
           canonical(envelope),
           row.tenant,
           row.connection,
@@ -44,8 +44,10 @@ export async function rotatePrivateData(store: Store, limit = 50) {
           row.kind,
           row.envelope,
         )
-        .run();
-      rotated += update.meta.changes;
+        .all<{ id: string }>();
+      // D1 changes also counts auxiliary trigger writes, such as rotating a
+      // source body's proof token. RETURNING counts only matched private rows.
+      rotated += update.results.length;
     } catch {
       blocked++;
     }

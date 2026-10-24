@@ -55,6 +55,13 @@ function numeric(value: unknown): number | undefined {
   return Number.isFinite(number) ? number : undefined;
 }
 
+function megahertz(frequencyKHz: number): number {
+  // Shift the source number's decimal representation instead of introducing
+  // binary division artifacts that look like additional transmitted precision.
+  const [significand, exponent = "0"] = frequencyKHz.toString().split("e");
+  return Number(`${significand}e${Number(exponent) - 3}`);
+}
+
 export function sourceFlag(value: unknown): boolean {
   if (
     value === undefined ||
@@ -386,7 +393,7 @@ export async function projectContact(
     stationCall: ownCall,
     startAtMillis,
     timePrecision: startAtMillis % 1000 ? "millisecond" : "second",
-    ...(frequencyKHz ? { frequencyMHz: frequencyKHz / 1000 } : {}),
+    ...(frequencyKHz ? { frequencyMHz: megahertz(frequencyKHz) } : {}),
     band,
     ...mode(qso.mode),
     ...(grid ? { grid } : {}),

@@ -3,6 +3,8 @@
  * SELECT only: no database runner, vendor request, decryption, signing or writes.
  * The caller supplies identities from the normal projection/identity helper.
  * Passing these checks never proves source completeness or fresh remote absence.
+ * A current mandatory source-export proof must still be collected and pinned by
+ * the normal runtime; policy membership alone is not that proof.
  */
 import type { DestinationIdentityClaim } from "../src/identity-claims.ts";
 import { canonical, sha256 } from "../src/security.ts";
@@ -31,6 +33,8 @@ const required = [
   "source_version_current",
   "context_current",
   "sync_forward",
+  "source_policy_ready",
+  "source_policy_membership_current",
   "birth_present",
   "destination_active",
   "destination_credential_current",
@@ -85,6 +89,8 @@ SELECT r.route_slot,r.vendor,
  (SELECT COUNT(*) FROM reconciliation_work w WHERE w.tenant=?1 AND w.source=?2 AND w.qso=?3 AND w.version=?6) source_version_current,
  (SELECT COUNT(*) FROM context WHERE generation=?7 AND json_extract(cursor,'$.complete')=1 AND json_extract(cursor,'$.syncComplete')=1) context_current,
  (SELECT COUNT(*) FROM cursors WHERE tenant=?1 AND connection=?2 AND stream='sync' AND json_extract(cursor,'$.mode')='forward') sync_forward,
+ (SELECT COUNT(*) FROM source_read_policy_ready WHERE tenant=?1 AND source=?2) source_policy_ready,
+ (SELECT COUNT(*) FROM source_read_contact_membership WHERE tenant=?1 AND source=?2 AND qso=?3 AND operation_id IS (SELECT operation_id FROM contact)) source_policy_membership_current,
  (SELECT COUNT(*) FROM source_births WHERE tenant=?1 AND source=?2 AND qso=?3) birth_present,
  (SELECT COUNT(*) FROM connections d WHERE d.tenant=?1 AND d.id=r.destination AND d.kind=r.vendor AND d.status='active') destination_active,
  (SELECT COUNT(*) FROM connections d WHERE d.tenant=?1 AND d.id=r.destination AND d.credential_version=r.credential_version) destination_credential_current,
@@ -92,7 +98,8 @@ SELECT r.route_slot,r.vendor,
    AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?8)) destination_credential_available,
  (SELECT COUNT(*) FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=r.destination AND l.generation=?4 AND l.context_generation=?7 AND l.operation_id IS (SELECT operation_id FROM contact)) ledger_current,
  (SELECT COUNT(*) FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=r.destination AND l.due_at<=?8) quiet_period_complete,
- (SELECT COUNT(*) FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=r.destination AND l.state IN('missing_current_identity','live_new') AND l.remote_id IS NULL AND l.sent_hash IS NULL AND l.provenance!='adoption_conflict') first_insert_candidate,
+ (SELECT COUNT(*) FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=r.destination AND l.state IN('missing_current_identity','live_new') AND l.remote_id IS NULL AND l.sent_hash IS NULL AND l.provenance!='adoption_conflict'
+   AND (r.vendor!='qrz' OR EXISTS(SELECT 1 FROM qrz_fresh_insert_eligible f WHERE f.tenant=l.tenant AND f.source=l.source AND f.qso=l.qso AND f.destination=l.destination))) first_insert_candidate,
  (SELECT COUNT(*) FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=?1 AND a.source=?2 AND a.qso=?3 AND a.destination=r.destination AND s.state NOT IN('delivered','observed','rejected','cancelled')) unresolved_attempts,
  (SELECT COUNT(*) FROM attempts a LEFT JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=?1 AND a.source=?2 AND a.qso=?3 AND a.destination=r.destination AND s.attempt IS NULL) attempt_states_missing,
  (SELECT COUNT(*) FROM destination_identity_claims c WHERE c.tenant=?1 AND c.destination=r.destination AND c.vendor=r.vendor AND c.identity_hash=r.identity_hash AND (c.source!=?2 OR c.qso!=?3)) competing_claims,
@@ -215,6 +222,8 @@ export function exportTrialAuditReport(
     evidence: "local-metadata-only" as const,
     writesAuthorized: false as const,
     sourceBoundaryVerified: false as const,
+    sourceExportProofVerified: false as const,
+    requiresCurrentSourceExportProof: true as const,
     freshVendorChecksComplete: false as const,
     routes,
   };

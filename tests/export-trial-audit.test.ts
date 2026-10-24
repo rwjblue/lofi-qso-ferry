@@ -7,6 +7,10 @@ import {
   exportTrialAuditReport,
 } from "../scripts/export-trial-audit.ts";
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
+import {
+  ensureSourceReadPolicy,
+  resetSourceReadPolicy,
+} from "../src/source-read-policy.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
@@ -20,7 +24,10 @@ const record = {
   MODE: "FT8",
   MY_GRIDSQUARE: "FN31AA12",
 };
-async function setup(beforeMandatoryProofMigration = false) {
+async function setup(
+  beforeMandatoryProofMigration = false,
+  readyPolicy = true,
+) {
   const h = await database();
   try {
     if (beforeMandatoryProofMigration) {
@@ -37,6 +44,11 @@ async function setup(beforeMandatoryProofMigration = false) {
         await applyMigration(h.db, file);
     } else await applyAdditionalMigrations(h.db);
     await seed(h.store);
+    await h.store
+      .statement(
+        "UPDATE connections SET config='{\"accountId\":\"source\"}' WHERE tenant='a' AND id='source'",
+      )
+      .run();
     await h.store
       .statement(
         "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at) VALUES('a','lotw','lotw','private-book','LoTW','active','v1',0)",
@@ -79,6 +91,48 @@ async function setup(beforeMandatoryProofMigration = false) {
         "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) VALUES('a','source','sync','{\"mode\":\"forward\",\"private\":\"private-token\"}',7,100),('a','source','context','{\"complete\":true,\"syncComplete\":true}',9,100)",
       )
       .run();
+    if (readyPolicy) {
+      const source = (await h.store.connection("a", "source"))!;
+      const lease = (await h.store.claim(
+        "a",
+        "poll:source:sync",
+        500,
+        90_000,
+      ))!;
+      try {
+        const { policy } = await ensureSourceReadPolicy(
+          h.store,
+          source,
+          lease,
+          500,
+        );
+        // This fixture describes metadata only. It intentionally mints no
+        // positive source proof and cannot stage an attempt on the new schema.
+        await h.db.batch([
+          h.store.statement(
+            "UPDATE source_read_policies SET phase='ready',completed_sync_generation=9,completed_at=600 WHERE tenant='a' AND source='source'",
+          ),
+          h.store.statement(
+            "UPDATE cursors SET generation=9,cursor=? WHERE tenant='a' AND connection='source' AND stream='sync'",
+            JSON.stringify({
+              mode: "forward",
+              readerPolicy: "all-clients-v1",
+              policyEpoch: policy.epoch,
+              accountId: "source",
+            }),
+          ),
+          h.store.statement(
+            "UPDATE cursors SET generation=9,cursor='{\"complete\":true,\"syncComplete\":true}' WHERE tenant='a' AND connection='source' AND stream='context'",
+          ),
+          h.store.statement(
+            "UPDATE source_work SET policy_seen_epoch=? WHERE tenant='a' AND source='source'",
+            policy.epoch,
+          ),
+        ]);
+      } finally {
+        await h.store.release(lease);
+      }
+    }
     for (const destination of ["destination", "lotw"]) {
       await h.store.observe(
         { tenant: "a", source: "source", qso: "private-contact", destination },
@@ -155,6 +209,8 @@ test("exact trial metadata remains read-only and never authorizes writes or prin
     );
     assert.equal(result.writesAuthorized, false);
     assert.equal(result.sourceBoundaryVerified, false);
+    assert.equal(result.sourceExportProofVerified, false);
+    assert.equal(result.requiresCurrentSourceExportProof, true);
     assert.equal(result.freshVendorChecksComplete, false);
     assert.deepEqual(
       await h.store
@@ -228,6 +284,161 @@ test("stale source, ledger and context generations fail independently with close
       )
       .run();
     assert.equal((await h.audit()).routes[0].counts.context_current, 0);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("forward cursors cannot substitute for a ready current all-client policy", async (t) => {
+  const absent = await setup(false, false);
+  t.after(() => absent.mf.dispose());
+  const withoutPolicy = await absent.audit();
+  assert.equal(withoutPolicy.routes[0].counts.sync_forward, 1);
+  assert.equal(withoutPolicy.routes[0].counts.context_current, 1);
+  assert.equal(withoutPolicy.routes[0].counts.source_policy_ready, 0);
+  assert.equal(
+    withoutPolicy.routes[0].counts.source_policy_membership_current,
+    0,
+  );
+  assert(withoutPolicy.routes.every((route) => !route.metadataChecksPass));
+
+  const h = await setup();
+  t.after(() => h.mf.dispose());
+  assert((await h.audit()).routes.every((route) => route.metadataChecksPass));
+  for (const phase of ["backfill", "drain", "quarantine"] as const) {
+    await h.store
+      .statement(
+        "UPDATE source_read_policies SET phase=?,completed_sync_generation=NULL,completed_at=NULL",
+        phase,
+      )
+      .run();
+    const incomplete = await h.audit();
+    assert.equal(incomplete.routes[0].counts.sync_forward, 1);
+    assert.equal(incomplete.routes[0].counts.source_policy_ready, 0);
+    assert(incomplete.routes.every((route) => !route.metadataChecksPass));
+  }
+  await h.store
+    .statement(
+      "UPDATE source_read_policies SET phase='ready',completed_sync_generation=9,completed_at=600",
+    )
+    .run();
+  assert.equal((await h.audit()).routes[0].counts.source_policy_ready, 1);
+  await h.store
+    .statement(
+      "UPDATE connections SET remote_identity='different-account' WHERE tenant='a' AND id='source'",
+    )
+    .run();
+  assert.equal((await h.audit()).routes[0].counts.source_policy_ready, 0);
+  await h.store
+    .statement(
+      "UPDATE connections SET remote_identity='source' WHERE tenant='a' AND id='source'",
+    )
+    .run();
+  assert.equal((await h.audit()).routes[0].counts.source_policy_ready, 1);
+  const source = (await h.store.connection("a", "source"))!;
+  const policy = await h.store
+    .statement("SELECT epoch FROM source_read_policies")
+    .first<{ epoch: string }>();
+  assert(policy);
+  const lease = (await h.store.claim("a", "poll:source:sync", now, 90_000))!;
+  try {
+    await resetSourceReadPolicy(
+      h.store,
+      source,
+      lease,
+      { epoch: policy.epoch, generation: 9 },
+      "cursor_gap",
+      now,
+    );
+  } finally {
+    await h.store.release(lease);
+  }
+  const reset = await h.audit();
+  assert.equal(reset.routes[0].counts.source_policy_ready, 0);
+  assert.equal(reset.routes[0].counts.source_policy_membership_current, 0);
+  assert(reset.routes.every((route) => !route.metadataChecksPass));
+});
+
+test("contact, base and every retained event need current policy membership", async () => {
+  const h = await setup();
+  try {
+    const epoch = await h.store
+      .statement("SELECT epoch FROM source_read_policies")
+      .first<string>("epoch");
+    assert(epoch);
+    for (const id of [
+      "private-contact",
+      "private-operation",
+      "private-event",
+    ]) {
+      const current = await h.audit();
+      assert(current.routes.every((route) => route.metadataChecksPass));
+      await h.store
+        .statement(
+          "UPDATE source_work SET policy_seen_epoch=NULL WHERE id=?",
+          id,
+        )
+        .run();
+      const stale = await h.audit();
+      assert.equal(stale.routes[0].counts.source_policy_ready, 1);
+      assert.equal(stale.routes[0].counts.dependencies_available, 1);
+      assert.equal(stale.routes[0].counts.source_policy_membership_current, 0);
+      assert(stale.routes.every((route) => !route.metadataChecksPass));
+      await h.store
+        .statement(
+          "UPDATE source_work SET policy_seen_epoch=? WHERE id=?",
+          epoch,
+          id,
+        )
+        .run();
+    }
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("QRZ trial candidate follows the narrow first-insert view without implying a source proof", async () => {
+  const h = await setup();
+  try {
+    await h.store
+      .statement(
+        "UPDATE ledger SET baseline_hash=source_hash WHERE destination='destination'",
+      )
+      .run();
+    assert.equal((await h.audit()).routes[0].counts.first_insert_candidate, 1);
+    for (const update of [
+      "baseline_hash='different'",
+      "remote_hash='accepted'",
+      "confirmed=1",
+      "provenance='adopted'",
+      "provenance='ferry_created'",
+      "narrative='remote_preserved'",
+    ]) {
+      await h.store
+        .statement(
+          `UPDATE ledger SET ${update} WHERE destination='destination'`,
+        )
+        .run();
+      const report = await h.audit();
+      assert.equal(report.routes[0].counts.first_insert_candidate, 0);
+      assert.equal(report.routes[0].metadataChecksPass, false);
+      assert.equal(report.routes[1].counts.first_insert_candidate, 1);
+      await h.store
+        .statement(
+          "UPDATE ledger SET baseline_hash=source_hash,remote_hash=NULL,confirmed=0,provenance='unknown',narrative='unbound' WHERE destination='destination'",
+        )
+        .run();
+    }
+    const metadataOnly = await h.audit();
+    assert(metadataOnly.routes.every((route) => route.metadataChecksPass));
+    assert.equal(metadataOnly.sourceExportProofVerified, false);
+    assert.equal(metadataOnly.requiresCurrentSourceExportProof, true);
+    assert.equal(
+      await h.store
+        .statement("SELECT count(*) n FROM source_export_proofs")
+        .first<number>("n"),
+      0,
+    );
   } finally {
     await h.mf.dispose();
   }
@@ -309,6 +520,7 @@ test("identity ownership and unresolved attempts stay scoped to the exact tenant
       )
       .run();
     await applyMigration(h.db, "0030_source_export_guards.sql");
+    await applyMigration(h.db, "0031_qrz_fresh_insert_authorization.sql");
     await seed(h.store, "foreign");
     await h.store.observe(
       {
@@ -372,14 +584,23 @@ test("identity ownership and unresolved attempts stay scoped to the exact tenant
     assert.equal((await h.audit()).routes[0].counts.competing_claims, 1);
     assert.equal((await h.audit()).routes[1].counts.competing_claims, 0);
     assert.equal((await h.audit()).routes[0].counts.attempt_states_missing, 1);
+    assert.equal((await h.audit()).routes[0].counts.first_insert_candidate, 0);
     await h.store
       .statement(
         "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a','attempt','unknown-state',0,0)",
       )
       .run();
     assert.equal((await h.audit()).routes[0].counts.unresolved_attempts, 1);
+    assert.equal((await h.audit()).routes[0].counts.first_insert_candidate, 0);
     await h.store.statement("UPDATE attempt_state SET state='cancelled'").run();
     assert.equal((await h.audit()).routes[0].counts.unresolved_attempts, 0);
+    assert.equal((await h.audit()).routes[0].counts.first_insert_candidate, 1);
+    await h.store
+      .statement(
+        "INSERT INTO attempt_events(tenant,attempt,state,at) VALUES('a','attempt','uncertain',500)",
+      )
+      .run();
+    assert.equal((await h.audit()).routes[0].counts.first_insert_candidate, 0);
   } finally {
     await h.mf.dispose();
   }

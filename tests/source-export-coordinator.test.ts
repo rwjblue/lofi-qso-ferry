@@ -170,6 +170,7 @@ async function fixture(
     source,
     destination,
     scope,
+    operations,
     qsos,
     requests,
     network,
@@ -186,6 +187,169 @@ async function fixture(
     },
   };
 }
+
+/** Real retained anchors position each requested QSO behind one separate page. */
+function scatteredCollection(
+  h: Awaited<ReturnType<typeof fixture>>,
+  failure?: "read" | "event" | "partial_drain",
+  onCollection?: (count: number) => void,
+) {
+  let collections = 0;
+  const selected = h.qsos.filter((_, index) => index % 2 === 0);
+  const rows = [
+    ...h.qsos,
+    ...selected.flatMap((qso) =>
+      Array.from({ length: 24 }, (_, index) => ({
+        ...qso,
+        uuid: `${qso.uuid}-neighbor-${index}`,
+        syncedAtMillis: Number(qso.syncedAtMillis) - index - 1,
+      })),
+    ),
+  ];
+  h.intercept(async (url, init) => {
+    if (!url.endsWith("/v1/sync")) return null;
+    const sync = JSON.parse(String(init?.body)).meta.sync;
+    if (sync.qsos.syncedSinceMillis !== undefined) {
+      if (failure !== "partial_drain") return null;
+      return Response.json({
+        account: { uuid: "source" },
+        operations: [],
+        qsos: [
+          { ...h.qsos[0], uuid: "drain-neighbor", syncedAtMillis: Date.now() },
+        ],
+        meta: {
+          operations: { records_left: 0 },
+          qsos: { records_left: 1, next_cursor: "unfinished-drain" },
+        },
+      });
+    }
+    collections++;
+    onCollection?.(collections);
+    if (failure === "read" && collections === 3)
+      throw new Error("Synthetic collection transport failure");
+    const page = rows
+      .filter((row) => Number(row.syncedAtMillis) < sync.qsos.syncedUntilMillis)
+      .sort((a, b) => Number(b.syncedAtMillis) - Number(a.syncedAtMillis))
+      .slice(0, 25);
+    if (failure === "event" && collections === 3)
+      page[1] = {
+        ...page[1],
+        uuid: "unknown-collection-event",
+        band: "event",
+        event: {},
+      };
+    return Response.json({
+      account: { uuid: "source" },
+      operations: h.operations,
+      qsos: page,
+      meta: {
+        operations: { records_left: 0 },
+        qsos: { records_left: 1, next_cursor: `scattered-${collections}` },
+      },
+    });
+  });
+  return selected.map((row) => String(row.uuid));
+}
+
+test("a request-limited cohort drains and proves only complete witnessed contacts, then makes progress on the remainder", async (t) => {
+  const h = await fixture(t, { count: 12, stampStep: 50 });
+  await h.clearPresence();
+  const selected = scatteredCollection(h);
+  const first = await h.run(selected);
+  assert.equal(first.held, "request_budget");
+  assert.equal(first.actualAttempts, 4);
+  assert.equal(first.remainingRequests, 0);
+  assert.deepEqual(first.ready.map(({ contact }) => contact.id).sort(), [
+    "q10",
+    "q6",
+    "q8",
+  ]);
+  assert.equal(await h.proofCount(), 3);
+  assert.equal(first.sourceBoundaryVerified, false);
+  assert.equal(first.writesAuthorized, false);
+  const rows = await h.store
+    .statement("SELECT proof FROM source_export_proofs ORDER BY qso")
+    .all<{ proof: string }>();
+  for (const row of rows.results) {
+    const proof = JSON.parse(row.proof);
+    assert.equal(proof.dependencies.length, 2);
+    assert.ok(proof.completeReadStartedAt >= proof.collectionFinishedAt);
+    assert.ok(
+      proof.dependencies.every(
+        (dependency: { requestStartedAt: number }) =>
+          dependency.requestStartedAt <= proof.collectionFinishedAt &&
+          proof.expiresAt <= dependency.requestStartedAt + 300_000,
+      ),
+    );
+  }
+  const completed = new Set(first.ready.map(({ contact }) => contact.id));
+  const remaining = selected.filter((id) => !completed.has(id));
+  const second = await h.run(remaining);
+  assert.equal(second.held, null);
+  assert.equal(second.actualAttempts, 4);
+  assert.deepEqual(
+    second.ready.map(({ contact }) => contact.id).sort(),
+    remaining.sort(),
+  );
+  assert.equal(await h.proofCount(), 6);
+});
+
+test("partial witnesses never publish proofs after read errors, unknown events or an incomplete final drain", async (t) => {
+  for (const failure of [
+    "read",
+    "event",
+    "partial_drain",
+    "new_final_event",
+  ] as const)
+    await t.test(failure, async (t) => {
+      const h = await fixture(t, { count: 12, stampStep: 50 });
+      await h.clearPresence();
+      const selected = scatteredCollection(
+        h,
+        failure === "new_final_event" ? undefined : failure,
+      );
+      if (failure === "new_final_event") h.injectEvent();
+      const result = await h.run(selected);
+      assert.equal(
+        result.held,
+        failure === "read"
+          ? "read_failed"
+          : failure === "event"
+            ? "dependency_changed"
+            : "drain_incomplete",
+      );
+      assert.deepEqual(result.ready, []);
+      assert.equal(
+        result.actualAttempts,
+        failure === "read" || failure === "event" ? 3 : 4,
+      );
+      assert.equal(await h.proofCount(), 0);
+    });
+});
+
+test("request-budget partial collection cannot reuse positives that expire before its reserved drain", async (t) => {
+  const h = await fixture(t, { count: 12, stampStep: 50 });
+  const oldest = await h.store
+    .statement("SELECT MIN(positive_observed_at) AS oldest FROM source_work")
+    .first<number>("oldest");
+  assert.ok(oldest);
+  let clock = oldest + 299_000;
+  t.mock.method(Date, "now", () => clock);
+  await h.store
+    .statement(
+      "UPDATE source_work SET positive_observed_at=NULL,positive_policy_epoch=NULL,positive_credential_version=NULL WHERE id IN('q0','q2','q4','q6')",
+    )
+    .run();
+  const selected = scatteredCollection(h, undefined, (count) => {
+    if (count === 3) clock += 2_000;
+  });
+  const result = await h.run(selected);
+  assert.equal(result.held, "witness_expired");
+  assert.equal(result.actualAttempts, 3);
+  assert.equal(result.remainingRequests, 1);
+  assert.deepEqual(result.ready, []);
+  assert.equal(await h.proofCount(), 0);
+});
 
 test("twenty contacts share positive collection and one canonical drain without destination I/O", async (t) => {
   const h = await fixture(t);

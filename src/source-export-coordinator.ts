@@ -12,6 +12,7 @@ import {
 } from "./source-presence-collector.ts";
 import {
   loadSourcePresence,
+  SOURCE_PRESENCE_MAX_AGE_MS,
   type SourcePresenceScope,
   type SourcePresenceTarget,
 } from "./source-presence-store.ts";
@@ -30,6 +31,7 @@ type Hold =
   | "proof_unavailable";
 export interface SourceExportCohortResult {
   ready: { contact: IntakeContact; proofId: string; expiresAt: number }[];
+  /** Only request_budget may accompany ready contacts; the remainder stays held. */
   held: Hold | null;
   actualAttempts: number;
   remainingRequests: number;
@@ -207,9 +209,35 @@ export async function ensureSourceExportProofs(
     );
     await session.persistRenewal(collected.credentials);
     if (collected.retryAt !== undefined) retryAt = collected.retryAt;
-    if (collected.status !== "observed")
+    const partial =
+      collected.status === "held" && collected.reason === "request_budget";
+    if (collected.status !== "observed" && !partial)
       return result(transportHold ?? collected.reason ?? "read_failed");
     const collectionFinishedAt = time();
+    // A budget exit occurs before the collector's final freshness check. Do not
+    // turn old cached positives or a failed observation into partial authority.
+    if (
+      collected.witnesses.some(
+        (witness) =>
+          !integer(witness.requestStartedAt) ||
+          witness.requestStartedAt > collectionFinishedAt ||
+          witness.requestStartedAt <=
+            collectionFinishedAt - SOURCE_PRESENCE_MAX_AGE_MS,
+      )
+    )
+      return result("witness_expired");
+    const witnessed = (target: SourcePresenceTarget) =>
+      collected.witnesses.some(
+        (witness) =>
+          canonical(witness.scope) === canonical(scope) &&
+          canonical(witness.target) === canonical(target),
+      );
+    // Only complete contact closures can use the reserved drain. A contact with
+    // even one unobserved base/event/QSO remains held, regardless of its size.
+    const selected = partial
+      ? before.filter((snapshot) => snapshot.targets.every(witnessed))
+      : before;
+    if (!selected.length) return result("request_budget");
     // This shared canonical read includes newly arrived/previously unknown
     // events. A terminal page that started from a continuation cannot qualify.
     const drained = await pollSource(
@@ -221,9 +249,14 @@ export async function ensureSourceExportProofs(
       null,
     );
     if (!drained.complete) return result("drain_incomplete");
-    const after = await loadSourceExportSnapshots(store, scope, qsos, time());
+    const after = await loadSourceExportSnapshots(
+      store,
+      scope,
+      selected.map((snapshot) => snapshot.contact.id),
+      time(),
+    );
     if (
-      after.length !== qsos.length ||
+      after.length !== selected.length ||
       after.some(
         (snapshot) =>
           snapshot.completeReadStartedAt === null ||
@@ -232,18 +265,9 @@ export async function ensureSourceExportProofs(
     )
       return result("drain_incomplete");
     for (const snapshot of after) {
-      if (
-        snapshot.targets.some(
-          (target) =>
-            !collected.witnesses.some(
-              (witness) =>
-                canonical(witness.scope) === canonical(scope) &&
-                canonical(witness.target) === canonical(target),
-            ),
-        )
-      )
+      if (snapshot.targets.some((target) => !witnessed(target)))
         return result("source_changed");
-      const original = before.find(
+      const original = selected.find(
         (item) => item.contact.id === snapshot.contact.id,
       );
       if (!original) return result("source_changed");
@@ -286,7 +310,7 @@ export async function ensureSourceExportProofs(
         expiresAt: proof.expiresAt,
       });
     }
-    return result(null, ready);
+    return result(partial ? "request_budget" : null, ready);
   } catch (error) {
     if (error instanceof VendorDeferredError) {
       retryAt = error.retryAt;

@@ -8,21 +8,18 @@ replaced, deleted or uploaded during this implementation work.
 
 ## Current evidence (2026-10-24 UTC)
 
-The owner has enrolled and linked LoFi, QRZ and LoTW. Signed source
-`4fefd2ae3941f68cd07af22743df478a95976a5c` deployed read-only as Worker
-`7bffe640-e86d-4d54-bb7c-24ca6ded7cd2` at 01:06 UTC. All **829 tests** and required
-checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40046763351);
-focused tests and static/build checks also passed locally.
-Live checks at 01:07 UTC confirmed twenty-three migrations, healthy service,
-matching assets and all five gates closed. There are 380 LoTW identity claims
-with zero uncovered mappings; attempts, cutovers, legacy holds and temporary
-guards remain zero. The release adds bounded QRZ covering reads and UTC-midnight
-date fixes, current source-base comparison and a known-positive forward replay
-probe. Automatic covering fallback is not integrated, and the forward probe
-requires independent writer evidence before live execution. The earlier guarded
-fifteen-minute QRZ retry holds remain; they do not establish absence or clear the
-backlog. No new migration was needed. See
-[deployment evidence](deployment.md).
+The owner has enrolled and linked LoFi, QRZ and LoTW.
+Signed revision `d575e21ca0b8f803c91bb2029c7c2246949483bc` deployed read-only
+at 01:59 UTC as Worker `a0c6a5a8-b062-43a0-a06b-789d6345954f`. All **925 tests**
+and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40051457580).
+Independent 02:00–02:01 UTC checks confirm healthy service, matching assets,
+all six export gates closed, all 23 migrations, 380 LoTW identity claims and
+zero uncovered mappings, attempts, cutovers, legacy holds or temporary guards.
+No new migration was needed. The release integrates bounded QRZ history
+covering reads, separate fresh collision checks and explicit destination scope.
+The first new scheduler run completed at 02:02:16 UTC. At 02:03:58, one
+QRZ cover was complete after matching reads of 98 records, with none in the
+original target. Other gaps and real vendor acceptance remain unverified.
 
 The earlier read-only D1 snapshot at **2026-10-23 21:53:13 UTC** contains zero export attempts and
 zero cutovers. The five completed scheduler runs from 21:30 through 21:50 processed
@@ -44,11 +41,11 @@ ambiguous identities, lower-precision locations or missing routes.
 | Source boundary           | Local replay, tombstone and cutover guards are implemented. Exhaustive UUID/tombstone coverage and the live replay/retention contract are not established. A completed cursor alone is insufficient.                                                                                                                 |
 | Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                             |
 | LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Historical lower-precision associations and live ARRL acceptance remain unproved.                                                                                                     |
-| First vendor writes       | No first-write trial is authorized or performed. Prepare exact source UUIDs, destination identities, projected fields and expected readback before requesting it.                                                                                                                                                    |
+| First vendor writes       | The owner authorized one or two contacts, QRZ first and LoTW afterward, with a database backup before external changes. No write has occurred. Exact source/destination selection, current evidence and normal delivery prerequisites remain required.                                                               |
 
 ## Finish reconciliation and review exceptions
 
-Keep all five export gates closed while doing this work. Preserve cursors, source
+Keep all six export gates closed while doing this work. Preserve cursors, source
 birth evidence, current context and destination reservations; clearing counts or
 forcing a contact into an eligible state is not reconciliation.
 
@@ -96,19 +93,37 @@ cursor aging and server retention still need evidence. The bounded forward
 probe is implemented but still needs independently verified writer provenance
 before a live run. No deletion or source repair was inferred from local differences.
 
-QRZ absence work now has a bounded covering-read primitive and UTC-midnight
-neighborhood regressions. At 01:09 UTC a fresh 35-day cover returned 467 records
-across two complete pages, with zero records inside one seven-day pending gap.
-Book and target scope stayed valid through the read. This is observed coverage
-for one gap; automatic fallback and fresh pre-write coverage are not integrated,
-and the other pending ranges remain unverified. Integrate the bounded read path
-with normal history verification and commit fences. Cached metadata may select
-a range but cannot supply fresh evidence. See the [QRZ evidence](evidence-qrz.md#bounded-covering-reads-2026-10-24-utc).
+QRZ absence work now has integrated bounded history fallback and separate
+fresh collision checks. A prior 35-day read observed 467 records across two
+complete pages with none in one pending seven-day gap. The deployed history path
+requires matching complete covers before publishing cached evidence; the fresh
+path verifies the current book and scope again before writes. One automatic
+cover completed in production at the 02:03:58 observation, with 98 surrounding
+records and zero target records. The remaining gaps and actual insert/readback
+acceptance still need observation. See the [QRZ evidence](evidence-qrz.md#integrated-history-and-fresh-checks).
+
+The all-client source inventory completed its first 4,500-record pass at 02:10
+UTC, matching Ferry identities and versions. Its second pass is incomplete.
+The source policy still needs its
+[versioned baseline and handoff](capacity-plan.md#planned-versioned-all-client-source-baseline-and-handoff),
+plus fresh positive source/context validation for main exports. A bounded
+all-client forward probe is implemented but requires a completed fresh inventory
+before execution. These checks do not open the global source gate.
 
 ## First-export trial packet
 
-Prepare this restricted packet before asking for live-write authorization. Keep
-private contact details out of repository documentation.
+The owner has authorized a one- or two-contact trial with QRZ first, followed by
+LoTW. Prepare this restricted packet and satisfy the evidence prerequisites before
+executing that scope. Keep private contact details out of repository documentation.
+
+A protected production SQL backup completed at 01:23 UTC on 2026-10-24. It restored
+successfully into isolated in-memory SQLite with valid integrity, zero foreign-key
+violations and all 23 migrations. The separately protected encryption-key backup
+decrypted all three current credentials. Restore quarantine was applied twice to
+the isolated copy: accounts, connections, sessions, credentials and leases were
+inactive, while attempts and permanent claims were preserved. No production
+restore or external logbook write occurred. Take a current backup before the live
+trial if the intervening state changes warrant it.
 
 The [read-only trial audit](../scripts/export-trial-audit.ts) accepts one explicit
 contact, current revision/generation and normal projected destination identities.
@@ -131,16 +146,17 @@ does not impose eight-character grids on other users or contacts.
    exact timestamp and projected station/contact fields. Preserve its actual
    source grid (4/6/8 characters); exercise fractional time and eight-character
    precision when naturally present in the selected contact.
-3. Name every routed destination: the exact QRZ book and LoTW account, with the
-   relevant station/certificate and date coverage. The existing UUID allowlist
-   applies across **all routed destinations**; it is not a destination allowlist.
-   A QRZ-only trial needs an explicitly reviewed route/connection plan first.
+3. Name the exact QRZ book or LoTW account, with the relevant station/certificate
+   and date coverage. Set both the contact and destination allowlists to the
+   reviewed scope. The destination allowlist must exclude LoTW during the first
+   QRZ trial; absent or empty scope grants no write permission.
 4. Review fresh absence or existing association evidence, identity reservations,
    source context, quiet period, credentials and all unresolved attempts. Confirm
    the selected contact has no ambiguity, location mismatch or competing owner.
 5. Show the expected QRZ record/narrative and LoTW signed station fields, the exact
-   UUID scope, and the stop conditions. Obtain explicit permission for those real
-   destination writes. A test callsign is excluded by Ferry and is not a bypass.
+   UUID and destination scope, and the stop conditions. Use the owner's existing
+   one- or two-contact authorization only within that scope. A test callsign is
+   excluded by Ferry and is not a bypass.
 6. Enable only the approved scope after prerequisites are met. Record QRZ receipt
    and exact readback. For LoTW, distinguish upload acknowledgment (**submitted**)
    from exact later readback (**observed**); QSL confirmation is independent.
@@ -159,7 +175,8 @@ prove replacement, cleanup, restore or arbitrary station/mode coverage.
 
 Enablement requires all of `EXPORTS_ENABLED=true`, `ROLLOUT_CHECKS_PASSED=true`,
 `SOURCE_BOUNDARY_VERIFIED=true`, the exact authorization value documented in
-[operations](operations.md), and a nonempty `ROLLOUT_QSO_IDS_JSON` scope. None of
+[operations](operations.md), and nonempty `ROLLOUT_QSO_IDS_JSON` and
+`ROLLOUT_DESTINATION_IDS_JSON` scopes. None of
 these values is evidence by itself. The guarded deployment task deliberately
 refuses open gates; current readiness deployments use it unchanged.
 

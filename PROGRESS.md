@@ -1,6 +1,44 @@
 # Implementation progress
 
-Current checkpoint, 2026-10-24 01:06 UTC: signed revision
+Current checkpoint, 2026-10-24 02:11 UTC:
+
+Signed revision `d575e21ca0b8f803c91bb2029c7c2246949483bc` deployed read-only
+at 01:59 UTC as Worker `a0c6a5a8-b062-43a0-a06b-789d6345954f`. All **925 tests**
+and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40051457580).
+Independent 02:00–02:01 UTC checks confirm healthy service, matching assets,
+all six export gates closed, all 23 migrations, 380 LoTW identity claims and
+zero uncovered mappings, attempts, cutovers, legacy holds or temporary guards.
+No new migration was needed. The release integrates bounded QRZ history
+covering reads, separate fresh collision checks and explicit destination scope.
+The first new scheduler run completed at 02:02:16 UTC. At 02:03:58, one
+QRZ cover was complete after matching reads of 98 records, with none in the
+original target. Other gaps and real vendor acceptance remain unverified.
+
+The protected source audit completed its first full inventory at 02:10 UTC:
+4,500 records, comprising 218 operations, 4,154 contacts and 128 events, with
+60 deleted records. All 4,500 identities and versions match Ferry. HaLo has
+13 fewer contacts, 3,247 server-stamp differences and 180 unknown versions;
+application versions, flags and membership agree for shared records. The second
+pass has 400 records and remains incomplete. A prior empty-incomplete response
+did not advance its checkpoint; later reads resumed. Production source cursors and
+source records remain unchanged. Complete both inventories before claiming
+membership agreement. All-client forward tooling is implemented with strict
+remote-observation freshness and 116 focused audit/probe tests; it has not run
+against production. Independent local resumes cannot freshen remote evidence.
+
+The protected SQL backup completed at 01:23 UTC and passed isolated integrity,
+foreign-key, migration and credential-decryption checks. Applying restore
+quarantine twice preserved claims while disabling restored access and work.
+No production restore occurred. The owner authorized one or two real contacts,
+QRZ first then LoTW, after sufficient evidence; no vendor write has occurred.
+
+Next: observe the deployed QRZ fallback, complete both source inventory passes
+and the fresh forward probe, then implement the reviewed all-client baseline
+handoff and positive source/context validation. Main exports remain disabled;
+a sampled agreement is not a global source-boundary proof. See the [roadmap](ROADMAP.md)
+and [rollout checklist](docs/rollout-checklist.md).
+
+Previous checkpoint, 2026-10-24 01:06 UTC: signed revision
 `4fefd2ae3941f68cd07af22743df478a95976a5c` is deployed as Worker
 `7bffe640-e86d-4d54-bb7c-24ca6ded7cd2` at 100% traffic. The release adds bounded
 QRZ covering reads, correct neighborhood date bounds across UTC midnight,
@@ -401,12 +439,12 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 
 ## Next action and rollout boundaries
 
-1. Obtain independent source replay/tombstone/retention proof. The 22:19 UTC audit confirms both destination rescans complete, consistent retained births and current payloads, plus two contacts attached to deleted operations. Those contacts stay held; zero pending operation rereads is not evidence they can export.
-2. Diagnose the persistent QRZ read rejections and review the exact trial contacts and every routed destination, including fractional timestamps, full station grids, certificates, identity claims and fresh remote checks. Historical minute-only time, lower grid precision, location mismatch and routing holds require explicit evidence; cron does not approve them.
-3. Prepare the exact first-write packet in the [rollout checklist](docs/rollout-checklist.md). The protected local encryption-key backup decrypted current credentials; off-device storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account. The live account still has one active key.
-4. After those prerequisites, obtain explicit authorization for the named UUIDs, QRZ book and LoTW account. Verify QRZ receipt/readback and LoTW observed acceptance, then close the gates and review before broader scope.
+1. Complete both independent source inventory passes and the fresh all-client forward probe. Implement the versioned all-client baseline and fresh positive source/context validation before claiming main-export readiness. Contacts attached to deleted or unverified operations stay held; zero pending rereads does not establish eligibility.
+2. Observe the remaining QRZ gaps after the first successful automatic covering read, then review the exact trial contacts and destinations, including fractional timestamps, full station grids, certificates, identity claims and fresh remote checks. Historical minute-only time, lower grid precision, location mismatch and routing holds require explicit evidence; cron does not approve them.
+3. Prepare the exact first-write packet in the [rollout checklist](docs/rollout-checklist.md). The protected SQL backup passed isolated restore and current credential-decryption checks; refresh it before external changes if needed. Off-device key storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account.
+4. The owner has already authorized a one- or two-contact trial, QRZ first then LoTW, after the evidence prerequisites. Bind it to exact contact and destination scopes, verify QRZ receipt/readback and LoTW observed acceptance, then close the gates and review before broader scope.
 
-All five gates remain closed. Unrelated historical exceptions may remain isolated during an explicitly scoped trial; broad automatic coverage needs its own review. Replacement and old-identity cleanup remain disabled until separately proven. Continue resource/cost, restore/revocation, browser/passkey and full workload acceptance before expansion. Staging remains undeployed. See [roadmap](ROADMAP.md), [deployment](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md).
+All six gates remain closed. Unrelated historical exceptions may remain isolated during an explicitly scoped trial; broad automatic coverage needs its own review. Replacement and old-identity cleanup remain disabled until separately proven. Continue resource/cost, restore/revocation, browser/passkey and full workload acceptance before expansion. Staging remains undeployed. See [roadmap](ROADMAP.md), [deployment](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md).
 
 ## Previous follow-up: LoFi connection freshness
 

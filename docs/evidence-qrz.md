@@ -136,12 +136,36 @@ than inferring absence from QRZ's ambiguous `FAIL`. It is a finite observation,
 not a snapshot or proof for the other pending ranges. No repeated expansion or
 retry loop was used. The result was not imported into production history state.
 
-Automatic reconciliation fallback is not connected to this primitive. Neither
-the failed expanded probe nor retry expiry establishes QRZ absence. Successful
-covering reads still need the normal history verification, source/generation
-and adoption fences, and a fresh pre-write duplicate check. Integrate a bounded,
-resumable fallback under those existing guards, validate the other pending gaps,
-and separately establish fresh pre-write coverage before any trial write.
+### Integrated history and fresh checks
+
+The automatic history path now recovers only the exact ambiguous-empty response
+with one fixed cover of at most 35 days. Current same-scope positive metadata can
+choose the smallest containing range; otherwise one directional range is chosen.
+The plan never widens itself after failure. Each scheduler advance performs at
+most one budgeted FETCH, with four attempts per pass and the original partition
+expiry. Inclusive continuation anchors must match exactly. Every outer record
+is validated before filtering to the original target; only hashes and counters
+from outer records are retained. The target becomes complete only after two
+complete covers agree in content and count. Changed, malformed, oversized or
+incomplete reads stay held. Cached results still have no fresh-write authority.
+
+The fresh neighborhood path separately handles the same response with verified
+STATUS book identity and one complete current cover. Its hard bounds are four
+targeted FETCHs, one STATUS and four covering FETCHs, sharing a 60-second deadline.
+All modes inside the call/band/time neighborhood remain collision candidates.
+Partial targeted results are discarded before fallback. Account, source,
+destination, credential and book scope are rechecked during reads and before
+write authorization; existing generation, dependency, claim and lease fences
+remain required. A new destination allowlist makes a QRZ-only trial explicit.
+
+Focused tests cover the observed 467-record gap, changed anchors and verification
+passes, malformed outer records, scope races, midnight boundaries and bounded
+failure. The implementation deployed read-only at 01:59 UTC. Its first new
+scheduled run completed at 02:02:16 UTC; the 02:03:58 aggregate found one complete
+cover after matching base/verification reads of 98 surrounding records and zero
+records in the original target. No attempt or cutover was created. This verifies
+one automatic cache completion in production. Remaining gaps, fresh live
+pre-write checks and real insert/readback acceptance remain unverified.
 
 ## ADIF and template profile
 
@@ -171,7 +195,7 @@ Legacy LoTW prior-identity exclusions still depend on retained, unrevoked `lotw_
 
 Migration `0024_identity_mapping_overlap.sql` closes the deployment overlap where an old Worker invocation can adopt a mapping after `0023` has seeded existing rows. Every subsequent LoTW mapping write atomically reserves its canonical hash; a conflicting owner aborts the mapping. QRZ mapping changes reserve the exact LOGID unless an exact completed receipt is linked to the same immutable attempt claim. Current historical adoption removes only its own exact LOGID/owner/hash reservation under the same proof transaction, including idempotent adoption. Legacy mappings without that proof remain held for bounded readback; an unresolved older LOGID reservation cannot be overwritten.
 
-The claims replace the earlier blanket fractional-timestamp block; they do not open any export gate, approve historical precision mismatches, establish source completeness or prove vendor acceptance. All five production gates remain closed. New regression fixtures cover competing-stage races, atomic rollback, retained ownership, migration, exact payload linkage and final source/dependency/lease changes, including fractional-time contacts with full eight-character grids and lost mutation responses.
+The claims replace the earlier blanket fractional-timestamp block; they do not open any export gate, approve historical precision mismatches, establish source completeness or prove vendor acceptance. All six production gates remain closed. New regression fixtures cover competing-stage races, atomic rollback, retained ownership, migration, exact payload linkage and final source/dependency/lease changes, including fractional-time contacts with full eight-character grids and lost mutation responses.
 
 Limits do not depend on clocks or cooperative timeouts: 16 KiB combined template source, 16 nesting levels, 2,048 structural tokens, 20,000 execution steps, 1,000 aggregate loop iterations, 64 KiB intermediate allocation budget and 8 KiB final UTF-8 output per field, rechecked after normalization. Filters preflight expanding joins and bound split/replacement results. There is no include, filesystem/network, JavaScript evaluation, arbitrary property traversal or compiled code path. The profile rejects prototype properties. `now` must be captured by the durable preparer once per eligible source generation; templates cannot schedule work themselves.
 

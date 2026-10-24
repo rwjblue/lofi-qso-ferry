@@ -70,7 +70,7 @@ Open `http://localhost:8787`. Signup uses a browser-bound local mailbox and a di
 
 The dashboard manages one current connection per optional service, immutable QRZ template versions, passkeys and the 20–60 minute quiet period. Its read-only review shows retained LoFi contacts, scan/context progress, station/location and current-template previews before enabling delivery. Source counts and destination reconciliation counts are separate. Cron processes contacts automatically, including operation/segment corrections, without an operation-release step. Signing runs inside the Worker; submission, observed acceptance and confirmation remain separate states.
 
-[Live read-only evidence](docs/evidence-live-readonly.md) verifies bounded existing-account reads from LoFi, QRZ and LoTW. These reads do not establish complete historical absence or mutation compatibility. No existing log was modified. Production exports require verified source boundaries, rollout checks, explicit live-write authorization and a scoped QSO allowlist. All checked-in environments disable exports.
+[Live read-only evidence](docs/evidence-live-readonly.md) verifies bounded existing-account reads from LoFi, QRZ and LoTW. These reads do not establish complete historical absence or mutation compatibility. No existing log was modified. Production exports require verified source boundaries, rollout checks, explicit live-write authorization and both contact and destination allowlists. All checked-in environments disable exports.
 
 The roadmap distinguishes completed implementation from blocked vendor, hardware and deployment checks. Primary sources and experiments were checked on 2026-10-22.
 

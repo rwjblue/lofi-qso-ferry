@@ -120,6 +120,62 @@ Compare UUID, operation membership, server timestamp, deletion/purge and event c
 
 This targeted probe verifies one operation's observed response and adapter behavior. A whole-account shadow inventory would need its own bounded, resumable, protected read plan and independent expected UUID set. It cannot be replaced by comparing two aggregate counts. Without the server-boundary evidence above, `SOURCE_BOUNDARY_VERIFIED` remains false even if the targeted probe and every local fixture pass.
 
+### All-client inventory audit and remaining read-policy work (2026-10-24 UTC)
+
+The [resumable inventory audit](../scripts/source-inventory-audit.ts) reads two
+independent full `/v1/sync` backfills with `anyClient:true`, comparing their
+operation/contact/event identities and versions against separate HaLo and Ferry
+manifests. Each continuation permits four actual reads over 120 seconds, with
+200 requested rows per stream, a 2 MiB response cap, bounded tie expansion,
+10,000 retained metadata rows and a 90-minute total age. Scope and credentials
+must remain current. Private checkpoints contain metadata and opaque cursors,
+never credentials or QSON bodies; production intake cursors are untouched.
+Budget denial before dispatch consumes no read attempt.
+
+The first successful continuation ended at 01:47:15 UTC after four reads and
+77.929 seconds. It retained 1,018 records: 218 operations, 795 contacts and five
+events, including 46 deleted records. Five duplicate observations and four
+timestamp ties were consistent; no page expansion occurred. Both inventories
+are still incomplete, so this is progress rather than completeness evidence.
+The checkpoint is durable; source mutations and production cursor writes were
+zero. Future continuations must retain the same scope and the shared vendor
+budget. All source-boundary and write-authority flags remain false.
+
+At 02:10:56 UTC, 24 total reads had accepted 23 pages and completed the first
+pass: 4,500 records, including 218 operations, 4,154 contacts, 128 events and
+60 deleted records. Ferry matches all identities, flags, membership, application
+versions, server stamps and revisions. HaLo has 13 fewer contacts, 3,247 differing
+server stamps and 180 unknown versions; shared flags, membership and application
+versions agree. Both independent local snapshots remained stable through the
+first comparison. The second server pass has 400 records and is incomplete, so
+repeat agreement is not yet established. No source mutation or production cursor
+write occurred.
+
+Independent HaLo metadata contains fractional historical server stamps and some
+missing stamps. The audit preserves those values exactly and reports version
+differences or unknowns; it never rounds them into agreement. Live sync cursor
+and remote checkpoint stamps remain integer-only, matching the existing adapter.
+
+Primary implementation notes identify two further boundaries. The maintainer
+corrected [HALO-454](https://cabo.ham2k.com/halo/c/454) to say REST reads use
+`cutoff_in_days`, while the sync controller has no such cutoff. Thus a complete
+operation-QSO REST response does not by itself prove full historical membership
+for every account plan. Earlier exact positive observations remain valid.
+[HALO-609](https://cabo.ham2k.com/halo/c/609) reports that `anyClient:false` can
+exclude rows whose writer is NULL. The deployed timestamp correction described
+in [HALO-770](https://cabo.ham2k.com/halo/c/770) does not establish that this filter
+was fixed. [HALO-787](https://cabo.ham2k.com/halo/c/787) describes all-client
+forward reads for claims; that alone does not prove deployed QSO/operation
+behavior.
+
+Ferry's current forward policy therefore needs a versioned all-client baseline
+and handoff, with recovered old rows classified as historical. Merely changing a
+flag while reusing filtered opaque cursors cannot recover prior omissions and
+could misclassify a newly discovered old row as a new contact. Missing inventory
+members must remain held for revalidation, never become inferred deletions.
+Fresh positive source/context evidence and a bounded all-client forward probe
+remain follow-ups before broad export readiness.
+
 ### Independent membership probe and conflicting purge evidence
 
 The next source review inspected HaLo commit `eb1a54ced637bfdd3c5b361a31df0e843edf9867`. It found conflicting descriptions of LoFi purge behavior within that same committed client revision. The [database schema comment](https://github.com/ham2k/halo/blob/eb1a54ced637bfdd3c5b361a31df0e843edf9867/packages/halo_core/lib/src/db/database.dart#L35) describes server removal without replay to other devices, while the [operation merge guard](https://github.com/ham2k/halo/blob/eb1a54ced637bfdd3c5b361a31df0e843edf9867/packages/halo_core/lib/src/repo/operations_repository.dart#L549) describes retained purge records being redelivered. The latter prevents a received purge from recreating a locally absent operation. These comments establish neither a stable server contract nor a retention duration. A primary public `ham2k/api-lofi` repository was not accessible in the repository lookup, and scoped repository/code searches did not find the server contract. That search result does not establish that no contract exists privately.

@@ -353,6 +353,68 @@ Acceptance: deterministic multi-account tests demonstrate bounded wait and
 progress under bursts, cooldowns and a 200,000-contact import. Report actual
 poll age and oldest eligible work, not just completed turns.
 
+#### Planned: versioned all-client source baseline and handoff
+
+This reviewed plan is **not implemented**. The [LoFi evidence](evidence-lofi.md#all-client-inventory-audit-and-remaining-read-policy-work-2026-10-24-utc)
+identifies a NULL-writer exclusion under `anyClient:false`; switching that flag
+while retaining filtered opaque cursors could miss old rows or label recovered
+history as new. Keep exports and `SOURCE_BOUNDARY_VERIFIED` disabled throughout
+this transition. Neither completion nor a successful audit opens a gate.
+1. **Version and fence the reader.** Add one policy table recording tenant/source,
+   logical account identity, policy epoch, phase and completed baseline generation,
+   plus a separate `source_work.policy_seen_epoch`. Existing `seen_epoch` belongs
+   to operation rereads. Under the existing source poll lease, atomically archive
+   the old cursor, increment its generation, install a tagged all-client backfill
+   cursor and invalidate context completeness. Cursor INSERT/UPDATE triggers must
+   reject absent or wrong policy tags after activation. This fences old Workers
+   even if they read the new cursor: an untagged checkpoint rolls back its entire
+   page transaction. Preserve receipts, claims and the immutable
+   [inventory epochs, births and cutovers](../migrations/0005_cutover.sql).
+2. **Baseline, then drain.** Reuse [pollSource and its checkpointed intake](../src/intake.ts)
+   with [all-client reads](../src/lofi.ts) in both modes. Persist policy tags and
+   mark membership even when payloads are unchanged. Keep baseline and forward
+   catch-up on bounded background turns. Every first observation remains
+   historical through backfill, drain and quarantine; independent stream
+   watermarks and opaque cursors retain their existing direction rules.
+3. **Quarantine and hand off.** Hold prior QSO, base-operation and event metadata
+   absent from the completed baseline in bounded batches; never infer deletion.
+   Cancel only prepared attempts, preserving sent/uncertain work and identity
+   claims. Context remains incomplete until no unclassified old dependency
+   remains and an atomic lease, epoch, source-identity and current complete
+   forward-cursor check establishes readiness. A concurrent operation reread
+   cannot bypass the policy hold. Positive unchanged reappearance must explicitly
+   release it. Expiry and gap recovery must preserve policy tags or begin a new
+   baseline; ordinary bearer renewal must not restart the logical source.
+4. **Require current membership and provenance.** Runtime and transactional stage/
+   dispatch guards must require the current policy and dependency membership.
+   [Cutover proof](../src/cutover.ts) must require a `forward_new` birth after both
+   the existing destination cutover and the completed policy baseline generation.
+   Preserve old immutable births; they must not regain eligibility after reset.
+
+The implementation spans one migration and policy helper, `lofi.ts`, `intake.ts`,
+`cutover.ts`, stage/dispatch guards and a small scheduler phase adjustment.
+Acceptance covers old/new Worker overlap and atomic rollback, restart in every
+phase, edits during backfill, historical discoveries during drain, stale leases
+and logical-account changes, unseen dependencies, independent reread membership,
+prepared versus uncertain attempts, unchanged reappearance, and expiry/gap resets.
+
+Runtime background pages remain **25 rows** with at most **four shared LoFi
+background requests per five minutes**. A QSO pass alone therefore has ideal
+lower bounds of about **3.3 hours for 4,000 rows** and **6.9 days for 200,000**;
+forward drain, context, competing accounts and retries add time. The protected
+[inventory audit](../scripts/source-inventory-audit.ts) requests 200 rows per
+stream, but it neither changes runtime page size nor establishes production
+checkpoint capacity. Larger runtime pages remain a separately measured change.
+
+Fresh positive source validation is a separate export prerequisite. A hard purge
+may leave no tombstone, so all-client forward completion cannot prove continued
+upstream presence. Design short-lived, scope/version-bound positive evidence for
+the selected QSO, base operation and required event context, checked atomically
+before dispatch; absent, changed or over-budget evidence remains held. Reusing a
+retained body or renewing a cursor-complete flag cannot renew that evidence.
+The exact bounded sync-read contract still needs validation; do not assume the
+operation REST endpoint supplies unrestricted historical coverage.
+
 ### 3. Make live delivery economical without weakening write safety
 
 Durable outbound identity claims are implemented for both vendors, including

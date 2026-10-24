@@ -57,6 +57,31 @@ ROLLOUT_DESTINATION_IDS_JSON=[]
 
 The reported startup is deployment evidence, not per-request billed CPU or peak memory. No representative monthly workload/cost has been measured. Physical and synced passkey behavior remains for the owner to verify at this permanent origin. See [rollout acceptance](rollout-checklist.md) for the remaining vendor checks.
 
+## Current-schema backup verification (2026-10-24, 07:56 UTC)
+
+At 07:56:04 UTC, independent version, deployment, health and asset readback
+confirmed the same deployed release at 100% traffic and all seven controls closed.
+A new protected SQL export completed and passed isolated verification at
+**07:56:18.407 UTC**. All 30 migrations through `0031` are installed; none was
+applied during the rehearsal. SQLite integrity and foreign-key checks passed,
+and the protected encryption key decrypted all three current credentials.
+
+The snapshot contains 4,500 source rows, 7,666 ledger rows, 380 permanent identity
+claims and zero attempts, cutovers, source proofs or proof pins. Two quarantine
+passes ran only in memory, leaving accounts, connections, sessions, credentials
+and leases inactive while preserving ledger rows and identity fields, ownership and
+immutable proof/attempt records. The synthetic restore test exercises nonempty
+attempts, claims and cutovers; this backup does not verify nonempty proof/pin
+preservation.
+
+The private SQL file is 31,487,578 bytes. Its private manifest records its SHA-256,
+the pre-export Time Travel bookmark and the independently attested Worker version.
+The helper's local Git revision is recorded separately and is not deployment
+evidence. SQL and manifests remain outside Git in protected storage. No production
+restore, migration, source/cursor write or vendor mutation occurred. Keep this
+snapshot and its key available; refresh it before any later external changes if
+the state has changed. Off-device key storage remains unconfirmed.
+
 ## Bounded baseline pages and policy-aware audit (2026-10-24, 06:09 UTC)
 
 Signed revision `02e3dc89b99a5d7428c01b6a09596a105784eb11` deployed read-only

@@ -123,9 +123,10 @@ Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-cha
    changes that instruction and the remaining evidence checks pass.
    The proposed sequence remains QRZ first, then LoTW. Both contact and destination allowlists must be
    exact, so LoTW remains excluded during QRZ work. A fresh protected production
-   SQL backup was verified at 05:20 UTC: isolated restore with 29 migrations plus
-   `0031`, integrity/foreign-key checks, three credential decryptions and repeated
-   quarantine passed, preserving 380 claims and zero attempts/cutovers. Preserve its evidence and
+   SQL backup was verified at 07:56 UTC: isolated restore with all 30 installed
+   migrations and no pending migration, integrity/foreign-key checks, three credential
+   decryptions and repeated quarantine passed, preserving 380 claims and zero
+   attempts/cutovers/proofs. Preserve its evidence and
    refresh it if needed before external changes. Earlier restore rehearsals
    remain recorded in the deployment history. Preserve each contact's
    actual 4/6/8-character grid. No

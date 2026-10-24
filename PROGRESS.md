@@ -36,6 +36,13 @@ Its initial commit is signed and pushed; the final refinement is committed local
 and awaiting 1Password signing. All **1,184 tests** and required local checks pass.
 Neither collector change is deployed yet.
 
+A new protected SQL backup passed verification at **07:56:18 UTC** against all
+30 installed migrations, with no pending migration applied. Isolated restore,
+integrity/foreign-key checks, all three credential decryptions and two quarantine
+passes succeeded. It preserves 4,500 source rows, 380 identity claims and zero
+attempts, cutovers or proofs. The deployed release, assets and all seven closed
+controls were rechecked at 07:56:04. No production restore or vendor write ran.
+
 At **07:38:44 UTC**, a fresh QRZ check established an empty neighborhood for one
 eligible candidate using one targeted FETCH, one STATUS book verification and one
 complete covering FETCH. Exact local scope and dependencies remained stable.
@@ -591,7 +598,7 @@ Source metadata still totals **4,134 contacts**: **3,097 pending**, **761 blocke
 1. Complete signing and deployment of the reviewed collector fix, then diagnose the `proof_cohort_count` mint failure with exports closed. The all-client baseline/handoff completed at 06:35:44.881 UTC; fresh collection and final drain have not yet produced a current immutable proof. Preserve exact dependency, scope, generation and expiry guards.
 2. Keep the implemented authority split closed. Default-off QRZ first-insert mode excludes source-wide cutovers, no-query inference, LoTW, replacement and corrections. `SOURCE_BOUNDARY_VERIFIED` remains false: complete inventories and finite positive samples do not establish universal tombstone or purge guarantees.
 3. Pair the observed QRZ absence with a successful current source proof. The 07:38:44 three-read probe completed and found an empty neighborhood; refresh that evidence for the same exact contact before any later authorized write. Historical precision, location and routing holds need explicit evidence; cron does not approve them.
-4. Prepare the exact first-write packet read-only in the [rollout checklist](docs/rollout-checklist.md), preserving the verified 05:20 UTC SQL backup and refreshing it if needed before external changes. Off-device key storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account.
+4. Prepare the exact first-write packet read-only in the [rollout checklist](docs/rollout-checklist.md), preserving the verified 07:56 UTC current-schema SQL backup and refreshing it if needed before external changes. Off-device key storage remains unconfirmed. A second independent passkey is recommended, not a hard export requirement for this owner-operated pilot; manual operator recovery can register a new credential for the existing account.
 5. Keep exports disabled. The latest instruction supersedes the earlier one- or two-contact trial authorization; no actual trial may run until the owner changes that instruction and all current proof/vendor checks pass.
 
 All seven controls remain closed. Unrelated historical exceptions may remain isolated during an explicitly scoped trial; broad automatic coverage needs its own review. Replacement and old-identity cleanup remain disabled until separately proven. Continue resource/cost, restore/revocation, browser/passkey and full workload acceptance before expansion. Staging remains undeployed. See [roadmap](ROADMAP.md), [deployment](docs/deployment.md) and [rollout checklist](docs/rollout-checklist.md).

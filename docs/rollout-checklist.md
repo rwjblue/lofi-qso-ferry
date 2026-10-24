@@ -206,7 +206,17 @@ enforced separation from the global cutover/no-query effects described above,
 then current evidence for the exact scope. The proposed order remains QRZ first,
 followed by LoTW. Keep private contact details out of repository documentation.
 
-A fresh protected production SQL backup was verified at **04:25:27 UTC on
+A fresh protected production SQL backup was verified at **07:56:18 UTC on
+2026-10-24** with all 30 installed migrations and no pending migration applied.
+Isolated restore, integrity/foreign-key checks, all three credential decryptions
+and repeated quarantine passed. The snapshot preserves 4,500 source rows, 380
+permanent identity claims and zero attempts, cutovers or proofs. The exact deployed
+release and all seven closed controls were rechecked at 07:56:04. The SQL hash,
+pre-export Time Travel bookmark and verification manifest remain in protected
+storage outside Git. No production restore or vendor mutation occurred. Preserve
+the backup and key; refresh them before external changes when state warrants it.
+
+The earlier protected production SQL backup was verified at **04:25:27 UTC on
 2026-10-24**, before the mandatory-proof release. Its isolated restore passed all
 28 existing migrations plus pending `0030`, integrity checks and zero foreign-key
 violations. All three current credentials decrypted; repeated quarantine preserved

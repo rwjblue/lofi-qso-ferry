@@ -679,6 +679,36 @@ test("missing, hard-purged, moved and changed required records cannot become obs
   }
 });
 
+test("authoritative deleted status cannot renew a previously live target's positive witness", async () => {
+  for (const kind of ["operation", "qso"] as const) {
+    const deleted = {
+      ...(kind === "operation" ? operation : contact),
+      deleted: false,
+      status: "deleted",
+    };
+    // Model a retained body whose old decoder incorrectly classified its
+    // authoritative status as live. The body hash and timestamp still match.
+    const retiredTarget = { ...(await target(kind, deleted)), deleted: false };
+    const fixture = await input();
+    fixture.targets = fixture.targets.map((value) =>
+      value.kind === kind ? retiredTarget : value,
+    );
+    const result = await collectSourcePresence(fixture, {
+      now: () => clock,
+      currentScope: async () => scope,
+      fetcher: async () =>
+        page(
+          [kind === "operation" ? deleted : operation],
+          [kind === "qso" ? deleted : contact],
+        ),
+    });
+    assert.equal(result.status, "held");
+    assert.equal(result.reason, "changed_target");
+    assert.deepEqual(result.witnesses, []);
+    noAuthority(result);
+  }
+});
+
 test("unknown live events in selected operations force dependency reload; unrelated neighbors are harmless", async () => {
   for (const [row, expected] of [
     [event, "held"],

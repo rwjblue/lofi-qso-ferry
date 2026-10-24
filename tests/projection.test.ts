@@ -471,6 +471,51 @@ test("event edits/deletions apply while stop rows never open segments", async ()
   assert.throws(() => isSourceDeleted({ deleted: "maybe" }), ProjectionError);
 });
 
+test("authoritative deleted status prevents contact, operation and event resurrection", async () => {
+  for (const deleted of [undefined, null, false, 0, "false", "0", "unknown"]) {
+    const raw = { ...qso, deleted, status: "deleted" };
+    const original = structuredClone(raw);
+    assert.equal(isSourceDeleted(raw), true);
+    assert.equal((await project(raw)).deleted, true);
+    assert.deepEqual(raw, original, "normalization preserves the source body");
+  }
+  await assert.rejects(project(qso, { ...operation, status: "deleted" }), {
+    code: "operation_context_incomplete",
+  });
+  assert.equal(
+    effectiveOperation(
+      operation,
+      [{ ...event("retired", at, { grid: "FN42CC" }), status: "deleted" }],
+      at,
+    ).grid,
+    operation.grid,
+  );
+});
+
+test("other statuses never override positive tombstones or coerce deletion flags", () => {
+  for (const status of [
+    undefined,
+    null,
+    "live",
+    "unknown",
+    "Deleted",
+    "deleted ",
+    1,
+    {},
+    ["deleted"],
+  ]) {
+    for (const flag of [true, 1, "true", "1"]) {
+      assert.equal(isSourceDeleted({ deleted: flag, status }), true);
+      assert.equal(isSourceDeleted({ purged: flag, status }), true);
+    }
+    assert.throws(
+      () => isSourceDeleted({ deleted: "maybe", status }),
+      ProjectionError,
+    );
+    assert.equal(isSourceDeleted({ deleted: false, status }), false);
+  }
+});
+
 test("ambiguous boundary, mixed station calls, unsupported mode and wrong frequency units fail visibly", async () => {
   await assert.rejects(
     project(qso, operation, [

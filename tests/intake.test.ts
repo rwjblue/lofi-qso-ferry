@@ -3138,6 +3138,116 @@ test("ordinary web operation deletion with an unchanged application revision inv
   );
 });
 
+test("authoritative deleted status retires current contacts, events and operation context without rewriting raw flags", async (t) => {
+  const state = await setup(true);
+  const { store, source, now, mf } = state;
+  t.after(() => mf.dispose());
+  const originalOperation = { ...op, updatedAtMillis: 50 };
+  const originalLoose = { ...loose, deleted: false, updatedAtMillis: 50 };
+  await pollBaselinePage(
+    store,
+    source,
+    async () => response([originalOperation], [qso, originalLoose, boundary]),
+    now,
+  );
+  await finishBaseline(store, source, now);
+  await rereadOperation(
+    store,
+    source,
+    async () => operationResponse([qso, boundary]),
+    now + 1,
+  );
+  const before = await pendingContacts(store, source, 40, now + 1);
+  assert.equal(before.length, 2);
+  assert.equal(
+    before.find((contact) => contact.id === qso.uuid)?.grid,
+    "FN32BB",
+  );
+
+  const removed: SourceRecord[] = [
+    { ...originalLoose, status: "deleted", syncedAtMillis: 202 },
+    { ...boundary, status: "deleted", syncedAtMillis: 201 },
+    {
+      ...originalLoose,
+      uuid: "first-seen-deleted",
+      status: "deleted",
+      syncedAtMillis: 203,
+    },
+  ];
+  await pollSource(store, source, async () => response([], removed), now + 2);
+  for (const raw of removed) {
+    const row = await work(state, String(raw.uuid));
+    assert.ok(row);
+    assert.equal(row.deleted, 1);
+    assert.deepEqual(
+      await store.private<SourceRecord>(
+        "a",
+        "source",
+        row.private_id,
+        "source",
+      ),
+      raw,
+      "the authoritative deletion is normalized in metadata, not rewritten into ciphertext",
+    );
+  }
+  assert.deepEqual(
+    await pendingContacts(store, source, 40, now + 3),
+    [],
+    "an event deletion first invalidates dependent operation coverage",
+  );
+  await rereadOperation(
+    store,
+    source,
+    async () => operationResponse([qso, removed[1]]),
+    now + 3,
+  );
+  const [remaining, ...extra] = await pendingContacts(
+    store,
+    source,
+    40,
+    now + 3,
+  );
+  assert.deepEqual(extra, []);
+  assert.equal(remaining?.id, qso.uuid);
+  assert.equal(
+    remaining?.grid,
+    "FN31AA",
+    "the deleted event no longer overrides the base",
+  );
+
+  const deletedOperation = {
+    ...originalOperation,
+    status: "deleted",
+    syncedAtMillis: 300,
+  };
+  await pollSource(
+    store,
+    source,
+    async () => response([deletedOperation], []),
+    now + 4,
+  );
+  const row = await work(state, String(op.uuid), "operation");
+  assert.ok(row);
+  assert.equal(row.deleted, 1);
+  assert.deepEqual(
+    await store.private<SourceRecord>("a", "source", row.private_id, "source"),
+    deletedOperation,
+  );
+  assert.deepEqual(await pendingContacts(store, source, 40, now + 5), []);
+  assert.equal(
+    (await work(state, String(qso.uuid)))?.reason,
+    "operation_context_unavailable",
+  );
+  assert.equal(
+    (
+      await store
+        .statement("SELECT COUNT(*) n FROM attempts")
+        .first<{ n: number }>()
+    )?.n,
+    0,
+  );
+});
+
 test("event expiry and missing membership never erase a segment or block an unrelated general log", async () => {
   const state = await setup();
   const { store, source, now, mf } = state;

@@ -78,7 +78,13 @@ export function sourceFlag(value: unknown): boolean {
 }
 
 export function isSourceDeleted(record: SourceRecord): boolean {
-  return sourceFlag(record.deleted) || sourceFlag(record.purged);
+  // LoFi's computed deletion status is authoritative even when its stored
+  // flag is absent or disagrees. Other status values cannot revive a tombstone.
+  return (
+    record.status === "deleted" ||
+    sourceFlag(record.deleted) ||
+    sourceFlag(record.purged)
+  );
 }
 
 export function isEventRecord(record: SourceRecord): boolean {

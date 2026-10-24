@@ -1,5 +1,12 @@
 import type { AdifRecord } from "./adif.ts";
+import {
+  clearHistoricalAssociationLegacyReservation,
+  historicalAssociationAvailable,
+  historicalAssociationStatements,
+  historicalQrzLogId,
+} from "./historical-associations.ts";
 import { historicalGridsCompatible } from "./historical-location.ts";
+import { historicalCandidates } from "./historical-matching.ts";
 import {
   availableIdentityClaim,
   destinationIdentityClaim,
@@ -128,6 +135,13 @@ export interface ReconciliationOutcome {
   reason: string | null;
   evidence: ReconciliationEvidence;
   remote?: AdifRecord;
+  /** Historical recognition cannot grant upload or correction authority. */
+  associationOnly?: true;
+  /** Added only after the complete reverse-source comparison succeeds. */
+  associationProof?: {
+    bookIdentity: string;
+    commitGuard: (now: number) => HistoryCommitGuard;
+  };
 }
 export const ADOPTION_CONFLICT_REASON =
   "Multiple source contacts claim one destination identity; review associations before exporting";
@@ -281,6 +295,91 @@ export function classifyHistory(
     );
   return result(match.state, "reason" in match ? match.reason : null);
 }
+
+/**
+ * Published QRZ matching rules discover historical presence, never absence or an
+ * upload identity. A positive result still needs reverse-source uniqueness and
+ * durable association-only ownership before prepareHistoryAdoption accepts it.
+ */
+export function classifyHistoricalAssociation(
+  source: AdifRecord,
+  remote: AdifRecord[],
+  evidence: ReconciliationEvidence,
+): ReconciliationOutcome {
+  const previous = classifyHistory(source, remote, evidence);
+  if (
+    evidence.destination !== "qrz" ||
+    !evidence.capturedGeneration ||
+    evidence.capturedGeneration !== evidence.currentGeneration ||
+    !evidence.readAccess ||
+    !evidence.inventoryComplete ||
+    !evidence.catchupComplete ||
+    (!evidence.freshCheckComplete && !evidence.inventoryPositiveOnly)
+  )
+    return previous;
+  const held = (reason: string): ReconciliationOutcome => ({
+    state: "history_ambiguous",
+    reason,
+    evidence,
+  });
+  const candidates = historicalCandidates("qrz", source, remote);
+  if (candidates.state === "none")
+    // Wider candidate discovery never expands existing absence authority.
+    return previous.state === "adopted_existing"
+      ? held("Historical candidate evidence cannot establish this association")
+      : previous;
+  if (candidates.state !== "unique")
+    return held(
+      candidates.issues.length
+        ? "Historical candidate evidence is incomplete or unsupported"
+        : "Multiple historical candidates fall within the matching window",
+    );
+  const candidate = candidates.candidates[0];
+  if (!candidate.time.entireIntervalWithinWindow)
+    return held(
+      "Recorded time precision crosses the historical matching window",
+    );
+  if (!/^[0-9]{1,64}$/.test(candidate.record.APP_QRZLOG_LOGID ?? ""))
+    return held("Matched QRZ record has no verified LOGID");
+
+  // Identity has already been compared by the vendor policy. Align only a
+  // temporary comparison view so the existing operating-detail checks can run
+  // independently; original records and receipt comparisons remain untouched.
+  const operating = { ...source };
+  for (const field of [
+    "QSO_DATE",
+    "TIME_ON",
+    "MODE",
+    "SUBMODE",
+    "PROP_MODE",
+    "SAT_NAME",
+  ]) {
+    delete operating[field];
+    if (candidate.record[field] !== undefined)
+      operating[field] = candidate.record[field];
+  }
+  if (
+    historicalGridsCompatible(
+      source.MY_GRIDSQUARE,
+      candidate.record.MY_GRIDSQUARE,
+    )
+  )
+    operating.MY_GRIDSQUARE = candidate.record.MY_GRIDSQUARE;
+  const match = matchQrzHistory(operating, [candidate.record]);
+  if (match.state !== "adopted_existing")
+    return {
+      state: match.state,
+      reason: "reason" in match ? match.reason : null,
+      evidence,
+    };
+  return {
+    state: "adopted_existing",
+    reason: null,
+    evidence,
+    remote: candidate.record,
+    associationOnly: true,
+  };
+}
 const COMPARABLE = [
   "STATION_CALLSIGN",
   "CALL",
@@ -433,6 +532,20 @@ async function prepareHistoryAdoption(
     !inventoryGuard
   )
     return { applied: false, reason: "inventory_commit_guard_required" };
+  if (outcome.associationOnly) {
+    if (
+      outcome.state !== "adopted_existing" ||
+      ledger.destination_kind !== "qrz" ||
+      !inventoryGuard ||
+      !outcome.associationProof?.bookIdentity
+    )
+      return { applied: false, reason: "historical_comparison_proof_required" };
+    const comparison = outcome.associationProof.commitGuard(now);
+    inventoryGuard = {
+      sql: `(${inventoryGuard.sql}) AND (${comparison.sql})`,
+      params: [...inventoryGuard.params, ...comparison.params],
+    };
+  }
   const guardId = inventoryGuard ? randomToken() : null;
   const guardStart =
     inventoryGuard && guardId
@@ -468,18 +581,39 @@ async function prepareHistoryAdoption(
     ledger.destination_kind === "lotw" && remoteId
       ? await store.lotwIdentityClaimGuard(key, remoteId)
       : { sql: "1", params: [] };
-  const outboundIdentity = remote
-    ? await destinationIdentityClaim(
-        ledger.destination_kind === "qrz" ? "qrz" : "lotw",
-        remote,
-      )
-    : null;
+  const outboundIdentity =
+    remote && !outcome.associationOnly
+      ? await destinationIdentityClaim(
+          ledger.destination_kind === "qrz" ? "qrz" : "lotw",
+          remote,
+        )
+      : null;
   const outboundAvailable = outboundIdentity
     ? availableIdentityClaim(key, outboundIdentity)
     : { sql: "1", params: [] };
+  const historicalIdentity =
+    outcome.associationOnly && outcome.associationProof && remoteId
+      ? {
+          vendor: "qrz" as const,
+          bookIdentity: outcome.associationProof.bookIdentity,
+          remoteId,
+        }
+      : null;
+  const historicalAvailable =
+    ledger.destination_kind === "qrz" && remoteId
+      ? historicalAssociationAvailable(
+          key,
+          remoteId,
+          historicalIdentity?.bookIdentity,
+        )
+      : { sql: "1", params: [] };
   const retainedClaim = {
-    sql: `(${priorClaim.sql}) AND (${outboundAvailable.sql})`,
-    params: [...priorClaim.params, ...outboundAvailable.params],
+    sql: `(${priorClaim.sql}) AND (${outboundAvailable.sql}) AND (${historicalAvailable.sql})`,
+    params: [
+      ...priorClaim.params,
+      ...outboundAvailable.params,
+      ...historicalAvailable.params,
+    ],
   };
   const adoption = store.statement(
     `UPDATE ledger SET confirmed=COALESCE(?,confirmed),state=?,reason=?,baseline_hash=COALESCE(?,source_hash),source_hash=COALESCE(?,source_hash),remote_hash=?,remote_id=?,provenance=CASE WHEN ?='adopted_existing' THEN 'adopted' ELSE provenance END,narrative=CASE WHEN ?='adopted_existing' AND ?='qrz' THEN 'remote_preserved' ELSE narrative END,updated_at=? WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND source_hash=? AND remote_id IS NULL AND state!='changed' AND sent_hash IS NULL AND template_version IS NULL AND provenance NOT IN('ferry_created','adoption_conflict') AND NOT EXISTS(SELECT 1 FROM ledger other WHERE other.tenant=? AND other.destination=? AND other.remote_id=? AND (other.source!=? OR other.qso!=?)) AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled')) AND EXISTS(SELECT 1 FROM connections d WHERE d.tenant=ledger.tenant AND d.id=ledger.destination AND d.kind=?) AND ${retainedClaim.sql} AND (${currentInventory.sql}) RETURNING qso`,
@@ -541,6 +675,37 @@ async function prepareHistoryAdoption(
   const statements = [
     ...(guardStart ? [guardStart] : []),
     adoption,
+    ...(historicalIdentity
+      ? (() => {
+          const guard = {
+            sql: `EXISTS(SELECT 1 FROM ledger WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND state='adopted_existing' AND remote_id=? AND provenance='adopted') AND (${currentInventory.sql})`,
+            params: [
+              key.tenant,
+              key.source,
+              key.qso,
+              key.destination,
+              generation,
+              remoteId,
+              ...currentInventory.params,
+            ],
+          };
+          return [
+            ...historicalAssociationStatements(
+              store,
+              key,
+              historicalIdentity,
+              now,
+              guard,
+            ),
+            clearHistoricalAssociationLegacyReservation(
+              store,
+              key,
+              historicalIdentity,
+              guard,
+            ),
+          ];
+        })()
+      : []),
     ...(identity ? [identity] : []),
     ...(outboundIdentity
       ? [
@@ -599,14 +764,27 @@ async function prepareHistoryAdoption(
       ...currentInventory.params,
     ];
     const conflictExists = `EXISTS(SELECT 1 FROM ledger contender WHERE ${contenderWhere} AND contender.provenance='adoption_conflict')`;
-    const ownerIdentity = `(owner.remote_id=? OR EXISTS(SELECT 1 FROM destination_identity_claims claimed WHERE claimed.tenant=owner.tenant AND claimed.destination=owner.destination AND claimed.source=owner.source AND claimed.qso=owner.qso AND claimed.vendor=? AND claimed.identity_hash=?))`;
-    const ownerWhere = `owner.tenant=? AND owner.destination=? AND ${ownerIdentity} AND owner.provenance='adoption_conflict' AND ${conflictExists}`;
+    const retainedOwner = {
+      sql:
+        ledger.destination_kind === "qrz"
+          ? "EXISTS(SELECT 1 FROM historical_remote_owners h JOIN connections target ON target.tenant=h.tenant AND target.id=? AND target.kind='qrz' AND target.remote_identity=h.book_identity WHERE h.tenant=owner.tenant AND h.vendor='qrz' AND h.source=owner.source AND h.qso=owner.qso AND h.remote_id=? AND (h.destination=owner.destination OR EXISTS(SELECT 1 FROM connections d WHERE d.tenant=owner.tenant AND d.id=owner.destination AND d.kind='qrz' AND d.remote_identity=h.book_identity)))"
+          : "0",
+      params:
+        ledger.destination_kind === "qrz"
+          ? [key.destination, historicalQrzLogId(remoteId)]
+          : [],
+    };
+    const ownerScope = `owner.tenant=? AND (owner.destination=? OR ${retainedOwner.sql})`;
+    const ownerIdentity = `(owner.remote_id=? OR EXISTS(SELECT 1 FROM destination_identity_claims claimed WHERE claimed.tenant=owner.tenant AND claimed.destination=owner.destination AND claimed.source=owner.source AND claimed.qso=owner.qso AND claimed.vendor=? AND claimed.identity_hash=?) OR ${retainedOwner.sql})`;
+    const ownerWhere = `${ownerScope} AND ${ownerIdentity} AND owner.provenance='adoption_conflict' AND ${conflictExists}`;
     const ownerParams = [
       key.tenant,
       key.destination,
+      ...retainedOwner.params,
       remoteId,
       outboundIdentity?.vendor ?? ledger.destination_kind,
       outboundIdentity?.hash ?? "",
+      ...retainedOwner.params,
       ...contenderParams,
     ];
     quarantineIndex = statements.length;
@@ -618,7 +796,7 @@ async function prepareHistoryAdoption(
         ...contenderParams,
       ),
       store.statement(
-        `UPDATE ledger AS owner SET state='history_ambiguous',provenance='adoption_conflict',reason=?,updated_at=? WHERE owner.tenant=? AND owner.destination=? AND ${ownerIdentity} AND owner.provenance='adopted' AND owner.sent_hash IS NULL AND owner.template_version IS NULL AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=owner.tenant AND a.source=owner.source AND a.qso=owner.qso AND a.destination=owner.destination AND s.state NOT IN('prepared','rejected','cancelled')) AND ${conflictExists}`,
+        `UPDATE ledger AS owner SET state='history_ambiguous',provenance='adoption_conflict',reason=?,updated_at=? WHERE ${ownerScope} AND ${ownerIdentity} AND owner.provenance='adopted' AND owner.sent_hash IS NULL AND owner.template_version IS NULL AND NOT EXISTS(SELECT 1 FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=owner.tenant AND a.source=owner.source AND a.qso=owner.qso AND a.destination=owner.destination AND s.state NOT IN('prepared','rejected','cancelled')) AND ${conflictExists}`,
         ADOPTION_CONFLICT_REASON,
         now,
         ...ownerParams,

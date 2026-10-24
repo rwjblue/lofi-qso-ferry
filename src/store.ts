@@ -77,6 +77,17 @@ export class Store {
       ).all<Connection>()
     ).results;
   }
+  async historicalAssociationOnly(key: LedgerKey): Promise<boolean> {
+    return Boolean(
+      await this.statement(
+        "SELECT 1 held FROM historical_association_write_blocks WHERE tenant=? AND source=? AND qso=? AND destination=? LIMIT 1",
+        key.tenant,
+        key.source,
+        key.qso,
+        key.destination,
+      ).first(),
+    );
+  }
   async putPrivate(
     tenant: string,
     connection: string,

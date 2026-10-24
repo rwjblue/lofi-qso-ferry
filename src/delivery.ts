@@ -698,6 +698,8 @@ export async function prepareDue(
   )
     return { state: "blocked", reason: "destination_outside_rollout_scope" };
   const row = await store.ledger(key);
+  if (await store.historicalAssociationOnly(key))
+    return { state: "blocked", reason: "historical_association_read_only" };
   if (row?.provenance === "adoption_conflict")
     return { state: "blocked", reason: "remote_identity_claim_conflict" };
   if (
@@ -993,6 +995,8 @@ export async function prepareDue(
   } else if (connection.kind === "lotw") {
     if (!modeEnabled(gates, authorizationMode))
       return { state: "blocked", reason: "exports_disabled_before_signing" };
+    if (await store.historicalAssociationOnly(key))
+      return { state: "blocked", reason: "historical_association_read_only" };
     const config = JSON.parse(connection.config) as LotwConfig;
     const routes = (
       config.stations ?? (config.station ? [config.station] : [])
@@ -1245,6 +1249,11 @@ export async function prepareDue(
   } catch (error) {
     if (
       error instanceof Error &&
+      error.message.includes("historical association is read only")
+    )
+      return { state: "blocked", reason: "historical_association_read_only" };
+    if (
+      error instanceof Error &&
       (error.message.includes("QRZ fresh insert unavailable") ||
         error.message.includes("LoTW fresh insert unavailable"))
     )
@@ -1390,6 +1399,8 @@ export async function dispatchAttempt(
   }
   if (data.attempt.attempt_state !== "prepared")
     return { state: "skipped", reason: "attempt_not_claimable" };
+  if (await store.historicalAssociationOnly(key))
+    return { state: "blocked", reason: "historical_association_read_only" };
   const authorizationMode = await attemptSourceExportAuthorizationMode(
     store,
     tenant,
@@ -1961,6 +1972,12 @@ export async function dispatchAttempt(
         .run();
     return { state, attemptId: id };
   } catch (error) {
+    if (
+      !mutationStarted &&
+      error instanceof Error &&
+      error.message.includes("historical association is read only")
+    )
+      return { state: "blocked", reason: "historical_association_read_only" };
     if (
       !mutationStarted &&
       error instanceof Error &&

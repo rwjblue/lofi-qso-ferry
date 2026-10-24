@@ -52,6 +52,7 @@ const prohibited = [
   "legacy_outbound_reservations",
   "adoption_conflict",
   "existing_mapping",
+  "historical_association_blocks",
   "other_active_ledger_routes",
 ] as const;
 const observations = ["owned_claims", "ledger_present"] as const;
@@ -99,6 +100,7 @@ SELECT r.route_slot,r.vendor,
  (SELECT COUNT(*) FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=r.destination AND l.generation=?4 AND l.context_generation=?7 AND l.operation_id IS (SELECT operation_id FROM contact)) ledger_current,
  (SELECT COUNT(*) FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=r.destination AND l.due_at<=?8) quiet_period_complete,
  (SELECT COUNT(*) FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=r.destination
+   AND NOT EXISTS(SELECT 1 FROM historical_association_write_blocks h WHERE h.tenant=l.tenant AND h.source=l.source AND h.qso=l.qso AND h.destination=l.destination)
    AND ((r.vendor='qrz' AND EXISTS(SELECT 1 FROM qrz_fresh_insert_eligible f WHERE f.tenant=l.tenant AND f.source=l.source AND f.qso=l.qso AND f.destination=l.destination))
     OR (r.vendor='lotw' AND EXISTS(SELECT 1 FROM lotw_fresh_insert_eligible f WHERE f.tenant=l.tenant AND f.source=l.source AND f.qso=l.qso AND f.destination=l.destination)))) first_insert_candidate,
  (SELECT COUNT(*) FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=?1 AND a.source=?2 AND a.qso=?3 AND a.destination=r.destination AND s.state NOT IN('delivered','observed','rejected','cancelled')) unresolved_attempts,
@@ -109,6 +111,7 @@ SELECT r.route_slot,r.vendor,
  (SELECT COUNT(*) FROM legacy_outbound_identity_reservations x WHERE x.tenant=?1 AND x.destination=r.destination) legacy_outbound_reservations,
  (SELECT COUNT(*) FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=r.destination AND l.provenance='adoption_conflict') adoption_conflict,
  (SELECT COUNT(*) FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=r.destination AND l.remote_id IS NOT NULL) existing_mapping,
+ (SELECT COUNT(*) FROM historical_association_write_blocks h WHERE h.tenant=?1 AND h.source=?2 AND h.qso=?3 AND h.destination=r.destination) historical_association_blocks,
  (SELECT COUNT(*) FROM ledger l JOIN connections d ON d.tenant=l.tenant AND d.id=l.destination WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND d.status='active' AND l.state!='retained_old_route' AND NOT EXISTS(SELECT 1 FROM expected_routes e WHERE e.destination=l.destination)) other_active_ledger_routes,
  (SELECT COUNT(*) FROM destination_identity_claims c WHERE c.tenant=?1 AND c.destination=r.destination AND c.vendor=r.vendor AND c.identity_hash=r.identity_hash AND c.source=?2 AND c.qso=?3) owned_claims,
  (SELECT COUNT(*) FROM ledger l WHERE l.tenant=?1 AND l.source=?2 AND l.qso=?3 AND l.destination=r.destination) ledger_present

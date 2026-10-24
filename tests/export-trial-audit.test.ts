@@ -569,6 +569,8 @@ test("identity ownership and unresolved attempts stay scoped to the exact tenant
     await applyMigration(h.db, "0030_source_export_guards.sql");
     await applyMigration(h.db, "0031_qrz_fresh_insert_authorization.sql");
     await applyMigration(h.db, "0032_lotw_fresh_insert_authorization.sql");
+    // The metadata audit also observes the independent permanent write blocks.
+    await applyMigration(h.db, "0034_historical_associations.sql");
     await seed(h.store, "foreign");
     await h.store.observe(
       {
@@ -680,6 +682,103 @@ test("legacy holds and adopted history stay ineligible for a first insert", asyn
       )
       .run();
     assert.equal((await h.audit()).routes[1].counts.legacy_lotw_claims, 1);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("historical associations stay outside trial candidates after edits and same-book reconnects", async () => {
+  const h = await setup();
+  try {
+    assert.equal((await h.audit()).routes[0].counts.first_insert_candidate, 1);
+    await h.db.batch([
+      h.store.statement(
+        "INSERT INTO historical_remote_owners(tenant,vendor,book_identity,remote_id,source,qso,destination,created_at) VALUES('a','qrz','destination','91','source','private-contact','destination',0)",
+      ),
+      h.store.statement(
+        "INSERT INTO historical_associations(tenant,vendor,book_identity,remote_id,source,qso,destination,created_at) VALUES('a','qrz','destination','91','source','private-contact','destination',0)",
+      ),
+    ]);
+    // An edited contact can have a fresh identity and cleared ledger mapping;
+    // its original association remains the authority for the permanent hold.
+    const original = (await h.audit()).routes[0];
+    assert.equal(original.counts.existing_mapping, 0);
+    assert.equal(original.counts.first_insert_candidate, 0);
+    assert(original.counts.historical_association_blocks > 0);
+    assert.equal(original.metadataChecksPass, false);
+    assert.equal((await h.audit()).routes[1].counts.first_insert_candidate, 1);
+
+    // Relink the original connection before reconnecting its old book, preserving
+    // the normal unique logical-destination constraint.
+    await h.store
+      .statement(
+        "UPDATE connections SET remote_identity='changed-book' WHERE id='destination'",
+      )
+      .run();
+    for (const [id, book, blocked] of [
+      ["same-book", "destination", true],
+      ["other-book", "independent-book", false],
+    ] as const) {
+      await h.store
+        .statement(
+          "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at) VALUES('a',?,'qrz',?,'QRZ','active','v1',0)",
+          id,
+          book,
+        )
+        .run();
+      await (
+        await h.store.putPrivate("a", id, "v1", "credential", {
+          secret: "never-output-reconnect-credential",
+        })
+      ).run();
+      await h.store.observe(
+        {
+          tenant: "a",
+          source: "source",
+          qso: "private-contact",
+          destination: id,
+        },
+        h.scope.generation,
+        "private-source-hash",
+        30,
+        false,
+        100,
+      );
+      await h.store
+        .statement(
+          "UPDATE ledger SET context_generation=9,operation_id='private-operation',state='missing_current_identity',due_at=900 WHERE destination=?",
+          id,
+        )
+        .run();
+      assert.equal(
+        await h.store
+          .statement(
+            "SELECT count(*) n FROM qrz_fresh_insert_eligible WHERE tenant='a' AND source='source' AND qso='private-contact' AND destination=?",
+            id,
+          )
+          .first<number>("n"),
+        1,
+      );
+      const scope = {
+        ...h.scope,
+        routes: [{ ...h.scope.routes[0], destination: id }],
+      };
+      const report = await h.audit(scope);
+      const counts = report.routes[0].counts;
+      assert.equal(counts.first_insert_candidate, blocked ? 0 : 1);
+      assert.equal(counts.historical_association_blocks > 0, blocked);
+      assert.equal(report.writesAuthorized, false);
+    }
+    assert(
+      (await h.audit()).routes[0].counts.historical_association_blocks > 0,
+    );
+    assert.equal((await h.audit()).routes[0].counts.first_insert_candidate, 0);
+    assert.equal(
+      await h.store
+        .statement("SELECT count(*) n FROM attempts")
+        .first<number>("n"),
+      0,
+    );
   } finally {
     await h.mf.dispose();
   }

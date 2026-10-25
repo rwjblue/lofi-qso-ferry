@@ -4,8 +4,9 @@ Ferry is suitable for an invite-only, read-only pilot with one or two users.
 Automatic exports are still disabled. A small first-export trial requires current source
 proofs, fresh vendor evidence and exact contact review; finishing the 200,000-contact capacity
 plan is a separate expansion milestone. One authorized QRZ INSERT has been
-acknowledged and its delivered-attempt recovery passes; exact readback remains
-unresolved. Further writes are held while that read-only check is completed.
+acknowledged; recovery, known-ACK readback at minute precision and a unique
+neighborhood pass. Seconds remain unverified. The next checked batch requires
+recoverable artifacts through normal ACK cleanup and actual scheduled acceptance.
 
 ## Current evidence (2026-10-25)
 
@@ -59,8 +60,18 @@ trial. The **03:56 UTC** post-trial backup verifies exactly one delivered
 attempt, accepted receipt, matching claim and proof pin, and decryption of the
 protected original artifact after normal database outbox purging. All baseline
 immutable rows, credentials and keys survive integrity/FK checks and two
-isolated quarantines. Resolve the exact LOGID/field/narrative readback before
-any checked batches or scheduled export activation.
+isolated quarantines.
+
+Subsequent read-only checks verify that LOGID, 13 literal-exact transmitted
+fields and a four-digit returned time agreeing with the transmitted UTC minute.
+The source seconds are retained but unverified. A complete neighborhood contains
+exactly one candidate, the acknowledged LOGID. Separate known-ACK assessment
+verifies receipt/owner/claim/proof links; the original unresolved literal outcome
+and uncertain recovery remain unchanged. See [the acceptance evidence](qrz-pilot.md#acknowledged-readback-and-duplicate-check--2026-10-25-utc).
+All eight controls remain closed. Before the next two-contact trial, retain
+encrypted artifacts through normal ACK cleanup and verify the populated approved
+attempt set. Checked batches and actual scheduled delivery precede automatic QRZ
+scope; LoTW stays disabled throughout QRZ acceptance.
 
 ### Earlier release evidence (f2c41cb3, 2026-10-24)
 

@@ -148,8 +148,33 @@ source-proof pin. Its original encrypted payload remains preserved in the host
 packet and decrypts correctly after normal ACK outbox purging. All 3,327
 baseline claims, 2,895 QRZ owners/markers, 3,860 LoTW owners and 3,327 exact
 evidence rows are unchanged; crypto, integrity/FKs and two isolated quarantines
-pass. This does not resolve the readback. The singleton's INSERT allowance is
-exhausted; only read-only investigation follows until acceptance is established.
+pass. The singleton's INSERT allowance is exhausted; no resend is permitted.
+
+## Acknowledged readback and duplicate check — 2026-10-25 UTC
+
+The independent exact-LOGID read verifies the acknowledged record in the intended
+book. All 13 other transmitted fields are literal-exact, including the full grid,
+coordinates and narrative. QRZ returns four-digit `TIME_ON` matching the first
+four of the six transmitted digits on the same UTC date. Seconds remain
+unverified; preserve the original six-digit value rather than padding readback.
+[ADIF allows both precisions](https://www.adif.org/316/ADIF_316_annotated.htm#Time).
+
+A separate offline assessment binds this observation to the delivered receipt,
+permanent QRZ owner, exact claims and source-proof pin. It permits only this
+same-minute reduction, with every other transmitted field literal-exact. This
+does not alter the original unresolved literal-readback outcome or the stricter
+production uncertain-attempt matcher. Its 21 focused cases and strict types pass.
+
+A complete bounded CALL/band/date FETCH independently finds one record and one
+normal ±30-minute neighborhood candidate, the acknowledged LOGID. Pagination
+ambiguity holds the check rather than establishing absence. The 10 focused
+neighborhood cases, types and bundle pass. Both read-only previews are disposed;
+all eight controls remain closed. No further INSERT occurred.
+
+The singleton is accepted at returned minute precision, with seconds unverified.
+Next, preserve encrypted artifacts through normal ACK cleanup and verify recovery
+for a checked two-contact scope before actual scheduled delivery. The existing
+runtime supports two QSO IDs and one QRZ destination without wider authority.
 
 ## Acceptance after the authorized attempt
 

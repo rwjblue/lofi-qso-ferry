@@ -22,9 +22,17 @@ The **03:56 UTC** backup and isolated recovery verify exactly one delivered
 attempt, accepted receipt, matching identity claim/source-proof pin and
 decryption of the preserved original artifact after normal outbox purging.
 Every baseline immutable row is unchanged; credential/key checks, integrity/FKs
-and two isolated quarantines pass. Next: complete a read-only exact LOGID and
-field/narrative comparison. Only after acceptance should small checked QRZ
-batches and scheduled delivery precede automatic QRZ scope; LoTW follows its
+and two isolated quarantines pass.
+
+Independent read-only checks now verify the acknowledged LOGID and exactly one
+candidate in its complete neighborhood. All 13 other transmitted fields match
+literally. QRZ returns a four-digit time matching the transmitted UTC minute;
+the source seconds remain preserved but unverified at QRZ. The separate known-ACK
+assessment passes receipt/owner/claim/proof links without changing the original
+unresolved literal-readback outcome or uncertain recovery. All eight controls
+remain closed. Next: preserve encrypted artifacts through normal ACK cleanup,
+verify recovery for a two-contact scope and observe actual scheduled delivery.
+Small checked QRZ batches must precede automatic QRZ scope; LoTW follows its
 own signing/upload/readback acceptance. The [roadmap](ROADMAP.md) and
 [pilot guide](docs/qrz-pilot.md) carry the current status. Older observations
 below retain their original release and instruction context.

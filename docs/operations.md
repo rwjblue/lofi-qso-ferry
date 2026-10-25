@@ -37,9 +37,13 @@ writes are held. The **03:56 UTC** recovery snapshot verifies exactly one
 delivered attempt, accepted receipt, claim and source-proof pin, preserves and
 decrypts the protected original payload after normal outbox purging, and passes
 all baseline immutable-row, integrity/FK and repeated-quarantine checks. No
-production restore occurred. All eight controls remain closed. Resolve the
-read-only LOGID/field/narrative comparison before checked batches or automatic
-activation; see the [current QRZ pilot evidence](qrz-pilot.md).
+production restore occurred. Subsequent exact-LOGID and complete neighborhood
+reads verify one acknowledged candidate, with all 13 other fields literal-exact
+and the same returned UTC minute. Seconds remain unverified. The separate
+known-ACK assessment preserves the original unresolved literal outcome and does
+not change uncertain recovery. All eight controls remain closed. Retain original
+encrypted artifacts through normal ACK cleanup and verify approved-set recovery
+before checked scheduled batches; see the [current QRZ pilot evidence](qrz-pilot.md).
 
 The first two completed new-release crons made 126/148 contact turns and
 96/156 classifications, with zero adoptions or attempt turns, and stopped at

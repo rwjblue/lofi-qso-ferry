@@ -1,6 +1,6 @@
 # QRZ and template implementation evidence
 
-Initial implementation review: 2026-10-22, using documentation and synthetic fixtures. Subsequent observations are dated below. One authorized QRZ INSERT has now been acknowledged; exact readback remains unresolved. Automatic exports remain disabled.
+Initial implementation review: 2026-10-22, using documentation and synthetic fixtures. Subsequent observations are dated below. One authorized QRZ INSERT has been acknowledged, recovered and independently observed with a unique neighborhood. Its returned UTC minute agrees; seconds remain unverified. Automatic exports remain disabled.
 
 ## Authorized singleton INSERT — 2026-10-25 03:55 UTC
 
@@ -16,9 +16,39 @@ ACK path purged the database outbox; the original encrypted artifact remains
 preserved and decrypts correctly from the protected pre-dispatch packet.
 All baseline claims, historical owners, association markers and exact evidence
 remain unchanged. Integrity/FKs, credential/key checks and two isolated
-quarantines pass. This proves acknowledged delivery and recovery, not exact
-readback acceptance. The next action is a read-only comparison of that LOGID
-against the immutable transmitted payload; further writes remain held.
+quarantines pass. Subsequent readback and its precision limits are recorded below;
+the original unresolved literal-readback outcome remains unchanged.
+
+## Known-ACK readback and duplicate absence — 2026-10-25 UTC
+
+A separate read-only exact-LOGID FETCH verifies the intended book and the
+acknowledged record. All **13 other transmitted fields match literally**,
+including the full eight-character grid, coordinates, power, reports and complete
+narrative. `TIME_ON` returns four digits matching the first four transmitted
+digits, with the same UTC date. [ADIF permits four- or six-digit time](https://www.adif.org/316/ADIF_316_annotated.htm#Time).
+This observation does not establish that QRZ preserves seconds internally or
+that every QRZ read discards them.
+
+The separate offline assessment requires the native accepted LOGID, delivered
+receipt, permanent owner and exact claim links. It verifies the original payload
+and populated recovery snapshot, and accepts only the observed same-minute
+precision reduction with every other transmitted field literal-exact. All
+**21 focused cases** and strict TypeScript pass. Literal equality and exact
+seconds remain false; source seconds and original evidence are preserved.
+The production uncertain/no-ACK recovery matcher is unchanged.
+
+A later bounded STATUS plus complete CALL/band/date FETCH returns **one record,
+one neighborhood candidate and one occurrence of the acknowledged LOGID**.
+It uses the normal ±30-minute neighborhood, rejects incomplete pagination and
+does not use the same-minute assessment to choose identity. All **10 focused
+cases**, types and bundle checks pass. Both read-only previews are disposed,
+with all eight production controls independently verified closed. No additional
+INSERT or source request occurred.
+
+This accepts the singleton at the precision returned by QRZ, with seconds
+unverified. Before scheduled batches, retain encrypted artifacts after terminal
+outbox cleanup and verify recovery for the approved attempt set. The singleton's
+one-INSERT allowance is exhausted; later batches use separate bounded scope.
 
 The earlier two invocations stopped before any attempt or dispatch, as verified
 by their independent recovery snapshots. An offline reproduction identified
@@ -116,29 +146,30 @@ GPS accuracy, how QRZ produced those fields, or the cause of the discrepancy.
 The user policy clarification is pending; contradictory fields remain held.
 No matching rule, stored association or export permission was changed.
 
-## First QRZ INSERT acceptance still required
+## Remaining QRZ scheduled acceptance
 
 Use the [restricted QRZ pilot checklist](qrz-pilot.md) for the concrete packet
 and the separate authorization/acceptance boundary.
 
-The read-only packet has exercised the current source-proof and absence path.
-A first write still requires a changed owner instruction, a reviewed single-contact
-and single-destination execution/stop procedure, fresh evidence at preparation
-and dispatch, and actual acknowledgement plus exact field/narrative readback and
-recovery checks. A clean INSERT acknowledgement currently resolves delivery and
-purges its outbox without automatic exact post-acknowledgement readback; preserve
-the reviewed payload privately for that independent comparison. Unknown outcomes
+The singleton evidence above exercises current source proof, absence, delivery,
+readback at returned precision and populated recovery. The next scheduled trial
+needs reviewed exact QSO/destination scope, fresh checks and durable artifact
+capture before dispatch. A clean INSERT acknowledgement currently resolves
+delivery and purges its outbox without automatic post-acknowledgement field
+verification. Preserve the original payload for independent comparison and
+recovery through the scheduled path. Unknown outcomes
 retain their durable attempt and claim; they never authorize blind retry.
 
-After separate acceptance and authorization, the existing first-insert capability
+After checked scheduled acceptance, the existing first-insert capability
 can use `ROLLOUT_QSO_IDS_JSON=["*"]` with exact QRZ destination IDs for a small
 pilot. This includes older missing contacts that satisfy all current source,
 absence and ownership checks; it is not limited to newly arrived contacts.
 Keep `SOURCE_BOUNDARY_VERIFIED=false`, LoTW off, and corrections, replacement
 and deletion disabled. Unrelated historical exceptions, recovery of currently
 empty raw LoTW history and 200,000-contact capacity are separate workstreams,
-not prerequisites for that restricted QRZ pilot. None of these future steps is
-authorized while the instruction to keep exports disabled remains in effect.
+not prerequisites for that restricted QRZ pilot. The owner has authorized staged
+progression only after successful checks; automatic exports remain disabled
+while scheduled acceptance and recoverability are prepared.
 
 ## Previous-release same-contact cloud check — 2026-10-24 21:10 UTC
 

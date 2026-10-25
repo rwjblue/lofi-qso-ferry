@@ -6,17 +6,17 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ### Export readiness at a glance
 
-| Work                            | Current state                                                                                       | Next acceptance evidence                                                                                      |
-| ------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                                         |
-| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                                          |
-| QRZ first-insert evidence       | Current-release source proof and fresh empty neighborhood passed for the authorized contact         | Renew normal evidence for every later contact                                                                 |
-| QRZ delivery                    | One INSERT acknowledged; delivered-attempt recovery passed; exact readback unresolved               | Resolve acknowledged LOGID readback before any further writes                                                 |
-| LoTW delivery                   | Disabled; source proof, empty three-day report and unrevoked serial observed                        | Renew current checks; prove signing, upload/readback acceptance and populated-evidence recovery               |
-| Broader rollout                 | Disabled; staged progression authorized after successful validation                                 | Accept the singleton, observe small checked QRZ batches and scheduled delivery, then consider automatic scope |
+| Work                            | Current state                                                                                          | Next acceptance evidence                                                                           |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks    | Continue guarded associations; review contradictory location evidence                              |
+| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint              | Observe ongoing intake and sustained cost/throughput                                               |
+| QRZ first-insert evidence       | Current-release source proof and fresh empty neighborhood passed for the authorized contact            | Renew normal evidence for every later contact                                                      |
+| QRZ delivery                    | One INSERT acknowledged; recovery and unique-neighbor checks pass; readback agrees at minute precision | Preserve recoverable artifacts for a checked two-contact scheduled trial                           |
+| LoTW delivery                   | Disabled; source proof, empty three-day report and unrevoked serial observed                           | Renew current checks; prove signing, upload/readback acceptance and populated-evidence recovery    |
+| Broader rollout                 | Disabled; singleton assessed with seconds unverified                                                   | Observe checked QRZ batches and scheduled delivery before automatic scope; LoTW follows separately |
 
-The next check is exact readback for the restricted QRZ trial described in
-[the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
+The next work is recoverable artifact capture and a checked two-contact QRZ
+trial described in [the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
 
@@ -206,9 +206,24 @@ permitted by this trial. Automatic exports and LoTW remain disabled. The
 accepted receipt, identity claim and source-proof pin; the original encrypted
 artifact remains recoverable in the protected packet after normal outbox
 purging. Every pretrial immutable row is preserved, and crypto, integrity/FKs
-and two isolated quarantines pass. Next: independently FETCH the acknowledged
-LOGID and compare every transmitted field and full narrative. Acknowledgement
-and recovery alone do not establish exact readback acceptance.
+and two isolated quarantines pass.
+
+Subsequent read-only checks verify the acknowledged LOGID in the intended book
+and a complete neighborhood containing exactly one candidate, that same LOGID.
+All **13 other transmitted fields** match literally, including the full grid,
+coordinates and narrative. `TIME_ON` returns four digits matching the first four
+of the six transmitted digits: the UTC date/minute agrees, while seconds remain
+unverified. A separate offline assessment binds this result to the delivered
+receipt, permanent owner, exact claims and proof pin. The original unresolved
+literal-readback outcome is preserved; uncertain-attempt recovery is unchanged.
+See [the acceptance limits](docs/qrz-pilot.md#acknowledged-readback-and-duplicate-check--2026-10-25-utc).
+
+Before the next checked batch, retain the original encrypted artifact through
+normal ACK cleanup and prove populated recovery for the approved attempt set.
+The scheduler already supports two exact QSO IDs and one QRZ destination;
+successful actual scheduled delivery remains unobserved. Keep all eight controls
+closed while completing this preparation, then validate small scoped QRZ batches
+before broader automatic activation. LoTW remains a separate later milestone.
 
 ### Previous production — ownership bootstrap and deletion status (f2c41cb3)
 
@@ -1175,7 +1190,8 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 
 - [x] Add a compact mobile-friendly dashboard for connection health, history adoption, pending work, submitted/observed states, and exceptions. No manual operation-release step.
 - [ ] Complete review of the owner's read-only reconciliation results and relevant exceptions for broader rollout. The restricted QRZ singleton uses its own exact candidate, proof, ownership and absence checks; unrelated historical holds remain held.
-- [ ] Accept one specifically authorized QRZ INSERT with exact readback and recovery; observe a singleton scheduled turn before expanding QRZ scope. LoTW needs separate signing and accepted upload/readback evidence before its own activation. Record each deployed revision and contract evidence.
+- [x] Accept one specifically authorized QRZ INSERT with populated recovery, known-ACK readback at returned minute precision and a complete unique neighborhood. All other transmitted fields match literally; seconds remain unverified.
+- [ ] Preserve original encrypted artifacts through normal delivery cleanup and verify populated approved-set recovery. Observe checked scheduled QRZ delivery before broader scope. LoTW needs separate signing and accepted upload/readback evidence before its own activation. Record each deployed revision and contract evidence.
 - [x] Document deployment, certificate renewal, key rotation, passkey management, source cursor gaps, uncertain requests, backup restore, disabling connections, retention, and vendor throttling.
 - [ ] Measure representative monthly Worker/D1/email usage; document actual cost and tune batching/polling without weakening correctness.
 - [x] Verify a second isolated tenant with synthetic fixtures before enabling additional people.

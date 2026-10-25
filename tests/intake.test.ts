@@ -240,7 +240,7 @@ function countedStore(store: Store) {
 }
 
 test("observations batch fresh contact metadata and preserve adopted narrative across tenants", async (t) => {
-  const { store, source, now, mf } = await setup();
+  const { store, source, now, mf } = await setup(true);
   t.after(() => mf.dispose());
   await seed(store, "other");
   const foreignKey = {

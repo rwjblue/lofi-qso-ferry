@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
 import test, { type TestContext } from "node:test";
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
+import { pollSource, rereadOperation } from "../src/intake.ts";
 import { backfillLotwOwnership } from "../src/lotw-ownership.ts";
 import {
   prepareLotwOwnershipBatch,
   renewAttemptLotwOwnership,
 } from "../src/lotw-ownership-bridge.ts";
+import { sourceFingerprint } from "../src/projection.ts";
 import {
   adoptHistory,
   canonicalLotwIdentity,
@@ -16,10 +18,16 @@ import { canonical, randomToken, sha256 } from "../src/security.ts";
 import {
   attemptSourceExportAuthorizationMode,
   attemptSourceExportProofCurrent,
+  loadCurrentSourcePresenceScope,
+  loadSourceExportSnapshots,
   lotwFreshInsertCurrent,
   lotwFreshInsertEligibleGuard,
+  mintSourceExportProofs,
   type SourceExportAuthorization,
 } from "../src/source-export-proofs.ts";
+import { loadSourcePresence } from "../src/source-presence-store.ts";
+import { sourceReadPolicy } from "../src/source-read-policy.ts";
+import type { Connection, Store } from "../src/store.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
 import { mintFixtureSourceProofs } from "./source-proof-fixtures.ts";
 
@@ -32,6 +40,180 @@ const record = {
   BAND: "20M",
   MODE: "FT8",
 };
+// This fixture deliberately predates the ownership schema used by current
+// observeContact. Establish real source evidence, then use the original guarded
+// ledger observation before minting proofs through the unchanged native guard.
+async function mintHistoricalSourceProofs(
+  store: Store,
+  input: Pick<
+    Parameters<typeof mintFixtureSourceProofs>[1],
+    "source" | "qsos" | "operations"
+  > & {
+    destinations: Connection[];
+  },
+) {
+  const { source } = input;
+  assert.equal(input.qsos.length, 1);
+  assert.equal(input.operations.length, 1);
+  assert.equal(input.qsos[0].operation, input.operations[0].uuid);
+  const accountId = JSON.parse(source.config).accountId as string;
+  const reply = (qsos = input.qsos, operations = input.operations) =>
+    Response.json({
+      account: { uuid: accountId },
+      qsos,
+      operations,
+      meta: { operations: { records_left: 0 }, qsos: { records_left: 0 } },
+    });
+  let budgetWindow = 20_000;
+  const poll = (qsos = input.qsos, operations = input.operations) =>
+    pollSource(
+      store,
+      source,
+      async () => reply(qsos, operations),
+      Date.now(),
+      "sync",
+      ++budgetWindow * 300_000,
+    );
+  await poll();
+  for (
+    let turn = 0;
+    turn < 3 &&
+    (await sourceReadPolicy(store, source.tenant, source.id))?.phase !==
+      "ready";
+    turn++
+  )
+    await poll([], []);
+  assert.equal(
+    (await sourceReadPolicy(store, source.tenant, source.id))?.phase,
+    "ready",
+  );
+  await rereadOperation(
+    store,
+    source,
+    async (url) => {
+      assert.equal(
+        decodeURIComponent(new URL(String(url)).pathname.split("/").at(-2)!),
+        input.operations[0].uuid,
+      );
+      return reply(input.qsos, []);
+    },
+    Date.now(),
+    undefined,
+    ++budgetWindow * 300_000,
+  );
+  await poll();
+  const scope = await loadCurrentSourcePresenceScope(store, source);
+  assert.ok(scope);
+  const id = input.qsos[0].uuid;
+  assert.ok(typeof id === "string");
+  const before = await loadSourceExportSnapshots(store, scope, [id]);
+  assert.equal(before.length, 1);
+  const witnesses = (
+    await loadSourcePresence(store, scope, before[0].targets)
+  ).map((witness) => {
+    assert.ok(witness);
+    return witness;
+  });
+  const collectionFinishedAt = Date.now();
+  await poll([], []);
+  const snapshots = await loadSourceExportSnapshots(store, scope, [id]);
+  assert.equal(snapshots.length, 1);
+  const [snapshot] = snapshots;
+  // Keep genuine canonical witnesses and drain proofs, but reproduce only
+  // the historical ledger observation: current intake also hashes ownership
+  // rows from 0035, which must remain absent in this migration fixture.
+  assert.equal(
+    await store
+      .statement(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='lotw_ownership_owners'",
+      )
+      .first(),
+    null,
+  );
+  const guard = randomToken(),
+    now = Date.now();
+  const account = await store
+    .statement("SELECT quiet_minutes FROM accounts WHERE id=?", source.tenant)
+    .first<{ quiet_minutes: number }>();
+  assert.ok(account);
+  const updates = [
+    store.statement(
+      "INSERT INTO projection_guards VALUES(?,?,?,?,?,?)",
+      guard,
+      source.tenant,
+      source.id,
+      snapshot.contact.contextGeneration,
+      now,
+      snapshot.contact.operationId,
+    ),
+  ];
+  for (const routed of input.destinations) {
+    const route = {
+      tenant: source.tenant,
+      source: source.id,
+      qso: snapshot.contact.id,
+      destination: routed.id,
+    };
+    const previous = await store.ledger(route);
+    updates.push(
+      // Preserve each existing route, narrative, remote identity, and attempt.
+      store.statement(
+        "UPDATE ledger SET state=COALESCE(prior_route_state,state),prior_route_state=NULL,reason=NULL WHERE tenant=? AND source=? AND qso=? AND destination=? AND state='retained_old_route'",
+        route.tenant,
+        route.source,
+        route.qso,
+        route.destination,
+      ),
+      store.observation(
+        route,
+        snapshot.contact.generation,
+        await sourceFingerprint(
+          snapshot.contact,
+          routed.kind as "qrz" | "lotw",
+          previous?.narrative === "remote_preserved",
+        ),
+        account.quiet_minutes,
+        snapshot.contact.deleted,
+        now,
+      ),
+      store.statement(
+        "UPDATE ledger SET context_generation=?,operation_id=? WHERE tenant=? AND source=? AND qso=? AND destination=?",
+        snapshot.contact.contextGeneration,
+        snapshot.contact.operationId,
+        route.tenant,
+        route.source,
+        route.qso,
+        route.destination,
+      ),
+    );
+  }
+  updates.push(
+    store.statement("DELETE FROM projection_guards WHERE id=?", guard),
+  );
+  await store.db.batch(updates);
+  const lease = await store.claim(
+    source.tenant,
+    `cycle:${source.id}`,
+    Date.now(),
+    90_000,
+  );
+  assert.ok(lease);
+  try {
+    const proofs = await mintSourceExportProofs(
+      store,
+      [{ snapshot, witnesses, collectionFinishedAt }],
+      lease,
+    );
+    const authorizations = proofs.map((proof) => ({
+      proofId: proof.id,
+      scope: proof.scope,
+      reconciliationVersion: proof.reconciliationVersion,
+    }));
+    return { scope, snapshots, proofs, authorizations };
+  } finally {
+    await store.release(lease);
+  }
+}
 async function fixture(
   t: TestContext,
   historicalAttempt = false,
@@ -132,11 +314,14 @@ async function fixture(
   }
   const source = (await h.store.connection("a", "source"))!;
   const destination = (await h.store.connection("a", "destination"))!;
-  const evidence = await mintFixtureSourceProofs(h.store, {
+  const destinations = extraQrz
+    ? [destination, (await h.store.connection("a", "qrz-destination"))!]
+    : [destination];
+  const evidence = await (beforeMigration
+    ? mintHistoricalSourceProofs
+    : mintFixtureSourceProofs)(h.store, {
     source,
-    destinations: extraQrz
-      ? [destination, (await h.store.connection("a", "qrz-destination"))!]
-      : [destination],
+    destinations,
     operations: [
       { uuid: "op", syncedAtMillis: 100, stationCall: "W1AW", grid: "FN31AA" },
     ],

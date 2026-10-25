@@ -887,6 +887,121 @@ test("fresh QRZ first-insert mode proves and inserts an unmapped contact with th
   assert.equal(h.env.SOURCE_BOUNDARY_VERIFIED, "false");
 });
 
+test("finite QRZ scope gets its normal export turn after a mode wake behind unrelated history", async (t) => {
+  const h = await fixture(
+    t,
+    (state, qsos) => {
+      state.qrzRecords.length = 0;
+      qsos.push({
+        ...structuredClone(state.qso),
+        uuid: "q2",
+        their: { call: "K2SCOPED" },
+        syncedAtMillis: 102,
+        startAtMillis: Number(state.qso.startAtMillis) + 120000,
+      });
+      for (let i = 0; i < 100; i++)
+        qsos.push({
+          ...structuredClone(state.qso),
+          uuid: `z-backlog-${String(i).padStart(3, "0")}`,
+          their: { call: `W${i}BACKLOG` },
+          syncedAtMillis: 103 + i,
+          startAtMillis: Number(state.qso.startAtMillis) + (i + 2) * 120000,
+        });
+    },
+    40,
+    "inventory_pending",
+  );
+  h.enable();
+  h.env.SOURCE_BOUNDARY_VERIFIED = "false";
+  h.env.QRZ_FRESH_INSERTS_ENABLED = "false";
+  h.env.LOTW_FRESH_INSERTS_ENABLED = "false";
+  h.env.ROLLOUT_QSO_IDS_JSON = '["q1","q2"]';
+  h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination"]';
+  await tick(h.env, h.fetcher, Date.now() - 25 * 60000);
+  assert.equal(
+    await h.count("attempts"),
+    0,
+    "finite scope alone grants no write mode",
+  );
+  // Reproduce the native queue state after a closed turn recently revisited the
+  // two chosen contacts. Activation must not require an operator queue reset.
+  await h.store
+    .statement(
+      "UPDATE source_work SET processed_at=? WHERE tenant='a' AND source='source' AND id IN('q1','q2')",
+      Date.now() - 60000,
+    )
+    .run();
+  const oldest = (
+    await h.store
+      .statement(
+        "SELECT qso FROM reconciliation_work WHERE tenant='a' AND source='source' AND eligible=1 ORDER BY selected_at,qso LIMIT 20",
+      )
+      .all<{ qso: string }>()
+  ).results;
+  assert(oldest.every((row) => row.qso.startsWith("z-backlog-")));
+  h.env.QRZ_FRESH_INSERTS_ENABLED = "true";
+  const before = await h.store
+    .statement("SELECT value FROM reconciliation_policy WHERE id='delivery'")
+    .first<string>("value");
+  const result = await tick(h.env, h.fetcher);
+  const after = await h.store
+    .statement("SELECT value FROM reconciliation_policy WHERE id='delivery'")
+    .first<string>("value");
+  assert.notEqual(
+    after,
+    before,
+    "normal mode flip performs the global policy wake",
+  );
+  assert.equal(result.errors, 0);
+  assert.equal(h.calls.qrzWrites, 2);
+  assert.equal(h.calls.lotwUploads, 0);
+  assert.equal(await h.count("attempts"), 2);
+  assert.deepEqual(
+    (
+      await h.store
+        .statement(
+          "SELECT a.qso,a.destination,s.state,p.authorization_mode FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id JOIN attempt_source_export_proofs p ON p.tenant=a.tenant AND p.attempt=a.id ORDER BY a.qso",
+        )
+        .all()
+    ).results,
+    [
+      {
+        qso: "q1",
+        destination: "destination",
+        state: "delivered",
+        authorization_mode: "qrz_fresh_insert",
+      },
+      {
+        qso: "q2",
+        destination: "destination",
+        state: "delivered",
+        authorization_mode: "qrz_fresh_insert",
+      },
+    ],
+  );
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) n FROM attempt_artifacts")
+      .first<number>("n"),
+    2,
+  );
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) n FROM source_cutovers")
+      .first<number>("n"),
+    0,
+  );
+  assert(
+    h.qrzMutations.every((record) =>
+      ["K1ABC", "K2SCOPED"].includes(record.CALL ?? ""),
+    ),
+  );
+  assert(
+    result.contacts > 2,
+    "later ordinary rounds continue serving unrelated history",
+  );
+});
+
 test("fresh QRZ mode stays closed by default and never collects correction proofs", async (t) => {
   const h = await fixture(t);
   await h.observeDueEdit();

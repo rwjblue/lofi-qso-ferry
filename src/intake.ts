@@ -10,7 +10,10 @@ import {
   projectContact,
   sourceFingerprint,
 } from "./projection.ts";
-import { selectReconciliationWork } from "./reconciliation-work.ts";
+import {
+  type ReconciliationScopePreference,
+  selectReconciliationWork,
+} from "./reconciliation-work.ts";
 import {
   canonical,
   type Envelope,
@@ -706,6 +709,7 @@ export async function pendingContactBatch(
   qso?: string,
   processedBefore?: number,
   readyContextOnly = false,
+  preference?: ReconciliationScopePreference,
 ): Promise<{ contacts: IntakeContact[]; selected: number }> {
   const policy = await sourceReadPolicy(store, source.tenant, source.id);
   if (policy && policy.phase !== "ready") return { contacts: [], selected: 0 };
@@ -731,6 +735,7 @@ export async function pendingContactBatch(
     qso,
     processedBefore,
     readyContextOnly,
+    preference,
   });
   const payloads = new Map<string, RetainedPayload>();
   for (let offset = 0; offset < rows.length; offset += 100) {

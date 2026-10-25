@@ -1117,6 +1117,18 @@ export async function tick(
   await purgeAuth(env, now);
   const store = new Store(metered.database, keyring(env));
   const gates = deliveryGates(env);
+  const reconciliationPreference =
+    exportsEffective(gates) &&
+    gates.allowedQsoIds &&
+    gates.allowedDestinationIds
+      ? {
+          qsoIds: gates.allowedQsoIds,
+          destinationIds: gates.allowedDestinationIds,
+          vendorKinds: (["qrz", "lotw"] as const).filter(
+            (vendor) => deliveryMode(gates, vendor) !== null,
+          ),
+        }
+      : undefined;
   await syncReconciliationPolicy(
     store,
     JSON.stringify({
@@ -1581,6 +1593,7 @@ export async function tick(
               undefined,
               nowAtStart,
               readyContextOnly,
+              reconciliationPreference,
             ),
           );
       progress += batch.selected;

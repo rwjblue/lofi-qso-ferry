@@ -9,6 +9,7 @@ import {
   reconciliationCheckStatement,
   reconciliationPreflight,
   reconciliationPreflightBatch,
+  type ReconciliationScopePreference,
   recordReconciliationCheck,
   selectReconciliationWork,
   syncReconciliationPolicy,
@@ -470,6 +471,181 @@ test("indexed scheduling preserves live priority, context preference, cutoff and
         })
       ).length,
       1,
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("finite rollout scheduling uses bounded key seeks before a policy-woken backlog, then resumes ordinary work", async () => {
+  const h = await fixture();
+  try {
+    await h.store
+      .statement(
+        "WITH RECURSIVE n(i) AS(SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<2000) INSERT INTO source_work(tenant,source,id,kind,private_id,revision,expires_at) SELECT 'a','source',printf('backlog-%04d',i),'qso',printf('private-%04d',i),'r1',? FROM n",
+        now + 86400000,
+      )
+      .run();
+    await qso(h.store, "q1");
+    await qso(h.store, "q2");
+    await seed(h.store, "b");
+    await qso(h.store, "q1", { tenant: "b" });
+    await h.store
+      .statement(
+        "UPDATE source_work SET processed_at=? WHERE tenant='a' AND id IN('q1','q2')",
+        now - 1000,
+      )
+      .run();
+    await syncReconciliationPolicy(h.store, "closed");
+    await syncReconciliationPolicy(h.store, "finite-qrz-fresh-insert");
+    const options = {
+      limit: 20,
+      now,
+      priority: "background" as const,
+      processedBefore: now,
+      readyContextOnly: true,
+    };
+    const ordinary = await selectReconciliationWork(h.store, source, options);
+    assert.equal(ordinary.length, 20);
+    assert(ordinary.every((row) => row.id.startsWith("backlog-")));
+    const measured = measuredDatabase(h.db);
+    const store = new Store(measured.database, h.store.keys);
+    let query: { sql: string; values: (string | number | null)[] } | undefined;
+    const statement = store.statement.bind(store);
+    store.statement = (sql, ...values) => {
+      if (sql.includes("r.qso=ids.value")) query = { sql, values };
+      return statement(sql, ...values);
+    };
+    const preference = {
+      qsoIds: ["q2", "q1", "q1"],
+      destinationIds: ["destination"],
+      vendorKinds: ["qrz"] as const,
+    };
+    const preferred = await selectReconciliationWork(store, source, {
+      ...options,
+      preference,
+    });
+    assert.deepEqual(
+      preferred.map((row) => [row.tenant, row.id]),
+      [
+        ["a", "q1"],
+        ["a", "q2"],
+      ],
+    );
+    assert.equal(measured.metrics.calls, 1);
+    assert(
+      measured.metrics.rowsRead < 100,
+      "preferred lookup must not scan 2,000 unrelated due rows",
+    );
+    assert(query);
+    const plan = (
+      await h.store
+        .statement(`EXPLAIN QUERY PLAN ${query.sql}`, ...query.values)
+        .all<{ detail: string }>()
+    ).results;
+    assert(
+      plan.some((row) =>
+        /SEARCH r USING INDEX sqlite_autoindex_reconciliation_work_1 \(tenant=\? AND source=\? AND qso=\?\)/.test(
+          row.detail,
+        ),
+      ),
+    );
+    assert(!plan.some((row) => /SCAN r\b/.test(row.detail)));
+    await h.store
+      .statement(
+        "UPDATE source_work SET processed_at=? WHERE tenant='a' AND id IN('q1','q2')",
+        now,
+      )
+      .run();
+    assert.deepEqual(
+      (
+        await selectReconciliationWork(h.store, source, {
+          ...options,
+          preference,
+        })
+      ).map((row) => row.id),
+      ordinary.map((row) => row.id),
+      "selected preferred contacts do not starve the next ordinary round",
+    );
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("finite scheduling preference preserves due, readiness, source, vendor and active destination fences", async () => {
+  const h = await fixture();
+  try {
+    await qso(h.store, "ordinary");
+    await qso(h.store, "preferred");
+    await qso(h.store, "waiting-context", { operation: "missing" });
+    const preference: ReconciliationScopePreference = {
+      qsoIds: ["preferred", "waiting-context"],
+      destinationIds: ["destination"],
+      vendorKinds: ["qrz"] as const,
+    };
+    const options = {
+      limit: 20,
+      now,
+      priority: "background" as const,
+      readyContextOnly: true,
+      preference,
+    };
+    const ids = async (overrides: Partial<typeof options> = {}) =>
+      (
+        await selectReconciliationWork(h.store, source, {
+          ...options,
+          ...overrides,
+        })
+      ).map((row) => row.id);
+    assert.deepEqual(await ids(), ["preferred"]);
+    await h.store
+      .statement(
+        "UPDATE reconciliation_work SET next_due_at=? WHERE qso='preferred'",
+        now + 300000,
+      )
+      .run();
+    assert.deepEqual(await ids(), ["ordinary"]);
+    await h.store
+      .statement(
+        "UPDATE reconciliation_work SET next_due_at=0 WHERE qso='preferred'",
+      )
+      .run();
+    await h.store
+      .statement(
+        "UPDATE source_work SET expires_at=? WHERE id='preferred'",
+        now,
+      )
+      .run();
+    assert.deepEqual(await ids(), ["ordinary"]);
+    await h.store
+      .statement(
+        "UPDATE source_work SET expires_at=? WHERE id='preferred'",
+        now + 86400000,
+      )
+      .run();
+    for (const changed of [
+      { destinationIds: ["foreign"] },
+      { destinationIds: ["source"] },
+      { vendorKinds: ["lotw"] as const },
+      { qsoIds: Array.from({ length: 201 }, () => "preferred") },
+    ])
+      assert.deepEqual(
+        await ids({ preference: { ...preference, ...changed } }),
+        ["ordinary", "preferred"],
+      );
+    await h.store
+      .statement(
+        "UPDATE connections SET status='disabled' WHERE tenant='a' AND id='destination'",
+      )
+      .run();
+    assert.deepEqual(await ids(), ["ordinary", "preferred"]);
+    assert.deepEqual(
+      await selectReconciliationWork(
+        h.store,
+        { ...source, id: "foreign" },
+        options,
+      ),
+      [],
     );
   } finally {
     await h.mf.dispose();

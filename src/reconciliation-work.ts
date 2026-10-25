@@ -12,6 +12,11 @@ export interface ReconciliationWork extends Work {
 export interface ReconciliationLedger extends Ledger {
   destination_kind: Connection["kind"];
 }
+export interface ReconciliationScopePreference {
+  qsoIds: readonly string[];
+  destinationIds: readonly string[];
+  vendorKinds: readonly ("qrz" | "lotw")[];
+}
 
 /** One bounded read supplies hints for a source batch; commit guards stay authoritative. */
 export async function reconciliationPreflightBatch(
@@ -46,6 +51,7 @@ export async function selectReconciliationWork(
     processedBefore?: number;
     readyContextOnly?: boolean;
     qso?: string;
+    preference?: ReconciliationScopePreference;
   },
 ): Promise<ReconciliationWork[]> {
   const { now, priority, processedBefore, readyContextOnly, qso } = options;
@@ -69,35 +75,59 @@ export async function selectReconciliationWork(
         .all<ReconciliationWork>()
     ).results;
   }
-  const rows: ReconciliationWork[] = [];
-  for (const lane of priority
-    ? [priority]
-    : (["live", "background"] as const)) {
-    // Time can expire a hint between maintenance passes. The final lane still
-    // lets ordinary intake classify that dependency instead of hiding it.
-    for (const readiness of readyContextOnly
-      ? ["ready"]
-      : ["ready", "held", "expired"]) {
-      if (rows.length >= limit) break;
-      const ready = readiness === "held" ? 0 : 1;
-      const batch = await store
-        .statement(
-          `SELECT w.*,r.version AS reconciliation_version FROM reconciliation_work r INDEXED BY reconciliation_due JOIN source_work w ON w.tenant=r.tenant AND w.source=r.source AND w.id=r.qso AND w.kind='qso' WHERE r.tenant=? AND r.source=? AND r.priority=? AND r.eligible=1 AND r.context_ready=? AND r.next_due_at<=? AND r.selected_at<? AND w.expires_at>? ${ready ? `AND r.context_expires_at${readiness === "expired" ? "<=" : ">"}?` : ""} ORDER BY r.next_due_at,r.selected_at,r.qso LIMIT ?`,
-          source.tenant,
-          source.id,
-          lane,
-          ready,
-          now,
-          processedBefore ?? parked,
-          now,
-          ...(ready ? [now] : []),
-          limit - rows.length,
-        )
-        .all<ReconciliationWork>();
-      rows.push(...batch.results);
+  const preference = options.preference;
+  // A finite rollout is a bounded scheduling hint, never export authority.
+  // Larger/wildcard scopes retain the ordinary indexed queue.
+  const preferred =
+    preference?.qsoIds.length &&
+    preference.qsoIds.length <= 200 &&
+    preference.destinationIds.length &&
+    preference.destinationIds.length <= 200 &&
+    preference.vendorKinds.length &&
+    preference.vendorKinds.length <= 2
+      ? {
+          qsos: JSON.stringify([...new Set(preference.qsoIds)]),
+          destinations: JSON.stringify([...new Set(preference.destinationIds)]),
+          vendors: JSON.stringify([...new Set(preference.vendorKinds)]),
+        }
+      : undefined;
+  for (const scoped of preferred ? [preferred, undefined] : [undefined]) {
+    const rows: ReconciliationWork[] = [];
+    for (const lane of priority
+      ? [priority]
+      : (["live", "background"] as const)) {
+      // Time can expire a hint between maintenance passes. The final lane still
+      // lets ordinary intake classify that dependency instead of hiding it.
+      for (const readiness of readyContextOnly
+        ? ["ready"]
+        : ["ready", "held", "expired"]) {
+        if (rows.length >= limit) break;
+        const ready = readiness === "held" ? 0 : 1;
+        const batch = await store
+          .statement(
+            `SELECT w.*,r.version AS reconciliation_version FROM ${scoped ? "json_each(?) ids CROSS JOIN reconciliation_work r" : "reconciliation_work r INDEXED BY reconciliation_due"} JOIN source_work w ON w.tenant=r.tenant AND w.source=r.source AND w.id=r.qso AND w.kind='qso' WHERE ${scoped ? "r.qso=ids.value AND " : ""}r.tenant=? AND r.source=? AND r.priority=? AND r.eligible=1 AND r.context_ready=? AND r.next_due_at<=? AND r.selected_at<? AND w.expires_at>? ${ready ? `AND r.context_expires_at${readiness === "expired" ? "<=" : ">"}?` : ""} ${scoped ? "AND EXISTS(SELECT 1 FROM json_each(?) ds CROSS JOIN connections d WHERE d.tenant=r.tenant AND d.id=ds.value AND d.status='active' AND d.kind IN(SELECT value FROM json_each(?)))" : ""} ORDER BY r.next_due_at,r.selected_at,r.qso LIMIT ?`,
+            ...(scoped ? [scoped.qsos] : []),
+            source.tenant,
+            source.id,
+            lane,
+            ready,
+            now,
+            processedBefore ?? parked,
+            now,
+            ...(ready ? [now] : []),
+            ...(scoped ? [scoped.destinations, scoped.vendors] : []),
+            limit - rows.length,
+          )
+          .all<ReconciliationWork>();
+        rows.push(...batch.results);
+      }
     }
+    // Do not pad a finite rollout cohort with unrelated history: preparation
+    // follows the whole cohort. The normal selected_at fence lets later rounds
+    // serve ordinary work after the preferred contacts have had their turn.
+    if (rows.length || !scoped) return rows;
   }
-  return rows;
+  return [];
 }
 
 /** A changed policy wakes work once, without scanning the backlog every tick. */

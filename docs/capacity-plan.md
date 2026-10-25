@@ -384,6 +384,9 @@ Nine native token/race/bounds cases, the 19-case fresh-delivery suite and two
 scheduler cases pass, including stale proof rejection and a late neighbor
 preventing INSERT. The full local `mise run check` passes **1,628 tests**, formatting,
 lint, both TypeScript checks and the Worker dry build.
+[CI for signed reuse commit `77607263`](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40144251500)
+also passed at **2026-10-25 00:10:55 UTC**. This result predates the planning
+admission and deferred-key follow-ups below.
 
 The **23:25:07.633 UTC** independent local-D1 comparison uses the same fixture,
 quiet period, budgets, completed work and fake-vendor behavior on the baseline
@@ -406,7 +409,7 @@ request-demand measurements, not live vendor acceptance, production latency or
 sustained capacity. Deployment is deferred until the frozen first-QRZ acceptance
 work is complete; no export authority or limit changed.
 
-### Open larger-cohort admission issue
+### Larger-cohort starvation and bounded planning admission
 
 At **23:41:45.958 UTC**, a separate local-D1 probe used 20 quiet-due unmapped
 candidates, warm inventory and the real ambiguous-empty fallback control flow.
@@ -423,13 +426,67 @@ memos become due again after roughly five minutes, while the next canonical poll
 invalidates the prepared attempts' proofs before background dispatch. This is
 an inference from scheduling, not an observed multi-tick result.
 
-Before broader backfill, bound fresh negative-history admission and preserve
-request headroom for final queries and INSERTs. Keep positive historical matching
-available across the larger cohort. A fresh allowance must not refill on every
-outer round, and tests must include multiple sources, later rounds and next-tick
-fairness. A fixed two-scan allowance alone cannot guarantee headroom when a
-neighborhood takes its maximum bounded reads or other work shares the quota.
-This follow-up remains unimplemented and does not block the singleton trial.
+The follow-up local implementation admits fresh negative-history scans according
+to the current cohort's dispatch slots, after checking the exact ledger generation
+and quiet-period deadline. Positive historical matching retains its larger
+cohort. Unscanned negatives receive neither an absence classification nor a new
+retry deadline, so they remain available for the next invocation. Normal
+selection still prevents their replay within this invocation.
+
+An invocation-local planning ceiling admits at most **14 background / 110 total
+QRZ HTTP requests**, before the ordinary shared reservation. It never refills
+within the invocation, even across a five-minute boundary, and includes both
+history and preparation reads. The difference from the existing 24/120 limits
+allows one maximal final neighborhood (four targeted reads, STATUS and four
+covering reads) plus INSERT. Dispatch and recovery retain their normal shared
+budget and guards. This is a planning ceiling, not a shared reservation:
+inventory, other dispatches or another Worker can still consume that headroom.
+No quota or export control changes.
+
+An independent exact-v2 repeat uses the same 20-contact fixture and default
+limits, with no budget or clock reset:
+
+| Warm 20-contact cohort   | Fake INSERTs | QRZ raw/admitted requests | D1 RPCs / SQL |
+| ------------------------ | -----------: | ------------------------: | ------------: |
+| Direct empty response    |            2 |                         6 |       437/780 |
+| Ambiguous-empty fallback |            2 |                        14 |       457/800 |
+
+Both cases have zero errors or denied requests, three LoFi requests, 20 inventory
+cache hits and no inventory fetches. The other 18 contacts remain due in
+`inventory_pending`, with no new absence memo; no current attempt pins remain.
+The extra exact due-at checks add 20 RPCs / 20 SQL statements against v1.
+These are local request-demand results, not a production service rate.
+Packet `ferry-qrz-budget-demand-v2-1awjetum` retains runtime and fixture hashes;
+its manifest SHA256 is
+`f30b40512be467363a0a78312b87455cd357a86ac2039657ad12043b680c7e60`.
+
+The exact-v2 native scheduler worst-case test consumes nine planning reads for
+the first contact and five for an incomplete second scan. The second receives
+no absence memo or attempt. The first then completes nine final reads and one
+fake INSERT: **24 admitted HTTP requests, one delivered contact, zero errors**,
+with **278 D1 RPCs / 364 SQL statements** and one expected local deferral. Local
+denial occurs before the shared reservation and raw transport. Native quiet-prefix
+and oversized-prefix regressions verify that ineligible work does not consume
+another contact's scan admission and fitting neighbors can progress on a later
+normal invocation without resetting clocks, budgets or queue selection.
+
+The protected v2 packet is `ferry-qrz-planning-admission-prototype-77607263`,
+manifest SHA256
+`2fd1e586be97dbd97a004c94ce916c01e3a2fb9bd939f3adf8f01e75b5550e4d`.
+The worst-case result is a separate `worst-nine-result.json` in that packet.
+The independently measured v1 two-source fixture delivers three of four contacts
+in its first tick, then the last contact after a real **301.007-second** wait
+using the same database and unchanged clocks/budgets. Its respective QRZ counts
+are **24 admitted / one denied** and **10 admitted / zero denied**, with zero
+errors. This is separately pinned v1 evidence, not an exact-v2 or sustained
+capacity result.
+
+Same-source throughput beyond two contacts remains open: normal selection marks
+the bounded cohort selected before scan admission, excluding its deferred
+siblings from later rounds. A bounded current-key re-entry path must also respect
+the four-request source-proof limit, current projection, queue versions and the
+unchanged proof/dispatch guards. These local improvements are not deployed and
+do not block the separately authorized singleton trial.
 
 ## First scheduled run of `12f636b3`
 
@@ -1179,6 +1236,16 @@ between that query and INSERT. Do not claim atomic vendor concurrency protection
 Acceptance: request demand fits the configured budgets with retry/maintenance
 headroom in both sparse and burst tests. Member cancellation, crash recovery,
 partial readback and collisions pass with zero duplicate writes.
+
+The 100-account target also needs an explicit admission-policy decision. With
+today's required final QRZ query plus INSERT, even a hypothetical zero-cost
+planning path needs at least two requests per delivered contact. Twice the
+10,000-contact/day arrival rate would therefore need at least **40,000 QRZ
+requests/day**, exceeding the configured global **34,560/day** before any
+maintenance or retry. This is a code-derived lower bound, not an upstream quota.
+Request reuse alone cannot meet the proposed 2× headroom target. Evaluate fair
+account/book admission with a global safety ceiling against measured behavior
+and the vendor contract; any policy change needs separate evidence and rollout.
 
 ### 4. Add durable continuations around bounded work
 

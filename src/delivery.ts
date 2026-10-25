@@ -26,6 +26,7 @@ import {
   type QrzOptions,
   sameQrzIdentity,
 } from "./qrz.ts";
+import { type QrzPlanningAllowance, qrzPlanningFetch } from "./qrz-planning.ts";
 import {
   canonicalLotwIdentity,
   comparableRemote,
@@ -91,6 +92,8 @@ export interface DeliveryDependencies {
   sourceProof?: SourceExportAuthorization;
   /** Single-use empty scan from this source turn; never valid for dispatch. */
   qrzEmptyObservation?: QrzEmptyObservation;
+  /** Invocation-local planning reads only; dispatch and recovery never consume it. */
+  qrzPlanning?: QrzPlanningAllowance;
 }
 /** An injected test origin cannot freeze expiry while asynchronous work runs. */
 function deliveryClock(origin?: number): () => number {
@@ -666,10 +669,13 @@ export class QrzEmptyObservationScope {
     if (!this.#open)
       throw new QrzError("blocked", "QRZ observation scope unavailable");
     const records = await new QrzClient(apiKey, {
-      fetch: vendorFetch(this.#store, "qrz", deps.fetcher ?? fetch, {
-        priority: deps.priority,
-        now: deps.now,
-      }),
+      fetch: qrzPlanningFetch(
+        this.#store,
+        deps.fetcher ?? fetch,
+        deps.priority,
+        time,
+        deps.qrzPlanning,
+      ),
       neighborhoodFallback: qrzNeighborhoodFallback(
         this.#store,
         input.source,
@@ -755,6 +761,7 @@ function qrzClient(
     init: RequestInit | undefined,
   ) => Promise<void>,
   authorizationMode: SourceExportAuthorizationMode = "source_boundary",
+  planning?: QrzPlanningAllowance,
 ): QrzClient {
   if (!credential.apiKey) throw new Error("QRZ credential is unavailable");
   const currentTime = deliveryClock(deps.now);
@@ -781,11 +788,13 @@ function qrzClient(
     return (deps.fetcher ?? fetch)(input, init);
   };
   return new QrzClient(credential.apiKey, {
-    fetch: (input, init) =>
-      vendorFetch(store, "qrz", transport, {
-        priority: deps.priority,
-        now: currentTime(),
-      })(input, init),
+    fetch: qrzPlanningFetch(
+      store,
+      transport,
+      deps.priority,
+      currentTime,
+      planning,
+    ),
     writesEnabled: modeEnabled(gates, authorizationMode),
     replacementContractVerified: config.replacementContractVerified === true,
     beforeWrite: async () =>
@@ -1054,6 +1063,7 @@ export async function prepareDue(
       undefined,
       undefined,
       authorizationMode,
+      authorizationMode === "qrz_fresh_insert" ? deps.qrzPlanning : undefined,
     );
     let record = structured;
     if (row.narrative !== "remote_preserved") {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { type AdifRecord, serializeAdifRecord } from "../src/adif.ts";
 import { bindLegacyQrzIdentity } from "../src/identity-claims.ts";
 import { rereadOperation } from "../src/intake.ts";
 import type { SourceRecord } from "../src/lofi.ts";
@@ -1006,4 +1007,282 @@ test("fresh LoTW mode stays closed by default and cannot collect correction proo
     assert.equal(h.calls.lotwUploads, 0);
     assert.equal(h.calls.qrzWrites, 0);
   }
+});
+
+test("two oversized fresh negatives yield to fitting unscanned neighbors in the next invocation", async (t) => {
+  const h = await fixture(
+    t,
+    async (state, qsos) => {
+      state.qrzRecords.length = 0;
+      for (let i = 0; i < 63; i++)
+        qsos.push({
+          uuid: `event-${i}`,
+          operation: "op-fixture",
+          band: "event",
+          event: {},
+          startAtMillis: Number(state.qso.startAtMillis) - 1,
+          syncedAtMillis: 2 + i,
+        });
+      qsos.push({
+        ...structuredClone(state.qso),
+        uuid: "q2",
+        their: { call: "K2BLOCK" },
+        syncedAtMillis: 102,
+        startAtMillis: Number(state.qso.startAtMillis) + 120000,
+      });
+      for (let i = 3; i <= 4; i++)
+        qsos.push({
+          ...structuredClone(state.qso),
+          uuid: `q${i}`,
+          operation: null,
+          their: { call: `K${i}FIT` },
+          our: {
+            stationCall: "W1AW",
+            grid: "FN31AA",
+            state: "CT",
+            county: "Tolland",
+            dxccCode: 291,
+            cqZone: 5,
+            ituZone: 8,
+          },
+          syncedAtMillis: 100 + i,
+          startAtMillis: Number(state.qso.startAtMillis) + i * 120000,
+        });
+    },
+    40,
+    "inventory_pending",
+  );
+  h.enable();
+  h.env.SOURCE_BOUNDARY_VERIFIED = "false";
+  h.env.QRZ_FRESH_INSERTS_ENABLED = "true";
+  h.env.LOTW_FRESH_INSERTS_ENABLED = "false";
+  h.env.ROLLOUT_QSO_IDS_JSON = '["q1","q2","q3","q4"]';
+  h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination"]';
+  const before = Date.now();
+  const first = await tick(h.env, h.fetcher);
+  const queued = (
+    await h.store
+      .statement(
+        "SELECT w.qso,w.version,w.next_due_at,w.selected_at,l.state,l.reason FROM reconciliation_work w JOIN ledger l ON l.tenant=w.tenant AND l.source=w.source AND l.qso=w.qso AND l.destination='destination' WHERE w.tenant='a' ORDER BY w.qso",
+      )
+      .all()
+  ).results;
+  const checks = (
+    await h.store
+      .statement(
+        "SELECT qso,count(*) n FROM reconciliation_checks GROUP BY qso ORDER BY qso",
+      )
+      .all()
+  ).results;
+  assert.equal(first.errors, 0);
+  assert.equal(h.calls.qrzWrites, 0);
+  assert.equal(await h.count("attempts"), 0);
+  for (const row of queued) {
+    if (["q1", "q2"].includes(String(row.qso))) {
+      assert.equal(row.reason, "source_export_proof_unavailable");
+      assert(Number(row.next_due_at) >= before + 300000);
+    } else {
+      assert(Number(row.next_due_at) <= before);
+      assert.equal(row.state, "inventory_pending");
+    }
+  }
+  assert(
+    checks.every((row) => ["q1", "q2"].includes(String(row.qso))),
+    "unscanned neighbors receive no absence memo",
+  );
+  // Real later invocation, with all durable cursors, proofs, budgets and clocks intact.
+  const second = await tick(h.env, h.fetcher);
+  assert.equal(second.errors, 0);
+  assert(
+    h.calls.qrzWrites > 0,
+    "fitting neighbors progress without retrying the blocked prefix",
+  );
+  assert(h.qrzMutations.every((row) => ["K3FIT", "K4FIT"].includes(row.CALL)));
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) n FROM attempts WHERE qso IN('q1','q2')")
+      .first<number>("n"),
+    0,
+  );
+});
+
+test("quiet-period prefix does not consume the fitting neighbors' planning slots", async (t) => {
+  const h = await fixture(
+    t,
+    async (state, qsos) => {
+      state.qrzRecords.length = 0;
+      for (let i = 2; i <= 4; i++)
+        qsos.push({
+          ...structuredClone(state.qso),
+          uuid: `q${i}`,
+          their: { call: `K${i}FIT` },
+          syncedAtMillis: 100 + i,
+          startAtMillis: Number(state.qso.startAtMillis) + i * 120000,
+        });
+    },
+    40,
+    "inventory_pending",
+  );
+  // Actual source edits and normal observation put only the first two contacts
+  // back into quiet time; no queue/proof/budget or eligibility rows are forged.
+  h.qso.freq = 14075;
+  h.qso.syncedAtMillis = 200;
+  const q2 = h.qsos.find((q) => q.uuid === "q2")!;
+  q2.freq = 14075;
+  q2.syncedAtMillis = 201;
+  await tick(h.env, h.fetcher, Date.now() - 60000);
+  h.enable();
+  h.env.SOURCE_BOUNDARY_VERIFIED = "false";
+  h.env.QRZ_FRESH_INSERTS_ENABLED = "true";
+  h.env.LOTW_FRESH_INSERTS_ENABLED = "false";
+  h.env.ROLLOUT_QSO_IDS_JSON = '["q1","q2","q3","q4"]';
+  h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination"]';
+  const before = (
+    await h.store
+      .statement(
+        "SELECT qso,due_at FROM ledger WHERE destination='destination' ORDER BY qso",
+      )
+      .all()
+  ).results;
+  const now = Date.now();
+  assert(
+    before
+      .filter((r) => ["q1", "q2"].includes(String(r.qso)))
+      .every((r) => Number(r.due_at) > now),
+  );
+  assert(
+    before
+      .filter((r) => ["q3", "q4"].includes(String(r.qso)))
+      .every((r) => Number(r.due_at) <= now),
+  );
+  const result = await tick(h.env, h.fetcher);
+  const attempts = (
+    await h.store.statement("SELECT qso FROM attempts ORDER BY qso").all()
+  ).results;
+  assert.equal(result.errors, 0);
+  assert(h.calls.qrzWrites > 0);
+  assert(attempts.every((a) => ["q3", "q4"].includes(String(a.qso))));
+  assert(h.qrzMutations.every((row) => ["K3FIT", "K4FIT"].includes(row.CALL)));
+});
+
+test("two nine-read negative plans retain enough normal quota for one final nine-read scan and INSERT", async (t) => {
+  const h = await fixture(
+    t,
+    async (state, qsos) => {
+      state.qrzRecords.length = 0;
+      state.qrzRecords.push({
+        ...state.initial,
+        CALL: "K9OTHER",
+        APP_QRZLOG_LOGID: "500",
+      });
+      const d = (await state.store.connection("a", "destination"))!;
+      await state.store
+        .statement(
+          "UPDATE connections SET config=? WHERE tenant='a' AND id='destination'",
+          JSON.stringify({
+            ...JSON.parse(d.config),
+            bookId: "synthetic-book",
+            readAccess: true,
+          }),
+        )
+        .run();
+      qsos.push({
+        ...structuredClone(state.qso),
+        uuid: "q2",
+        their: { call: "K2NEXT" },
+        syncedAtMillis: 102,
+        startAtMillis: Number(state.qso.startAtMillis) + 120000,
+      });
+    },
+    40,
+    "inventory_pending",
+  );
+  h.enable();
+  h.env.SOURCE_BOUNDARY_VERIFIED = "false";
+  h.env.QRZ_FRESH_INSERTS_ENABLED = "true";
+  h.env.LOTW_FRESH_INSERTS_ENABLED = "false";
+  h.env.ROLLOUT_QSO_IDS_JSON = '["q1","q2"]';
+  h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination"]';
+  const count = { target: 0, status: 0, cover: 0, insert: 0 };
+  let coverPage = 0;
+  const encode = (value: Record<string, string>) =>
+    new Response(new URLSearchParams(value).toString());
+  const page = (call: string, start: number, length: number) =>
+    encode({
+      RESULT: "OK",
+      COUNT: String(length),
+      ADIF: Array.from({ length }, (_, i) =>
+        serializeAdifRecord({
+          ...h.initial,
+          CALL: call,
+          TIME_ON: "000000",
+          APP_QRZLOG_LOGID: String(start + i),
+        } as AdifRecord),
+      ).join(""),
+    });
+  const raw: typeof fetch = async (input, init) => {
+    if (new URL(String(input)).hostname !== "logbook.qrz.com")
+      return h.fetcher(input, init);
+    const form = new URLSearchParams(String(init?.body));
+    const action = form.get("ACTION");
+    if (action === "INSERT") {
+      count.insert++;
+      return h.fetcher(input, init);
+    }
+    if (action === "STATUS") {
+      count.status++;
+      coverPage = 0;
+      return encode({
+        RESULT: "OK",
+        BOOKID: "synthetic-book",
+        CALLSIGN: "W1AW",
+        START_DATE: "2020-01-01",
+        END_DATE: "2030-12-31",
+      });
+    }
+    assert.equal(action, "FETCH");
+    const fields = (form.get("OPTION") ?? "").split(",");
+    const value = (key: string) =>
+      fields.find((x) => x.startsWith(`${key}:`))?.slice(key.length + 1);
+    const call = value("CALL");
+    if (call) {
+      count.target++;
+      const after = Number(value("AFTERLOGID") ?? 0);
+      return after >= 1750
+        ? encode({ RESULT: "FAIL", COUNT: "0" })
+        : page(call, after ? after : 1001, 250);
+    }
+    count.cover++;
+    coverPage++;
+    return coverPage === 4
+      ? page("K9OTHER", 748, 1)
+      : page("K9OTHER", (coverPage - 1) * 249 + 1, 250);
+  };
+  const result = await tick(h.env, raw);
+  const budget = await h.store
+    .statement(
+      "SELECT requests,background_requests FROM vendor_requests WHERE vendor='qrz'",
+    )
+    .first();
+  const attempts = (
+    await h.store
+      .statement(
+        "SELECT a.qso,s.state FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id",
+      )
+      .all()
+  ).results;
+  assert.equal(result.errors, 0);
+  assert.equal(count.insert, 1);
+  assert.equal(count.target + count.status + count.cover + count.insert, 24);
+  assert.equal(budget?.requests, 24);
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0]?.qso, "q1");
+  assert.equal(attempts[0]?.state, "delivered");
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) n FROM reconciliation_checks WHERE qso='q2'")
+      .first<number>("n"),
+    0,
+    "partial second read is not an absence",
+  );
 });

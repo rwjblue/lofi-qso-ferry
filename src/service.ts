@@ -50,6 +50,7 @@ import { purgeResolvedSource, rotatePrivateData } from "./maintenance.ts";
 import type { Contact } from "./projection.ts";
 import { sourceFingerprint } from "./projection.ts";
 import { QrzClient, QrzError } from "./qrz.ts";
+import { QrzPlanningAllowance } from "./qrz-planning.ts";
 import type {
   HistoryAdoptionInput,
   ReconciliationEvidence,
@@ -348,6 +349,7 @@ async function reconcileContact(
   vendorNow: number | undefined,
   metrics: ThroughputMetrics,
   emptyObservations?: QrzEmptyObservationScope,
+  planning?: { allowance: QrzPlanningAllowance; admitScan: () => boolean },
 ) {
   const key: LedgerKey = {
     tenant: source.tenant,
@@ -394,6 +396,26 @@ async function reconcileContact(
     (gates.sourceBoundaryVerified ||
       (await freshInsertRouteCurrent(store, gates, key, destination)))
   ) {
+    if (
+      destination.kind === "qrz" &&
+      routeDeliveryMode(gates, key.qso, destination) === "qrz_fresh_insert" &&
+      planning
+    ) {
+      // Structural first-insert eligibility alone does not include the quiet
+      // period. Unready negatives cannot consume another candidate's scan slot.
+      const due = await store
+        .statement(
+          "SELECT 1 FROM ledger WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND due_at<=?",
+          key.tenant,
+          key.source,
+          key.qso,
+          key.destination,
+          contact.generation,
+          vendorNow ?? Date.now(),
+        )
+        .first();
+      if (!due || !planning.admitScan()) return false;
+    }
     let raw: {
       apiKey?: string;
       query?: { username: string; password: string };
@@ -420,7 +442,12 @@ async function reconcileContact(
         const read = await emptyObservations.read(
           { key, contact, source, destination },
           { apiKey: raw.apiKey },
-          { fetcher, priority, now: vendorNow },
+          {
+            fetcher,
+            priority,
+            now: vendorNow,
+            qrzPlanning: planning?.allowance,
+          },
         );
         remote = read.records;
         emptyObservation = read.observation;
@@ -1133,6 +1160,8 @@ export async function tick(
     live: 6,
     background: 2,
   };
+  // Shared across every source/cohort/round in this invocation, never module state.
+  const qrzPlanning = new QrzPlanningAllowance();
   const sourceProofAttempts = new Map<string, number>();
   const maintainLotwOwnership = async (tenant: string) => {
     if (!maintainedLotwOwnership.has(tenant) && metered.metrics.calls < 720) {
@@ -1409,6 +1438,7 @@ export async function tick(
             const prepared = await prepareDue(store, key, item.contact, gates, {
               ...deps,
               priority,
+              qrzPlanning,
               qrzEmptyObservation: routes.find(
                 (route) =>
                   route.contact.id === item.contact.id &&
@@ -1608,6 +1638,8 @@ export async function tick(
       // One bounded projection cohort (at most20), closed before leaving this
       // turn. Nothing survives into another source turn or scheduled invocation.
       const emptyObservations = new QrzEmptyObservationScope(store);
+      let freshQrzScans = 0;
+      const planningDeferred = new Set<string>();
       const finished = new Map<string, IntakeContact>();
       const budgetBackoffs = new Map<string, number>();
       const historyTurns = new Map<string, Promise<void>>();
@@ -1680,7 +1712,7 @@ export async function tick(
             try {
               let qrzEmptyObservation: QrzEmptyObservation | undefined;
               await historyTurn(destination, contact, async () => {
-                qrzEmptyObservation = await measure("history", () =>
+                const observation = await measure("history", () =>
                   reconcileContact(
                     store,
                     source,
@@ -1693,9 +1725,21 @@ export async function tick(
                     clock,
                     throughput,
                     emptyObservations,
+                    {
+                      allowance: qrzPlanning,
+                      admitScan: () => {
+                        if (freshQrzScans >= attemptSlots[priority])
+                          return false;
+                        freshQrzScans++;
+                        return true;
+                      },
+                    },
                   ),
                 );
+                if (observation === false) planningDeferred.add(contact.id);
+                else qrzEmptyObservation = observation;
               });
+              if (kind === "qrz" && planningDeferred.has(contact.id)) continue;
               if (expired()) break;
               // Read-only adoption must retain its actual history diagnosis.
               // Closed rollout gates are global status, not a contact failure.
@@ -1794,7 +1838,10 @@ export async function tick(
         emptyObservations.close();
         // An edit during the shared drain has a newer version; the ordinary CAS
         // leaves that work awake instead of parking it with this older turn.
-        for (const contact of finished.values())
+        for (const contact of finished.values()) {
+          // Unexamined negatives stay due; selected_at still prevents same-tick replay.
+          // They precede already attempted reads in the following normal source turn.
+          if (planningDeferred.has(contact.id)) continue;
           await finishReconciliationWork(
             store,
             source,
@@ -1802,6 +1849,7 @@ export async function tick(
             contact.reconciliationVersion,
             currentTime(),
           );
+        }
         if (budgetBackoffs.size) {
           // An individually oversized closure yields one extra retry interval
           // to its neighbors. Only the exact selected queue version may move;

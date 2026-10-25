@@ -2,7 +2,7 @@
 
 This roadmap is the handoff for implementation in this repository. Checked items have implementation and local evidence. Unchecked items retain external verification or rollout work; they must not be inferred from synthetic success. The owner authorized small signed commits directly to `origin/main` for implementation; no implementation PRs are opened. Retain the product decisions in [README](README.md). Each milestone should update its evidence and remaining questions here.
 
-## Next milestones (2026-10-24 UTC)
+## Next milestones (2026-10-25 UTC)
 
 ### Export readiness at a glance
 
@@ -36,12 +36,21 @@ preparation while retaining a new duplicate query before every INSERT. An
 independent native comparison measures **4→3** requests for one direct-empty
 contact, **9→7** for three candidates/two INSERTs and **10→7** for one
 ambiguous-empty fallback. Current source proofs, ownership and dispatch/recovery
-checks remain mandatory. All **1,628 tests** and the full local check pass.
+checks remain mandatory. All **1,628 tests** and the full local check pass;
+[CI for that committed reuse change](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40144251500)
+also passed at **2026-10-25 00:10:55 UTC**.
 A separate 20-candidate fallback probe exposed history reads consuming all
 24 background QRZ requests before dispatch: two attempts prepared, zero INSERTs.
-Bound fresh negative-history admission and protect final-query headroom before
-broader backfill; retain the larger positive historical-matching cohort. Then
-evaluate bounded earlier covering reads and
+The local follow-up bounds fresh negative-history scans by available dispatch
+slots and caps planning HTTP requests across the entire invocation. Unscanned
+contacts retain their existing due work without an absence classification;
+positive historical matching retains the larger cohort. A native worst-case
+test completes one nine-read final neighborhood and INSERT within the unchanged
+24-request budget after another planning scan stops partway. This prevents the
+reproduced starvation; it does not establish larger-scale throughput or guarantee
+headroom when other Workers share the same budget. Same-source progress beyond
+two contacts per invocation remains follow-up work. Then evaluate bounded
+earlier covering reads and
 LoTW batches, with per-contact ownership, proofs and uncertain-result recovery
 preserved. No quota increase or production capacity is claimed. The
 [capacity plan](docs/capacity-plan.md#qrz-first-insert-request-demand--exact-f2c-local-measurement)

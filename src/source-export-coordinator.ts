@@ -162,7 +162,7 @@ export async function ensureSourceExportProofs(
       ]),
     };
     attempts++;
-    return options.rawFetcher(url, request);
+    return options.rawFetcher.call(globalThis, url, request);
   };
   try {
     if (!(await currentScope())) return result("source_unavailable");

@@ -9,7 +9,10 @@ import {
   pollSource,
   rereadOperation,
 } from "../src/intake.ts";
+import { lookupLotwHistoricalOwnership } from "../src/lotw-historical-associations.ts";
+import { backfillLotwOwnership } from "../src/lotw-ownership.ts";
 import { sourceFingerprint } from "../src/projection.ts";
+import { canonical, sha256 } from "../src/security.ts";
 import { Store } from "../src/store.ts";
 import { database, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
@@ -152,6 +155,225 @@ async function assertNoGuards(store: Store) {
   );
 }
 
+test("later observation cohorts keep LoTW owner coverage complete without another maintenance pass", async (t) => {
+  const h = await setup(4, true);
+  t.after(() => h.mf.dispose());
+  const { store, source, contacts, destinations, now } = h;
+  const observations = contacts.map((contact) => ({
+    contact,
+    routedDestinations: destinations.filter((d) => d.kind === "lotw"),
+  }));
+  const first = measuredStore(store);
+  assert.deepEqual(
+    (
+      await observeContacts(first.store, source, observations.slice(0, 2), now)
+    ).map((r) => r.status),
+    ["fulfilled", "fulfilled"],
+  );
+  assert.equal(first.batches.length, 2, "metadata plus one atomic write RPC");
+  await backfillLotwOwnership(store, "a");
+  const later = measuredStore(store);
+  assert.deepEqual(
+    (
+      await observeContacts(later.store, source, observations.slice(2), now + 1)
+    ).map((r) => r.status),
+    ["fulfilled", "fulfilled"],
+  );
+  assert.equal(later.batches.length, 2, "later owners require no extra RPC");
+  const owners = (
+    await store
+      .statement(
+        "SELECT source,qso,owner_hash FROM lotw_ownership_owners WHERE tenant='a' ORDER BY qso",
+      )
+      .all<{ source: string; qso: string; owner_hash: string }>()
+  ).results;
+  assert.equal(owners.length, 4);
+  for (const owner of owners)
+    assert.equal(
+      owner.owner_hash,
+      await sha256(canonical([owner.source, owner.qso])),
+    );
+  const lookup = await lookupLotwHistoricalOwnership(store, "a", [
+    contactReconciliationAdif(contacts[2]),
+  ]);
+  assert.equal(lookup.state, "observed", lookup.reason);
+  assert.ok(lookup.snapshot);
+  assert.deepEqual(lookup.candidates, []);
+  assert.equal(
+    await store
+      .statement("SELECT COUNT(*) n FROM lotw_ownership_evidence")
+      .first("n"),
+    0,
+    "hashing references does not manufacture identity evidence",
+  );
+  await assertNoGuards(store);
+});
+
+test("observation fills a legacy null owner once and never updates an established hash", async (t) => {
+  const h = await setup(1);
+  t.after(() => h.mf.dispose());
+  const { store, source, contacts, destinations, now } = h;
+  const contact = contacts[0];
+  await store.observe(
+    key(contact.id),
+    contact.generation,
+    await sourceFingerprint(contact, "lotw"),
+    30,
+    false,
+    now,
+  );
+  const ownerHash = () =>
+    store
+      .statement(
+        "SELECT owner_hash FROM lotw_ownership_owners WHERE tenant='a' AND qso=?",
+        contact.id,
+      )
+      .first("owner_hash");
+  assert.equal(await ownerHash(), null);
+  const observations = [
+    {
+      contact,
+      routedDestinations: destinations.filter((d) => d.kind === "lotw"),
+    },
+  ];
+  assert.equal(
+    (await observeContacts(store, source, observations, now))[0].status,
+    "fulfilled",
+  );
+  const expected = await sha256(canonical([source.id, contact.id]));
+  assert.equal(await ownerHash(), expected);
+  const clock = await store
+    .statement("SELECT clock FROM lotw_ownership_state WHERE tenant='a'")
+    .first("clock");
+  await store
+    .statement(
+      "CREATE TRIGGER reject_owner_rehash BEFORE UPDATE ON lotw_ownership_owners BEGIN SELECT RAISE(ABORT,'existing owner must not be updated'); END",
+    )
+    .run();
+  assert.equal(
+    (await observeContacts(store, source, observations, now + 1))[0].status,
+    "fulfilled",
+  );
+  assert.equal(await ownerHash(), expected);
+  assert.equal(
+    await store
+      .statement("SELECT clock FROM lotw_ownership_state WHERE tenant='a'")
+      .first("clock"),
+    clock,
+  );
+  await assertNoGuards(store);
+});
+
+test("a stale projection rolls back a preceding owner hash and ledger write before isolated retries", async (t) => {
+  const h = await setup(2);
+  t.after(() => h.mf.dispose());
+  const { store, source, contacts, destinations, now } = h;
+  await store.observe(
+    key(contacts[0].id),
+    "previous",
+    "previous-hash",
+    30,
+    false,
+    now,
+  );
+  let inspectedRollback = false;
+  const measured = measuredStore(store, async (call) => {
+    if (call !== 3) return;
+    inspectedRollback = true;
+    assert.equal(
+      (await store.ledger(key(contacts[0].id)))?.generation,
+      "previous",
+    );
+    assert.equal(
+      await store
+        .statement(
+          "SELECT owner_hash FROM lotw_ownership_owners WHERE tenant='a' AND qso=?",
+          contacts[0].id,
+        )
+        .first("owner_hash"),
+      null,
+    );
+    assert.equal(await store.ledger(key(contacts[1].id)), null);
+    assert.equal(
+      await store
+        .statement(
+          "SELECT COUNT(*) n FROM lotw_ownership_owners WHERE tenant='a' AND qso=?",
+          contacts[1].id,
+        )
+        .first("n"),
+      0,
+    );
+    await assertNoGuards(store);
+  });
+  const results = await observeContacts(
+    measured.store,
+    source,
+    contacts.map((contact, index) => ({
+      contact: index === 1 ? { ...contact, contextGeneration: -1 } : contact,
+      routedDestinations: destinations.filter((d) => d.kind === "lotw"),
+    })),
+    now + 1,
+  );
+  assert.equal(inspectedRollback, true);
+  assert.deepEqual(
+    results.map((r) => r.status),
+    ["fulfilled", "rejected"],
+  );
+  assert.equal(
+    await store
+      .statement(
+        "SELECT owner_hash FROM lotw_ownership_owners WHERE tenant='a' AND qso=?",
+        contacts[0].id,
+      )
+      .first("owner_hash"),
+    await sha256(canonical([source.id, contacts[0].id])),
+  );
+  assert.equal(await store.ledger(key(contacts[1].id)), null);
+  await assertNoGuards(store);
+});
+
+test("QRZ-only observation does not create or update LoTW owners", async (t) => {
+  const h = await setup(1);
+  t.after(() => h.mf.dispose());
+  const { store, source, contacts, destinations, now } = h;
+  await store
+    .statement(
+      "CREATE TRIGGER reject_qrz_owner_update BEFORE UPDATE ON lotw_ownership_owners BEGIN SELECT RAISE(ABORT,'unexpected LoTW owner write'); END",
+    )
+    .run();
+  const measured = measuredStore(store);
+  const results = await observeContacts(
+    measured.store,
+    source,
+    [
+      {
+        contact: contacts[0],
+        routedDestinations: destinations.filter((d) => d.kind === "qrz"),
+      },
+    ],
+    now,
+  );
+  assert.deepEqual(
+    results.map((r) => r.status),
+    ["fulfilled"],
+  );
+  assert.equal(measured.batches.length, 2);
+  assert.ok(await store.ledger(key(contacts[0].id, "destination")));
+  assert.equal(
+    await store
+      .statement("SELECT COUNT(*) n FROM lotw_ownership_owners")
+      .first("n"),
+    0,
+  );
+  assert.equal(
+    await store
+      .statement("SELECT COUNT(*) n FROM lotw_ownership_state")
+      .first("n"),
+    0,
+  );
+  await assertNoGuards(store);
+});
+
 test("twenty observations share one metadata read and preserve tenant, narrative and quiet-period policy", async (t) => {
   const h = await setup(20);
   t.after(() => h.mf.dispose());
@@ -193,7 +415,7 @@ test("twenty observations share one metadata read and preserve tenant, narrative
     results.map((r) => r.status),
     Array(20).fill("fulfilled"),
   );
-  assert.deepEqual(measured.batches, [2, 48, 48, 48, 48, 48]);
+  assert.deepEqual(measured.batches, [2, 52, 52, 52, 52, 52]);
   t.diagnostic(
     "20 contacts / two destinations: 6 D1 RPCs, each write transaction contains four complete contacts",
   );
@@ -531,7 +753,7 @@ test("invalid destinations and oversized members are isolated without splitting 
     results.map((r) => r.status),
     ["fulfilled", "rejected", "rejected", "fulfilled"],
   );
-  assert.deepEqual(measured.batches, [2, 24]);
+  assert.deepEqual(measured.batches, [2, 26]);
   assert.equal(
     (
       await store

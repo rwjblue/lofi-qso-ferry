@@ -1262,6 +1262,20 @@ async function observationStatements(
         now,
       ),
     );
+    if (destination.kind === "lotw")
+      // The ledger trigger registers this owner. Hash its reference in the
+      // same guarded transaction so later cohorts cannot leave tenant-wide
+      // coverage pending after the cycle's bounded maintenance has run.
+      updates.push(
+        store.statement(
+          "UPDATE lotw_ownership_owners SET owner_hash=? WHERE tenant=? AND destination=? AND source=? AND qso=? AND owner_hash IS NULL",
+          await sha256(canonical([key.source, key.qso])),
+          key.tenant,
+          key.destination,
+          key.source,
+          key.qso,
+        ),
+      );
     updates.push(
       store.statement(
         "UPDATE ledger SET context_generation=?,operation_id=? WHERE tenant=? AND source=? AND qso=? AND destination=?",

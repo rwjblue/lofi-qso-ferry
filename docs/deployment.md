@@ -1,6 +1,99 @@
 # Production deployment and rollout evidence
 
-Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. QRZ’s automatic trial remains accepted with thirteen ACKs assessed at known-ACK minute/sideband precision. LoTW trial C establishes accepted processing for one native upload; QSL confirmation is false. Later LoTW pair D held before signing/staging and made zero new attempts/uploads. All fourteen prior accepted attempts and thirteen artifacts pass POST recovery. All eight controls are closed. The cleanup release and fresh scheduled evidence below qualify the next guarded trial; the historical history-read cause and unfinished invocation remain unresolved. Earlier dated holds and literal QRZ comparison limits remain unchanged.
+Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. QRZ’s automatic trial remains accepted with thirteen ACKs assessed at known-ACK minute/sideband precision. LoTW trial C and pair G2 establish accepted processing for three native uploads. All sixteen attempts and fifteen artifacts pass accepted recovery. All eight controls are closed. Monitored automatic LoTW scope and sustained scale remain pending. Historical unfinished invocations, dated holds and literal QRZ comparison limits remain unchanged.
+
+## Accepted LoTW pair G2 and closed recovery (2026-10-25 UTC)
+
+Both new contacts pass strict independent accepted-processing readback. The
+first completed at **18:54:51.885 UTC**, the second at **19:04:03.077 UTC**,
+with one native GET and six D1 calls each, all eight controls closed before/after,
+and zero vendor mutations or application writes. The first is **not QSL-confirmed**;
+the second **is QSL-confirmed**. The original trial-C confirmation remains false.
+
+The append-only observer inventory correction preserves the strict path reader,
+native core, SQL, matching, guards and original file bytes. It normalizes only
+inventory aliases, with digest parity and real integrity-function regressions;
+both independent reviews pass. A separate second-member invocation held for
+`metadata_changed` before its GET, spending one ordinary budget reservation and
+four D1 calls. That held packet remains unchanged. The renewed second-member
+input uses the actual **18:59:32.488 UTC** snapshot; no old capture time or result
+is refreshed, and no upload is repeated.
+
+Full accepted POST recovery completed at **19:05:40.015 UTC**, verifying
+**42,140,138 SQL bytes**, **sixteen accepted attempts and fifteen artifacts**,
+thirteen QRZ and three LoTW. Both current accepted-report captures, all fourteen
+prior accepted attempts, original crypto/pins/signatures, full restore, integrity,
+zero FK violations and both quarantines pass. States are thirteen delivered QRZ
+and three observed LoTW attempts. Receipt
+`ferry-lotw-mixed-backup-50c19ad3-result-2026-10-25T19-05-15-322Z-3fbc357d.json`
+has SHA256 `d76d90c16a13bbcb42c54fc49ed9c7c448a7c1b00c925860f4eb95bbdf58f526`.
+Actual SQL capture was **19:05:17.571–19:05:28.013 UTC**. Separate closing
+attestation at **19:05:39.996 UTC** confirms the same sole 100% Worker
+`a8102b5c-dd57-4661-b67e-2576dfa721ce`, deployment
+`4ec2a932-7560-4a81-9765-eaf6eea111ca`, source `50c19ad3`, all eight controls
+closed, healthy HTTPS, matching assets and KEK 1. Schema remains 37.
+
+This accepts the pair; it does not establish automatic or sustained-scale
+acceptance. Cumulative mixed evidence and the next monitored automatic scope
+remain pending. The closed 18:45 invocation is also unfinalized; the 18:50,
+18:55 and 19:00 invocations subsequently completed. Default counters and zero
+active leases do not establish the unfinished run's work or cause. Historical
+unfinished rows remain untouched and separate from G2's completed active window.
+
+## LoTW pair G2: closed recovery and pending reports (2026-10-25 UTC)
+
+The reviewed offline candidate successor models native activation's policy wake
+without changing eligibility or final guards. Its nineteen focused cases, types,
+formatting, inventories and two source reviews pass. The actual review selected
+two contacts from 200 metadata hints with two full projections and no ownership,
+identity, certificate or other final blocker, network call, signature or vendor
+mutation. The first scheduling preparation stopped before input, intent or closer
+creation when no settled current cycle arrived inside its original margin.
+G2 subsequently passed settled admission with the same review and fresh PRE;
+no clock, deadline, scope or eligibility requirement was changed.
+
+The exact two-contact scope activated on signed source `50c19ad3`, Worker
+`e0ca9b2c-d62b-4fbe-bcb3-334471f38753`, with the independent closer armed first.
+QRZ, automatic exports and source-boundary writes stayed disabled; at most two
+LoTW uploads were authorized. The normal **18:35 cron** completed thirteen
+contact turns/four attempt turns, zero errors, stopping at its deadline. The
+**18:40 cron** completed twenty-two contact turns/zero attempts and errors.
+These are two completed invocations, not sustained throughput acceptance.
+Exactly two new native dispatches are present, one observed and one submitted,
+with both artifacts retained and zero unapproved attempts. Attempt turns count
+scheduling work and must not be reported as four uploads.
+
+The supervisor completed closure at **18:41:13.461 UTC**. Independent
+**18:41:12.236 UTC** attestation confirms sole 100% Worker
+**`a8102b5c-dd57-4661-b67e-2576dfa721ce`**, deployment
+`4ec2a932-7560-4a81-9765-eaf6eea111ca`, signed source `50c19ad3`, healthy HTTPS,
+matching assets, KEK 1 and all eight controls closed. No future closer is pending.
+Original closure receipt SHA256 is
+`696907a523e07d8f47a97f845b648af0a88cd3b9c30a2ba8b61fcfe59ef5b76b`.
+
+After more than 180 seconds of drain, full factual capture verified **42,090,904
+SQL bytes**, exactly fourteen prior attempts plus two actual LoTW members,
+and no unfinished current-window invocation or active lease. Their descriptors
+and hashes are derived from the original stored artifacts, never prospective
+approvals. The bridge grants no acceptance or retry authority.
+
+Full POST recovery completed at **18:46:24.129 UTC**, verifying **42,077,060 SQL
+bytes**, all **sixteen attempts and fifteen retained artifacts**, original
+crypto/pins/signatures, full restore, integrity, zero FK violations and both
+quarantines. All fourteen prior accepted attempts remain unchanged. Receipt
+`ferry-lotw-mixed-backup-50c19ad3-result-2026-10-25T18-46-00-692Z-9d8faa28.json`
+has SHA256 `e93650b94e1d2ae84c11cb92f79c72cfb7a116b6af9af23578f67afa5628e209`.
+SQL capture times are **18:46:02.601–18:46:14.077 UTC**; the separate closing
+attestation at **18:46:24.114 UTC** verifies the same exact closed deployment.
+Current accepted-report count remains fourteen; the two new reports are missing.
+
+Independent observer checks stopped locally before keys or vendor requests.
+The protected dependency inventory contains noncanonical import paths; the
+strict reader correctly rejects them. A new inventory must normalize and bind
+those aliases while preserving every original byte and path guard, with a
+regression invoking the real integrity checker. Then each member needs strict
+accepted-processing readback and accepted full recovery before pair acceptance
+or a small automatic LoTW scope. Historical unfinished runs remain unresolved.
 
 ## Closed owner and client cleanup release (2026-10-25 UTC)
 

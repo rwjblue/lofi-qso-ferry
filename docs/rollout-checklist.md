@@ -13,6 +13,30 @@ now pass known-ACK observed-precision assessment and populated recovery.
 
 ## Current evidence (2026-10-25)
 
+- [x] Qualify the bounded policy-wake review successor: nineteen focused cases,
+  types, format, inventories and both source reviews pass. Actual review selects
+  two eligible contacts with no signing, vendor request or write.
+- [x] Run the exact two-contact G2 scope through normal cron after settled
+  admission with the independent closer armed; exactly two native dispatches,
+  no unapproved attempts, both invocations completed without errors.
+- [x] Close all eight controls at 18:41:12.236 UTC on Worker `a8102b5c`, source
+  `50c19ad3`; the supervisor completed and no future closer is pending.
+- [x] After drain, derive the two actual artifacts and complete 18:46:24.129 UTC
+  full recovery: sixteen attempts, fifteen artifacts, all fourteen prior accepted
+  attempts preserved, full crypto/restore, integrity/FK and both quarantines pass.
+- [x] Correct the observer inventory's noncanonical paths while preserving the
+  strict reader and original bytes; actual integrity regression and both reviews pass.
+  Original local holds remain unchanged.
+- [x] Capture strict accepted-processing reports for both new members, one GET
+  and six D1 calls each, then complete 19:05:40.015 UTC accepted full recovery:
+  sixteen accepted attempts, fifteen artifacts, thirteen QRZ and three LoTW.
+  One new contact is QSL-confirmed and one is not. A metadata-change hold sent
+  no GET; renewal used a new snapshot without repeating an upload.
+- [ ] Accept a small automatic LoTW scope with complete mixed evidence and
+  monitoring; sustained scale remains separate.
+
+### Earlier release evidence
+
 - [x] Deploy signed `50c19ad3` after all **1,775 tests** and required checks pass in
   [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40217803799).
   Independent 18:06:47.205 / 18:07:57.633 UTC checks confirm Worker `4edc6060`

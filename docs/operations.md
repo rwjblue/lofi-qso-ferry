@@ -6,6 +6,30 @@ Checked-in environments default to disabled exports. The first LoTW contact now 
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
+Pair G2 is accepted after two independent strict reports and full
+**19:05:40.015 UTC** recovery: sixteen accepted attempts and fifteen artifacts,
+thirteen QRZ and three LoTW. One new contact is QSL-confirmed and one is not.
+All eight controls remain closed on Worker `a8102b5c`, source `50c19ad3`.
+Next is complete cumulative mixed evidence and a monitored automatic scope;
+inherited unfinished rows, including the closed 18:45 invocation, remain an
+operational investigation. See the
+[accepted pair G2 receipt](deployment.md#accepted-lotw-pair-g2-and-closed-recovery-2026-10-25-utc).
+
+The following record retains the earlier pre-readback checkpoint.
+
+Pair G2 has closed after exactly two native LoTW dispatches. The latest
+**18:46:24.114 UTC** closing attestation verifies Worker
+`a8102b5c-dd57-4661-b67e-2576dfa721ce`, source `50c19ad3`, with all eight controls
+closed. POST recovery preserves sixteen attempts and fifteen artifacts, all
+fourteen prior accepted attempts, full crypto/restore and both quarantines.
+One new member is observed and one submitted; the accepted count remains fourteen
+until both independent reports pass. The observer held at local inventory
+integrity before keys or vendor calls; correct its inventory without relaxing
+the path guard, then obtain strict readback and accepted full recovery. See the
+[pair G2 receipt](deployment.md#lotw-pair-g2-closed-recovery-and-pending-reports-2026-10-25-utc).
+
+The following record describes the earlier initial deployment of the same source.
+
 The current runtime is signed `50c19ad316f07e434efbde98dc1f4dad4d51c46a`,
 with 37 migrations and all **1,775 tests and required checks** passing in
 [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40217803799).

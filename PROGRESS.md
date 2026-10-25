@@ -2,6 +2,47 @@
 
 ## Current production and export acceptance — 2026-10-25 UTC
 
+**LoTW pair G2 is accepted.** Each contact passed independent strict report
+matching with one GET and six D1 calls, all eight controls closed before/after.
+One is QSL-confirmed and one is not. Full **19:05:40.015 UTC** recovery verifies
+**sixteen accepted attempts and fifteen artifacts**, thirteen QRZ and three
+LoTW, all crypto/pins/signatures, restore, integrity/FK and both quarantines.
+The normal worker now records all three LoTW attempts observed.
+
+Worker `a8102b5c` remains closed on signed source `50c19ad3`. The inventory fix
+retains strict path checks and all original bytes. A separate metadata-change
+hold sent zero GETs and was renewed from a new snapshot; old results remain
+unchanged. Monitored automatic scope and sustained capacity remain pending.
+The closed 18:45 invocation remains unfinalized; later completed cycles do not
+resolve its cause. See the
+[accepted pair G2 receipt](docs/deployment.md#accepted-lotw-pair-g2-and-closed-recovery-2026-10-25-utc).
+
+## Earlier G2 recovery checkpoint — independent reports pending
+
+LoTW pair G2 made exactly two native dispatches and closed. Its 18:35/18:40
+scheduled runs completed with zero errors and no unapproved attempts. One new
+attempt is observed and one submitted; independent strict accepted-report
+captures remain pending. The first scheduling preparation stopped before any
+input/intent; the later settled admission passed without relaxing its guards.
+
+All eight controls were independently verified closed at **18:41:12.236 UTC**
+on Worker **`a8102b5c-dd57-4661-b67e-2576dfa721ce`**, deployment
+`4ec2a932-7560-4a81-9765-eaf6eea111ca`, signed source `50c19ad3`.
+After the required drain, factual capture derived the two actual artifacts.
+Full recovery at **18:46:24.129 UTC** verifies **sixteen attempts and fifteen
+artifacts**, preserving all fourteen prior accepted attempts, full crypto,
+restore, integrity/FK and both quarantines. The accepted count remains fourteen
+until the two new reports pass. Older unfinished runs remain unresolved.
+
+The independent observer's checks held locally, before keys or vendor reads.
+Its inventory contains noncanonical dependency paths, correctly rejected by the
+strict reader. Correct the inventory in an append-only successor, run the real
+integrity regression, then obtain strict readback for both members and repeat
+accepted full recovery. Automatic exports remain disabled. See the
+[pair G2 receipt](docs/deployment.md#lotw-pair-g2-closed-recovery-and-pending-reports-2026-10-25-utc).
+
+## Earlier owner and client cleanup release — 2026-10-25 UTC
+
 Pair E's renewed offline review held all twenty bounded projections because the
 verified snapshot contained one unhashed LoTW owner. No contact was selected and
 no activation, signature or upload occurred. Native completeness checks remain

@@ -8,7 +8,38 @@ zero new attempts/uploads. The
 released TQSL source and local Worker compatibility; the
 [certificate checks](lotw-certificates.md) explain the preflight limits.
 
-## Current checkpoint — ownership, response cleanup and closed recovery
+## Current checkpoint — pair G2 accepted
+
+Both contacts pass independent strict accepted-processing readback, one GET and
+six D1 calls each with all eight controls closed. One is QSL-confirmed and one
+is not. Full **19:05:40.015 UTC** recovery verifies sixteen accepted attempts and
+fifteen artifacts, thirteen QRZ and three LoTW, full crypto/restore and both
+quarantines. The normal worker records all three LoTW attempts observed.
+
+The corrected observer inventory keeps strict path and native matching guards;
+a later metadata-change hold sent no GET and was renewed from a genuine new
+snapshot. Original held packets remain unchanged, and neither renewal repeated
+an upload. Automatic scope and sustained scale remain pending. See the
+[accepted pair G2 receipt](deployment.md#accepted-lotw-pair-g2-and-closed-recovery-2026-10-25-utc).
+
+## Earlier checkpoint — pair G2 recovered; independent reports pending
+
+The reviewed two-contact scope made exactly two native LoTW dispatches, then
+closed all eight controls at **18:41:12.236 UTC** on Worker `a8102b5c`, source
+`50c19ad3`. Both scheduled invocations completed without errors. After drain,
+full **18:46:24.129 UTC** recovery verifies sixteen attempts and fifteen artifacts,
+all fourteen prior accepted attempts, full crypto/restore and both quarantines.
+One new attempt is observed and one submitted; independent strict report captures
+are still required, so the accepted count remains fourteen.
+
+Observer checks held at local file-inventory integrity before keys or vendor
+reads. Normalize and bind the inventory aliases in a successor while keeping
+the strict path guard, then verify accepted processing for each contact and
+repeat full accepted recovery. A native observed state alone does not supply
+the missing independent capture. No repeat upload is authorized by this hold.
+See the [pair G2 receipt](deployment.md#lotw-pair-g2-closed-recovery-and-pending-reports-2026-10-25-utc).
+
+## Earlier checkpoint — ownership, response cleanup and closed recovery
 
 Signed `50c19ad3` is deployed closed on Worker
 `4edc6060-554b-4f57-bd40-95e468f0d84f`, with all **1,775 tests** and required

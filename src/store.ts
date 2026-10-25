@@ -1070,5 +1070,11 @@ export class Store {
       "DELETE FROM private_data WHERE expires_at<=?",
       now,
     ).run();
+    // Terminal outbox cleanup must not erase the original recovery copy. Its
+    // original seven-day deadline still applies, including after quarantine.
+    await this.statement(
+      "DELETE FROM attempt_artifacts WHERE expires_at<=?",
+      now,
+    ).run();
   }
 }

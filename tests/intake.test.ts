@@ -3499,6 +3499,7 @@ test("payload expiry retains version evidence so an older reread cannot resurrec
   const state = await setup();
   const { store, source, now, mf } = state;
   try {
+    await applyMigration(store.db, "0038_attempt_artifacts.sql");
     const latest = {
       ...qso,
       notes: "latest before expiry",

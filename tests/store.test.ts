@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { database, seed } from "./helpers.ts";
+import { applyMigration, database, seed } from "./helpers.ts";
+
 test("D1 tenants, atomic checkpoints and lease fencing survive overlap", async () => {
   const { mf, store } = await database();
   try {
@@ -59,6 +60,14 @@ test("D1 tenants, atomic checkpoints and lease fencing survive overlap", async (
 test("outbox pins versions, forbids mutation/overlap and parks crashes", async () => {
   const { mf, store } = await database();
   try {
+    // Keep this legacy staging fixture independent of mandatory source proofs,
+    // while installing the original-row metadata and current recovery schema.
+    await store
+      .statement(
+        "ALTER TABLE private_data ADD COLUMN source_proof_version TEXT NOT NULL DEFAULT ''",
+      )
+      .run();
+    await applyMigration(store.db, "0038_attempt_artifacts.sql");
     const key = await seed(store);
     const version = await store.saveTemplate("a", "destination", {
       comment: "v1",

@@ -314,6 +314,29 @@ Global source cutover, QRZ REPLACE/correction validation, LoTW signing/upload/re
 
 Automatic exports and LoTW remain disabled at the current closed checkpoint. The owner has authorized progression through checked QRZ batches and automatic activation only after successful validation, followed by a separate LoTW acceptance process. Every enabled mode requires `EXPORTS_ENABLED=true`, `ROLLOUT_CHECKS_PASSED=true`, `LIVE_WRITE_AUTHORIZATION=I_AUTHORIZE_LIVE_VENDOR_WRITES`, and exact nonempty `ROLLOUT_QSO_IDS_JSON` and `ROLLOUT_DESTINATION_IDS_JSON` scopes. The independent first-insert flags are `QRZ_FRESH_INSERTS_ENABLED` and `LOTW_FRESH_INSERTS_ENABLED`; both default to false. QRZ remains the first rollout milestone. Keep the other vendor flag off and exclude its destination during a single-vendor trial.
 
+The optional service binding `QRZ_FRESH_INSERT_EXPIRES_AT` bounds a monitored QRZ
+window using an original 13-digit UTC epoch-millisecond timestamp. Omitted or
+exactly empty preserves ordinary operation. A present value permits only QRZ
+fresh-insert mode with one explicit destination, source-boundary authority off
+and LoTW off. Invalid or elapsed values close write admission while ordinary
+read-only synchronization continues. This setting enables no export gate.
+
+The scheduler captures the timestamp once and caps immutable source-proof expiry
+at that value. Cached and prepared proofs cannot outlive the cap; a later window
+cannot extend an older pin. Both scheduled dispatch paths check the bound, and
+the existing final proof check after vendor budget admission stops an expired
+request before raw INSERT. A request already sent may acknowledge after expiry;
+retain that factual receipt and verify it normally.
+
+Deploy this control closed before using it: an older binary does not honor the
+new binding. The operator must verify the original value on the actual deployed
+Worker, close all eight controls, account for old and unfinished invocations,
+and capture every actual attempt after drain. The bound is neither a send-count
+limit nor proof of completed drain. Normal current configuration remains the
+runtime authority; drift from the reviewed accounting scope holds window
+acceptance. Recovery and observer provenance inventories need a successor when
+their pinned source dependencies change.
+
 Each first-insert mode requires an unmapped, unaccepted contact, a current immutable source proof and durable identity ownership while retaining `SOURCE_BOUNDARY_VERIFIED=false`. LoTW additionally requires query credentials, a complete empty history report for the previous/current/following UTC dates before signing and again before dispatch, current certificate checks, and validation of the exact immutable single-contact upload after vendor-budget admission. Any returned record or unavailable report holds. This conservative policy does not establish global uniqueness. Submitted, uncertain, missing-state and previously accepted attempts cannot become fresh inserts; only a prepared attempt proven unsent can retry. An upload acknowledgement is submitted, not observed acceptance.
 
 Neither first-insert mode authorizes replacements, corrections, source-wide cutovers or no-query inference. Broader source-boundary mode separately requires `SOURCE_BOUNDARY_VERIFIED=true` and its independent evidence. Preparation pins the selected mode; changing a flag cannot promote an old attempt. Keep exact contact UUIDs and destination IDs initially; a sole `["*"]` is an explicit later expansion for that scope. Empty, missing or malformed scopes cannot authorize exports. The combined `fresh_inserts` health/admin label reports both independent capabilities, never source completeness. Scopes do not approve source evidence or vendor compatibility. The LoTW mode and migration `0032` are deployed with all eight controls closed; actual ARRL acceptance remains unverified.

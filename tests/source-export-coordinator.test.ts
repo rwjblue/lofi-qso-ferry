@@ -635,3 +635,62 @@ test("an actually observed sparse anchor finds an old target below a dense newer
   assert(selected.every((request) => request.allClients));
   assert.equal(await h.proofCount(), 1);
 });
+
+test("window cap stays original through collection and final drain; elapsed cap publishes no proof", async (t) => {
+  for (const crosses of [false, true])
+    await t.test(
+      crosses ? "expiry during collection" : "caller cannot renew in flight",
+      async (t) => {
+        const h = await fixture(t, { count: 1 });
+        await h.clearPresence();
+        await h.store.statement("DELETE FROM vendor_requests").run();
+        const lease = await h.store.claim(
+          "a",
+          "cycle:source",
+          Date.now(),
+          120000,
+        );
+        assert(lease);
+        let crossed = false;
+        const cap = Date.now() + 30000;
+        const options = {
+          rawFetcher: h.rawFetcher,
+          now: () => (crossed ? cap + 1 : Date.now()),
+          deadline: Date.now() + 90000,
+          expiresAtCap: cap,
+          remainingRequests: 4,
+          routedDestinations: () => [h.destination],
+        };
+        const before = h.network.length;
+        h.intercept(async () => {
+          options.expiresAtCap = cap + 60000;
+          if (crosses) crossed = true;
+          return null;
+        });
+        const result = await ensureSourceExportProofs(
+          h.store,
+          h.scope,
+          ["q0"],
+          lease,
+          options,
+        ).finally(() => h.store.release(lease));
+        if (crosses) {
+          assert(result.held);
+          assert.equal(result.ready.length, 0);
+          assert.equal(await h.proofCount(), 0);
+          assert.equal(h.network.length - before, 1);
+        } else {
+          assert.equal(result.held, null);
+          assert.equal(result.ready.length, 1);
+          assert.equal(result.ready[0].expiresAt, cap);
+          assert.equal(h.network.length - before, 2);
+        }
+        assert.equal(
+          await h.store
+            .statement("SELECT count(*) n FROM attempts")
+            .first<number>("n"),
+          0,
+        );
+      },
+    );
+});

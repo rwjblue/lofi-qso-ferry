@@ -62,6 +62,8 @@ export interface SourceExportProofRequest {
 export interface SourceExportProofAdmission {
   /** The enclosing source phase deadline, never a renewed collection window. */
   deadline?: number;
+  /** Absolute caller authority cap; it may only shorten normal proof expiry. */
+  expiresAtCap?: number;
   now?: () => number;
 }
 export type SourceExportAuthorizationMode =
@@ -345,6 +347,12 @@ export async function mintSourceExportProofs(
   now = Date.now(),
   admission: SourceExportProofAdmission = {},
 ): Promise<SourceExportProof[]> {
+  const expiresAtCap = admission.expiresAtCap;
+  if (
+    expiresAtCap !== undefined &&
+    (!integer(expiresAtCap) || expiresAtCap <= now)
+  )
+    throw new Error("invalid_source_export_proof_expiry_cap");
   if (!integer(now) || requests.length > 20)
     throw new Error("invalid_source_export_proof_request");
   if (!requests.length) return [];
@@ -426,6 +434,7 @@ export async function mintSourceExportProofs(
     )
       throw new Error("source_export_dependency_set_invalid");
     const expiresAt = Math.min(
+      expiresAtCap ?? Number.MAX_SAFE_INTEGER,
       ...dependencies.map((d) =>
         Math.min(
           d.requestStartedAt + SOURCE_PRESENCE_MAX_AGE_MS,

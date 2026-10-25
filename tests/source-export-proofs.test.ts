@@ -976,3 +976,45 @@ test("the original atomic batch still rejects races and is never retried after a
       );
     });
 });
+
+test("window cap shortens native immutable proofs and rejects invalid or elapsed authority", async (t) => {
+  const h = await setup(t);
+  const [ordinary] = await h.mint();
+  const cap = Date.now() + 30000;
+  assert(ordinary.expiresAt > cap);
+  const [bounded] = await mintSourceExportProofs(
+    h.store,
+    h.requests,
+    h.lease,
+    Date.now(),
+    { expiresAtCap: cap },
+  );
+  assert.equal(bounded.expiresAt, cap);
+  assert.deepEqual(await h.current(bounded), bounded);
+  assert.equal(
+    (await h.current(ordinary))?.expiresAt,
+    ordinary.expiresAt,
+    "older proof is neither rewritten nor renewed",
+  );
+  for (const expiresAtCap of [
+    0,
+    -1,
+    NaN,
+    Infinity,
+    cap + 0.1,
+    Date.now() - 1,
+  ]) {
+    await assert.rejects(
+      mintSourceExportProofs(h.store, h.requests, h.lease, Date.now(), {
+        expiresAtCap,
+      }),
+      /invalid_source_export_proof_expiry_cap/,
+    );
+  }
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) n FROM source_export_proofs")
+      .first<number>("n"),
+    2,
+  );
+});

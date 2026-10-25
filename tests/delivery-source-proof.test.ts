@@ -10,6 +10,11 @@ import {
   claimedAttemptCurrent,
   destinationIdentityClaim,
 } from "../src/identity-claims.ts";
+import {
+  qrzWindowProofAllowed,
+  type ScheduledDeliveryGates,
+  scheduledPreparedWindowCurrent,
+} from "../src/service.ts";
 import { buildSignedTq8, type SigningCredential } from "../src/signing.ts";
 import { attemptSourceExportProofCurrent } from "../src/source-export-proofs.ts";
 import type { Store } from "../src/store.ts";
@@ -22,7 +27,11 @@ const gates: DeliveryGates = {
   sourceBoundaryVerified: true,
 };
 
-async function setup(t: TestContext, oldPresence = false) {
+async function setup(
+  t: TestContext,
+  oldPresence = false,
+  expiresAtCap?: number,
+) {
   const h = await schedulerFixture();
   t.after(() => h.mf.dispose());
   h.qso.startAtMillis = Number(h.qso.startAtMillis) + 123;
@@ -44,6 +53,7 @@ async function setup(t: TestContext, oldPresence = false) {
       operations: [h.operation],
       destinations,
       observedAt,
+      expiresAtCap,
     });
     await h.store
       .statement(
@@ -468,4 +478,161 @@ test("LoTW certificate expiry during final source authorization cannot reach upl
     true,
     "proof and lease are still current; only the certificate expired",
   );
+});
+
+const windowGates = (expiresAt: number): ScheduledDeliveryGates => ({
+  exportsEnabled: true,
+  liveWriteAuthorized: true,
+  sourceBoundaryVerified: false,
+  qrzFreshInsertsEnabled: true,
+  lotwFreshInsertsEnabled: false,
+  allowedQsoIds: ["q1"],
+  allowedDestinationIds: ["destination"],
+  qrzFreshInsertExpiresAt: expiresAt,
+});
+
+test("window rejects longer cached and prepared proof while later window cannot extend a capped immutable pin", async (t) => {
+  const h = await setup(t);
+  const cap = Date.now() + 30000;
+  const boundedGates = windowGates(cap);
+  assert(h.proof.expiresAt > cap);
+  assert.equal(
+    qrzWindowProofAllowed(boundedGates, h.proof.expiresAt),
+    false,
+    "current cached evidence cannot authorize past this window",
+  );
+  const prepared = await prepareDue(h.store, h.key(), h.contact, boundedGates, {
+    fetcher: h.fetcher,
+    sourceProof: { ...h.sourceProof, authorizationMode: "qrz_fresh_insert" },
+  });
+  assert.equal(prepared.state, "prepared");
+  assert(prepared.attemptId);
+  assert.equal(
+    await scheduledPreparedWindowCurrent(
+      h.store,
+      boundedGates,
+      "a",
+      prepared.attemptId,
+    ),
+    false,
+  );
+  assert.equal(h.calls.qrzWrites, 0);
+});
+
+test("window expiry after native mutation budget admits no raw INSERT and later gate cannot extend old pin", async (t) => {
+  const cap = Date.now() + 45000;
+  const h = await setup(t, false, cap);
+  assert.equal(h.proof.expiresAt, cap);
+  const firstGates = windowGates(cap);
+  const prepared = await prepareDue(h.store, h.key(), h.contact, firstGates, {
+    fetcher: h.fetcher,
+    sourceProof: { ...h.sourceProof, authorizationMode: "qrz_fresh_insert" },
+  });
+  assert(prepared.attemptId);
+  assert.equal(
+    await scheduledPreparedWindowCurrent(
+      h.store,
+      firstGates,
+      "a",
+      prepared.attemptId,
+    ),
+    true,
+  );
+  const pinBefore = await h.store
+    .statement(
+      "SELECT * FROM attempt_source_export_proofs WHERE attempt=?",
+      prepared.attemptId,
+    )
+    .first();
+  let clock = Date.now();
+  const laterGates = windowGates(cap + 60000);
+  assert.equal(
+    await scheduledPreparedWindowCurrent(
+      h.store,
+      laterGates,
+      "a",
+      prepared.attemptId,
+    ),
+    true,
+    "still inside original expiry, unchanged proof is usable",
+  );
+  t.mock.method(Date, "now", () => clock);
+  const delayed = delayAdmission(h.store, "qrz", () => {
+    clock = cap + 1;
+  });
+  const result = await dispatchAttempt(
+    delayed,
+    "a",
+    prepared.attemptId,
+    laterGates,
+    { now: clock, fetcher: h.fetcher },
+  );
+  assert.deepEqual(result, {
+    state: "blocked",
+    reason: "source_export_proof_unavailable",
+  });
+  assert.equal(await h.state(prepared.attemptId), "cancelled");
+  assert.equal(h.calls.qrzWrites, 0);
+  assert.deepEqual(
+    await h.store
+      .statement(
+        "SELECT * FROM attempt_source_export_proofs WHERE attempt=?",
+        prepared.attemptId,
+      )
+      .first(),
+    pinBefore,
+  );
+  assert.equal(
+    await h.store
+      .statement(
+        "SELECT expires_at FROM source_export_proofs WHERE id=?",
+        h.proof.id,
+      )
+      .first<number>("expires_at"),
+    cap,
+  );
+  assert.equal(
+    await scheduledPreparedWindowCurrent(
+      h.store,
+      laterGates,
+      "a",
+      prepared.attemptId,
+    ),
+    false,
+  );
+});
+
+test("window admitted INSERT may finish ACK after expiry without pretending the send was late", async (t) => {
+  const cap = Date.now() + 45000;
+  const h = await setup(t, false, cap);
+  const boundedGates = windowGates(cap);
+  const prepared = await prepareDue(h.store, h.key(), h.contact, boundedGates, {
+    fetcher: h.fetcher,
+    sourceProof: { ...h.sourceProof, authorizationMode: "qrz_fresh_insert" },
+  });
+  assert(prepared.attemptId);
+  let clock = Date.now();
+  t.mock.method(Date, "now", () => clock);
+  let startedAt = 0;
+  const fetcher: typeof fetch = async (url, init) => {
+    const form = new URLSearchParams(String(init?.body));
+    if (form.get("ACTION") === "INSERT") {
+      startedAt = clock;
+      const response = await h.fetcher(url, init);
+      clock = cap + 1;
+      return response;
+    }
+    return h.fetcher(url, init);
+  };
+  const result = await dispatchAttempt(
+    h.store,
+    "a",
+    prepared.attemptId,
+    boundedGates,
+    { fetcher, now: clock },
+  );
+  assert.equal(result.state, "delivered");
+  assert(startedAt > 0 && startedAt < cap);
+  assert.equal(h.calls.qrzWrites, 1);
+  assert.equal(await h.state(prepared.attemptId), "delivered");
 });

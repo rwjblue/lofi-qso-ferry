@@ -61,6 +61,8 @@ export async function ensureSourceExportProofs(
     rawFetcher: typeof fetch;
     now?: () => number;
     deadline: number;
+    /** Captured absolute window expiry; never renewed by collection or drain. */
+    expiresAtCap?: number;
     remainingRequests: number;
     priority?: VendorPriority;
     /** The caller's ordinary unique-per-vendor route selection. */
@@ -69,8 +71,10 @@ export async function ensureSourceExportProofs(
 ): Promise<SourceExportCohortResult> {
   const clock = options.now ?? Date.now;
   const startedAt = clock();
+  const expiresAtCap = options.expiresAtCap;
   const deadline = Math.min(
     options.deadline,
+    expiresAtCap ?? Number.MAX_SAFE_INTEGER,
     startedAt + 120_000,
     cycleLease.expires_at,
   );
@@ -94,6 +98,8 @@ export async function ensureSourceExportProofs(
   if (
     !integer(startedAt) ||
     !integer(options.deadline) ||
+    (expiresAtCap !== undefined &&
+      (!integer(expiresAtCap) || expiresAtCap <= startedAt)) ||
     !integer(cycleLease.expires_at) ||
     deadline <= startedAt ||
     !Number.isSafeInteger(options.remainingRequests) ||
@@ -298,7 +304,7 @@ export async function ensureSourceExportProofs(
       })),
       cycleLease,
       time(),
-      { deadline, now: time },
+      { deadline, expiresAtCap, now: time },
     );
     time();
     const ready: SourceExportCohortResult["ready"] = [];

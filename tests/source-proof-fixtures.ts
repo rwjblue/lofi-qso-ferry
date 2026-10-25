@@ -29,6 +29,7 @@ export async function mintFixtureSourceProofs(
     events?: SourceRecord[];
     destinations?: Connection[];
     observedAt?: number;
+    expiresAtCap?: number;
   },
 ) {
   const { source } = input;
@@ -168,6 +169,8 @@ export async function mintFixtureSourceProofs(
         collectionFinishedAt,
       })),
       lease,
+      Date.now(),
+      { expiresAtCap: input.expiresAtCap },
     );
     const authorizations: SourceExportAuthorization[] = proofs.map((proof) => ({
       proofId: proof.id,

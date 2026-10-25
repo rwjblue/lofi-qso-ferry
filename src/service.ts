@@ -141,7 +141,15 @@ async function fittingSourceExportSnapshots(
     ? loadSourceExportSnapshots(store, scope, selected, now())
     : [];
 }
-export function deliveryGates(env: Env): DeliveryGates {
+export type ScheduledDeliveryGates = DeliveryGates & {
+  /** Undefined preserves ordinary operation; zero is a malformed closed window. */
+  qrzFreshInsertExpiresAt?: number;
+};
+type ScheduledEnvironment = Env & { QRZ_FRESH_INSERT_EXPIRES_AT?: string };
+
+export function deliveryGates(
+  env: ScheduledEnvironment,
+): ScheduledDeliveryGates {
   const scope = (value: string | undefined): string[] | null => {
     const parsed: unknown = JSON.parse(value || "[]");
     if (
@@ -154,7 +162,18 @@ export function deliveryGates(env: Env): DeliveryGates {
       ? null
       : (parsed as string[]);
   };
+  const rawExpiry = env.QRZ_FRESH_INSERT_EXPIRES_AT;
+  const expiry =
+    rawExpiry === undefined || rawExpiry === ""
+      ? undefined
+      : typeof rawExpiry === "string" &&
+          rawExpiry.length === 13 &&
+          /^\d{13}$/.test(rawExpiry) &&
+          Number.isSafeInteger(Number(rawExpiry))
+        ? Number(rawExpiry)
+        : 0;
   return {
+    ...(expiry === undefined ? {} : { qrzFreshInsertExpiresAt: expiry }),
     allowedQsoIds: scope(env.ROLLOUT_QSO_IDS_JSON),
     allowedDestinationIds: scope(env.ROLLOUT_DESTINATION_IDS_JSON),
     exportsEnabled:
@@ -167,8 +186,63 @@ export function deliveryGates(env: Env): DeliveryGates {
     lotwFreshInsertsEnabled: String(env.LOTW_FRESH_INSERTS_ENABLED) === "true",
   };
 }
-export function exportsEffective(gates: DeliveryGates): boolean {
+function qrzWindowOpen(gates: ScheduledDeliveryGates, now = Date.now()) {
+  const expiresAt = gates.qrzFreshInsertExpiresAt;
   return (
+    expiresAt === undefined ||
+    (Number.isSafeInteger(expiresAt) &&
+      expiresAt > Math.max(now, Date.now()) &&
+      gates.sourceBoundaryVerified === false &&
+      gates.lotwFreshInsertsEnabled !== true &&
+      gates.qrzFreshInsertsEnabled === true &&
+      gates.allowedDestinationIds?.length === 1)
+  );
+}
+/** This never extends an existing proof or changes its immutable ID. */
+export function qrzWindowProofAllowed(
+  gates: ScheduledDeliveryGates,
+  expiresAt: number,
+  now = Date.now(),
+) {
+  return (
+    qrzWindowOpen(gates, now) &&
+    (gates.qrzFreshInsertExpiresAt === undefined ||
+      (Number.isSafeInteger(expiresAt) &&
+        expiresAt > Math.max(now, Date.now()) &&
+        expiresAt <= gates.qrzFreshInsertExpiresAt))
+  );
+}
+/** Only the scheduled window path needs this additional current pinned-proof fence. */
+export async function scheduledPreparedWindowCurrent(
+  store: Store,
+  gates: ScheduledDeliveryGates,
+  tenant: string,
+  attempt: string,
+  now = Date.now(),
+) {
+  if (gates.qrzFreshInsertExpiresAt === undefined) return true;
+  const destination = gates.allowedDestinationIds?.[0];
+  if (!destination || !exportsEffective(gates) || !qrzWindowOpen(gates, now))
+    return false;
+  const pin = await store
+    .statement(
+      `SELECT pin.expires_at FROM attempt_source_export_proofs_current pin
+     JOIN attempts a ON a.tenant=pin.tenant AND a.id=pin.attempt
+     JOIN connections d ON d.tenant=a.tenant AND d.id=a.destination AND d.kind='qrz'
+     WHERE pin.tenant=? AND pin.attempt=? AND pin.authorization_mode='qrz_fresh_insert'
+       AND a.destination=? AND pin.expires_at<=? AND pin.expires_at>MAX(?,CAST(unixepoch('subsec')*1000 AS INTEGER))`,
+      tenant,
+      attempt,
+      destination,
+      gates.qrzFreshInsertExpiresAt,
+      now,
+    )
+    .first<{ expires_at: number }>();
+  return !!pin && qrzWindowProofAllowed(gates, pin.expires_at, now);
+}
+export function exportsEffective(gates: ScheduledDeliveryGates): boolean {
+  return (
+    qrzWindowOpen(gates) &&
     (deliveryMode(gates, "qrz") !== null ||
       deliveryMode(gates, "lotw") !== null) &&
     (gates.allowedQsoIds === null || (gates.allowedQsoIds?.length ?? 0) > 0) &&
@@ -177,7 +251,7 @@ export function exportsEffective(gates: DeliveryGates): boolean {
   );
 }
 /** Public status reports the enabled mode without claiming source completeness. */
-export function exportAuthorizationMode(gates: DeliveryGates) {
+export function exportAuthorizationMode(gates: ScheduledDeliveryGates) {
   if (!exportsEffective(gates)) return null;
   const qrz = deliveryMode(gates, "qrz");
   const lotw = deliveryMode(gates, "lotw");
@@ -186,7 +260,7 @@ export function exportAuthorizationMode(gates: DeliveryGates) {
   return qrz ?? lotw;
 }
 export function routeDeliveryMode(
-  gates: DeliveryGates,
+  gates: ScheduledDeliveryGates,
   qso: string,
   destination: Pick<Connection, "id" | "kind">,
 ) {
@@ -204,7 +278,7 @@ export function routeDeliveryMode(
 /** Structural eligibility only; preparation still requires fresh vendor reads. */
 async function freshInsertRouteCurrent(
   store: Store,
-  gates: DeliveryGates,
+  gates: ScheduledDeliveryGates,
   key: LedgerKey,
   destination: Pick<Connection, "id" | "kind">,
 ) {
@@ -343,7 +417,7 @@ async function reconcileContact(
   source: Connection,
   destination: Connection,
   contact: IntakeContact,
-  gates: DeliveryGates,
+  gates: ScheduledDeliveryGates,
   fetcher: typeof fetch,
   now: number,
   priority: VendorPriority,
@@ -581,7 +655,7 @@ async function reconcileReadOnlyBatch(
   source: Connection,
   destinations: Connection[],
   contacts: IntakeContact[],
-  gates: DeliveryGates,
+  gates: ScheduledDeliveryGates,
   fetcher: typeof fetch,
   priority: VendorPriority,
   currentTime: () => number,
@@ -1068,7 +1142,7 @@ export interface ThroughputMetrics {
 }
 /** Drain fair rounds until idle or out of time, with fenced source cycles. */
 export async function tick(
-  env: Env,
+  env: ScheduledEnvironment,
   fetcher: typeof fetch = fetch,
   clock?: number,
 ) {
@@ -1139,6 +1213,9 @@ export async function tick(
       exportsEffective: exportsEffective(gates),
       allowedQsoIds: gates.allowedQsoIds,
       allowedDestinationIds: gates.allowedDestinationIds,
+      ...(gates.qrzFreshInsertExpiresAt === undefined
+        ? {}
+        : { qrzFreshInsertExpiresAt: gates.qrzFreshInsertExpiresAt }),
     }),
   );
   await pruneHistoryInventory(store, now);
@@ -1370,7 +1447,11 @@ export async function tick(
       }[];
       if (
         cached.length === snapshots.length &&
-        cached.every((proof) => proof !== null)
+        cached.every(
+          (proof) =>
+            proof !== null &&
+            qrzWindowProofAllowed(gates, proof.expiresAt, currentTime()),
+        )
       ) {
         // Existing IDs are reused verbatim. No read, timestamp refresh or rebind.
         ready = cached.flatMap((proof, index) =>
@@ -1401,6 +1482,7 @@ export async function tick(
               rawFetcher: fetcher,
               now: currentTime,
               deadline: currentTime() + Math.max(0, deadline - Date.now()),
+              expiresAtCap: gates.qrzFreshInsertExpiresAt,
               remainingRequests,
               priority,
               routedDestinations: (contact) =>
@@ -1448,6 +1530,8 @@ export async function tick(
         const reconciliationVersion = item.contact.reconciliationVersion;
         if (reconciliationVersion === undefined) continue;
         for (const destination of uniqueRoutes(destinations, item.contact)) {
+          if (!qrzWindowProofAllowed(gates, item.expiresAt, currentTime()))
+            continue;
           if (expired() || attemptSlots[priority] <= 0) return;
           if (!eligible.has(JSON.stringify([item.contact.id, destination.id])))
             continue;
@@ -1495,7 +1579,14 @@ export async function tick(
             if (
               prepared.state === "prepared" &&
               prepared.attemptId &&
-              !expired()
+              !expired() &&
+              (await scheduledPreparedWindowCurrent(
+                store,
+                gates,
+                source.tenant,
+                prepared.attemptId,
+                currentTime(),
+              ))
             ) {
               // Dispatch while this source still has the qualifying generation,
               // before the next canonical poll can invalidate its immutable pin.
@@ -2168,7 +2259,17 @@ export async function tick(
             return matches.length === 1 ? matches : [];
           });
           await observeContact(store, source, contact, now, routed);
-          if (expired()) continue;
+          if (
+            expired() ||
+            !(await scheduledPreparedWindowCurrent(
+              store,
+              gates,
+              attempt.tenant,
+              attempt.attempt,
+              currentTime(),
+            ))
+          )
+            continue;
           await dispatchAttempt(store, attempt.tenant, attempt.attempt, gates, {
             ...deps,
             priority,

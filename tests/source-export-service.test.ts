@@ -1632,3 +1632,118 @@ test("a post-projection due race rejects the burned key without changing schedul
   assert.equal(await h.count("attempts"), 0);
   assert.equal(h.calls.qrzWrites, 0);
 });
+
+test("scheduled QRZ window caps its real collected proof and inserts with ordinary guards", async (t) => {
+  const h = await fixture(
+    t,
+    (state) => {
+      state.qrzRecords.length = 0;
+    },
+    40,
+    "inventory_pending",
+  );
+  h.enable();
+  h.env.SOURCE_BOUNDARY_VERIFIED = "false";
+  h.env.QRZ_FRESH_INSERTS_ENABLED = "true";
+  h.env.LOTW_FRESH_INSERTS_ENABLED = "false";
+  h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination"]';
+  const cap = Date.now() + 60000;
+  const env = { ...h.env, QRZ_FRESH_INSERT_EXPIRES_AT: String(cap) };
+  const result = await tick(env, h.fetcher);
+  assert.equal(result.errors, 0);
+  assert.equal(h.calls.qrzWrites, 1);
+  assert.equal(h.calls.lotwUploads, 0);
+  const rows = (
+    await h.store
+      .statement(
+        "SELECT p.expires_at,p.proof,pin.authorization_mode FROM source_export_proofs p JOIN attempt_source_export_proofs pin ON pin.tenant=p.tenant AND pin.proof_id=p.id",
+      )
+      .all<{ expires_at: number; proof: string; authorization_mode: string }>()
+  ).results;
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].expires_at, cap);
+  assert.equal(JSON.parse(rows[0].proof).expiresAt, cap);
+  assert.equal(rows[0].authorization_mode, "qrz_fresh_insert");
+});
+
+test("expired and malformed scheduled windows remain read-only while ordinary synchronization continues", async (t) => {
+  for (const expiry of [String(Date.now() - 1), "not-an-epoch"])
+    await t.test(
+      expiry.startsWith("not") ? "malformed" : "late old invocation",
+      async (t) => {
+        const h = await fixture(
+          t,
+          (state) => {
+            state.qrzRecords.length = 0;
+          },
+          40,
+          "inventory_pending",
+        );
+        h.enable();
+        h.env.SOURCE_BOUNDARY_VERIFIED = "false";
+        h.env.QRZ_FRESH_INSERTS_ENABLED = "true";
+        h.env.LOTW_FRESH_INSERTS_ENABLED = "false";
+        h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination"]';
+        const before = h.calls.sourceSync;
+        const result = await tick(
+          { ...h.env, QRZ_FRESH_INSERT_EXPIRES_AT: expiry },
+          h.fetcher,
+        );
+        assert.equal(result.errors, 0);
+        assert(h.calls.sourceSync > before);
+        assert.equal(h.calls.qrzWrites, 0);
+        assert.equal(h.calls.lotwUploads, 0);
+        assert.equal(await h.count("attempts"), 0);
+      },
+    );
+});
+
+test("window timestamp is captured rather than renewed or widened into other export modes", () => {
+  const h = {
+    EXPORTS_ENABLED: "true",
+    ROLLOUT_CHECKS_PASSED: "true",
+    LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
+    SOURCE_BOUNDARY_VERIFIED: "false",
+    QRZ_FRESH_INSERTS_ENABLED: "true",
+    LOTW_FRESH_INSERTS_ENABLED: "false",
+    ROLLOUT_QSO_IDS_JSON: '["*"]',
+    ROLLOUT_DESTINATION_IDS_JSON: '["destination"]',
+  } as Env;
+  const cap = Date.now() + 60000;
+  const env = { ...h, QRZ_FRESH_INSERT_EXPIRES_AT: String(cap) };
+  const captured = deliveryGates(env);
+  env.QRZ_FRESH_INSERT_EXPIRES_AT = String(cap + 60000);
+  assert.equal(captured.qrzFreshInsertExpiresAt, cap);
+  assert(exportsEffective(captured));
+  for (const value of [" ", "0", "Infinity", `${cap}.0`, `${cap}\n`])
+    assert.equal(
+      exportsEffective(
+        deliveryGates({ ...h, QRZ_FRESH_INSERT_EXPIRES_AT: value }),
+      ),
+      false,
+    );
+  assert.equal(
+    exportsEffective(
+      deliveryGates({
+        ...h,
+        QRZ_FRESH_INSERT_EXPIRES_AT: String(cap),
+        SOURCE_BOUNDARY_VERIFIED: "true",
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    exportsEffective(
+      deliveryGates({
+        ...h,
+        QRZ_FRESH_INSERT_EXPIRES_AT: String(cap),
+        LOTW_FRESH_INSERTS_ENABLED: "true",
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    exportsEffective(deliveryGates({ ...h, QRZ_FRESH_INSERT_EXPIRES_AT: "" })),
+    true,
+  );
+});

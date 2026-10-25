@@ -50,6 +50,7 @@ import { purgeResolvedSource, rotatePrivateData } from "./maintenance.ts";
 import type { Contact } from "./projection.ts";
 import { sourceFingerprint } from "./projection.ts";
 import { QrzClient, QrzError } from "./qrz.ts";
+import { type DeferredQrzKey, DeferredQrzPlanning } from "./qrz-deferred.ts";
 import { QrzPlanningAllowance } from "./qrz-planning.ts";
 import type {
   HistoryAdoptionInput,
@@ -349,7 +350,11 @@ async function reconcileContact(
   vendorNow: number | undefined,
   metrics: ThroughputMetrics,
   emptyObservations?: QrzEmptyObservationScope,
-  planning?: { allowance: QrzPlanningAllowance; admitScan: () => boolean },
+  planning?: {
+    allowance: QrzPlanningAllowance;
+    admitScan: () => boolean;
+    defer: (key: DeferredQrzKey) => void;
+  },
 ) {
   const key: LedgerKey = {
     tenant: source.tenant,
@@ -405,7 +410,7 @@ async function reconcileContact(
       // period. Unready negatives cannot consume another candidate's scan slot.
       const due = await store
         .statement(
-          "SELECT 1 FROM ledger WHERE tenant=? AND source=? AND qso=? AND destination=? AND generation=? AND due_at<=?",
+          "SELECT l.due_at,r.next_due_at,r.version FROM ledger l JOIN reconciliation_work r ON r.tenant=l.tenant AND r.source=l.source AND r.qso=l.qso WHERE l.tenant=? AND l.source=? AND l.qso=? AND l.destination=? AND l.generation=? AND l.due_at<=?",
           key.tenant,
           key.source,
           key.qso,
@@ -413,8 +418,19 @@ async function reconcileContact(
           contact.generation,
           vendorNow ?? Date.now(),
         )
-        .first();
-      if (!due || !planning.admitScan()) return false;
+        .first<{ due_at: number; next_due_at: number; version: number }>();
+      if (!due || due.version !== contact.reconciliationVersion) return false;
+      if (!planning.admitScan()) {
+        planning.defer({
+          ...key,
+          generation: contact.generation,
+          version: due.version,
+          dueAt: due.due_at,
+          workDueAt: due.next_due_at,
+          priority,
+        });
+        return false;
+      }
     }
     let raw: {
       apiKey?: string;
@@ -1162,6 +1178,7 @@ export async function tick(
   };
   // Shared across every source/cohort/round in this invocation, never module state.
   const qrzPlanning = new QrzPlanningAllowance();
+  const deferredQrz = new DeferredQrzPlanning();
   const sourceProofAttempts = new Map<string, number>();
   const maintainLotwOwnership = async (tenant: string) => {
     if (!maintainedLotwOwnership.has(tenant) && metered.metrics.calls < 720) {
@@ -1531,22 +1548,41 @@ export async function tick(
       if (expired()) return 0;
       await establishCutovers(store, source, gates, currentTime());
       if (expired()) return 0;
-      const batch = await measure("projection", () =>
-        pendingContactBatch(
-          store,
-          source,
-          priority === "live"
-            ? exportsEffective(gates)
-              ? Math.max(1, Math.min(6, attemptSlots.live))
-              : 1
-            : 20,
-          currentTime(),
-          priority,
-          undefined,
-          nowAtStart,
-          readyContextOnly,
-        ),
-      );
+      const reentry =
+        exportsEffective(gates) &&
+        gates.qrzFreshInsertsEnabled &&
+        !gates.sourceBoundaryVerified &&
+        attemptSlots[priority] > 0 &&
+        (sourceProofAttempts.get(sourceKey) ?? 0) < 4
+          ? await measure("projection", () =>
+              deferredQrz.take(
+                store,
+                source,
+                priority,
+                attemptSlots[priority],
+                currentTime,
+                () => !expired(),
+              ),
+            )
+          : { contacts: [], destinations: new Map<string, string>() };
+      const batch = reentry.contacts.length
+        ? { contacts: reentry.contacts, selected: reentry.contacts.length }
+        : await measure("projection", () =>
+            pendingContactBatch(
+              store,
+              source,
+              priority === "live"
+                ? exportsEffective(gates)
+                  ? Math.max(1, Math.min(6, attemptSlots.live))
+                  : 1
+                : 20,
+              currentTime(),
+              priority,
+              undefined,
+              nowAtStart,
+              readyContextOnly,
+            ),
+          );
       progress += batch.selected;
       const destinations = batch.contacts.length
         ? (await store.connections(source.tenant)).filter(
@@ -1679,6 +1715,8 @@ export async function tick(
           const routingIssues: string[] = [];
           for (const kind of ["qrz", "lotw"] as const) {
             if (expired()) break;
+            if (reentry.destinations.has(contact.id) && kind !== "qrz")
+              continue;
             const candidates = destinations.filter(
               (c) => c.kind === kind && routeMatches(c, contact),
             );
@@ -1708,6 +1746,11 @@ export async function tick(
               continue;
             }
             const destination = candidates[0];
+            if (
+              reentry.destinations.has(contact.id) &&
+              destination.id !== reentry.destinations.get(contact.id)
+            )
+              continue;
             const preparing = false;
             try {
               let qrzEmptyObservation: QrzEmptyObservation | undefined;
@@ -1727,6 +1770,7 @@ export async function tick(
                     emptyObservations,
                     {
                       allowance: qrzPlanning,
+                      defer: (key) => deferredQrz.add(key),
                       admitScan: () => {
                         if (freshQrzScans >= attemptSlots[priority])
                           return false;

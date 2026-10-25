@@ -48,8 +48,19 @@ positive historical matching retains the larger cohort. A native worst-case
 test completes one nine-read final neighborhood and INSERT within the unchanged
 24-request budget after another planning scan stops partway. This prevents the
 reproduced starvation; it does not establish larger-scale throughput or guarantee
-headroom when other Workers share the same budget. Same-source progress beyond
-two contacts per invocation remains follow-up work. Then evaluate bounded
+headroom when other Workers share the same budget. Signed `e4a1b1e2` passes
+**1,635 tests** and the full local check.
+
+The next local follow-up revisits at most 20 deferred primitive work keys in
+later normal source rounds, with current projection and exact queue guards.
+An independent 20-contact fixture completes **four direct-empty** or **three
+fallback** INSERTs within one invocation; a real following-window run completes
+three more fallback contacts, six across two ticks. Budgets, quiet periods,
+source proofs, final duplicate checks and recovery remain mandatory. These are
+fake-vendor/native-D1 results, not production capacity. Review, all **27 modified
+service tests**, formatting, lint, both TypeScript checks and the Worker dry
+build pass. The 1,635-test full result above belongs to the parent commit.
+Then evaluate bounded
 earlier covering reads and
 LoTW batches, with per-contact ownership, proofs and uncertain-result recovery
 preserved. No quota increase or production capacity is claimed. The

@@ -481,12 +481,73 @@ are **24 admitted / one denied** and **10 admitted / zero denied**, with zero
 errors. This is separately pinned v1 evidence, not an exact-v2 or sustained
 capacity result.
 
-Same-source throughput beyond two contacts remains open: normal selection marks
-the bounded cohort selected before scan admission, excluding its deferred
-siblings from later rounds. A bounded current-key re-entry path must also respect
-the four-request source-proof limit, current projection, queue versions and the
-unchanged proof/dispatch guards. These local improvements are not deployed and
-do not block the separately authorized singleton trial.
+The v2 fix is signed `e4a1b1e2b330c151362a5360f5a79c4268f28016`.
+Its full local check passes **1,635 tests**, formatting, lint, both TypeScript
+projects and the Worker dry build. This is separate from the v3 checks below.
+
+V2 alone still selects the bounded cohort before scan admission, excluding its
+deferred siblings from later rounds and limiting the measured same-source work
+to two contacts. The follow-up below addresses that limit. These local
+improvements are not deployed and do not block the separately authorized
+singleton trial.
+
+### Deferred-key re-entry — local implementation, not deployed
+
+The v3 follow-up retains at most **20 primitive work keys per invocation**;
+invalid or consumed keys cannot refill that allowance. It stores neither
+contacts nor reusable vendor observations or source proofs. Before admitting
+work from a key, it checks the original tenant/source/destination, queue version, priority,
+eligibility and due time, ledger generation and due time, and current context.
+It projects current source ciphertext through normal intake, checks those
+conditions again, and requires the original destination to remain the unique
+current QRZ route. Keys are consumed before asynchronous work and cannot be
+re-added, so failed or oversized closures cannot create an inner retry loop.
+
+Re-entry happens only during later ordinary source rounds, with the same source
+lease, two background attempt slots per round, four source-proof requests per
+source, invocation planning ceiling and shared vendor budgets. No durable
+`selected_at` is rewound. Quiet contacts, failed/partial reads and already
+attempted scan keys are not retained for re-entry. Each admitted contact still
+needs its normal fresh QRZ scan, current post-drain proof, immutable preparation
+and final duplicate check. Source-boundary and LoTW routes do not use re-entry.
+
+An independent exact-v3 fixture verifies the frozen runtime before and after:
+
+| Single-source 20-contact case  | Prepared | Fake INSERTs | QRZ admitted / denied | LoFi | D1 RPCs / SQL |
+| ------------------------------ | -------: | -----------: | --------------------: | ---: | ------------: |
+| Direct empty, first tick       |        4 |            4 |                  12/0 |    5 |     663/1,099 |
+| Ambiguous fallback, first tick |        4 |            3 |                  24/1 |    5 |     682/1,114 |
+| Same fallback DB, next window  |        4 |       3 more |                  24/1 |    5 |     660/1,054 |
+
+The two one-tick cases make 22 contact turns for 20 distinct contacts, with
+22 cached inventory hits, zero inventory fetches, errors or reported tick
+deferrals. Both leave 16 unscanned contacts due. The fallback retains one
+known-unsent prepared attempt when its final query is denied; denied requests
+do not reach raw transport. LoFi's five calls include the ordinary poll and two
+normal collection/drain pairs, within the unchanged four coordinator requests.
+
+The following-window test preserves the same database, cursors, source proofs
+and ordinary vendor policies, waiting **301,010 actual milliseconds** without a
+clock or budget reset. It finishes with **six delivered, one cancelled and one
+prepared attempt**, retaining one current proof pin. The older known-unsent
+attempt was cancelled through the normal stale-proof path; these results do
+not establish that this particular cancelled contact was retried or completed.
+New unscanned work progressed first. Neither two ticks nor this isolated source
+fixture establishes sustained capacity, general fairness or upstream quotas.
+
+Protected packets `ferry-qrz-budget-demand-v3-zih6ec_7` and
+`ferry-qrz-budget-window-v3-l_h1p5fh` retain the one-tick and following-window
+measurements separately. Their manifest SHA256 values are
+`3c274b4b210fa2e75bdfee916713b40915fe41a3ab6942e3e9d1f003e13654bf`
+and `ca66df2750d122b3970d4f66720cdcc1b3a3e175874d2627f3d2bacaac9e39fb`.
+The promotable implementation manifest is
+`cbd6725299726cd31e9571511324f681c0ed10608831b43784c723f4c248fed1`.
+Thirteen native focused cases pass, including source/operation edits, queue
+and generation changes, credential/relink changes, a post-projection due race,
+and fitting neighbors progressing without repeating an oversized prefix. All
+**27 tests in the modified service suite** pass in the primary checkout, as do
+formatting, lint, both TypeScript checks and the Worker dry build. The 1,635-test
+full result above is the v2 parent, not a full v3-suite result.
 
 ## First scheduled run of `12f636b3`
 

@@ -10,8 +10,15 @@ import {
   sourceFingerprint,
 } from "../src/projection.ts";
 import { mergeQrzCorrection } from "../src/qrz.ts";
+import {
+  type DeferredQrzKey,
+  DeferredQrzPlanning,
+} from "../src/qrz-deferred.ts";
+import { HISTORICAL_MATCHING_VERSION } from "../src/reconcile.ts";
+import { syncReconciliationPolicy } from "../src/reconciliation-work.ts";
 import { canonical, sha256 } from "../src/security.ts";
-import { tick } from "../src/service.ts";
+import { deliveryGates, exportsEffective, tick } from "../src/service.ts";
+import type { Store } from "../src/store.ts";
 import { schedulerFixture } from "./runtime-fixtures.ts";
 
 async function fixture(
@@ -1009,7 +1016,7 @@ test("fresh LoTW mode stays closed by default and cannot collect correction proo
   }
 });
 
-test("two oversized fresh negatives yield to fitting unscanned neighbors in the next invocation", async (t) => {
+test("deferred fitting neighbors progress within the invocation without revisiting oversized prefixes", async (t) => {
   const h = await fixture(
     t,
     async (state, qsos) => {
@@ -1058,51 +1065,47 @@ test("two oversized fresh negatives yield to fitting unscanned neighbors in the 
   h.env.LOTW_FRESH_INSERTS_ENABLED = "false";
   h.env.ROLLOUT_QSO_IDS_JSON = '["q1","q2","q3","q4"]';
   h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination"]';
-  const before = Date.now();
-  const first = await tick(h.env, h.fetcher);
-  const queued = (
-    await h.store
-      .statement(
-        "SELECT w.qso,w.version,w.next_due_at,w.selected_at,l.state,l.reason FROM reconciliation_work w JOIN ledger l ON l.tenant=w.tenant AND l.source=w.source AND l.qso=w.qso AND l.destination='destination' WHERE w.tenant='a' ORDER BY w.qso",
-      )
-      .all()
-  ).results;
-  const checks = (
-    await h.store
-      .statement(
-        "SELECT qso,count(*) n FROM reconciliation_checks GROUP BY qso ORDER BY qso",
-      )
-      .all()
-  ).results;
-  assert.equal(first.errors, 0);
-  assert.equal(h.calls.qrzWrites, 0);
-  assert.equal(await h.count("attempts"), 0);
-  for (const row of queued) {
-    if (["q1", "q2"].includes(String(row.qso))) {
-      assert.equal(row.reason, "source_export_proof_unavailable");
-      assert(Number(row.next_due_at) >= before + 300000);
-    } else {
-      assert(Number(row.next_due_at) <= before);
-      assert.equal(row.state, "inventory_pending");
+  const reads = new Map<string, number>();
+  const raw: typeof fetch = async (input, init) => {
+    if (new URL(String(input)).hostname === "logbook.qrz.com") {
+      const form = new URLSearchParams(String(init?.body));
+      if (form.get("ACTION") === "FETCH") {
+        const call = (form.get("OPTION") ?? "")
+          .split(",")
+          .find((v) => v.startsWith("CALL:"))
+          ?.slice(5);
+        if (call) reads.set(call, (reads.get(call) ?? 0) + 1);
+      }
     }
-  }
-  assert(
-    checks.every((row) => ["q1", "q2"].includes(String(row.qso))),
-    "unscanned neighbors receive no absence memo",
-  );
-  // Real later invocation, with all durable cursors, proofs, budgets and clocks intact.
-  const second = await tick(h.env, h.fetcher);
-  assert.equal(second.errors, 0);
-  assert(
-    h.calls.qrzWrites > 0,
-    "fitting neighbors progress without retrying the blocked prefix",
-  );
+    return h.fetcher(input, init);
+  };
+  const before = Date.now();
+  const result = await tick(h.env, raw);
+  assert.equal(result.errors, 0);
+  assert.equal(h.calls.qrzWrites, 2);
   assert(h.qrzMutations.every((row) => ["K3FIT", "K4FIT"].includes(row.CALL)));
+  assert.equal(reads.get("K1ABC"), 1);
+  assert.equal(reads.get("K2BLOCK"), 1);
   assert.equal(
     await h.store
       .statement("SELECT count(*) n FROM attempts WHERE qso IN('q1','q2')")
       .first<number>("n"),
     0,
+  );
+  const held = (
+    await h.store
+      .statement(
+        "SELECT w.next_due_at,w.selected_at,l.reason FROM reconciliation_work w JOIN ledger l ON l.tenant=w.tenant AND l.source=w.source AND l.qso=w.qso WHERE w.qso IN('q1','q2') AND l.destination='destination'",
+      )
+      .all()
+  ).results;
+  assert(
+    held.every(
+      (row) =>
+        row.reason === "source_export_proof_unavailable" &&
+        Number(row.next_due_at) >= before + 300000 &&
+        Number(row.selected_at) >= before,
+    ),
   );
 });
 
@@ -1285,4 +1288,232 @@ test("two nine-read negative plans retain enough normal quota for one final nine
     0,
     "partial second read is not an absence",
   );
+});
+
+async function deferredState(t: TestContext) {
+  const h = await fixture(
+    t,
+    async (s, qsos) => {
+      s.qrzRecords.length = 0;
+      qsos.push({
+        ...structuredClone(s.qso),
+        uuid: "q2",
+        their: { call: "K2NEXT" },
+        syncedAtMillis: 102,
+        startAtMillis: Number(s.qso.startAtMillis) + 120000,
+      });
+    },
+    40,
+    "inventory_pending",
+  );
+  h.enable();
+  h.env.SOURCE_BOUNDARY_VERIFIED = "false";
+  h.env.QRZ_FRESH_INSERTS_ENABLED = "true";
+  h.env.LOTW_FRESH_INSERTS_ENABLED = "false";
+  h.env.ROLLOUT_QSO_IDS_JSON = '["q1","q2"]';
+  h.env.ROLLOUT_DESTINATION_IDS_JSON = '["destination"]';
+  // Normal tick policy transition wakes previously parked read-only inventory.
+  const gates = deliveryGates(h.env);
+  await syncReconciliationPolicy(
+    h.store,
+    JSON.stringify({
+      historicalMatchingVersion: HISTORICAL_MATCHING_VERSION,
+      sourceBoundaryVerified: gates.sourceBoundaryVerified,
+      qrzFreshInsertsEnabled: gates.qrzFreshInsertsEnabled === true,
+      lotwFreshInsertsEnabled: gates.lotwFreshInsertsEnabled === true,
+      exportsEffective: exportsEffective(gates),
+      allowedQsoIds: gates.allowedQsoIds,
+      allowedDestinationIds: gates.allowedDestinationIds,
+    }),
+  );
+  const source = (await h.store.connection("a", "source"))!;
+  const keys = (
+    await h.store
+      .statement(
+        "SELECT l.tenant,l.source,l.qso,l.destination,l.generation,r.version,l.due_at AS dueAt,r.next_due_at AS workDueAt,r.priority FROM ledger l JOIN reconciliation_work r ON r.tenant=l.tenant AND r.source=l.source AND r.qso=l.qso WHERE l.destination='destination' ORDER BY l.qso",
+      )
+      .all<DeferredQrzKey>()
+  ).results;
+  assert.equal(keys.length, 2);
+  assert(keys.every((k) => k.dueAt <= Date.now() && k.workDueAt <= Date.now()));
+  return { h, source, keys };
+}
+test("deferred keys are copied, current reprojected, and consumed only once", async (t) => {
+  const { h, source, keys } = await deferredState(t);
+  const q = new DeferredQrzPlanning();
+  const original = { ...keys[0]! };
+  q.add(original);
+  original.qso = "not-the-original";
+  const got = await q.take(
+    h.store,
+    source,
+    "background",
+    2,
+    Date.now,
+    () => true,
+  );
+  assert.equal(got.contacts.length, 1);
+  assert.equal(got.contacts[0]?.id, "q1");
+  assert.equal(got.contacts[0]?.generation, keys[0]?.generation);
+  assert.equal(got.destinations.get("q1"), "destination");
+  assert.equal(
+    (await q.take(h.store, source, "background", 2, Date.now, () => true))
+      .contacts.length,
+    0,
+  );
+  q.add(keys[0]!);
+  assert.equal(
+    (await q.take(h.store, source, "background", 2, Date.now, () => true))
+      .contacts.length,
+    0,
+  );
+  assert.equal(await h.count("attempts"), 0);
+  assert.equal(h.calls.qrzWrites, 0);
+});
+test("the global twenty-key cap includes invalid and consumed keys", async (t) => {
+  const { h, source, keys } = await deferredState(t);
+  const q = new DeferredQrzPlanning();
+  for (let i = 0; i < 19; i++) q.add({ ...keys[0]!, qso: `missing-${i}` });
+  q.add(keys[0]!);
+  q.add(keys[1]!);
+  const got = await q.take(
+    h.store,
+    source,
+    "background",
+    20,
+    Date.now,
+    () => true,
+  );
+  assert.deepEqual(
+    got.contacts.map((x) => x.id),
+    ["q1"],
+  );
+  q.add(keys[1]!);
+  assert.equal(
+    (await q.take(h.store, source, "background", 20, Date.now, () => true))
+      .contacts.length,
+    0,
+  );
+});
+for (const change of [
+  "quiet",
+  "generation",
+  "version",
+  "route",
+  "credential",
+  "source",
+  "operation",
+] as const)
+  test(`deferred ${change} change cannot re-enter`, async (t) => {
+    const { h, source, keys } = await deferredState(t);
+    const q = new DeferredQrzPlanning();
+    q.add(keys[0]!);
+    if (change === "quiet")
+      await h.store
+        .statement(
+          "UPDATE ledger SET due_at=? WHERE destination='destination' AND qso='q1'",
+          Date.now() + 60000,
+        )
+        .run();
+    if (change === "generation")
+      await h.store
+        .statement(
+          "UPDATE ledger SET generation='changed' WHERE destination='destination' AND qso='q1'",
+        )
+        .run();
+    if (change === "version")
+      await h.store
+        .statement(
+          "UPDATE reconciliation_work SET version=version+1 WHERE qso='q1'",
+        )
+        .run();
+    if (change === "route")
+      await h.store
+        .statement(
+          "UPDATE connections SET remote_identity='another-book' WHERE tenant='a' AND id='destination'",
+        )
+        .run();
+    if (change === "credential")
+      await h.store
+        .statement(
+          "UPDATE connections SET credential_version='unavailable' WHERE tenant='a' AND id='destination'",
+        )
+        .run();
+    if (change === "source")
+      await h.store
+        .statement(
+          "UPDATE source_work SET revision=revision+1 WHERE tenant='a' AND source='source' AND kind='qso' AND id='q1'",
+        )
+        .run();
+    if (change === "operation")
+      await h.store
+        .statement(
+          "UPDATE source_work SET revision=revision+1 WHERE tenant='a' AND source='source' AND kind='operation'",
+        )
+        .run();
+    assert.equal(
+      (await q.take(h.store, source, "background", 2, Date.now, () => true))
+        .contacts.length,
+      0,
+      change,
+    );
+    assert.equal(await h.count("attempts"), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+  });
+test("a post-projection due race rejects the burned key without changing scheduling authority", async (t) => {
+  const { h, source, keys } = await deferredState(t);
+  const q = new DeferredQrzPlanning();
+  q.add(keys[0]!);
+  let reads = 0;
+  const store = new Proxy(h.store, {
+    get(target, prop) {
+      if (prop === "statement")
+        return (...args: Parameters<Store["statement"]>) => {
+          const result = target.statement(...args);
+          if (args[0].includes("SELECT 1 FROM reconciliation_work r"))
+            return new Proxy(result, {
+              get(stmt, p) {
+                if (p === "first")
+                  return async (...values: unknown[]) => {
+                    reads++;
+                    if (reads === 2)
+                      await h.store
+                        .statement(
+                          "UPDATE ledger SET due_at=? WHERE qso='q1' AND destination='destination'",
+                          Date.now() + 60000,
+                        )
+                        .run();
+                    return (
+                      stmt.first as (...v: unknown[]) => Promise<unknown>
+                    )(...values);
+                  };
+                const v = Reflect.get(stmt, p, stmt);
+                return typeof v === "function" ? v.bind(stmt) : v;
+              },
+            });
+          return result;
+        };
+      const v = Reflect.get(target, prop, target);
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+  assert.equal(
+    (await q.take(store, source, "background", 2, Date.now, () => true))
+      .contacts.length,
+    0,
+  );
+  assert.equal(reads, 2);
+  await h.store
+    .statement(
+      "UPDATE ledger SET due_at=? WHERE qso='q1' AND destination='destination'",
+      keys[0]!.dueAt,
+    )
+    .run();
+  assert.equal(
+    (await q.take(h.store, source, "background", 2, Date.now, () => true))
+      .contacts.length,
+    0,
+  );
+  assert.equal(await h.count("attempts"), 0);
+  assert.equal(h.calls.qrzWrites, 0);
 });

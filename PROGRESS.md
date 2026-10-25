@@ -2,6 +2,42 @@
 
 ## Current production and export acceptance — 2026-10-25 UTC
 
+Pair E's renewed offline review held all twenty bounded projections because the
+verified snapshot contained one unhashed LoTW owner. No contact was selected and
+no activation, signature or upload occurred. Native completeness checks remain
+intact. The new observation fix fills only NULL owner hashes within the original
+guarded transaction, preventing later cohorts from recreating this availability
+hold after the maintenance phase. All nineteen observation tests pass.
+
+QRZ and the remaining relevant source/throttle response-cleanup paths now have
+separate committed fixes and focused native regressions. Signed **`50c19ad3`**
+is deployed closed as Worker **`4edc6060-554b-4f57-bd40-95e468f0d84f`**,
+deployment `752914e0-1455-4a3e-a10d-47069d6748cd`. All **1,775 tests** and
+required checks pass in
+[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40217803799).
+The original full local run passed 1,770 of 1,775 tests; its five schema-fixture
+failures are fixed and both affected files pass all 75 tests. Final local
+formatting, lint, types and build pass.
+
+PRE/POST recovery at **18:00:26.047 / 18:07:57.647 UTC** preserves all fourteen
+accepted attempts and thirteen artifacts, original crypto/pins/signatures,
+full restore, integrity/FK and both quarantines. Separate before/after checks
+require the same closed deployment; original capture times remain unchanged.
+No new attempt/upload occurred. The 18:15 cron completed normally with zero
+attempts and errors, but did no contact work; it does not establish pair acceptance.
+
+Pair F's offline review held before activation because its 44 currently due
+queue entries were not native fresh inserts. Snapshot-only diagnosis found
+385 native fresh LoTW routes, all retained, context/source ready and ledger-due,
+with reconciliation deferred. Normal policy activation wakes that work; a
+bounded review successor must account for that wake while preserving every
+eligibility, ownership and proof guard. Pair F created no activation input,
+intent, signature or upload. A checked pair, accepted-report recovery and small
+automatic scope remain pending. Earlier unfinished runs remain unresolved.
+See the [current release receipt](docs/deployment.md#closed-owner-and-client-cleanup-release-2026-10-25-utc).
+
+## Earlier closed cleanup release — 2026-10-25 UTC
+
 Signed **`8f5c0b9c`** is deployed closed on Worker
 `abf51751-d9a5-481c-ac99-f667b346f598`, independently verified at
 **16:55:06.651 UTC**. All **1,720 tests**, required local checks and

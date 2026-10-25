@@ -6,17 +6,25 @@ Checked-in environments default to disabled exports. The first LoTW contact now 
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
-The current runtime is signed `8f5c0b9c9d9ca5b57573ad3c3c38c324d8e2ee12`,
-with 37 migrations and all **1,720 tests and required checks** passing locally
-and in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40211266073).
-The latest **16:57:25.703 UTC** attestation confirms all eight controls closed on
-Worker `abf51751-d9a5-481c-ac99-f667b346f598`. The LoTW response-cleanup fix
-preserves existing outcomes without awaiting potentially pending cleanup.
-PRE/POST full recovery at **16:51:56.340 / 16:57:25.734 UTC** preserves all
+The current runtime is signed `50c19ad316f07e434efbde98dc1f4dad4d51c46a`,
+with 37 migrations and all **1,775 tests and required checks** passing in
+[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40217803799).
+The **18:07:57.633 UTC** closing attestation confirms all eight controls closed on
+Worker `4edc6060-554b-4f57-bd40-95e468f0d84f`. Owner observation fills only NULL
+hashes within its guarded transaction. QRZ, LoFi, vendor-throttle and
+source-presence cleanup preserve outcomes without awaiting pending cancellation.
+PRE/POST full recovery at **18:00:26.047 / 18:07:57.647 UTC** preserves all
 fourteen accepted attempts and thirteen artifacts, full crypto/restore and both
 quarantines. Fresh before/after receipts require the same closed deployment;
 original SQL capture and receipt times remain separate. See the
-[cleanup release receipt](deployment.md#closed-lotw-cleanup-release-and-full-recovery-2026-10-25-utc).
+[current release receipt](deployment.md#closed-owner-and-client-cleanup-release-2026-10-25-utc).
+
+Offline pairs E/F stopped before activation. E held tenant-wide ownership
+coverage; F's due queue contained no fresh inserts. The POST snapshot separately
+contains 385 native fresh routes whose source/context and ledger are ready but
+whose reconciliation checks are deferred. Normal activation wakes those checks.
+Qualify the bounded review selection before renewing a pair; retain all native
+eligibility and final proof guards. No preparation hold grants write authority.
 
 LoTW trial C's one native upload is accepted, with strict readback and full
 fourteen-attempt/thirteen-artifact recovery completed at **14:37:53.975 UTC**.

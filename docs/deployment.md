@@ -2,6 +2,58 @@
 
 Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. QRZ’s automatic trial remains accepted with thirteen ACKs assessed at known-ACK minute/sideband precision. LoTW trial C establishes accepted processing for one native upload; QSL confirmation is false. Later LoTW pair D held before signing/staging and made zero new attempts/uploads. All fourteen prior accepted attempts and thirteen artifacts pass POST recovery. All eight controls are closed. The cleanup release and fresh scheduled evidence below qualify the next guarded trial; the historical history-read cause and unfinished invocation remain unresolved. Earlier dated holds and literal QRZ comparison limits remain unchanged.
 
+## Closed owner and client cleanup release (2026-10-25 UTC)
+
+Signed `50c19ad316f07e434efbde98dc1f4dad4d51c46a` passes all **1,775 tests**
+and required checks in
+[exact-release CI 40217803799](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40217803799).
+Independent **18:06:47.205 / 18:07:57.633 UTC** checks confirm sole 100% Worker
+**`4edc6060-554b-4f57-bd40-95e468f0d84f`**, deployment
+`752914e0-1455-4a3e-a10d-47069d6748cd`, healthy HTTPS, matching assets, KEK 1
+and all eight controls closed. Schema remains 37. The original full local run
+found five old schema-fixture failures among 1,775 tests; both corrected files
+subsequently pass all 75 tests. Final local formatting, lint, types and build pass.
+
+The release adds best-effort response cleanup in QRZ, LoFi, vendor throttling
+and source-presence collection. Native tests preserve determined failures,
+uncertain writes, the existing single token renewal, cooldowns and deadline/scope
+holds. LoTW observation now fills only NULL owner hashes in its original guarded
+transaction; native regressions cover later cohorts, immutable hashes, stale
+rollback and QRZ-only routes without extra D1 round trips. No guard, budget,
+timeout, retry eligibility, schema, crypto or parser policy is relaxed. These
+demonstrated hazards do not establish pair D's historical failure cause.
+
+Fresh PRE recovery on the old closed runtime completed at **18:00:26.047 UTC**,
+verifying **42,646,068 SQL bytes**. Receipt
+`ferry-lotw-mixed-backup-8f5c0b9c-result-2026-10-25T18-00-05-020Z-9c252c57.json`
+has SHA256 `59f009958d0e7ba0d02b8705ce90e3ea815d2554b69489b884e0d3a5e010c279`.
+POST recovery on the new closed runtime completed at **18:07:57.647 UTC**,
+verifying **42,648,154 SQL bytes**. Receipt
+`ferry-lotw-mixed-backup-50c19ad3-result-2026-10-25T18-07-36-728Z-2051e50d.json`
+has SHA256 `9cc2bd3c8c128e5ffb95ae6ac2065d7cc0673842350f3115e9edfdde3af67c70`.
+Both preserve **fourteen accepted attempts and thirteen artifacts**, original
+crypto/proof/ownership pins and signatures, full restore, integrity, zero FK
+violations and both quarantines. No new attempt/upload, production restore or
+production migration occurred. Original SQL capture and receipt times remain
+separate; fresh closing attestation requires the same exact closed deployment.
+
+Pair E stopped offline before activation because one NULL owner hash held all
+twenty bounded projections. This was a tenant coverage hold, not twenty duplicate
+contacts. Pair F's offline review on the new POST snapshot selected zero because
+its 44 currently due reconciliation entries were not native fresh inserts.
+Read-only aggregate diagnosis found **385 native fresh LoTW routes**, all waiting,
+eligible, source/context fresh and ready, ledger-due and nondeleted, but with
+reconciliation deferred. Normal policy activation clears reconciliation delays;
+the offline review must model that wake without weakening eligibility. Neither
+E nor F created an activation input, intent, signature or upload.
+
+The **18:15 cron** ran on Worker `4edc6060` and completed with zero contacts,
+attempts and errors. This idle cycle does not establish pair acceptance. The
+bounded review successor, settled-cycle admission, fresh evidence, another
+checked LoTW pair, strict accepted-processing readback and full recovery remain
+required before a small automatic LoTW scope. Older unfinished invocations are
+not relabeled complete by current recovery or successful cycles.
+
 ## Closed LoTW cleanup release and full recovery (2026-10-25 UTC)
 
 Signed `8f5c0b9c9d9ca5b57573ad3c3c38c324d8e2ee12` passes all **1,720 tests**,
@@ -52,8 +104,8 @@ or LoTW pair acceptance. Renew the next pair's review and normal evidence only
 after the unchanged settled-cycle admission checks pass. Pair D's unfinished row remains unresolved; this
 release/recovery does not establish completed accounting for that interval.
 Checked-pair and automatic LoTW acceptance remain pending. The separately
-demonstrated QRZ cleanup hazard has a private reviewed proposal and native
-fixtures, but its follow-up is not deployed.
+demonstrated QRZ cleanup hazard still awaited release at that checkpoint;
+its follow-up subsequently shipped in `50c19ad3`, recorded above.
 
 ## LoTW pair D: history hold, closed recovery and unfinished invocation (2026-10-25 UTC)
 

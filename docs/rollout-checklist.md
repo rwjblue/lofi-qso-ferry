@@ -13,6 +13,26 @@ now pass known-ACK observed-precision assessment and populated recovery.
 
 ## Current evidence (2026-10-25)
 
+- [x] Deploy signed `50c19ad3` after all **1,775 tests** and required checks pass in
+  [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40217803799).
+  Independent 18:06:47.205 / 18:07:57.633 UTC checks confirm Worker `4edc6060`
+  at sole 100% traffic with all eight controls closed, schema 37 and matching assets.
+  Owner observation fills only NULL hashes; the QRZ/source/throttle cleanup fixes
+  preserve existing guards, outcomes and retry eligibility.
+- [x] Complete fresh PRE/POST recovery at 18:00:26.047 / 18:07:57.647 UTC:
+  fourteen accepted attempts and thirteen artifacts unchanged, original evidence,
+  full crypto/restore, integrity/FK and both quarantines passing.
+- [x] Diagnose E/F preparation holds without activation: E had one NULL owner
+  hash; F inspected 44 due nonfresh entries while 385 native fresh routes were
+  source/context ready and ledger-due but reconciliation-deferred. No signature/upload occurred.
+- [ ] Qualify bounded offline review selection that models the normal activation
+  wake, then renew current evidence after settled admission and accept another
+  checked LoTW pair with strict readback and full recovery.
+- [ ] Qualify complete cumulative mixed evidence for the next small automatic
+  scope; private adapter tests alone are not actual acceptance.
+
+### Earlier cleanup and trial checkpoints
+
 - [x] Deploy signed `8f5c0b9c` after all **1,720 tests**, required local checks
   and [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40211266073) pass.
   Independent 16:55:06.651 UTC verification confirms Worker `abf51751` and all
@@ -24,8 +44,8 @@ now pass known-ACK observed-precision assessment and populated recovery.
   before/after receipts require the same closed deployment; no capture is relabeled.
 - [ ] Observe clean scheduled work on the cleanup release, renew current pair
   review/evidence, then complete and independently assess another checked LoTW pair.
-- [ ] Qualify and release the separately demonstrated QRZ cleanup fix before
-  persistent rollout. Its proposal and native fixtures remain private.
+- [x] Qualify and release the separately demonstrated QRZ cleanup fix in
+  `50c19ad3`, recorded above.
 
 - [x] Deploy signed observability release `dd173803` after all 1,701 tests and
   required local/[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40203904797) checks pass.

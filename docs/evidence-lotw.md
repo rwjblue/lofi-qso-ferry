@@ -8,7 +8,28 @@ zero new attempts/uploads. The
 released TQSL source and local Worker compatibility; the
 [certificate checks](lotw-certificates.md) explain the preflight limits.
 
-## Current checkpoint — response cleanup and closed recovery
+## Current checkpoint — ownership, response cleanup and closed recovery
+
+Signed `50c19ad3` is deployed closed on Worker
+`4edc6060-554b-4f57-bd40-95e468f0d84f`, with all **1,775 tests** and required
+checks passing in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40217803799).
+The new guarded observation update fills only NULL owner hashes; QRZ and the
+remaining relevant source/throttle cleanup paths preserve their original
+outcomes without awaiting cancellation. PRE/POST full recovery at
+**18:00:26.047 / 18:07:57.647 UTC** preserves fourteen accepted attempts and
+thirteen artifacts, full crypto/restore and both quarantines. Independent
+before/after checks confirm the same closed deployment and original evidence.
+
+Offline pair E held tenant ownership coverage; pair F held because its 44 due
+queue entries were not fresh inserts. Read-only snapshot diagnosis found 385
+native fresh routes with retained ready source/context and due ledger work,
+but deferred reconciliation. Normal activation wakes that work. A bounded review
+successor, fresh settled admission/evidence, another checked pair and strict
+accepted-report recovery remain pending. Neither preparation activated or
+signed/uploaded a contact. See the
+[current release receipt](deployment.md#closed-owner-and-client-cleanup-release-2026-10-25-utc).
+
+## Earlier checkpoint — response cleanup and closed recovery
 
 Signed `8f5c0b9c` is deployed closed on Worker
 `abf51751-d9a5-481c-ac99-f667b346f598`, with **1,720 passing tests**, required

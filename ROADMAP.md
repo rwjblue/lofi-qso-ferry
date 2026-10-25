@@ -26,7 +26,48 @@ not because the trial failed, as described in
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
 
-### Current checkpoint — LoTW cleanup deployed; all controls closed
+### Current checkpoint — owner availability and response cleanup deployed closed
+
+The renewed pair E review stopped before activation: all twenty bounded
+projections held ownership coverage, with zero selected contacts, signatures,
+uploads or write authority. The verified 17:07 SQL snapshot contained one
+unhashed owner and no incomplete ownership inputs. This is one tenant-wide
+coverage hold, not evidence of twenty duplicate contacts. A later 17:20:51 UTC
+check found zero unhashed owners; normal maintenance can catch up, but new
+cohorts can recreate the delay.
+
+The source fix hashes each newly observed LoTW owner in its existing guarded
+transaction. Four new native regressions cover later cohorts, immutable hashes,
+stale rollback and QRZ-only routes; all nineteen observation tests pass, with
+no extra D1 round trips. Separate commits make QRZ, LoFi, shared vendor-throttle
+and source-presence cleanup best effort, preserving typed outcomes, uncertainty,
+one existing token renewal, cooldowns and scope/deadline holds. Their focused
+native regressions and independent reviews pass. Signed `50c19ad3` is deployed
+as Worker `4edc6060-554b-4f57-bd40-95e468f0d84f`; independent
+**18:06:47.205 / 18:07:57.633 UTC** checks confirm the same sole 100% deployment,
+healthy HTTPS, matching assets, KEK 1 and all eight controls closed. All
+**1,775 tests** and required checks pass in
+[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40217803799).
+The original full local run found five schema-fixture failures; both corrected
+files subsequently passed all 75 tests, and final local formatting, lint,
+types and build pass. These hazards do not establish the old invocation's cause.
+
+Fresh PRE/POST recovery completed at **18:00:26.047 / 18:07:57.647 UTC**,
+preserving fourteen accepted attempts and thirteen artifacts, full cryptography,
+restore and both quarantines. Pair F's offline review then selected zero:
+its 44 currently due queue entries were not fresh inserts. Snapshot-only
+diagnosis found **385 native fresh LoTW routes**, all ledger-due, source/context
+ready and retained, but deferred by reconciliation checks. Normal policy
+activation wakes that queue; the offline review must model that selection without
+weakening native eligibility. No pair F activation, signature or upload occurred.
+
+Next: qualify the bounded review successor, renew current evidence after
+settled-cycle admission, complete another checked LoTW pair and independently
+verify its accepted processing and recovery. A small automatic scope and
+sustained capacity remain pending. See the
+[current release receipt](docs/deployment.md#closed-owner-and-client-cleanup-release-2026-10-25-utc).
+
+### Earlier checkpoint — LoTW cleanup deployed; all controls closed
 
 Signed `8f5c0b9c` passes all **1,720 tests**, required local checks and
 [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40211266073).
@@ -52,8 +93,8 @@ cycle or LoTW pair acceptance.
 Next: renew the pair's current review/evidence after settled-cycle admission,
 then run and independently assess another checked LoTW pair.
 The prior unfinished invocation remains unresolved. Pair acceptance, a small
-automatic LoTW scope and sustained capacity remain pending. The matching QRZ
-cleanup hazard has a private tested proposal and still needs its own release.
+automatic LoTW scope and sustained capacity remained pending. The matching QRZ
+cleanup fix subsequently shipped in `50c19ad3`, recorded above.
 See the [closed cleanup checkpoint](docs/deployment.md#closed-lotw-cleanup-release-and-full-recovery-2026-10-25-utc).
 
 ### Earlier checkpoint — LoTW pair D held; all controls closed

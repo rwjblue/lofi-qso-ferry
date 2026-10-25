@@ -520,14 +520,14 @@ Source review separately includes eight test contacts and one blocked contact.
 Waiting for cron advances available inventory, retry work and newly compatible
 LoTW associations; unresolved identity, location and route conflicts remain held.
 
-| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                                                           |
-| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed.                                  |
-| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                                                               |
-| Source boundary           | Production baseline/handoff is ready with all 4,500 retained rows witnessed. At 08:12:53, a protected diagnostic minted a current proof and verified fresh QRZ absence for the same contact. Scheduled Worker validation remains open; expiring evidence must be refreshed. Global purge/replay guarantees remain unproved.                           |
-| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                                                              |
-| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Guarded broader LoTW history preserves raw time and valid nested grid precision in a separate reference. Ownership bootstrap and exact-evidence recovery pass; populated raw recovery and ARRL acceptance remain open. |
-| First vendor writes       | The latest instruction to keep exports disabled supersedes the earlier one- or two-contact trial authorization. No write or actual trial may occur until the owner changes that instruction. The authority split is deployed. Exact scope, successful current source proof, fresh vendor evidence and backup remain required.                         |
+| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed.                                             |
+| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                                                                          |
+| Source boundary           | Production baseline/handoff is ready with all 4,500 retained rows witnessed. At 08:12:53, a protected diagnostic minted a current proof and verified fresh QRZ absence for the same contact. Scheduled Worker validation remains open; expiring evidence must be refreshed. Global purge/replay guarantees remain unproved.                                      |
+| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                                                                         |
+| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Guarded broader LoTW history preserves raw time and valid nested grid precision in a separate reference. Ownership bootstrap and exact-evidence recovery pass; populated raw recovery and ARRL acceptance remain open.            |
+| First vendor writes       | The authorized singleton is accepted at returned minute precision; seconds remain unverified. The later scheduled two-contact trial made zero attempts and is closed. The owner authorizes checked QRZ batches and gradual activation after validation. Current source proof, exact scope, fresh vendor checks, backup and independent readback remain required. |
 
 ## Verify the deployed LoTW ownership release (5a427a30)
 
@@ -728,14 +728,33 @@ do not open the global source gate or establish source-wide cutover authority.
 
 ## First-export trial packet
 
-The latest instruction to keep exports disabled supersedes the earlier one- or
-two-contact trial authorization. Prepare this packet read-only; no actual trial
-may run until the owner changes that instruction. Any later trial also requires
-enforced separation from the global cutover/no-query effects described above,
-then current evidence for the exact scope. The proposed order remains QRZ first,
-followed by LoTW. Keep private contact details out of repository documentation.
+The owner authorized the original singleton, which produced exactly one delivered
+QRZ attempt. Its known-ACK readback is accepted at returned minute precision and
+its complete neighborhood contains only that accepted record. All other submitted
+fields match literally; seconds remain unverified. Preserve the original outcome
+packet, including its unresolved literal-readback result. The separate later
+assessment does not relax uncertain-result recovery or grant retry authority.
 
-The latest completed recovery receipt is the **2026-10-25 02:33:12.483 UTC**
+The owner has since authorized progression through checked QRZ batches and
+monitored automatic activation after validation, followed by separate LoTW
+acceptance. The first scheduled two-contact trial made zero new attempts, exposed
+a finite-scope scheduling defect and was closed. The **05:17 UTC** backup of
+`890f714c` verifies 37 migrations, exactly the original delivered attempt and no
+new artifacts; every prior immutable row survives isolated restore and repeated
+quarantine. Successful scheduled delivery and populated live table-artifact
+recovery remain open. See the current checkpoint at the top of this document and
+[the roadmap](../ROADMAP.md#remaining-work-before-exports).
+
+Use a fresh backup, current release-bound evidence and exact QRZ contact and
+destination scope for the next trial. Keep LoTW and source-boundary authority off;
+close and drain after the bounded batch, preserve its encrypted artifacts, and
+verify both the actual submitted payload and accepted remote records. Any
+uncertain result requires observation before another create. Keep private contact
+details out of repository documentation.
+
+### Historical pre-singleton packet (2026-10-25 02:33 UTC)
+
+The pre-singleton recovery receipt is the **2026-10-25 02:33:12.483 UTC**
 POST backup of signed `0386af30`: **40,449,296 bytes**, SQL SHA256
 `22180ca1ff35bdcadcba60272dd2579341ec2c96821edf6cdeb7631ebc1de109`.
 The **02:30:14.652 UTC PRE** contains **40,422,594 bytes**, SQL SHA256
@@ -763,9 +782,8 @@ It preserves the original packet and its expired/release-bound evidence. The
 **02:56:37.961 UTC** current-release SELECT-only review confirms the same
 contact and exact payload. That preliminary review grants no proof or absence
 authority. Fresh normal context/source/vendor checks and the specific owner trial
-instruction remain required. Actual first-write acceptance is unproved. General
-automatic scope expansion requires a separate explicit decision after that
-acceptance.
+instruction were required at that checkpoint. The later singleton acceptance and
+subsequent rollout authorization above supersede that historical status.
 
 ### Earlier recovery checkpoints
 

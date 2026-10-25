@@ -1,6 +1,6 @@
 import type { AdifRecord } from "./adif.ts";
 
-export const HISTORICAL_CANDIDATE_POLICY_VERSION = 1;
+export const HISTORICAL_CANDIDATE_POLICY_VERSION = 2;
 export const HISTORICAL_TIME_WINDOW_MS = 30 * 60_000;
 export const HISTORICAL_CANDIDATE_LIMIT = 512;
 export type HistoricalVendor = "qrz" | "lotw";
@@ -96,8 +96,8 @@ const parents: Readonly<Record<string, string>> = Object.freeze({
   JT65C: "JT65",
 });
 type ModeGroup = "CW" | "PHONE" | "DATA" | "IMAGE";
-// ARRL's explicit LoTW mode groups. FST4/FST4W/Q65 are also supported by
-// Ferry's TQSL signing map. This is not a guess based on a mode's spelling.
+// ARRL's explicit LoTW mode groups, checked against released TQSL 2.8.6
+// configuration 11.34. An ADIF parent alone does not establish a LoTW group.
 // https://lotw.arrl.org/lotw-help/frequently-asked-questions/
 const groups = new Map<string, ModeGroup>([
   ...["CW"].map((mode) => [mode, "CW"] as const),
@@ -105,7 +105,7 @@ const groups = new Map<string, ModeGroup>([
     .split(" ")
     .map((mode) => [mode, "PHONE"] as const),
   ..."IMAGE ATV FAX SSTV".split(" ").map((mode) => [mode, "IMAGE"] as const),
-  ..."DATA AMTOR ARDOP CHIP CLOVER CONTESTI DOMINO FSK31 FSK441 FT4 FT8 GTOR HELL HFSK ISCAT JT4 JT65 JT6M JT9 MFSK16 MFSK8 MINIRTTY MSK144 MT63 OLIVIA OPERA PACKET PACTOR PAX PSK10 PSK125 PSK2K PSK31 PSK63 PSK63F PSKAM PSKFEC31 Q15 QRA64 ROS RTTY RTTYM T10 THOR THROB VOI WINMOR WSPR FST4 FST4W Q65"
+  ..."DATA AMTOR ARDOP CHIP CLOVER CONTESTI DOMINO FSK31 FSK441 FT4 FT8 GTOR HELL HFSK ISCAT JT4 JT65 JT6M JT9 MFSK16 MFSK8 MINIRTTY MSK144 MT63 OLIVIA OPERA PACKET PACTOR PAX PSK10 PSK125 PSK2K PSK31 PSK63 PSK63F PSKAM PSKFEC31 Q15 QRA64 ROS RTTY RTTYM T10 THOR THROB VOI WINMOR WSPR FST4 Q65"
     .split(" ")
     .map((mode) => [mode, "DATA"] as const),
 ]);

@@ -1,7 +1,7 @@
 import type { AdifRecord } from "./adif.ts";
 import { adifInstant } from "./qrz.ts";
 import { canonical, sha256 } from "./security.ts";
-import { lotwMode } from "./signing.ts";
+import { lotwIdentityMode } from "./signing.ts";
 import { attemptSourceExportProofGuard } from "./source-export-proofs.ts";
 import type { Lease, LedgerKey, Store } from "./store.ts";
 
@@ -29,7 +29,7 @@ export async function destinationIdentityClaim(
   adifInstant(record);
   const mode =
     vendor === "lotw"
-      ? lotwMode(record.MODE, record.SUBMODE || record.APP_LOTW_MODE)
+      ? lotwIdentityMode(record.MODE, record.SUBMODE || record.APP_LOTW_MODE)
       : record.MODE;
   const identity = Object.fromEntries(
     [

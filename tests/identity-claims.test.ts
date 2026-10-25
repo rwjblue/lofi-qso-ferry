@@ -239,6 +239,33 @@ test("claim normalization matches existing vendor identity semantics without loc
   );
 });
 
+test("legacy FST4W claims retain the exact profile-2 identity", async () => {
+  const legacy = {
+    STATION_CALLSIGN: "W1AW",
+    CALL: "K1ABC",
+    QSO_DATE: "20261022",
+    TIME_ON: "123456",
+    BAND: "20m",
+    MODE: "MFSK",
+    SUBMODE: "FST4W",
+  };
+  // Captured from the unchanged profile-2 claim and remote-identity functions.
+  const hash = "ARzR059NELU_UuEn5eZ6i4WD03kU921TQGDxRwtDg9k";
+  assert.deepEqual(await destinationIdentityClaim("lotw", legacy), {
+    vendor: "lotw",
+    hash,
+  });
+  assert.equal(await lotwRemoteIdentity(legacy), hash);
+  assert.equal(
+    await lotwRemoteIdentity({ ...legacy, MODE: "FST4W", SUBMODE: "" }),
+    hash,
+  );
+  assert.notEqual(
+    await lotwRemoteIdentity({ ...legacy, MODE: "DATA", SUBMODE: "" }),
+    hash,
+  );
+});
+
 test("competing stages atomically elect one source UUID across both vendors", async (t) => {
   for (const vendor of ["qrz", "lotw"] as const)
     await t.test(vendor, async () => {

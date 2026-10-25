@@ -302,7 +302,7 @@ test("eight-character station grid is preserved in the signed payload and indepe
     now,
   );
   assert.equal(artifact.configurationVersion, SIGNING_CONFIGURATION);
-  assert.equal(SIGNING_CONFIGURATION, "ferry-lotw-v2-us-ca-2");
+  assert.equal(SIGNING_CONFIGURATION, "ferry-lotw-v2-us-ca-3");
   assert.deepEqual(artifact.canonicalData, [canonical]);
   assert.match(artifact.text, /<GRIDSQUARE:8>FN31PR12\n/);
   assert.ok(artifact.text.includes(signature));
@@ -434,4 +434,26 @@ test("ordinary USB and LSB use LoTW SSB parent mode without losing FT4 mapping",
     }),
     /14\.074SSB2026/,
   );
+});
+
+test("unverified FST4W remains held while configured digital modes stay exact", () => {
+  for (const input of [{ mode: "FST4W" }, { mode: "MFSK", submode: "FST4W" }]) {
+    assert.throws(() => lotwMode(input.mode, input.submode), /mapping/);
+    assert.throws(
+      () =>
+        canonicalSigningData(vector.station, { ...vector.contact, ...input }),
+      /mapping/,
+    );
+  }
+  for (const mode of ["FST4", "Q65", "FT4"]) {
+    assert.equal(lotwMode("MFSK", mode), mode);
+    assert.match(
+      canonicalSigningData(vector.station, {
+        ...vector.contact,
+        mode: "MFSK",
+        submode: mode,
+      }),
+      new RegExp(`14\\.074${mode}2026`),
+    );
+  }
 });

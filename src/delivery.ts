@@ -36,8 +36,10 @@ import {
 import { b64, canonical, randomToken, sha256, unb64 } from "./security.ts";
 import {
   buildSignedTq8,
+  canonicalSigningData,
   type LotwContact,
   type LotwStation,
+  SIGNING_CONFIGURATION,
   type SigningCredential,
 } from "./signing.ts";
 import {
@@ -1265,6 +1267,11 @@ export async function prepareDue(
         ? { frequencyMHz: String(contact.frequencyMHz) }
         : {}),
     };
+    try {
+      canonicalSigningData(station, lotwContact);
+    } catch {
+      return { state: "blocked", reason: "lotw_signing_fields_unavailable" };
+    }
     const exactLotwIdentity = await lotwAttemptIdentity(station, lotwContact);
     lotwIdentityId = exactLotwIdentity.remoteId;
     if (!(await lotwOwnershipAvailable(store, key, exactLotwIdentity)))
@@ -1623,6 +1630,15 @@ export async function dispatchAttempt(
   }
   if (data.attempt.attempt_state !== "prepared")
     return { state: "skipped", reason: "attempt_not_claimable" };
+  if (data.payload.kind === "lotw") {
+    if (data.payload.configurationVersion !== SIGNING_CONFIGURATION)
+      return { state: "blocked", reason: "lotw_signing_configuration_changed" };
+    try {
+      canonicalSigningData(data.payload.station, data.payload.contact);
+    } catch {
+      return { state: "blocked", reason: "lotw_signing_fields_unavailable" };
+    }
+  }
   if (await store.historicalAssociationOnly(key))
     return { state: "blocked", reason: "historical_association_read_only" };
   const authorizationMode = await attemptSourceExportAuthorizationMode(

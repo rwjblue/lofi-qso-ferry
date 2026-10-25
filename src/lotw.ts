@@ -3,7 +3,7 @@ import {
   type CertificateStatus,
   type LotwContact,
   type LotwStation,
-  lotwMode,
+  lotwIdentityMode,
   validCallsign,
 } from "./signing.ts";
 import { VendorDeferredError } from "./vendor-requests.ts";
@@ -346,7 +346,7 @@ export function observeLotwContact(
 ): LotwObservation {
   const date = contact.date.replaceAll("-", "");
   const time = contact.time.replaceAll(":", "").replace(/Z$/, "");
-  const mode = lotwMode(contact.mode, contact.submode);
+  const mode = lotwIdentityMode(contact.mode, contact.submode);
   const candidates = report.records.filter(
     (record) =>
       record.CALL?.toUpperCase() === contact.call.toUpperCase() &&
@@ -354,8 +354,10 @@ export function observeLotwContact(
         station.callsign.toUpperCase() &&
       record.QSO_DATE === date &&
       record.BAND?.toUpperCase() === contact.band.toUpperCase() &&
-      lotwMode(record.APP_LOTW_MODE || record.MODE || "", record.SUBMODE) ===
-        mode &&
+      lotwIdentityMode(
+        record.APP_LOTW_MODE || record.MODE || "",
+        record.SUBMODE,
+      ) === mode &&
       (record.TIME_ON === time ||
         (record.TIME_ON?.length === 4 && record.TIME_ON === time.slice(0, 4))),
   );

@@ -269,6 +269,36 @@ test("LoTW accepts exact individual modes or verified groups, not QRZ parent rul
   );
 });
 
+test("FST4W ADIF evidence cannot invent a LoTW DATA group or establish absence", () => {
+  for (const fields of [
+    { MODE: "FST4W" },
+    { MODE: "MFSK", SUBMODE: "FST4W" },
+    { MODE: "DATA", APP_LOTW_MODE: "FST4W", APP_LOTW_MODEGROUP: "DATA" },
+  ]) {
+    const record = qso(fields);
+    const source = historicalCandidates("lotw", record, []);
+    assert.equal(source.state, "invalid");
+    assert.equal(source.issues[0].reason, "invalid_mode");
+    const remote = historicalCandidates("lotw", qso(), [qso(), record]);
+    assert.equal(remote.state, "ambiguous");
+    assert.equal(remote.issues[0].reason, "invalid_mode");
+  }
+  // The QRZ primary-mode policy remains independent of verified LoTW groups.
+  assert.equal(
+    historicalCandidates("qrz", qso({ MODE: "MFSK", SUBMODE: "FST4W" }), [
+      qso({ MODE: "MFSK", SUBMODE: "FST4" }),
+    ]).state,
+    "unique",
+  );
+  for (const mode of ["FST4", "Q65", "FT4"])
+    assert.equal(
+      historicalCandidates("lotw", qso({ MODE: "MFSK", SUBMODE: mode }), [
+        qso({ MODE: "DATA", APP_LOTW_MODEGROUP: "DATA" }),
+      ]).state,
+      "unique",
+    );
+});
+
 test("contradictory, malformed or unknown relevant mode evidence blocks uniqueness", () => {
   for (const override of [
     { MODE: "INVENTED" },

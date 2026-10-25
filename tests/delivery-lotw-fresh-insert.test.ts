@@ -1,14 +1,22 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { gzipSync } from "node:zlib";
 import {
   type DeliveryGates,
   deliveryMode,
   dispatchAttempt,
   prepareDue,
+  type PreparedPayload,
   reconcileAttempt,
 } from "../src/delivery.ts";
 import { LotwClient } from "../src/lotw.ts";
-import { buildSignedTq8, type SigningCredential } from "../src/signing.ts";
+import { canonicalLotwIdentity, lotwRemoteIdentity } from "../src/reconcile.ts";
+import { canonical, sha256 } from "../src/security.ts";
+import {
+  buildSignedTq8,
+  SIGNING_CONFIGURATION,
+  type SigningCredential,
+} from "../src/signing.ts";
 import type { Store } from "../src/store.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
 import { schedulerFixture } from "./runtime-fixtures.ts";
@@ -27,6 +35,31 @@ const boundary: DeliveryGates = {
   sourceBoundaryVerified: true,
   lotwFreshInsertsEnabled: false,
 };
+const previousSigningConfiguration = "ferry-lotw-v2-us-ca-2";
+
+async function deliverySnapshot(store: Store) {
+  return Promise.all(
+    [
+      "ledger",
+      "attempts",
+      "attempt_state",
+      "attempt_events",
+      "private_data",
+      "destination_identity_claims",
+      "attempt_identity_claims",
+      "attempt_source_export_proofs",
+      "attempt_lotw_ownership_pins",
+      "lotw_ownership_checks",
+      "lotw_ownership_inputs",
+      "lotw_ownership_evidence",
+      "leases",
+      "vendor_requests",
+    ].map(async (table) => [
+      table,
+      (await store.statement(`SELECT * FROM ${table}`).all()).results,
+    ]),
+  );
+}
 
 async function fixture(t: TestContext, oldPresence = false) {
   t.mock.method(globalThis, "fetch", async () =>
@@ -167,6 +200,275 @@ test("first LoTW upload requires two complete three-day reads, pins its mode, an
     "observed",
   );
   assert.equal(h.calls.lotwUploads, 1);
+});
+
+test("a prepared prior signing profile is held before claims or vendor admission without changing its artifact", async (t) => {
+  const h = await fixture(t);
+  const prepared = await prepareDue(h.store, h.key(), h.contact, fresh, {
+    sourceProof: h.sourceProof,
+    fetcher: h.fetcher,
+    sign: async (...args) => {
+      const artifact = await buildSignedTq8(...args);
+      // TQSL_IDENT is outside the signed canonical contact. Model a retained
+      // profile-2 artifact without changing its signature or staging guards.
+      assert.notEqual(SIGNING_CONFIGURATION, previousSigningConfiguration);
+      const text = artifact.text.replace(
+        SIGNING_CONFIGURATION,
+        previousSigningConfiguration,
+      );
+      assert.notEqual(text, artifact.text);
+      return {
+        ...artifact,
+        text,
+        bytes: gzipSync(text),
+        configurationVersion: previousSigningConfiguration,
+      };
+    },
+  });
+  assert.equal(prepared.state, "prepared");
+  assert(prepared.attemptId);
+  const before = await deliverySnapshot(h.store);
+  const calls = { ...h.calls };
+  const result = await dispatchAttempt(
+    h.store,
+    "a",
+    prepared.attemptId,
+    fresh,
+    { fetcher: async () => assert.fail("Old profile reached a vendor") },
+  );
+  assert.deepEqual(result, {
+    state: "blocked",
+    reason: "lotw_signing_configuration_changed",
+  });
+  assert.equal(await h.state(prepared.attemptId), "prepared");
+  assert.deepEqual(await deliverySnapshot(h.store), before);
+  assert.deepEqual(h.calls, calls);
+  assert.equal(h.calls.lotwUploads, 0);
+});
+
+async function legacyFst4wFixture(
+  t: TestContext,
+  state: "prepared" | "submitted" | "uncertain",
+  configurationVersion = previousSigningConfiguration,
+) {
+  t.mock.method(globalThis, "fetch", async () =>
+    assert.fail("Unexpected unmocked vendor transport"),
+  );
+  const id = `legacy-fst4w-${state}`;
+  let retained!: Extract<PreparedPayload, { kind: "lotw" }>;
+  let remoteId = "";
+  const h = await schedulerFixture(async (legacy, records) => {
+    records.qso.mode = "FST4W";
+    records.lotwRecords[0]!.MODE = "FST4W";
+    // These are retained prior-worker facts, not a new current projection.
+    // Today's source projection also rejects FST4W before signing.
+    const generation = await sha256(canonical(records.qso));
+    const sourceHash = await sha256(
+      canonical({ qso: records.qso, operation: records.operation }),
+    );
+    const identity = canonicalLotwIdentity(records.lotwRecords[0]!);
+    remoteId = await lotwRemoteIdentity(identity);
+    const station = {
+      callsign: "W1AW",
+      dxcc: 291,
+      grid: "FN31AA",
+      state: "CT",
+      county: "Tolland",
+      cqZone: 5,
+      ituZone: 8,
+    };
+    const contact = {
+      id: "q1",
+      generation,
+      call: "K1ABC",
+      band: "20m",
+      mode: "FST4W",
+      date: "2026-10-22",
+      time: "12:00:01Z",
+      frequencyMHz: "14.074",
+    };
+    const at = Date.now() - 86400000;
+    const projectionHash = await sha256(canonical({ station, contact }));
+    retained = {
+      kind: "lotw",
+      // Recovery treats previous encrypted artifacts as opaque. This models
+      // already-sent bytes, never constructs a newly signable FST4W artifact.
+      tq8: Buffer.from("opaque prior-profile FST4W artifact").toString(
+        "base64",
+      ),
+      station,
+      contact,
+      members: [{ id: "q1", generation }],
+      projectionHash,
+      preparedAt: new Date(at).toISOString(),
+      certificateVersion: "scheduler-signing-v1",
+      configurationVersion,
+    };
+    await legacy.store
+      .statement(
+        "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,state,provenance,due_at,updated_at) VALUES('a','source','q1','lotw',?,?,'missing_current_identity','unknown',0,?)",
+        generation,
+        sourceHash,
+        at,
+      )
+      .run();
+    await legacy.store
+      .statement(
+        "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES('a',?,'source','q1','lotw',?,?,?,'fixture-lotw',?,?)",
+        id,
+        generation,
+        id,
+        projectionHash,
+        at,
+        sourceHash,
+      )
+      .run();
+    await legacy.store
+      .statement(
+        "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES('a',?,?,0,?)",
+        id,
+        state,
+        at,
+      )
+      .run();
+    await legacy.store
+      .statement(
+        "INSERT INTO destination_identity_claims VALUES('a','lotw','lotw',?,'source','q1',?)",
+        remoteId,
+        at,
+      )
+      .run();
+    await legacy.store
+      .statement(
+        "INSERT INTO attempt_identity_claims(tenant,attempt,destination,vendor,identity_hash,source,qso) VALUES('a',?,'lotw','lotw',?,'source','q1')",
+        id,
+        remoteId,
+      )
+      .run();
+    await legacy.store
+      .statement(
+        "INSERT INTO attempt_events(tenant,attempt,state,at) VALUES('a',?,?,?)",
+        id,
+        state,
+        at,
+      )
+      .run();
+    await (
+      await legacy.store.putPrivate("a", "lotw", id, "outbox", retained)
+    ).run();
+    if (state !== "prepared")
+      await (
+        await legacy.store.lotwIdentityStatement(
+          { tenant: "a", source: "source", qso: "q1", destination: "lotw" },
+          { identity, remoteId },
+          state,
+          at,
+          { sql: "1", params: [] },
+        )
+      ).run();
+    // schedulerFixture applies all current migrations after this legacy seed.
+  });
+  t.after(() => h.mf.dispose());
+  return { ...h, id, retained, remoteId };
+}
+
+test("legacy submitted and uncertain FST4W identities remain readable without signing or resending", async (t) => {
+  for (const state of ["submitted", "uncertain"] as const)
+    await t.test(state, async (t) => {
+      const h = await legacyFst4wFixture(t, state);
+      const claims = (
+        await h.store
+          .statement("SELECT * FROM destination_identity_claims")
+          .all()
+      ).results;
+      const identities = (
+        await h.store
+          .statement("SELECT * FROM private_data WHERE kind='lotw_identity'")
+          .all()
+      ).results;
+      const before = await deliverySnapshot(h.store);
+      assert.deepEqual(
+        await h.store.private("a", "lotw", h.id, "outbox"),
+        h.retained,
+      );
+      assert.equal(
+        (
+          await dispatchAttempt(h.store, "a", h.id, fresh, {
+            fetcher: async () => assert.fail("Legacy receipt resent"),
+          })
+        ).reason,
+        "attempt_not_claimable",
+      );
+      assert.deepEqual(await deliverySnapshot(h.store), before);
+      const observed = await reconcileAttempt(h.store, "a", h.id, {
+        fetcher: async (input, init) => {
+          assert.equal(
+            new URL(String(input)).pathname,
+            "/lotwuser/lotwreport.adi",
+          );
+          return h.fetcher(input, init);
+        },
+        sign: async () => assert.fail("Legacy receipt signed again"),
+      });
+      assert.equal(observed.state, "observed");
+      assert.deepEqual(
+        await h.store
+          .statement(
+            "SELECT state,remote_id FROM attempt_state WHERE attempt=?",
+            h.id,
+          )
+          .first(),
+        { state: "observed", remote_id: h.remoteId },
+      );
+      assert.deepEqual(
+        (
+          await h.store
+            .statement("SELECT * FROM destination_identity_claims")
+            .all()
+        ).results,
+        claims,
+      );
+      assert.deepEqual(
+        (
+          await h.store
+            .statement("SELECT * FROM private_data WHERE kind='lotw_identity'")
+            .all()
+        ).results,
+        identities,
+      );
+      assert.equal(h.calls.lotwQueries, 1);
+      assert.equal(h.calls.certificateStatus, 0);
+      assert.equal(h.calls.lotwUploads, 0);
+      assert.equal(h.calls.qrzWrites, 0);
+      assert.equal(
+        (
+          await dispatchAttempt(h.store, "a", h.id, fresh, {
+            fetcher: async () => assert.fail("Observed receipt resent"),
+          })
+        ).reason,
+        "attempt_or_connection_unavailable",
+      );
+      // Successful exact recovery retains its identity/observation and performs
+      // the existing outbox purge; there is no remaining dispatchable payload.
+      assert.equal(await h.store.private("a", "lotw", h.id, "outbox"), null);
+    });
+});
+
+test("a current profile label cannot dispatch unsupported legacy signing fields", async (t) => {
+  const h = await legacyFst4wFixture(t, "prepared", SIGNING_CONFIGURATION);
+  const before = await deliverySnapshot(h.store);
+  assert.deepEqual(
+    await dispatchAttempt(h.store, "a", h.id, fresh, {
+      fetcher: async () =>
+        assert.fail("Unsupported signing fields reached vendor"),
+    }),
+    { state: "blocked", reason: "lotw_signing_fields_unavailable" },
+  );
+  assert.deepEqual(await deliverySnapshot(h.store), before);
+  assert.equal(
+    h.calls.lotwQueries + h.calls.certificateStatus + h.calls.lotwUploads,
+    0,
+  );
 });
 
 test("fresh LoTW requires defined scopes, proof and no accepted/correction baseline before reads or signing", async (t) => {

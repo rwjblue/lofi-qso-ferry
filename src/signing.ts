@@ -11,7 +11,7 @@ const OID = {
   last: "1.3.6.1.4.1.12348.1.3",
   dxcc: "1.3.6.1.4.1.12348.1.4",
 };
-export const SIGNING_CONFIGURATION = "ferry-lotw-v2-us-ca-2";
+export const SIGNING_CONFIGURATION = "ferry-lotw-v2-us-ca-3";
 export type CertificateStatus =
   | "unrevoked"
   | "revoked"
@@ -314,7 +314,7 @@ const BANDS = new Set(
   ),
 );
 const MODES = new Set(
-  "CW SSB AM FM DATA RTTY FT8 FT4 PSK31 PSK63 MFSK16 MFSK8 JT65 JT9 Q65 FST4 FST4W MSK144 PACKET".split(
+  "CW SSB AM FM DATA RTTY FT8 FT4 PSK31 PSK63 MFSK16 MFSK8 JT65 JT9 Q65 FST4 MSK144 PACKET".split(
     " ",
   ),
 );
@@ -383,14 +383,23 @@ function stationFields(station: LotwStation): Record<string, string> {
   }
   return fields;
 }
-/** ARRL SUBMODE lookup falls back to the parent MODE; USB/LSB are SSB. */
-export function lotwMode(mode: string, submode?: string): string {
+/** Stable exact tuples for stored claims and readback, not signing authority. */
+export function lotwIdentityMode(mode: string, submode?: string): string {
   const parent = value(mode);
   const child = submode ? value(submode) : undefined;
   const mapped =
     parent === "SSB" && (child === "USB" || child === "LSB")
       ? "SSB"
       : child || parent;
+  // Profile 2 admitted FST4W without verified TQSL configuration evidence.
+  // Existing claims and uncertain artifacts must retain their exact identity.
+  if (!MODES.has(mapped) && mapped !== "FST4W")
+    fail("Mode needs an explicit supported LoTW mapping");
+  return mapped;
+}
+/** Verified signing modes; USB/LSB use the supported SSB parent. */
+export function lotwMode(mode: string, submode?: string): string {
+  const mapped = lotwIdentityMode(mode, submode);
   if (!MODES.has(mapped)) fail("Mode needs an explicit supported LoTW mapping");
   return mapped;
 }

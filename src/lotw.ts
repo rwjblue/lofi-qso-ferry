@@ -89,6 +89,15 @@ function validReportIdentity(record: AdifRecord): boolean {
     /^(?:[01]\d|2[0-3])[0-5]\d(?:[0-5]\d)?$/.test(record.TIME_ON ?? "")
   );
 }
+/** Cleanup must not delay or replace the already determined read/write outcome. */
+function cancelBestEffort(stream: { cancel(): Promise<void> } | null): void {
+  try {
+    // Cancellation can remain pending even after a response is rejected.
+    void stream?.cancel().catch(() => undefined);
+  } catch {
+    // A synchronous cleanup failure likewise cannot change the outcome.
+  }
+}
 export async function boundedResponse(
   response: Response,
   limit = MAX_RESPONSE,
@@ -111,7 +120,7 @@ export async function boundedResponse(
     }
     return result + decoder.decode();
   } finally {
-    await reader.cancel().catch(() => undefined);
+    cancelBestEffort(reader);
   }
 }
 export function parseLotwReport(input: string): LotwReport {
@@ -242,7 +251,7 @@ export class LotwClient {
       );
     }
     if (untrustedResponse(response) || !response.ok) {
-      await response.body?.cancel();
+      cancelBestEffort(response.body);
       if (response.status === 401 || response.status === 403)
         throw new LotwLoginError("credentials");
       throw new Error("LoTW query unavailable; coverage remains incomplete");
@@ -282,7 +291,7 @@ export class LotwClient {
         { redirect: "manual", signal: AbortSignal.timeout(15_000) },
       );
       if (untrustedResponse(response) || !response.ok) {
-        await response.body?.cancel();
+        cancelBestEffort(response.body);
         return "unknown";
       }
       const body = await boundedResponse(response, 16_384);
@@ -328,7 +337,7 @@ export class LotwClient {
         headers: { "User-Agent": "LoFiQSOFerry/0.1" },
       });
       if (untrustedResponse(response) || !response.ok) {
-        await response.body?.cancel();
+        cancelBestEffort(response.body);
         return { state: "uncertain", code: "http_after_dispatch" };
       }
       return parseUploadResponse(await boundedResponse(response, 64 * 1024));

@@ -1,8 +1,58 @@
-# Read-only production deployment
+# Production deployment and rollout evidence
 
-Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Automatic exports and LoTW are disabled. The singleton, checked pairs C/D2/F4 and window H account for eleven QRZ ACKs accepted at known-ACK minute/sideband precision. Eleven attempts and ten retained table artifacts pass actual recovery. Exact seconds remain unverified; original literal-held summaries remain intact. Trials A, B and F2 made zero attempts. Dated sections retain earlier evidence.
+Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Persistent QRZ fresh inserts are enabled for one exact existing destination and wildcard contacts; LoTW and source-boundary authority remain disabled. The singleton, checked pairs C/D2/F4 and window H account for eleven QRZ ACKs accepted at known-ACK minute/sideband precision. Eleven prior attempts and ten retained table artifacts pass actual recovery. The first active cycle adds a twelfth delivered ACK whose independent readback and recovery are pending. Exact seconds remain unverified; original literal-held summaries remain intact. Earlier checked trials A, B and F2 made zero attempts. Dated sections retain earlier evidence.
 
-## Accepted window H and current closed state (2026-10-25 UTC)
+## Persistent QRZ activation B (2026-10-25 UTC)
+
+Independent active attestation at **13:10:58.762 UTC** verifies Worker
+`242c1aa6-aa79-4f46-9ef2-dc033971bdac`, deployment
+`472f153d-d9b8-42e7-861e-635bc19bcd8b`, at sole 100% traffic, with healthy
+responses, matching assets and KEK 1. Runtime remains signed
+`7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`; exact-release
+[CI 40184837953](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40184837953)
+passed all **1,688 tests and required checks**. Exports, rollout checks and QRZ
+fresh inserts are true, with **one exact existing QRZ destination and wildcard
+contacts**. LoTW fresh inserts and source-boundary authority remain false;
+the expiry is empty for ordinary persistent mode. Normal per-contact source
+proofs, fresh vendor absence checks and durable ownership remain required.
+
+The reviewed persistent host V2 passes **16 focused cases** and independent
+peer review; manifest SHA256:
+`33f2035954665d9ee5d0896a114c2643396918ddb963628cf411a81cf9fb984a`.
+Activation A had stopped before intent/deployment: its backup age was
+**909,311 ms**, exceeding the 900,000 ms maximum at closed attestation. It made
+no external write. Activation B used a new backup/input, not a blind active retry.
+
+The fresh **13:09:53.227 UTC** PRE recovery contains **42,245,796 bytes**, eleven
+prior attempts and ten artifacts, with zero new attempts and passing crypto,
+proof/claim, integrity/FK and repeated-quarantine checks. Its explicit
+**12:53:27–13:09 closed-period follow-up** has zero unfinished rows; this is not
+an activation-window count or a resolution of older inherited unfinished rows.
+Report SHA256:
+`b1320347bc7ad6329fa437db31538e7588b66221c03b387cee49077567004959`.
+
+Activation started with **eleven total attempts, all predating persistent
+automatic QRZ, and zero new attempts**. The first full active cycle was the normal
+**13:15 cron**, received **13:15:42.570 UTC** on Worker `242c1aa6`. Provider outcome
+was `ok`, CPU **910 ms** and wall time **80,004 ms**. The tick recorded **32 contact
+turns, one attempt, zero errors, two deferrals and two rounds**, with **78,861 ms**
+elapsed and stop reason `database_budget`. The two deferrals alone establish no
+database fault or vendor cause.
+
+The **13:18 UTC** complete monitor confirms **one new delivered QRZ ACK and twelve
+total**, with all prior eleven attempts exactly preserved and scope/schema
+unchanged. It finds zero unknown or rejected attempts, zero running invocations
+and zero leases; `stopRequired=false`. Active Worker remains `242c1aa6`, with
+QRZ automatic fresh inserts on and LoTW off. The twelfth record has a native
+INSERT ACK, but **independent vendor readback and recovery are pending**;
+known-ACK independently assessed records remain **eleven**. This one completed
+cycle is not sustained-scale acceptance. LoTW has no actual signing/upload. Its unsigned offline scan held all first 20 projected contacts
+from 200 queued; a separate read-only snapshot has 373 structurally eligible/due
+routes. Those counts establish neither complete eligibility nor fresh absence.
+
+<a id="accepted-window-h-and-current-closed-state-2026-10-25-utc"></a>
+
+## Accepted window H and earlier closed state (2026-10-25 UTC)
 
 The monitored normal-cron window H ran on unchanged signed runtime
 `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`, qualified by
@@ -13,7 +63,7 @@ attempts and zero errors**, with four new delivered QRZ INSERT ACKs. The
 independent closer verified all eight controls closed at **12:12:40.617 UTC**,
 Worker `30c3c0b3-0e11-4858-8f41-211a7882fb2e`, deployment
 `4313866b-1832-472b-a2aa-444b5aa5f375`; fresh 12:40 UTC attestation retained
-the closed state. Persistent automatic QRZ remains off;
+the closed state. Persistent automatic QRZ was off at this checkpoint;
 LoTW has no actual attempt or upload and remains disabled.
 
 Actual POST recovery completed **12:40:34.456 UTC**, containing **41,768,036
@@ -45,7 +95,7 @@ missing or unresolved members. Aggregate summary SHA256:
 **Window H is accepted at known-ACK minute/sideband precision**, bringing the
 complete assessed trial set to **eleven records**. Exact seconds remain
 unverified; original literal-held summaries and uncertain-result matching are
-unchanged. Persistent automatic QRZ remains off pending the next step.
+unchanged. Persistent automatic QRZ was still off at that checkpoint; activation B follows above.
 
 Later closed cycles recorded intermittent `db_d1` categories: three at 12:15 UTC
 and five at 12:25; 12:20, 12:30 and 12:35 were clean. This classifier also covers
@@ -405,15 +455,15 @@ delivery and assessed readback. Remaining work includes further checked QRZ batc
 wider QRZ observation, separate LoTW acceptance, broader exception review and
 sustained capacity. The LoTW observer
 and recovery tools are ready offline only; no real-key upload acceptance is
-claimed. All export controls are closed.
+claimed. Current QRZ-only activation is recorded above; LoTW remains disabled.
 
 | Resource                  | Current value                                                                               |
 | ------------------------- | ------------------------------------------------------------------------------------------- |
 | Cloudflare account        | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                       |
 | Worker                    | `lofi-qso-ferry`, environment `production`                                                  |
 | Deployed source revision  | `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`                                                  |
-| Worker version            | `30c3c0b3-0e11-4858-8f41-211a7882fb2e`                                                      |
-| Deployment                | `4313866b-1832-472b-a2aa-444b5aa5f375`, closure verified `2026-10-25T12:12:40.617Z`         |
+| Worker version            | `242c1aa6-aa79-4f46-9ef2-dc033971bdac`                                                      |
+| Deployment                | `472f153d-d9b8-42e7-861e-635bc19bcd8b`, active attestation `2026-10-25T13:10:58.762Z`       |
 | Origin / passkey RP       | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                               |
 | Dedicated D1              | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                            |
 | Migrations                | All 37 migrations through `0038_attempt_artifacts`; independently verified after deployment |

@@ -11,20 +11,52 @@ This roadmap is the handoff for implementation in this repository. Checked items
 | Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                           |
 | Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                            |
 | QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                                                   |
-| QRZ delivery                    | All eleven ACKs accepted at observed minute/sideband precision; actual recovery passed              | Decide persistent automatic QRZ with continued monitoring and current per-contact guards        |
+| QRZ delivery                    | Persistent fresh inserts enabled; 13:18 checkpoint has twelve ACKs, eleven independently assessed   | Independently read back and recover the twelfth record; continue monitoring                     |
 | LoTW delivery                   | Disabled; source proof, empty three-day report and unrevoked serial observed                        | Renew current checks; prove signing, upload/readback acceptance and populated-evidence recovery |
-| Broader rollout                 | Disabled; window H closed and all four new ACKs passed complete-window assessment                   | Review the next automatic QRZ scope; LoTW follows separately                                    |
+| Broader rollout                 | QRZ fresh inserts active; LoTW and source-wide authority remain disabled                            | Monitor QRZ recovery and new records; LoTW follows separately                                   |
 
 The receiver fix is deployed; checked pairs C, D2 and F4 passed scheduled delivery,
 recovery and known-ACK assessment at the observed minute/sideband representation.
 Window H has now run and closed; all four additional ACKs pass complete-window
-readback and assessment. Persistent automatic QRZ remains off pending the next
-step, as described in
+readback and assessment. Persistent automatic QRZ fresh inserts are now enabled
+for the existing exact destination. The first completed active cycle adds one
+delivered ACK; its independent readback and recovery remain pending, as described in
 [the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
 
-### Current production — closed scheduler/deadline release (7738f7d7)
+### Current production — persistent QRZ fresh inserts (7738f7d7)
+
+Activation B was independently attested at **13:10:58.762 UTC** on unchanged
+signed runtime `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382` (1,688 tests and
+required checks passed). Worker `242c1aa6-aa79-4f46-9ef2-dc033971bdac`, deployment
+`472f153d-d9b8-42e7-861e-635bc19bcd8b`, receives sole 100% traffic; health,
+assets and KEK 1 pass. Exports, rollout checks and QRZ fresh inserts are enabled
+for **one exact existing QRZ destination and wildcard contacts**. LoTW fresh
+inserts and source-boundary authority remain false; ordinary mode has no window
+expiry. Every contact still needs its normal source proof, absence and ownership
+checks. Activation began with the **eleven prior attempts and zero new attempts**.
+The 13:15 cron, received **13:15:42.570 UTC**, completed 32 contact turns and one
+attempt with zero errors/two deferrals. At **13:18 UTC**, complete accounting
+confirms **one new delivered ACK, twelve total**, all prior eleven exactly
+preserved, unchanged scope/schema and zero unknown, rejected, running or leased
+work; `stopRequired=false`. The twelfth record still needs independent vendor
+readback and recovery, so the independently assessed count remains **eleven**.
+QRZ stays active; this single cycle does not establish sustained scale.
+
+The fresh **13:09:53.227 UTC** PRE recovery verifies 42,245,796 bytes, eleven
+attempts/ten artifacts, all crypto/quarantine checks and zero unfinished rows
+in its explicit **12:53:27–13:09 closed-period** follow-up. It is not a new
+activation window. Earlier activation A stopped before intent or deployment
+because its backup was 909,311 ms old against a 900,000 ms limit; B used fresh
+inputs, without an active retry. See the [activation receipt](docs/deployment.md#persistent-qrz-activation-b-2026-10-25-utc).
+
+LoTW remains disabled with no actual signing/upload. An unsigned offline scan
+examined 20 of 200 queued contacts and held all 20. A separate read-only aggregate
+found 373 structurally eligible/due routes; neither is complete eligibility or
+absence evidence. Private LoTW tooling corrections remain in progress.
+
+### Earlier accepted window H and closed release (7738f7d7)
 
 The monitored normal-cron **window H** used native `expiresAt=12:12:30 UTC`
 on the unchanged signed runtime. Its tick recorded **six contact turns, four
@@ -45,7 +77,8 @@ controls closed before and after, cover all four new ACKs. Aggregate replay is
 missing or unresolved members, and `fullMemberAssessmentComplete=true`. All
 **eleven trial records are accepted at known-ACK minute/sideband precision**.
 Seconds remain unverified; original literal-held summaries and the uncertain-
-result matcher are unchanged. Persistent automatic QRZ and LoTW remain disabled;
+result matcher are unchanged. At this checkpoint persistent automatic QRZ and
+LoTW remained disabled;
 no actual LoTW attempt or upload has occurred.
 
 Recovery V4 ignores only the top-level source diagnostics `lastSuccessfulPollAt`,
@@ -101,8 +134,8 @@ unverified. Original literal holds and uncertain-result matching are unchanged.
 
 Window H subsequently exercised the bounded normal-cron window with native
 absolute expiry and complete attempt recovery; all four new records now pass
-all-member readback and aggregate acceptance. Persistent automatic QRZ remains
-off. Timing reduces overlap; native proofs and durable claims remain necessary
+all-member readback and aggregate acceptance. Persistent automatic QRZ was still
+off at that checkpoint. Timing reduces overlap; native proofs and durable claims remain necessary
 when delayed events arrive. LoTW remains separate. See [deployment evidence](docs/deployment.md#closed-scheduler-and-qrz-deadline-release-2026-10-25-utc).
 
 ### Previous production — accepted D2 checkpoint (c88d413e)
@@ -153,8 +186,11 @@ has not been enabled.
   eleven-attempt/ten-artifact recovery, preserving all seven prior attempts.
 - [x] Complete window-H readback for every new ACK and aggregate acceptance at
   observed minute/sideband precision, preserving literal holds and unverified seconds.
-- [ ] Decide persistent automatic QRZ scope and investigate intermittent
-  closed-cycle `db_d1` categories without inferring their cause.
+- [x] Enable persistent QRZ fresh inserts for the existing exact destination after
+  accepted window H and fresh recovery; its first completed active cycle adds one
+  delivered ACK, with independent readback/recovery pending.
+- [ ] Monitor active delivery/recovery and investigate intermittent `db_d1`
+  categories without inferring their cause.
 - [ ] Validate LoTW separately after QRZ, preserving the complete prior QRZ
   ledger in its recovery checks.
 
@@ -1196,7 +1232,9 @@ The singleton, checked pairs C/D2/F4 and monitored window H now account for
 **eleven QRZ ACKs accepted at known-ACK minute/sideband precision**. Actual
 eleven-attempt/ten-artifact recovery and complete-window assessment pass. Exact
 seconds remain unverified, and original literal-held summaries are preserved.
-Persistent automatic QRZ and LoTW are currently disabled.
+Persistent automatic QRZ fresh inserts are now enabled for one exact destination;
+LoTW remains disabled. The first active cycle adds a twelfth delivered ACK;
+independent readback and recovery remain pending for that record.
 Linking accounts or waiting for cron does not establish readiness for expansion.
 
 Durable outbound claims, the ±30-minute historical matcher, nested valid grid
@@ -1212,9 +1250,10 @@ unproved.
    proof/history checks for every later contact and verify retained artifacts
    and accepted records. Neither representation differences nor an unresolved
    `db_d1` category authorizes a retry or bypass.
-2. **Expand QRZ only after checked batches pass.** The owner has authorized a few
-   additional checked batches and, after successful validation, automatic QRZ
-   export with close monitoring. Keep exact destination IDs, expand contacts
+2. **Monitor enabled automatic QRZ fresh inserts.** Accepted checked batches and
+   window H preceded activation B. The existing exact QRZ destination now has
+   wildcard contact scope; its first completed active cycle adds one delivered ACK.
+   Complete independent readback/recovery of that twelfth record while monitoring. Keep exact destination IDs, expand contacts
    gradually, and verify created records after each batch. First-insert authority
    does not enable replacements, corrections, deletion, source-wide cutovers or
    LoTW. Unrelated historical exceptions and 200,000-contact capacity do not block

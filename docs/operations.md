@@ -1,6 +1,6 @@
 # Operations and personal rollout
 
-All checked-in environments disable exports. Local tests and synthetic signatures establish implementation behavior; live source replay, QRZ mutation preservation and ARRL acceptance still require the inputs below. Deployment alone must not change real logs.
+Checked-in environments default to disabled exports. Production now has the independently attested QRZ-only activation below. Local tests and synthetic signatures establish implementation behavior; live source replay, QRZ mutation preservation and ARRL acceptance still require the inputs below. Deployment alone must not change real logs.
 
 ## Current production target
 
@@ -9,7 +9,27 @@ The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.co
 The current runtime remains signed `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`
 with 37 migrations and all **1,688 tests and required checks** passing in
 [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40184837953).
-Monitored normal-cron window H used native `expiresAt=12:12:30 UTC` and produced
+Persistent QRZ fresh inserts were enabled by activation B, independently attested
+at **13:10:58.762 UTC**: Worker `242c1aa6-aa79-4f46-9ef2-dc033971bdac`, deployment
+`472f153d-d9b8-42e7-861e-635bc19bcd8b`, sole 100% traffic, health/assets and KEK 1
+verified. Exports, rollout checks and QRZ fresh inserts are true for one exact
+existing QRZ destination with wildcard contacts; LoTW fresh inserts and source
+boundary remain false, with empty expiry for ordinary mode. Current source proof,
+fresh absence and ownership checks still apply to every contact.
+
+The 13:09:53.227 UTC PRE recovery verifies all eleven prior attempts/ten artifacts
+and zero new attempts. Its zero unfinished count covers only the explicit
+12:53:27–13:09 closed-period follow-up. The earlier A activation stopped before
+intent/deployment on backup age; B used fresh inputs. The first full active
+13:15 cron completed 32 contact turns/one attempt, zero errors and two deferrals.
+At 13:18 UTC, complete accounting verifies **one new delivered ACK/twelve total**,
+all prior eleven exactly preserved, unchanged scope/schema, zero unknown/rejected
+attempts, zero running invocations/leases and `stopRequired=false`. Worker
+`242c1aa6` remains active. Independent vendor readback and recovery of the twelfth
+record are pending; the independently assessed count remains eleven. Deferrals
+alone identify no database fault or vendor cause. See the [activation receipt](deployment.md#persistent-qrz-activation-b-2026-10-25-utc).
+
+The following receipts describe the earlier closed state. Monitored normal-cron window H used native `expiresAt=12:12:30 UTC` and produced
 **four new delivered QRZ ACKs** from six contact turns/four attempts with zero
 errors. The independent closer confirmed all eight controls closed at
 **12:12:40.617 UTC**, Worker `30c3c0b3-0e11-4858-8f41-211a7882fb2e`, deployment
@@ -27,7 +47,8 @@ minute/sideband precision**, with seconds unverified and original literal-held
 summaries and uncertain-result matching preserved. Fresh 12:40 UTC attestation
 retains the closed state. See the
 [current window receipt](deployment.md#accepted-window-h-and-current-closed-state-2026-10-25-utc)
-for immutable report and SQL hashes. Persistent automatic QRZ is not enabled;
+for immutable report and SQL hashes. Persistent automatic QRZ was not enabled at
+that checkpoint;
 no actual LoTW attempt or upload has occurred.
 
 The earlier recovery holds were an overlapping closed read cycle, then changes
@@ -47,7 +68,7 @@ older unfinished row. Before another finite scope, refresh reviewed inputs and
 backup, inspect completed-cycle/lease evidence and retain a scheduling margin.
 Native expiry, current proofs, durable claims and complete attempt accounting
 remain mandatory when delayed events arrive. Window-H readback and aggregate
-assessment now pass; persistent automatic QRZ remains off pending the next step.
+assessment pass; persistent automatic QRZ was subsequently enabled by activation B.
 LoTW acceptance remains separate.
 
 Earlier F2, C, D2 and F4 receipts remain in
@@ -249,7 +270,7 @@ Independent `KEK_V1`, `AUTH_SECRET` and `EMAIL_CODE_SECRET` secrets have been pr
 
 The 23:26 UTC read-only readiness audit found one active account with one active passkey. An independent backup key is recommended but is not a hard export requirement for the owner-operated pilot. An operator with database access can recover the account by associating a newly verified passkey public credential with the existing tenant; Ferry has no automated recovery command or email reset. Any manual recovery needs identity verification, a valid WebAuthn registration ceremony, review of tenant ownership, revocation of lost keys/sessions and an audit record. Database access cannot reconstruct a lost private passkey or replace missing encryption keys. The protected local application-secret backup exists with file mode `0600` and directory mode `0700`; secure secret-manager storage remains unconfirmed. See the [personal rollout checklist](rollout-checklist.md) for the exact first-write packet and the distinction between automatic inventory work and manual exception review.
 
-The checked-in production configuration keeps `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, `QRZ_FRESH_INSERTS_ENABLED=false`, `LOTW_FRESH_INSERTS_ENABLED=false`, `LIVE_WRITE_AUTHORIZATION` empty, `ROLLOUT_QSO_IDS_JSON=[]` and `ROLLOUT_DESTINATION_IDS_JSON=[]`. The independent 2026-10-25 02:32:22.968 UTC verification of `0386af30` confirms all eight controls closed, including `LOTW_FRESH_INSERTS_ENABLED`. Production `workers.dev` and preview URLs are disabled. The staging placeholder is intentionally undeployed.
+The checked-in production configuration keeps `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, `QRZ_FRESH_INSERTS_ENABLED=false`, `LOTW_FRESH_INSERTS_ENABLED=false`, `LIVE_WRITE_AUTHORIZATION` empty, `ROLLOUT_QSO_IDS_JSON=[]` and `ROLLOUT_DESTINATION_IDS_JSON=[]`. These are repository defaults; activation B uses the independently attested QRZ-only production settings above. The historical 2026-10-25 02:32:22.968 UTC verification of `0386af30` confirmed all eight controls closed, including `LOTW_FRESH_INSERTS_ENABLED`. Production `workers.dev` and preview URLs are disabled. The staging placeholder is intentionally undeployed.
 
 ## Prepare a disabled deployment
 
@@ -346,7 +367,7 @@ Set `ROLLOUT_QSO_IDS_JSON` and `ROLLOUT_DESTINATION_IDS_JSON` to the exact autho
 
 Global source cutover, QRZ REPLACE/correction validation, LoTW signing/upload/readback and sustained 200,000-contact capacity are separate follow-ups, not prerequisites for that singleton QRZ INSERT. A LoTW trial additionally requires the selected `.p12` and matching key, current certificate/serial status, query credentials, supported configuration and its own authorization. A queue acknowledgement is not observed acceptance; confirmation is separate again. General automatic expansion, including an explicit `["*"]` scope, requires a later decision after scoped acceptance. Template changes alone never authorize historical work; existing bindings remain pinned at durable export preparation.
 
-Automatic exports and LoTW remain disabled at the current closed checkpoint. The owner has authorized progression through checked QRZ batches and automatic activation only after successful validation, followed by a separate LoTW acceptance process. Every enabled mode requires `EXPORTS_ENABLED=true`, `ROLLOUT_CHECKS_PASSED=true`, `LIVE_WRITE_AUTHORIZATION=I_AUTHORIZE_LIVE_VENDOR_WRITES`, and exact nonempty `ROLLOUT_QSO_IDS_JSON` and `ROLLOUT_DESTINATION_IDS_JSON` scopes. The independent first-insert flags are `QRZ_FRESH_INSERTS_ENABLED` and `LOTW_FRESH_INSERTS_ENABLED`; both default to false. QRZ remains the first rollout milestone. Keep the other vendor flag off and exclude its destination during a single-vendor trial.
+Persistent QRZ fresh inserts are enabled for one exact existing destination and wildcard contacts after accepted checked batches and window H. LoTW remains disabled and requires its separate acceptance process. Every enabled mode requires `EXPORTS_ENABLED=true`, `ROLLOUT_CHECKS_PASSED=true`, `LIVE_WRITE_AUTHORIZATION=I_AUTHORIZE_LIVE_VENDOR_WRITES`, and exact nonempty `ROLLOUT_QSO_IDS_JSON` and `ROLLOUT_DESTINATION_IDS_JSON` scopes. The independent first-insert flags are `QRZ_FRESH_INSERTS_ENABLED` and `LOTW_FRESH_INSERTS_ENABLED`; both default to false. QRZ remains the first rollout milestone. Keep the other vendor flag off and exclude its destination during a single-vendor trial.
 
 The optional service binding `QRZ_FRESH_INSERT_EXPIRES_AT` bounds a monitored QRZ
 window using an original 13-digit UTC epoch-millisecond timestamp. Omitted or

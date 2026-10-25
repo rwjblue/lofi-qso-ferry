@@ -94,12 +94,43 @@ exact FST4W identities remain unchanged for permanent claims and read-only
 recovery of submitted/uncertain attempts. Both legacy recovery states and
 mutation-free prepared holds pass the **28-test LoTW delivery file**. These
 changes pass **all 1,653 tests**, formatting, lint, both TypeScript checks and
-the Worker dry build, with independent source review. They are **not deployed**;
-production remains the disabled-export
-`f2c41cb3` release. Actual personal-key signing, accepted upload/readback,
-populated raw-evidence recovery and deployed resource measurements remain open.
-A fresh **01:00:22.495 UTC** production attestation confirms that same release,
-healthy responses, matching assets and all eight export controls closed.
+the Worker dry build, with independent source review. The correction is signed
+and pushed as `d4dba32d`; the native evidence is in signed `3e46faac`. They are
+**not deployed**; production remains the disabled-export `f2c41cb3` release. Actual personal-key signing, accepted upload/readback,
+and populated raw-evidence recovery remain open. The mixed-cohort cloud resource
+observations below are complete, with per-case cost attribution unavailable.
+[CI for signed `3e46faac`](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40151923651)
+passed at **02:15:37 UTC**.
+A fresh **02:16:45.545 UTC** postexperiment production attestation confirms
+that same release, healthy responses, matching assets and all eight export
+controls closed.
+
+### LoTW cloud signing experiment — synthetic fixtures
+
+At **2026-10-25 01:56:09.954–01:56:17.212 UTC**, an isolated cloud Worker
+completed **27/27 validated requests**: normalized signing batches of **1, 10
+and 100 contacts**, each with six- and eight-character grids; separate
+legacy/current credential imports; and a control. Three requests per case
+produced **666 synthetic signatures and six imports**, matching fully verified
+offline expectations. No production credential, database or vendor was used.
+All nine previews and the temporary Worker were deleted, with parent absence
+verified at **01:56:39.837 UTC** and the temporary control secret removed.
+
+The first run's exact-name analytics stayed empty; a separate diagnostic found
+24 events with unknown Worker/preview names, which cannot establish per-case
+resource attribution. A second isolated measurement retained its naming
+metadata and passed another **27/27 requests** at **02:08:29.728–02:08:39.062 UTC**.
+At **02:14:30.047 UTC**, its exact-Worker analytics account for **27 successes
+and zero errors**, with mixed-cohort CPU P50/P99 **17.735/128.030 ms** and sampled
+isolate-memory P50/P99 **7,029,477/13,283,376 bytes** (about **6.7/12.7 MiB**).
+No limit failure was observed under the configured 5,000 ms CPU cap. This
+completes the bounded aggregate cloud resource observation. Preview names
+remain unknown in analytics, so the original per-case experiment is incomplete
+and no separate import/batch-size cost, peak-memory or production-capacity
+claim follows. Cleanup verified all second-run previews and the parent absent
+at **02:15:31.810 UTC**, with the control secret removed. Real-credential
+signing and ARRL upload/readback acceptance remain open. See
+[the exact experiment scope](docs/evidence-signing.md#cloud-signing-experiment-2026-10-25).
 
 ### Current production — ownership bootstrap and deletion status (f2c41cb3)
 
@@ -971,7 +1002,8 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 - [x] Build an isolated Worker signing spike with generated keys and representative PKCS#12 fixtures. Compare against [Wavelog's direct signer](https://github.com/wavelog/wavelog/blob/7f8eef4de94c674f73c6859ed4e0b0247f68dcd9/application/controllers/Lotw.php) and native TQSL/reference output where useful.
 - [x] Verify key import, legacy/current PKCS#12 encryption, certificate/key matching, callsign/DXCC/QSO-date authorization, canonical station/contact fields, RSA signature bytes, gzip, and multipart encoding.
 - [x] Record Worker bundle/startup observations and exercise cryptographic primitives with generated fixtures in actual local workerd.
-- [ ] Measure deployed billed CPU/memory for import and representative batches, and prove a real Worker-signed artifact through scoped ARRL acceptance. Local runtime results and published algorithm support do not establish this evidence.
+- [x] Record aggregate Cloudflare CPU, sampled isolate memory and resource-limit outcomes for a representative mixed cohort of synthetic certificate imports and 1/10/100-contact signing batches. The 2026-10-25 exact-Worker cohort accounts for all 27 successful requests; per-case attribution is unavailable and its parser remains incomplete. See [cloud evidence](docs/evidence-signing.md#aggregate-resource-observations). Sampled memory is not a per-request peak.
+- [ ] Prove a real Worker-signed artifact through separately authorized scoped ARRL upload and exact readback. Synthetic resource measurements and published algorithm support do not establish acceptance.
 - [x] Exercise [LoTW query parsing](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/) with accepted unconfirmed records, own station detail, error HTML, date partitions, and receive-time checkpoints. Distinguish submission acknowledgement from observed processing and QSL confirmation.
 
 **Acceptance:** reproducible synthetic vectors and runtime measurements are checked in without personal keys or logs. Document what still needs a deliberately scoped live ARRL acceptance check. A separate signer host is not the default fallback; report an actual blocker before revising the agreed architecture.

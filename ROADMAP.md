@@ -11,18 +11,53 @@ This roadmap is the handoff for implementation in this repository. Checked items
 | Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                           |
 | Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                            |
 | QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                                                   |
-| QRZ delivery                    | Singleton and checked pairs C/D2/F4 accepted at observed precision; populated recovery passed       | Verify a bounded normal-cron window before automatic scope                                      |
+| QRZ delivery                    | All eleven ACKs accepted at observed minute/sideband precision; actual recovery passed              | Decide persistent automatic QRZ with continued monitoring and current per-contact guards        |
 | LoTW delivery                   | Disabled; source proof, empty three-day report and unrevoked serial observed                        | Renew current checks; prove signing, upload/readback acceptance and populated-evidence recovery |
-| Broader rollout                 | Disabled; seven QRZ ACKs assessed with seconds unverified                                           | Verify the monitored QRZ window; LoTW follows separately                                        |
+| Broader rollout                 | Disabled; window H closed and all four new ACKs passed complete-window assessment                   | Review the next automatic QRZ scope; LoTW follows separately                                    |
 
 The receiver fix is deployed; checked pairs C, D2 and F4 passed scheduled delivery,
 recovery and known-ACK assessment at the observed minute/sideband representation.
-Next: continue small checked QRZ batches before automatic scope, as described in
+Window H has now run and closed; all four additional ACKs pass complete-window
+readback and assessment. Persistent automatic QRZ remains off pending the next
+step, as described in
 [the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
 
 ### Current production — closed scheduler/deadline release (7738f7d7)
+
+The monitored normal-cron **window H** used native `expiresAt=12:12:30 UTC`
+on the unchanged signed runtime. Its tick recorded **six contact turns, four
+attempts and zero errors**, producing four new delivered QRZ ACKs and **eleven
+attempts in total**. The independent closer confirmed all eight controls closed
+at **12:12:40.617 UTC**, Worker `30c3c0b3-0e11-4858-8f41-211a7882fb2e`,
+deployment `4313866b-1832-472b-a2aa-444b5aa5f375`. Fresh 12:40 UTC attestation
+retains the closed state.
+
+Actual POST recovery completed at **12:40:34.456 UTC**: **41,768,036 bytes,
+37 migrations, eleven attempts and ten retained table artifacts**. The prior
+seven attempts are preserved exactly; artifact/claim/proof-pin crypto,
+integrity/FKs and both isolated quarantines pass. Accounting distinguishes zero
+unfinished window invocations from **31 inherited unfinished rows**. Two disjoint
+pair observations, each using five QRZ reads and 24 D1 calls with all eight
+controls closed before and after, cover all four new ACKs. Aggregate replay is
+`complete_all_deliveries_consistent`: four consistent native ACKs, zero held,
+missing or unresolved members, and `fullMemberAssessmentComplete=true`. All
+**eleven trial records are accepted at known-ACK minute/sideband precision**.
+Seconds remain unverified; original literal-held summaries and the uncertain-
+result matcher are unchanged. Persistent automatic QRZ and LoTW remain disabled;
+no actual LoTW attempt or upload has occurred.
+
+Recovery V4 ignores only the top-level source diagnostics `lastSuccessfulPollAt`,
+`lastSyncFailureAt` and `lastError` when comparing configuration; every other
+source and destination field remains checked. It passes 26 offline checks and
+both peer reviews. This permits diagnostic-only drift without asserting source
+health. Later closed cycles show intermittent `db_d1` failures (three in 12:15,
+five in 12:25); the 12:20, 12:30 and 12:35 cycles are clean. Their cause remains
+unknown; `db_d1` also includes deliberate native guard aborts and does not prove
+a provider fault. See the [window-H receipt](docs/deployment.md#accepted-window-h-and-current-closed-state-2026-10-25-utc).
+
+The following release and F2/F4 receipts predate window H.
 
 The signing blocker is resolved. Signed `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`
 deployed closed at **10:34:26.259635 UTC**; GitHub verifies all four new commit
@@ -56,7 +91,7 @@ are LoTW history unavailability, with budget deferrals recorded separately.
 
 F4 subsequently delivered **two reviewed contacts**, with USB and LSB sidebands,
 through a completed scheduled run with zero errors. Its independent closer
-verified all eight controls closed at **11:43:12.107 UTC**; current Worker is
+verified all eight controls closed at **11:43:12.107 UTC**; its closed Worker was
 `bfdb4768-1018-4b38-a01d-bac7f7d662c1`. After the minimum observation period,
 the **11:46:41 UTC** recovery verifies all **seven attempts/six artifacts**.
 Five QRZ reads establish exact ACK identities and complete unique neighborhoods.
@@ -64,11 +99,11 @@ The separate assessment accepts both minute/sideband representations; all other
 fields match literally, including their eight-character grids. Seconds remain
 unverified. Original literal holds and uncertain-result matching are unchanged.
 
-Next verify the bounded normal-cron window with native absolute expiry and
-complete attempt accounting before automatic QRZ. Timing reduces overlap;
-native proofs and durable claims remain necessary when delayed events arrive.
-LoTW remains
-separate. See [deployment evidence](docs/deployment.md#closed-scheduler-and-qrz-deadline-release-2026-10-25-utc).
+Window H subsequently exercised the bounded normal-cron window with native
+absolute expiry and complete attempt recovery; all four new records now pass
+all-member readback and aggregate acceptance. Persistent automatic QRZ remains
+off. Timing reduces overlap; native proofs and durable claims remain necessary
+when delayed events arrive. LoTW remains separate. See [deployment evidence](docs/deployment.md#closed-scheduler-and-qrz-deadline-release-2026-10-25-utc).
 
 ### Previous production — accepted D2 checkpoint (c88d413e)
 
@@ -80,9 +115,10 @@ preserving literal holds and unverified seconds.
 
 All eight controls are closed on c88d413e/schema 37. Exact source and test-only
 follow-up CI are green. See the [D2 deployment checkpoint](docs/deployment.md#accepted-trial-d2-and-current-closed-state-2026-10-25-utc)
-for immutable receipts and the current Worker. Continue with checked pair E,
-diagnose the unresolved scheduler exception, and verify the full window before
-automatic scope. Wider-window tooling remains offline; actual window validation remains pending; LoTW
+for its immutable receipts and then-closed Worker. The planned pair E stopped
+before activation; F4 and window H subsequently supplied the later scheduled
+evidence above. Actual window recovery, all-member readback and aggregate
+acceptance now pass; scheduler diagnosis remains unresolved. LoTW
 acceptance follows separately.
 
 ### Readiness follow-up — implementation deployed closed
@@ -93,26 +129,32 @@ record status. The optional QRZ window deadline caps native source proofs and
 the final pre-INSERT admission check. The combined local source passes **all
 1,688 tests**, formatting, lint, both TypeScript checks and the Worker dry build.
 The signer was subsequently unlocked; the changes are signed, pushed and
-deployed closed in the current checkpoint above. The native deadline has not yet
-been exercised by an actual automatic QRZ window.
+deployed closed in the current checkpoint above. Window H has exercised the
+native deadline in a monitored normal-cron scope; persistent automatic export
+has not been enabled.
 - [x] Review and locally validate scheduler failure preservation and the native
   QRZ deadline, including expiry during vendor-budget admission.
 - [x] Independently review complete-window recovery, explicit one/two-member
-  readback and aggregation covering every actual new attempt. These are offline
-  tools; original literal holds, unknown states and incomplete coverage remain
-  explicit.
+  readback and aggregation covering every actual new attempt. Actual window-H
+  recovery and all-member readback/acceptance now pass. Original
+  literal holds, unknown states and incomplete coverage remain explicit.
 - [x] Finish and review the offline window controller with an independent
   closer and the original native expiry fixed to the intended close time.
   Fourteen focused cases pass, including launcher exit, late deployment/audit
-  and closure-journal failures; no actual window has been activated.
+  and closure-journal failures. Window H subsequently activated with its original
+  native expiry and independently verified closure.
 - [x] Resolve signing, push, deploy closed, and verify fresh backup/recovery and
   completed scheduler runs on the actual release. Historical failure diagnosis
   remains open.
 - [x] Obtain green exact-release CI before the next live QRZ scope.
 - [x] Complete F4 with two reviewed scheduled exports, populated recovery and
   unique ACK/neighborhood readback at observed minute/sideband precision.
-- [ ] Complete the bounded normal-cron window with full attempt accounting,
-  readback and recovery before automatic scope.
+- [x] Run window H with native absolute expiry, independent closure and actual
+  eleven-attempt/ten-artifact recovery, preserving all seven prior attempts.
+- [x] Complete window-H readback for every new ACK and aggregate acceptance at
+  observed minute/sideband precision, preserving literal holds and unverified seconds.
+- [ ] Decide persistent automatic QRZ scope and investigate intermittent
+  closed-cycle `db_d1` categories without inferring their cause.
 - [ ] Validate LoTW separately after QRZ, preserving the complete prior QRZ
   ledger in its recovery checks.
 
@@ -1150,10 +1192,11 @@ Timestamp/grid precision, routing and source-validity holds still require review
 
 ## Remaining work before exports
 
-The authorized QRZ singleton is accepted at the precision QRZ returned: its exact
-LOGID and complete unique neighborhood match, with all other transmitted fields
-literal matches. QRZ returned minutes rather than the submitted seconds, so
-seconds remain unverified. Automatic exports and LoTW are currently disabled.
+The singleton, checked pairs C/D2/F4 and monitored window H now account for
+**eleven QRZ ACKs accepted at known-ACK minute/sideband precision**. Actual
+eleven-attempt/ten-artifact recovery and complete-window assessment pass. Exact
+seconds remain unverified, and original literal-held summaries are preserved.
+Persistent automatic QRZ and LoTW are currently disabled.
 Linking accounts or waiting for cron does not establish readiness for expansion.
 
 Durable outbound claims, the ±30-minute historical matcher, nested valid grid
@@ -1162,13 +1205,13 @@ first-insert modes and original encrypted attempt-artifact retention are deploye
 Historical associations do not authorize edits or prove upstream absence. Keep
 `SOURCE_BOUNDARY_VERIFIED=false`; source-wide replay and purge guarantees remain
 unproved.
-1. **Continue small checked QRZ batches.** Trials C and D2 add four scheduled
-   ACKs to the singleton; reviewed payloads, closed-control drain and exact
-   five-attempt recovery pass. The separate known-ACK assessment accepts the returned minute
-   and sideband representation; original literal holds and unverified seconds
-   remain explicit. Use fresh normal proof/history checks for each next scope,
-   close and drain afterward, and verify retained artifacts and accepted records.
-   No retry is authorized by the representation differences.
+1. **Monitored QRZ window accepted.** Window H adds four normal-cron ACKs to
+   the prior seven, with native absolute expiry, independent closure, complete
+   attempt recovery and all-member readback/assessment. Keep inherited unfinished
+   scheduler rows separate from completed window accounting. Use fresh normal
+   proof/history checks for every later contact and verify retained artifacts
+   and accepted records. Neither representation differences nor an unresolved
+   `db_d1` category authorizes a retry or bypass.
 2. **Expand QRZ only after checked batches pass.** The owner has authorized a few
    additional checked batches and, after successful validation, automatic QRZ
    export with close monitoring. Keep exact destination IDs, expand contacts

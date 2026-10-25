@@ -1,8 +1,58 @@
 # Read-only production deployment
 
-Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Automatic exports and LoTW are disabled. The singleton and checked pairs C, D2 and F4 account for seven QRZ ACKs, accepted at the observed returned precision with seconds unverified. Trials A, B and F2 made zero attempts. Dated sections retain earlier evidence.
+Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Automatic exports and LoTW are disabled. The singleton, checked pairs C/D2/F4 and window H account for eleven QRZ ACKs accepted at known-ACK minute/sideband precision. Eleven attempts and ten retained table artifacts pass actual recovery. Exact seconds remain unverified; original literal-held summaries remain intact. Trials A, B and F2 made zero attempts. Dated sections retain earlier evidence.
 
-## Accepted F4 pair and current closed state (2026-10-25 UTC)
+## Accepted window H and current closed state (2026-10-25 UTC)
+
+The monitored normal-cron window H ran on unchanged signed runtime
+`7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`, qualified by
+[CI 40184837953](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40184837953)
+with all **1,688 tests and required checks** passing. Its native absolute
+`expiresAt` was **12:12:30 UTC**. The tick recorded **six contact turns, four
+attempts and zero errors**, with four new delivered QRZ INSERT ACKs. The
+independent closer verified all eight controls closed at **12:12:40.617 UTC**,
+Worker `30c3c0b3-0e11-4858-8f41-211a7882fb2e`, deployment
+`4313866b-1832-472b-a2aa-444b5aa5f375`; fresh 12:40 UTC attestation retained
+the closed state. Persistent automatic QRZ remains off;
+LoTW has no actual attempt or upload and remains disabled.
+
+Actual POST recovery completed **12:40:34.456 UTC**, containing **41,768,036
+bytes, 37 migrations, eleven QRZ attempts and ten retained table artifacts**.
+Every prior one of the seven attempts is preserved exactly. Artifact crypto,
+claims, proof pins, integrity/FKs and both isolated quarantines pass. Complete
+accounting finds **zero unfinished window invocations and 31 inherited
+unfinished rows**; the latter are not silently treated as completed.
+
+| Verified receipt | SHA256                                                             |
+| ---------------- | ------------------------------------------------------------------ |
+| Recovery report  | `b8e53bd14215170a9ff02363e691cbf992b24b3dc409b5a2f709ad38ee7e80ed` |
+| SQL snapshot     | `484043caf1d178ba01b04d567d23f42249c9d43e8260c38fd3823258f09e737f` |
+
+Earlier recovery checks held first for an overlapping closed read cycle, then
+for diagnostic-only source configuration drift. Reviewed recovery V4 excludes
+exactly the top-level source fields `lastSuccessfulPollAt`, `lastSyncFailureAt`
+and `lastError` from configuration equality; every other source and destination
+field remains checked. All **26 offline checks** and both peer reviews pass.
+These source diagnostics do not establish source health. No production restore
+or recovery-time vendor write occurred.
+
+Two disjoint pair observations each used **five QRZ reads and 24 D1 calls**,
+with all eight controls closed before and after. Aggregate replay covers all
+four new members: `complete_all_deliveries_consistent`,
+`fullMemberAssessmentComplete=true`, four consistent native ACKs and zero held,
+missing or unresolved members. Aggregate summary SHA256:
+`27c2cc8f504aaec7e6bbcacee508bc5a6588b527d7817513988b0bba543e9dd5`.
+**Window H is accepted at known-ACK minute/sideband precision**, bringing the
+complete assessed trial set to **eleven records**. Exact seconds remain
+unverified; original literal-held summaries and uncertain-result matching are
+unchanged. Persistent automatic QRZ remains off pending the next step.
+
+Later closed cycles recorded intermittent `db_d1` categories: three at 12:15 UTC
+and five at 12:25; 12:20, 12:30 and 12:35 were clean. This classifier also covers
+deliberate native guard aborts; it does not establish a provider fault. The root
+cause remains unresolved. These observations do not establish sustained capacity.
+
+## Accepted F4 pair and earlier closed state (2026-10-25 UTC)
 
 F4 activated on time at the reviewed two-contact scope on signed `7738f7d7`.
 The **11:40 UTC** normal cron completed **two exports, 16 contact turns and zero
@@ -34,8 +84,10 @@ The subsequent closed **11:45 UTC** run completed 168 turns with zero errors and
 zero attempts. Late finite-host observation returned an imprecise failure phase;
 full recovery and a separate fixed metadata query independently verify the
 seven-attempt ledger and completed post-close cycle. This host diagnostic issue
-does not invalidate those receipts. The monitored native-expiry window remains
-the next acceptance step; LoTW remains separate and disabled.
+does not invalidate those receipts. The later window-H activation, closure and
+recovery are recorded above; all four new records also pass all-member readback
+and aggregate acceptance.
+LoTW remains separate and disabled.
 
 ## Closed scheduler and QRZ deadline release (2026-10-25 UTC)
 
@@ -105,12 +157,13 @@ LoTW history errors and 13 budget deferrals. Neither is a capacity measurement.
 Take fresh release-bound backup/review and completed-cycle/lease evidence for
 the next finite pair. Preserve expired inputs and unfinalized rows. A scheduling
 margin cannot exclude delayed events; finite native authority and full accounting
-remain required. QRZ window capture, all-member readback and automatic
-activation remain open, followed by separate LoTW acceptance.
+remain required. Window H subsequently supplied actual capture and recovery;
+all-member readback and acceptance now pass. Persistent automatic activation
+remains the next decision, followed by separate LoTW acceptance.
 
 ## Accepted Trial D2 and earlier closed state (2026-10-25 UTC)
 
-Production remains on signed `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7`,
+At this earlier checkpoint production remained on signed `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7`,
 with all **37 migrations through `0038`**. The closed deployment at
 **07:28:17.57008 UTC** is Worker `0d70f4c8-e136-429b-a540-58ecca58c931`,
 deployment `26717a85-e1c7-458f-a305-7418d876160b`. The **07:28:21.817 UTC**
@@ -169,26 +222,25 @@ The two-stage failure mechanism is known; its initiating cause remains unknown.
 The **07:50 UTC** closed cycle was idle, with zero attempts and provider outcome
 `ok`; this is not resumed export acceptance.
 
-The local scheduler follow-up contains the reviewed diagnostic preservation and
+At this checkpoint, the local scheduler follow-up contained the reviewed diagnostic preservation and
 completed-before-sampler fix. The subsequent optional QRZ window deadline caps
 native source proofs and the final pre-INSERT admission check. The combined
 local source passes **all 1,688 tests**, formatting, lint, both TypeScript checks
-and the Worker dry build. Its push is blocked by 1Password's failed fill-buffer
-operation. These changes are not recorded as signed, pushed or deployed;
-production remains c88 with all eight controls closed.
+and the Worker dry build. Its push was then blocked by 1Password's failed
+fill-buffer operation. The later signed 7738f7d7 release and actual window-H
+execution are recorded above; the c88 receipt remains historical.
 
-The next checked pair E, exception diagnosis and full-window verification remain
-open. Wider QRZ window recovery and an observer covering every new member are
-still offline. Recovery retains ten passing native/host cases and adds a passing
+Pair E stopped before activation. At this earlier checkpoint wider QRZ window
+recovery and an observer covering every new member were still offline. Recovery retains ten passing native/host cases and adds a passing
 native capped-proof cancellation and repeated-quarantine case. Its source and
 complete protected inventory pass independent review. The selected-member observer
 retains 13 native and 33 host/selection cases with independent review. Mechanical
 dependency successors pass static, import and TypeScript checks; their inherited
 native receipts are not new live runs. The observer retains
 the complete window census while observing one or two native ACKs at a time;
-no report alone claims that every member is accepted. Actual window capture,
-all-member readback and aggregate acceptance remain open. No automatic scope
-or LoTW signing/upload has been enabled. See [the pilot](qrz-pilot.md) for the continuing boundaries.
+no report alone claims that every member is accepted. Window H now has actual
+capture and recovery above; its all-member readback and aggregate acceptance
+now pass. Persistent automatic QRZ and LoTW signing/upload remain disabled. See [the pilot](qrz-pilot.md) for the continuing boundaries.
 
 ## Historical receiver-fix deployment and accepted Trial C
 
@@ -359,9 +411,9 @@ claimed. All export controls are closed.
 | ------------------------- | ------------------------------------------------------------------------------------------- |
 | Cloudflare account        | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                       |
 | Worker                    | `lofi-qso-ferry`, environment `production`                                                  |
-| Deployed source revision  | `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7`                                                  |
-| Worker version            | `0d70f4c8-e136-429b-a540-58ecca58c931`                                                      |
-| Deployment                | `26717a85-e1c7-458f-a305-7418d876160b`, closed at `2026-10-25T07:28:17.57008Z`              |
+| Deployed source revision  | `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`                                                  |
+| Worker version            | `30c3c0b3-0e11-4858-8f41-211a7882fb2e`                                                      |
+| Deployment                | `4313866b-1832-472b-a2aa-444b5aa5f375`, closure verified `2026-10-25T12:12:40.617Z`         |
 | Origin / passkey RP       | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                               |
 | Dedicated D1              | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                            |
 | Migrations                | All 37 migrations through `0038_attempt_artifacts`; independently verified after deployment |

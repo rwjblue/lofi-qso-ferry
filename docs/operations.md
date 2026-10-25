@@ -6,34 +6,54 @@ All checked-in environments disable exports. Local tests and synthetic signature
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
-The latest closed checkpoint is signed 7738f7d7/schema 37, with scheduler
-diagnostics and the optional native QRZ proof deadline deployed. Fresh populated
-PRE/POST recovery and exact-release CI pass. F4 adds two checked QRZ deliveries;
-current closed Worker is `bfdb4768-1018-4b38-a01d-bac7f7d662c1`. All seven
-attempts/six artifacts pass populated recovery; exact ACK identities and unique
-neighborhoods pass at observed minute/USB/LSB precision. Seconds remain unverified.
-F2 previously closed with zero new attempts. Its original
-unfinished scheduler row remains unresolved, while later closed cycles complete.
-A separate later invocation with the old scheduled time is not recovery of that
-row. Before another finite scope, check the exact completed current cycle and
-leases, retain a next-cron margin and review handled route failures separately
-from scheduler failures. Native proofs and full accounting still apply. See the
-[current deployment record](deployment.md#closed-scheduler-and-qrz-deadline-release-2026-10-25-utc).
+The current runtime remains signed `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`
+with 37 migrations and all **1,688 tests and required checks** passing in
+[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40184837953).
+Monitored normal-cron window H used native `expiresAt=12:12:30 UTC` and produced
+**four new delivered QRZ ACKs** from six contact turns/four attempts with zero
+errors. The independent closer confirmed all eight controls closed at
+**12:12:40.617 UTC**, Worker `30c3c0b3-0e11-4858-8f41-211a7882fb2e`, deployment
+`4313866b-1832-472b-a2aa-444b5aa5f375`.
 
-Accepted Trial D2 supplies the existing field-acceptance evidence:
-**five approved QRZ attempts and four retained artifacts**, with prior evidence
-unchanged. Closed-control drain, exact recovery and unique ACK neighborhoods
-pass. The separate assessment accepts the observed minute/sideband representation;
-literal holds and unverified seconds remain recorded. The current Worker and
-immutable receipts are in the [D2 deployment record](deployment.md#accepted-trial-d2-and-current-closed-state-2026-10-25-utc).
+The **12:40:34.456 UTC** actual POST recovery verifies **eleven attempts and ten
+retained table artifacts**, preserving the prior seven exactly, with original
+crypto/claims/proof pins, integrity/FKs and both quarantines passing. Its
+41,768,036-byte snapshot has 37 migrations, zero unfinished window invocations
+and **31 inherited unfinished rows**. Two disjoint pair observations each used
+five QRZ reads and 24 D1 calls, with all eight controls closed before and after.
+Aggregate replay verifies all four new native ACKs, with zero held, missing or
+unresolved members. All **eleven trial records are accepted at known-ACK
+minute/sideband precision**, with seconds unverified and original literal-held
+summaries and uncertain-result matching preserved. Fresh 12:40 UTC attestation
+retains the closed state. See the
+[current window receipt](deployment.md#accepted-window-h-and-current-closed-state-2026-10-25-utc)
+for immutable report and SQL hashes. Persistent automatic QRZ is not enabled;
+no actual LoTW attempt or upload has occurred.
 
-Continue with fresh reviewed scope, backup and ordinary guarded evidence for each
-checked batch. Pair E, exception diagnosis and full-window verification remain
-open; wider-window recovery and all-member observation are offline; actual window validation remains pending.
-An unfinished scheduler row is unresolved even when its default counters are
-zero. Close the scope, drain at least 180 seconds and account for actual attempts
-and running invocations before accepting a batch. Automatic QRZ and LoTW remain
-disabled.
+The earlier recovery holds were an overlapping closed read cycle, then changes
+to source diagnostic fields. Recovery V4 excludes only top-level
+`lastSuccessfulPollAt`, `lastSyncFailureAt` and `lastError` from source-config
+comparison; every other source and destination field must still agree. Its 26
+offline checks and both peer reviews pass. Ignoring diagnostic drift does not
+assert source health. Keep zero unfinished window invocations distinct from
+inherited unfinalized scheduler rows, and preserve both in accounting.
+
+Later closed cycles had intermittent `db_d1` failures (three at 12:15 UTC and
+five at 12:25); 12:20, 12:30 and 12:35 were clean. The classifier also includes
+deliberate native guard aborts, so it does not prove a provider fault. The root
+cause remains unresolved.
+Do not equate clean later cycles or default-zero counters with recovery of an
+older unfinished row. Before another finite scope, refresh reviewed inputs and
+backup, inspect completed-cycle/lease evidence and retain a scheduling margin.
+Native expiry, current proofs, durable claims and complete attempt accounting
+remain mandatory when delayed events arrive. Window-H readback and aggregate
+assessment now pass; persistent automatic QRZ remains off pending the next step.
+LoTW acceptance remains separate.
+
+Earlier F2, C, D2 and F4 receipts remain in
+[deployment history](deployment.md). Pair E stopped before activation; it is not
+the next required pair. Actual window recovery, all-member observation and
+acceptance are complete at the stated observed precision.
 
 ### Previous 87e87b2d checkpoint
 

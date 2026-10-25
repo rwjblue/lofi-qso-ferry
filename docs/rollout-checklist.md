@@ -1,15 +1,15 @@
 # Personal rollout acceptance
 
-Persistent automatic QRZ fresh inserts are enabled for one exact existing
-destination and wildcard contacts. Current source proofs, fresh vendor evidence
-and ownership checks remain mandatory; LoTW and source-boundary authority remain
-disabled. Finishing the 200,000-contact capacity plan is a separate milestone. The singleton and checked pairs C/D2/F4
+The automatic QRZ trial is accepted; all eight controls are temporarily closed
+for independent observation and LoTW preparation. Current source proofs, fresh
+vendor evidence and ownership checks remain mandatory. LoTW acceptance and
+200,000-contact capacity remain separate milestones. The singleton and checked pairs C/D2/F4
 account for seven QRZ ACKs assessed at observed minute/sideband precision.
 Window H adds four assessed ACKs: all eleven trial records are accepted at
 known-ACK minute/sideband precision, and actual eleven-attempt/ten-artifact
 recovery passes. Exact seconds remain unverified. The eleven attempts predate
-persistent activation. The first completed active cycle adds a twelfth delivered
-ACK; independent readback and recovery remain pending for that record.
+persistent activation. Two active cycles add two more ACKs; all thirteen records
+now pass known-ACK observed-precision assessment and populated recovery.
 
 ## Current evidence (2026-10-25)
 
@@ -41,9 +41,31 @@ ACK; independent readback and recovery remain pending for that record.
   one attempt, zero errors/two deferrals. The 13:18 complete monitor confirms one
   new delivered ACK/twelve total, all prior eleven exactly preserved, unchanged
   scope/schema, zero unknown/rejected/running/leased work and `stopRequired=false`.
-  QRZ remains active on Worker `242c1aa6`; this is not sustained-scale acceptance.
-- [ ] Independently read back and recover the twelfth record. Eleven known-ACK
-  records remain assessed; the new native ACK alone does not complete this check.
+  QRZ was active on Worker `242c1aa6` at that checkpoint; this is not sustained-scale acceptance.
+- [x] Complete the second clean active cycle (13:20; 38 turns/one attempt,
+  zero errors/two deferrals), then temporarily close for independent observation
+  and LoTW preparation. All eight controls were attested closed at 13:25:46.975 UTC.
+- [x] Recover all thirteen attempts/twelve artifacts at 13:29:39.418 UTC and
+  independently assess both new ACKs with five QRZ reads: two consistent members,
+  zero held/missing/unresolved. Preserve all prior eleven exactly and distinguish
+  zero unfinished window invocations from 31 inherited rows. QRZ's automatic
+  trial is accepted at observed precision; exact seconds remain unverified.
+- [x] Run scoped LoTW trial A through the normal 14:00 cron: 16 contact turns,
+  zero attempts/errors and one deferral, stopping at the deadline. The selected
+  structurally eligible candidate held `source_export_proof_proof_unavailable`;
+  its generic category does not establish the underlying cause.
+- [x] Independently close all eight controls at 14:02:46.080 UTC and verify actual
+  POST recovery at 14:08:52.990 UTC: all thirteen attempts exactly preserved,
+  zero new attempts, zero unfinished window invocations, 31 inherited unfinished
+  rows, no LoTW proof pins, full restore and both quarantines passing. There was
+  no LoTW attempt/upload; zero attempts alone does not prove signing absence.
+- [ ] Resolve the precise source-proof hold and complete separate LoTW acceptance.
+  Trial B preparation stopped at 14:12:54 UTC, before input, intent or activation,
+  with `settled_margin_not_available`; all eight controls remain closed on
+  Worker `40991304` and attempts remain thirteen. The latest completed cycle
+  was 14:05 with no 14:10 scheduler row yet; this establishes neither a missed
+  cron nor its cause. Offline V5 selection and its 23 checks/peer
+  reviews are preparation evidence, not upload acceptance.
 
 ### Earlier release and checked-scope receipts
 
@@ -77,8 +99,8 @@ ACK; independent readback and recovery remain pending for that record.
   Actual window recovery and full observed-precision readback/acceptance now pass.
 - [ ] Prove LoTW signing/upload/accepted-report recovery separately after QRZ.
 
-See the [current activation checkpoint](deployment.md#persistent-qrz-activation-b-2026-10-25-utc) for the current Worker and
-receipt timestamps/hashes. QRZ fresh inserts are active; LoTW remains disabled.
+See the [current LoTW trial-A checkpoint](deployment.md#lotw-trial-a-source-proof-hold-and-closed-recovery-2026-10-25-utc) for the current Worker and
+receipt timestamps/hashes. QRZ is temporarily closed for the LoTW phase; LoTW remains disabled.
 
 ### Earlier evidence (87e87b2d, 2026-10-25)
 
@@ -619,14 +641,14 @@ Source review separately includes eight test contacts and one blocked contact.
 Waiting for cron advances available inventory, retry work and newly compatible
 LoTW associations; unresolved identity, location and route conflicts remain held.
 
-| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed.                                                                                                                                                                                                                 |
-| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                                                                                                                                                                                                                                              |
-| Source boundary           | Trials C and D2 exercise normal scheduled source proofs for their exact contacts. Refresh expiring evidence for each later contact; global purge/replay guarantees and source-wide cutover authority remain unproved.                                                                                                                                                                                                                                                                                                                |
-| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                                                                                                                                                                                                                                             |
-| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Guarded broader LoTW history preserves raw time and valid nested grid precision in a separate reference. Ownership bootstrap and exact-evidence recovery pass; populated raw recovery and ARRL acceptance remain open.                                                                                                                                                                                |
-| First vendor writes       | The singleton, checked pairs C/D2/F4 and window H account for eleven ACKs accepted at known-ACK minute/sideband precision, with seconds unverified and literal-held summaries preserved. Actual eleven-attempt recovery and all-member assessment pass. Persistent QRZ fresh inserts are enabled; the first completed active cycle adds a twelfth delivered ACK, with independent readback/recovery pending. LoTW remains disabled. Fresh source proof, exact scope, vendor checks, backup and independent readback remain required. |
+| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed.                                                                                                                                                                                                                                                       |
+| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                                                                                                                                                                                                                                                                                    |
+| Source boundary           | Trials C and D2 exercise normal scheduled source proofs for their exact contacts. Refresh expiring evidence for each later contact; global purge/replay guarantees and source-wide cutover authority remain unproved.                                                                                                                                                                                                                                                                                                                                                      |
+| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                                                                                                                                                                                                                                                                                   |
+| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Guarded broader LoTW history preserves raw time and valid nested grid precision in a separate reference. Ownership bootstrap and exact-evidence recovery pass; populated raw recovery and ARRL acceptance remain open.                                                                                                                                                                                                                      |
+| First vendor writes       | The singleton, checked pairs C/D2/F4 and window H account for eleven ACKs accepted at known-ACK minute/sideband precision, with seconds unverified and literal-held summaries preserved. Actual eleven-attempt recovery and all-member assessment pass. Two automatic cycles added two ACKs; all thirteen now pass recovery and known-ACK observed-precision assessment. QRZ is temporarily closed for the separate LoTW phase, not trial failure. LoTW remains disabled. Fresh source proof, exact scope, vendor checks, backup and independent readback remain required. |
 
 ## Verify the deployed LoTW ownership release (5a427a30)
 

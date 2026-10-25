@@ -6,32 +6,82 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ### Export readiness at a glance
 
-| Work                            | Current state                                                                                       | Next acceptance evidence                                                                        |
-| ------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                           |
-| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                            |
-| QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                                                   |
-| QRZ delivery                    | Persistent fresh inserts enabled; 13:18 checkpoint has twelve ACKs, eleven independently assessed   | Independently read back and recover the twelfth record; continue monitoring                     |
-| LoTW delivery                   | Disabled; source proof, empty three-day report and unrevoked serial observed                        | Renew current checks; prove signing, upload/readback acceptance and populated-evidence recovery |
-| Broader rollout                 | QRZ fresh inserts active; LoTW and source-wide authority remain disabled                            | Monitor QRZ recovery and new records; LoTW follows separately                                   |
+| Work                            | Current state                                                                                       | Next acceptance evidence                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                              |
+| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                               |
+| QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                                                      |
+| QRZ delivery                    | Automatic trial accepted: all thirteen ACKs assessed; temporarily closed for LoTW preparation       | Preserve accepted QRZ evidence through the separate LoTW trial; continue monitoring                |
+| LoTW delivery                   | Trial A reached a source-proof hold; closed with zero new attempts and verified recovery            | Resolve the precise proof hold; renew normal checks and complete scoped upload/readback acceptance |
+| Broader rollout                 | All eight controls temporarily closed; QRZ trial accepted; LoTW acceptance pending                  | Complete the separate LoTW acceptance process; sustain measured QRZ operation                      |
 
 The receiver fix is deployed; checked pairs C, D2 and F4 passed scheduled delivery,
 recovery and known-ACK assessment at the observed minute/sideband representation.
 Window H has now run and closed; all four additional ACKs pass complete-window
-readback and assessment. Persistent automatic QRZ fresh inserts are now enabled
-for the existing exact destination. The first completed active cycle adds one
-delivered ACK; its independent readback and recovery remain pending, as described in
+readback and assessment. Two persistent QRZ cycles added two more ACKs; all
+thirteen records now pass observed-precision assessment and populated recovery.
+QRZ was temporarily closed for independent observation and LoTW preparation,
+not because the trial failed, as described in
 [the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
 
-### Current production — persistent QRZ fresh inserts (7738f7d7)
+### Current checkpoint — QRZ accepted; LoTW trial A held and closed
+
+The 13:15 and 13:20 persistent QRZ cycles completed **32 and 38 contact turns**,
+with one attempt, zero errors and two deferrals each; both stopped at
+`database_budget`. Independent closure at **13:25:46.975 UTC** confirms all eight
+controls closed on Worker `d3df1bb6-39d2-4bb5-b1c2-ce268ed22744`, deployment
+`0eb59b3a-8c88-4259-a688-f3e559084855`. The closed 13:25 cycle completed 84 turns
+with zero attempts/errors; there were no other new QRZ attempts.
+
+The **13:29:39.418 UTC** POST recovery verifies **41,654,630 bytes, thirteen
+attempts and twelve artifacts**: both new attempts plus all prior eleven exactly
+preserved, original crypto/claims/proof pins, integrity/FKs and both quarantines
+passing. Zero unfinished window invocations remain distinct from 31 inherited
+unfinished rows. Five read-only QRZ requests cover the two new ACKs with all eight
+controls closed before/after; complete assessment finds two consistent members
+and zero held, missing or unresolved members. **All thirteen QRZ records are
+accepted at known-ACK minute/sideband precision**. Exact seconds remain unverified;
+original source values, literal-held summaries and uncertain matching are unchanged.
+This accepted automatic trial does not establish sustained scale.
+
+LoTW preparation remains separate. Unsigned offline helper V4 held the first
+20 candidates on `unsigned_source_time_precision`; reviewed V5 removes only its
+modulo-zero requirement to match the already-deployed whole-second projection
+and durable claims, preserving raw milliseconds/fingerprints. Its 23 checks and
+peer reviews pass; an actual offline V5 selection found one candidate without
+signing or network. The reviewed recovery bridge passes eleven native checks and
+both peers; it derives signed-artifact facts from saved SQL before the unchanged
+full recovery, granting no authority. LoTW trial A subsequently activated one
+exact contact on Worker `49d9c771-7553-40d0-a5f2-7ad7a39e5822`. The normal 14:00
+cron ran on that active Worker: 16 contact turns, zero attempts/errors, one
+deferral and a deadline stop. The selected candidate remained structurally
+eligible but its LoTW ledger held `source_export_proof_proof_unavailable`;
+that generic reason does not identify a request-budget, clock, transport or
+other proof failure. Independent closure at **14:02:46.080 UTC** verified all
+eight controls closed on Worker `40991304-8c5e-422e-bb41-61deb79b08c7`.
+
+Trial A POST recovery passed at **14:08:52.990 UTC**: all thirteen prior attempts
+remain exact, with zero new attempts, zero unfinished window invocations,
+31 inherited unfinished rows, no LoTW proof pins, full restore and both
+quarantines passing. No LoTW attempt or upload occurred; zero attempts alone
+does not establish whether signing ran. Trial B
+preparation stopped at **14:12:54 UTC**, before any input, intent or activation,
+with `settled_margin_not_available`. The latest completed cycle was 14:05; no
+14:10 scheduler row was present at that check. This does not establish a missed
+cron or its cause. All eight controls remain closed on Worker `40991304`, with
+thirteen total attempts; the precise trial-A proof failure still needs diagnosis.
+Runtime `7738f7d7` and its 1,688-test CI qualification are unchanged. See the
+[LoTW trial-A receipt](docs/deployment.md#lotw-trial-a-source-proof-hold-and-closed-recovery-2026-10-25-utc).
+
+### Earlier persistent QRZ activation B (7738f7d7)
 
 Activation B was independently attested at **13:10:58.762 UTC** on unchanged
 signed runtime `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382` (1,688 tests and
 required checks passed). Worker `242c1aa6-aa79-4f46-9ef2-dc033971bdac`, deployment
 `472f153d-d9b8-42e7-861e-635bc19bcd8b`, receives sole 100% traffic; health,
-assets and KEK 1 pass. Exports, rollout checks and QRZ fresh inserts are enabled
+assets and KEK 1 passed. Exports, rollout checks and QRZ fresh inserts were enabled
 for **one exact existing QRZ destination and wildcard contacts**. LoTW fresh
 inserts and source-boundary authority remain false; ordinary mode has no window
 expiry. Every contact still needs its normal source proof, absence and ownership
@@ -40,9 +90,10 @@ The 13:15 cron, received **13:15:42.570 UTC**, completed 32 contact turns and on
 attempt with zero errors/two deferrals. At **13:18 UTC**, complete accounting
 confirms **one new delivered ACK, twelve total**, all prior eleven exactly
 preserved, unchanged scope/schema and zero unknown, rejected, running or leased
-work; `stopRequired=false`. The twelfth record still needs independent vendor
-readback and recovery, so the independently assessed count remains **eleven**.
-QRZ stays active; this single cycle does not establish sustained scale.
+work; `stopRequired=false`. At that checkpoint the twelfth record still needed
+independent readback/recovery and QRZ was active. The later thirteen-record
+acceptance and temporary closure are recorded above; neither sample establishes
+sustained scale.
 
 The fresh **13:09:53.227 UTC** PRE recovery verifies 42,245,796 bytes, eleven
 attempts/ten artifacts, all crypto/quarantine checks and zero unfinished rows
@@ -1232,9 +1283,9 @@ The singleton, checked pairs C/D2/F4 and monitored window H now account for
 **eleven QRZ ACKs accepted at known-ACK minute/sideband precision**. Actual
 eleven-attempt/ten-artifact recovery and complete-window assessment pass. Exact
 seconds remain unverified, and original literal-held summaries are preserved.
-Persistent automatic QRZ fresh inserts are now enabled for one exact destination;
-LoTW remains disabled. The first active cycle adds a twelfth delivered ACK;
-independent readback and recovery remain pending for that record.
+All thirteen QRZ records now pass observed-precision assessment and recovery.
+QRZ is temporarily closed for independent observation and LoTW preparation;
+LoTW acceptance remains pending.
 Linking accounts or waiting for cron does not establish readiness for expansion.
 
 Durable outbound claims, the ±30-minute historical matcher, nested valid grid
@@ -1250,10 +1301,9 @@ unproved.
    proof/history checks for every later contact and verify retained artifacts
    and accepted records. Neither representation differences nor an unresolved
    `db_d1` category authorizes a retry or bypass.
-2. **Monitor enabled automatic QRZ fresh inserts.** Accepted checked batches and
-   window H preceded activation B. The existing exact QRZ destination now has
-   wildcard contact scope; its first completed active cycle adds one delivered ACK.
-   Complete independent readback/recovery of that twelfth record while monitoring. Keep exact destination IDs, expand contacts
+2. **Preserve accepted automatic QRZ evidence.** Two activation-B cycles added
+   two ACKs; thirteen total now pass observed-precision assessment and recovery.
+   QRZ is temporarily closed for the separate LoTW phase, not a failed trial. Keep exact destination IDs, expand contacts
    gradually, and verify created records after each batch. First-insert authority
    does not enable replacements, corrections, deletion, source-wide cutovers or
    LoTW. Unrelated historical exceptions and 200,000-contact capacity do not block

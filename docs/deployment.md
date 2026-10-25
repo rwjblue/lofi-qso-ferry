@@ -1,6 +1,87 @@
 # Production deployment and rollout evidence
 
-Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Persistent QRZ fresh inserts are enabled for one exact existing destination and wildcard contacts; LoTW and source-boundary authority remain disabled. The singleton, checked pairs C/D2/F4 and window H account for eleven QRZ ACKs accepted at known-ACK minute/sideband precision. Eleven prior attempts and ten retained table artifacts pass actual recovery. The first active cycle adds a twelfth delivered ACK whose independent readback and recovery are pending. Exact seconds remain unverified; original literal-held summaries remain intact. Earlier checked trials A, B and F2 made zero attempts. Dated sections retain earlier evidence.
+Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. The persistent QRZ trial is accepted with all thirteen ACKs assessed at known-ACK minute/sideband precision and thirteen-attempt/twelve-artifact recovery passing. All eight controls were independently closed after LoTW trial A reached a source-proof hold with zero new attempts; its complete recovery passes. This was not a failed QRZ trial. Exact seconds remain unverified; original literal-held summaries remain intact. Earlier checked trials A, B and F2 made zero attempts. Dated sections retain earlier evidence.
+
+## LoTW trial A: source-proof hold and closed recovery (2026-10-25 UTC)
+
+The one-contact normal-cron LoTW trial A activated on unchanged signed runtime
+`7738f7d7` and Worker `49d9c771-7553-40d0-a5f2-7ad7a39e5822`. The normal 14:00
+scheduled invocation ran on the active Worker; delayed tail delivery reports
+provider outcome `ok`, 282 ms CPU and 95,427 ms wall time. Native counters are
+16 contact turns, zero attempts/errors, one deferral, one round and 93,730 ms
+elapsed, stopping at `deadline`. A later D1 scheduler row has similar counters
+but no run-ID correlation; it is not equated with that provider event.
+
+The selected contact was live, eligible, context-ready and unexpired. Its LoTW
+route remained in `lotw_fresh_insert_eligible`, with ledger state
+`missing_current_identity` and reason `source_export_proof_proof_unavailable`.
+This establishes a source-proof hold after selection. The generic reason does
+not distinguish clock admission, database/guard failures, or another proof
+failure; it is not proof of request exhaustion or a provider fault.
+
+The independent supervisor attested all eight controls closed at
+**14:02:46.080 UTC**, Worker `40991304-8c5e-422e-bb41-61deb79b08c7`. Actual POST
+recovery completed **14:08:52.990 UTC**: full restore, both quarantines and exact
+preservation of all thirteen prior attempts pass; there are zero new attempts,
+zero unfinished window invocations, 31 inherited unfinished rows and no LoTW
+proof pins. No LoTW attempt or upload occurred. Zero attempts alone does not
+establish whether signing ran. Trial B
+preparation stopped at **14:12:54 UTC** with `settled_margin_not_available`,
+before any input, intent or activation. The latest completed cycle was 14:05;
+no 14:10 scheduler row was present at that check. This does not establish a
+missed cron or its cause. All eight controls remain closed on Worker `40991304`,
+with thirteen total attempts. Trial A's precise proof failure remains under
+diagnosis; no further activation is asserted.
+
+| Trial-A receipt                                | SHA256                                                             |
+| ---------------------------------------------- | ------------------------------------------------------------------ |
+| PRE recovery report                            | `6eca7c967ae8d0e58b07ef01f142787eb3951b423858f973a2701dd06de12ee9` |
+| Unsigned V5 review                             | `b801f21e464a20fa336a3fb92f396636047f322b6bf9cf22036217bf10900ebf` |
+| Actual reviewed input, issued 13:57:50.611 UTC | `4898eb1f94d95e892e68578a0c680240fa54c5e55289e77da8cb53d9145820b6` |
+| POST recovery report                           | `09d8445cec249ab5ee03c3f2b6f1dc00b402001f1a264d0fc285075a9d2bb5a1` |
+
+## Accepted persistent QRZ trial and temporary closure (2026-10-25 UTC)
+
+The 13:15 and 13:20 normal active cycles made **32 and 38 contact turns**, one
+attempt each, zero errors and two deferrals each, both stopping at
+`database_budget`. No cause is inferred from the deferrals. QRZ was temporarily
+closed for independent observation and LoTW preparation. Independent
+**13:25:46.975 UTC** attestation confirms all eight controls closed on Worker
+`d3df1bb6-39d2-4bb5-b1c2-ce268ed22744`, deployment
+`0eb59b3a-8c88-4259-a688-f3e559084855`. Runtime remains signed `7738f7d7`, with
+unchanged 1,688-test CI qualification and 37 migrations. The closed 13:25 cycle
+made **84 turns, zero attempts and zero errors**, with no other new QRZ attempts.
+
+Actual POST recovery completed **13:29:39.418 UTC**, containing **41,654,630
+bytes, thirteen attempts and twelve retained artifacts**. It verifies both new
+attempts and all prior eleven exactly, with crypto, original proof pins/claims,
+immutable rows, integrity/FKs and both isolated quarantines passing. Accounting
+finds zero unfinished window invocations and **31 inherited unfinished rows**.
+Report SHA256:
+`0005426c5dd73eaf6176ffce845d58dd1671129455ad6b167571c4c791e4627d`.
+
+The independent pair observer used **five QRZ reads**, with all eight controls
+closed before/after. Combined assessment is
+`complete_all_deliveries_consistent`: two new/two consistent members, zero held,
+missing or unresolved members. Assessment SHA256:
+`ddc4fd9e9f27303ffba3e80e0af7406e69282428952731400fd4b10606312106`.
+**All thirteen records are accepted at known-ACK minute/sideband precision**.
+Exact seconds remain unverified; original source values, literal-held summaries
+and uncertain-result matching are unchanged. The automatic QRZ trial is accepted;
+its temporary closure is for the next phase, not a trial failure or a sustained-
+scale claim.
+
+LoTW unsigned helper V4 held all first 20 candidates under
+`unsigned_source_time_precision`. V5 removes only the helper's modulo-zero
+requirement, aligning it with deployed native ISO whole-second projection and
+durable claims while preserving raw milliseconds/fingerprints. Twenty-three
+checks and peer reviews pass; actual offline V5 selection found one candidate
+without signing or network. The reviewed recovery bootstrap bridge passes eleven
+native checks and both peer reviews; it derives signed-artifact facts from saved
+SQL before unchanged full recovery. This is offline implementation evidence and
+grants no authority. At that **13:54 UTC** checkpoint no actual LoTW input,
+activation, signing or upload had occurred. The later trial-A hold and verified
+closed recovery are recorded above.
 
 ## Persistent QRZ activation B (2026-10-25 UTC)
 
@@ -43,10 +124,10 @@ The **13:18 UTC** complete monitor confirms **one new delivered QRZ ACK and twel
 total**, with all prior eleven attempts exactly preserved and scope/schema
 unchanged. It finds zero unknown or rejected attempts, zero running invocations
 and zero leases; `stopRequired=false`. Active Worker remains `242c1aa6`, with
-QRZ automatic fresh inserts on and LoTW off. The twelfth record has a native
-INSERT ACK, but **independent vendor readback and recovery are pending**;
-known-ACK independently assessed records remain **eleven**. This one completed
-cycle is not sustained-scale acceptance. LoTW has no actual signing/upload. Its unsigned offline scan held all first 20 projected contacts
+QRZ automatic fresh inserts were then on and LoTW off. At this checkpoint the
+twelfth native ACK still awaited independent readback/recovery and the assessed
+count was eleven. The later thirteen-record acceptance and temporary closure
+are recorded above; neither is sustained-scale acceptance. LoTW has no actual signing/upload. Its unsigned offline scan held all first 20 projected contacts
 from 200 queued; a separate read-only snapshot has 373 structurally eligible/due
 routes. Those counts establish neither complete eligibility nor fresh absence.
 
@@ -455,15 +536,15 @@ delivery and assessed readback. Remaining work includes further checked QRZ batc
 wider QRZ observation, separate LoTW acceptance, broader exception review and
 sustained capacity. The LoTW observer
 and recovery tools are ready offline only; no real-key upload acceptance is
-claimed. Current QRZ-only activation is recorded above; LoTW remains disabled.
+claimed. Current temporary closure after accepted QRZ observation is recorded above; LoTW remains disabled.
 
 | Resource                  | Current value                                                                               |
 | ------------------------- | ------------------------------------------------------------------------------------------- |
 | Cloudflare account        | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                       |
 | Worker                    | `lofi-qso-ferry`, environment `production`                                                  |
 | Deployed source revision  | `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`                                                  |
-| Worker version            | `242c1aa6-aa79-4f46-9ef2-dc033971bdac`                                                      |
-| Deployment                | `472f153d-d9b8-42e7-861e-635bc19bcd8b`, active attestation `2026-10-25T13:10:58.762Z`       |
+| Worker version            | `40991304-8c5e-422e-bb41-61deb79b08c7`                                                      |
+| Closure attestation       | `2026-10-25T14:02:46.080Z`; all eight controls closed                                       |
 | Origin / passkey RP       | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                               |
 | Dedicated D1              | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                            |
 | Migrations                | All 37 migrations through `0038_attempt_artifacts`; independently verified after deployment |

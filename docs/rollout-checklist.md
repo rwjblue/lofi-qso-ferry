@@ -3,8 +3,8 @@
 Ferry is suitable for an invite-only, read-only pilot with one or two users.
 Automatic exports are still disabled. A small first-export trial requires current source
 proofs, fresh vendor evidence and exact contact review; finishing the 200,000-contact capacity
-plan is a separate expansion milestone. The singleton and checked pairs C/D2
-account for five QRZ ACKs assessed at observed minute/sideband precision;
+plan is a separate expansion milestone. The singleton and checked pairs C/D2/F4
+account for seven QRZ ACKs assessed at observed minute/sideband precision;
 unique neighborhoods and populated recovery pass. Seconds remain unverified.
 Further checked batches are required before automatic scope.
 
@@ -18,9 +18,10 @@ Further checked batches are required before automatic scope.
 - [x] Close F2 with zero new attempts and verify the populated five-attempt,
   four-artifact POST recovery. The original unfinished scheduler row remains
   unresolved; a separate late invocation completed on the closed Worker.
-- [ ] Refresh the next pair's backup/review, completed-cycle and lease checks,
-  then validate its normal scheduled QRZ delivery. Preserve the never-activated
-  stale input and closed F2 input; neither authorizes reactivation.
+- [x] Refresh F4's backup/review, completed-cycle and lease checks; validate its
+  two scheduled QRZ deliveries, seven-attempt/six-artifact POST recovery and
+  unique ACK/neighborhood readback at observed minute/USB/LSB precision.
+  Preserve stale inputs and closed scopes; none authorizes reactivation.
 - [x] Exact c88d413e source and the test-only follow-up have green CI; schema 37
   remains deployed with all eight controls closed.
 - [x] Trial D2 delivered two new QRZ ACKs; all three prior attempts are unchanged.

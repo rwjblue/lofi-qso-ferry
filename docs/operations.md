@@ -8,8 +8,11 @@ The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.co
 
 The latest closed checkpoint is signed 7738f7d7/schema 37, with scheduler
 diagnostics and the optional native QRZ proof deadline deployed. Fresh populated
-PRE/POST recovery and exact-release CI pass. F2 closed with zero new attempts;
-current closed Worker is `17c17e12-db38-48da-9773-ca8df18268ef`. Its original
+PRE/POST recovery and exact-release CI pass. F4 adds two checked QRZ deliveries;
+current closed Worker is `bfdb4768-1018-4b38-a01d-bac7f7d662c1`. All seven
+attempts/six artifacts pass populated recovery; exact ACK identities and unique
+neighborhoods pass at observed minute/USB/LSB precision. Seconds remain unverified.
+F2 previously closed with zero new attempts. Its original
 unfinished scheduler row remains unresolved, while later closed cycles complete.
 A separate later invocation with the old scheduled time is not recovery of that
 row. Before another finite scope, check the exact completed current cycle and

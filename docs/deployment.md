@@ -1,6 +1,41 @@
 # Read-only production deployment
 
-Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Automatic exports and LoTW are disabled. The singleton and checked pairs C and D2 account for five QRZ ACKs, accepted at the observed returned precision with seconds unverified. Trials A and B made zero attempts. The resource summary reflects the latest closed deployment; dated sections retain earlier evidence.
+Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Automatic exports and LoTW are disabled. The singleton and checked pairs C, D2 and F4 account for seven QRZ ACKs, accepted at the observed returned precision with seconds unverified. Trials A, B and F2 made zero attempts. Dated sections retain earlier evidence.
+
+## Accepted F4 pair and current closed state (2026-10-25 UTC)
+
+F4 activated on time at the reviewed two-contact scope on signed `7738f7d7`.
+The **11:40 UTC** normal cron completed **two exports, 16 contact turns and zero
+errors/deferrals**, with no active leases afterward. Both actual payload hashes
+match the prior review. Its independent closer verified all eight controls
+closed at **11:43:12.107 UTC**, Worker
+`bfdb4768-1018-4b38-a01d-bac7f7d662c1`, deployment
+`ddba232c-baab-4829-bbc5-98faa2f4a41d` (installed 11:43:07.648636 UTC).
+
+After at least 180 seconds, POST recovery completed **11:46:41.112 UTC**. It
+contains **41,648,643 bytes**, exactly **seven delivered QRZ attempts and six
+retained artifacts**, with both new payloads decrypted and original proof pins,
+claims, immutable rows, integrity/FKs, isolated restore and repeated quarantine
+passing. Report
+`ferry-scheduled-batch-backup-7738f7d7-result-2026-10-25T11-46-27-222Z-98ee6103.json`,
+SHA256 `2e2f0594bb9898efceaba2a63228289f36afd9b0d17e7bfb19d812e4811ad8b9`.
+No production restore or recovery-time vendor mutation occurred.
+
+The read-only observer used **five QRZ reads** and verified both exact ACK LOGIDs
+and complete unique neighborhoods. One source record has SSB/USB and the other
+SSB/LSB; QRZ returns flat USB/LSB and minute-level time. Every other transmitted
+field matches literally, including their eight-character grids. The separate
+**11:48:57.488 UTC** assessment accepts these representations while retaining
+`literalExact=false` and `exactSeconds=false`. Assessment SHA256:
+`00080ce037cb025e2e910ff8229aa86123b7e7524fd9246b3d105691a1afcd6d`.
+Original literal holds and uncertain-result matching remain unchanged.
+
+The subsequent closed **11:45 UTC** run completed 168 turns with zero errors and
+zero attempts. Late finite-host observation returned an imprecise failure phase;
+full recovery and a separate fixed metadata query independently verify the
+seven-attempt ledger and completed post-close cycle. This host diagnostic issue
+does not invalidate those receipts. The monitored native-expiry window remains
+the next acceptance step; LoTW remains separate and disabled.
 
 ## Closed scheduler and QRZ deadline release (2026-10-25 UTC)
 

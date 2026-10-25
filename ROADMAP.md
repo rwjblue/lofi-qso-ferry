@@ -11,11 +11,11 @@ This roadmap is the handoff for implementation in this repository. Checked items
 | Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                           |
 | Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                            |
 | QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                                                   |
-| QRZ delivery                    | Singleton and checked pairs C/D2 accepted at observed precision; populated recovery passed          | Continue small checked QRZ batches before automatic scope                                       |
+| QRZ delivery                    | Singleton and checked pairs C/D2/F4 accepted at observed precision; populated recovery passed       | Verify a bounded normal-cron window before automatic scope                                      |
 | LoTW delivery                   | Disabled; source proof, empty three-day report and unrevoked serial observed                        | Renew current checks; prove signing, upload/readback acceptance and populated-evidence recovery |
-| Broader rollout                 | Disabled; five QRZ ACKs assessed with seconds unverified                                            | Observe further checked QRZ batches before automatic scope; LoTW follows separately             |
+| Broader rollout                 | Disabled; seven QRZ ACKs assessed with seconds unverified                                           | Verify the monitored QRZ window; LoTW follows separately                                        |
 
-The receiver fix is deployed; checked pairs C and D2 passed scheduled delivery,
+The receiver fix is deployed; checked pairs C, D2 and F4 passed scheduled delivery,
 recovery and known-ACK assessment at the observed minute/sideband representation.
 Next: continue small checked QRZ batches before automatic scope, as described in
 [the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
@@ -42,7 +42,7 @@ also passed all **1,688 tests and required checks** at **10:56:43 UTC**.
 
 The first prepared pair never activated and aged out while CI ran. The subsequent
 F2 scope activated but made **zero new attempts** and closed at **11:09:28.973 UTC**.
-Current closed Worker is `17c17e12-db38-48da-9773-ca8df18268ef`; independent
+F2's closed Worker was `17c17e12-db38-48da-9773-ca8df18268ef`; independent
 11:22:46 UTC attestation confirms all eight controls closed. The 11:14:21 UTC
 POST recovery preserves all five attempts and four artifacts through decryption,
 restore and repeated quarantine.
@@ -54,11 +54,20 @@ unknown. Later closed cycles complete and release leases. Their handled route
 exceptions are separate from a scheduler failure: the 11:25 cycle's five errors
 are LoTW history unavailability, with budget deferrals recorded separately.
 
-The next finite QRZ pair requires fresh backup/review, an exact completed closed
-cycle, no recent running invocation or active lease, and more than two minutes
-before the intended next cron. Timing reduces overlap; native finite scope,
-proofs and durable claims remain necessary when delayed events arrive. Then
-verify the bounded normal-cron window before automatic QRZ. LoTW remains
+F4 subsequently delivered **two reviewed contacts**, with USB and LSB sidebands,
+through a completed scheduled run with zero errors. Its independent closer
+verified all eight controls closed at **11:43:12.107 UTC**; current Worker is
+`bfdb4768-1018-4b38-a01d-bac7f7d662c1`. After the minimum observation period,
+the **11:46:41 UTC** recovery verifies all **seven attempts/six artifacts**.
+Five QRZ reads establish exact ACK identities and complete unique neighborhoods.
+The separate assessment accepts both minute/sideband representations; all other
+fields match literally, including their eight-character grids. Seconds remain
+unverified. Original literal holds and uncertain-result matching are unchanged.
+
+Next verify the bounded normal-cron window with native absolute expiry and
+complete attempt accounting before automatic QRZ. Timing reduces overlap;
+native proofs and durable claims remain necessary when delayed events arrive.
+LoTW remains
 separate. See [deployment evidence](docs/deployment.md#closed-scheduler-and-qrz-deadline-release-2026-10-25-utc).
 
 ### Previous production — accepted D2 checkpoint (c88d413e)
@@ -100,8 +109,10 @@ been exercised by an actual automatic QRZ window.
   completed scheduler runs on the actual release. Historical failure diagnosis
   remains open.
 - [x] Obtain green exact-release CI before the next live QRZ scope.
-- [ ] Complete the next checked QRZ pair, then the bounded normal-cron window
-  with full attempt accounting, readback and recovery before automatic scope.
+- [x] Complete F4 with two reviewed scheduled exports, populated recovery and
+  unique ACK/neighborhood readback at observed minute/sideband precision.
+- [ ] Complete the bounded normal-cron window with full attempt accounting,
+  readback and recovery before automatic scope.
 - [ ] Validate LoTW separately after QRZ, preserving the complete prior QRZ
   ledger in its recovery checks.
 

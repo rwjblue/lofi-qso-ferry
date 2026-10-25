@@ -10,7 +10,7 @@ import {
   reconcileAttempt,
 } from "../src/delivery.ts";
 import { observeContact, pollSource } from "../src/intake.ts";
-import { QrzClient } from "../src/qrz.ts";
+import { QrzClient, QrzError } from "../src/qrz.ts";
 import {
   loadCurrentSourcePresenceScope,
   loadSourceExportSnapshots,
@@ -515,6 +515,167 @@ test("a lost fresh insert response remains uncertain and closed gates preserve r
   assert.equal(h.calls.qrzWrites, 1);
   assert.equal(await h.count("destination_identity_claims"), 1);
 });
+
+for (const cancellation of ["pending", "rejected"] as const)
+  test(`QRZ ${cancellation} response cleanup preserves native no-attempt and uncertain lifecycle`, async (t) => {
+    const h = await fixture(t);
+    const failedResponse = () => {
+      let release!: () => void;
+      let started!: () => void;
+      let cancellations = 0;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const cancellationStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array([65]));
+          },
+          cancel() {
+            cancellations++;
+            started();
+            return cancellation === "pending"
+              ? gate
+              : Promise.reject(new Error("synthetic cleanup failure"));
+          },
+        }),
+        { status: 500 },
+      );
+      return {
+        response,
+        release,
+        cancellationStarted,
+        cancelled: () => cancellations,
+      };
+    };
+    const beforeCleanup = async <T>(
+      task: Promise<T>,
+      cleanup: ReturnType<typeof failedResponse>,
+    ): Promise<T> => {
+      const observed = task.then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      );
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const completed = await Promise.race([
+          observed,
+          // DB/crypto/admission before cancellation have no test deadline.
+          cleanup.cancellationStarted.then(
+            () =>
+              new Promise<null>((resolve) => {
+                timer = setTimeout(() => resolve(null), 10_000);
+              }),
+          ),
+        ]);
+        cleanup.release();
+        const final = await observed;
+        assert.notEqual(completed, null, "cleanup delayed the native outcome");
+        assert.equal(cleanup.cancelled(), 1);
+        if (!final.ok) throw final.error;
+        return final.value;
+      } finally {
+        clearTimeout(timer);
+        cleanup.release();
+      }
+    };
+
+    const failedRead = failedResponse();
+    let failedFetches = 0;
+    await assert.rejects(
+      beforeCleanup(
+        prepareDue(h.store, h.key(), h.contact, fresh, {
+          sourceProof: h.sourceProof,
+          fetcher: async (_input, init) => {
+            assert.equal(
+              new URLSearchParams(String(init?.body)).get("ACTION"),
+              "FETCH",
+            );
+            failedFetches++;
+            return failedRead.response;
+          },
+        }),
+        failedRead,
+      ),
+      (error: unknown) =>
+        error instanceof QrzError && error.kind === "transient",
+    );
+    assert.equal(failedFetches, 1);
+    for (const table of [
+      "attempts",
+      "attempt_artifacts",
+      "attempt_source_export_proofs",
+      "destination_identity_claims",
+    ])
+      assert.equal(await h.count(table), 0);
+    assert.equal(h.calls.qrzWrites, 0);
+
+    const prepared = await h.prepare();
+    assert(prepared.attemptId);
+    const attemptId = prepared.attemptId;
+    const immutable = async () => {
+      const rows: Record<string, unknown> = {};
+      for (const table of [
+        "attempts",
+        "attempt_artifacts",
+        "attempt_source_export_proofs",
+        "attempt_identity_claims",
+        "destination_identity_claims",
+      ])
+        rows[table] = (
+          await h.store.statement(`SELECT * FROM ${table}`).all()
+        ).results;
+      return rows;
+    };
+    const before = await immutable();
+    const failedWrite = failedResponse();
+    let inserts = 0;
+    const outcome = await beforeCleanup(
+      dispatchAttempt(h.store, "a", attemptId, fresh, {
+        fetcher: async (input, init) => {
+          const response = await h.fetcher(input, init);
+          const form = new URLSearchParams(String(init?.body));
+          if (form.get("ACTION") === "INSERT") {
+            inserts++;
+            assert.equal(form.has("OPTION"), false);
+            return failedWrite.response;
+          }
+          return response;
+        },
+      }),
+      failedWrite,
+    );
+    assert.equal(outcome.state, "uncertain");
+    assert.equal(await h.state(attemptId), "uncertain");
+    assert.equal(inserts, 1);
+    assert.equal(h.calls.qrzWrites, 1);
+    assert.deepEqual(await immutable(), before);
+    const events = (
+      await h.store
+        .statement(
+          "SELECT state FROM attempt_events WHERE tenant='a' AND attempt=? ORDER BY id",
+          attemptId,
+        )
+        .all<{ state: string }>()
+    ).results.map((row) => row.state);
+    assert.equal(events.at(-1), "uncertain");
+    assert(!events.includes("retry_scheduled"));
+    assert(!events.includes("delivered"));
+    assert.equal((await h.prepare()).reason, "unresolved_attempt");
+    assert.equal(
+      (
+        await dispatchAttempt(h.store, "a", attemptId, fresh, {
+          fetcher: async () => assert.fail("uncertain attempt was resent"),
+        })
+      ).state,
+      "skipped",
+    );
+    assert.equal(h.calls.qrzWrites, 1);
+    assert.deepEqual(await immutable(), before);
+  });
 
 test("a known-unsent admission hold reuses its immutable fresh attempt", async (t) => {
   const h = await fixture(t);

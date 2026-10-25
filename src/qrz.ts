@@ -121,6 +121,14 @@ export function parseQrzResponse(body: string): QrzResponse {
   if (!result.RESULT) throw new QrzError("protocol", "Missing QRZ result");
   return result;
 }
+/** Cleanup cannot delay or replace the established read/write outcome. */
+function cancelBestEffort(stream: { cancel(): Promise<void> } | null): void {
+  try {
+    void stream?.cancel().catch(() => undefined);
+  } catch {
+    // Cleanup failure must not change the response outcome.
+  }
+}
 async function boundedBody(response: Response): Promise<string> {
   if (!response.body) return "";
   const reader = response.body.getReader();
@@ -141,7 +149,7 @@ async function boundedBody(response: Response): Promise<string> {
       chunks.push(part.value);
     }
   } finally {
-    await reader.cancel().catch(() => undefined);
+    cancelBestEffort(reader);
   }
   const data = new Uint8Array(length);
   let offset = 0;
@@ -273,14 +281,14 @@ export class QrzClient {
       response.type === "opaqueredirect" ||
       (response.status >= 300 && response.status < 400)
     ) {
-      await response.body?.cancel();
+      cancelBestEffort(response.body);
       throw new QrzError(
         mutating ? "uncertain" : "protocol",
         "QRZ redirect or opaque response; mutation outcome must be reconciled",
       );
     }
     if (!response.ok) {
-      await response.body?.cancel();
+      cancelBestEffort(response.body);
       throw new QrzError(
         mutating
           ? "uncertain"

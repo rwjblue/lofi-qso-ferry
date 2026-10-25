@@ -1,7 +1,11 @@
 # QRZ first-insert pilot
 
-Current instruction: **keep exports disabled**. This document describes the
-remaining acceptance work; it does not authorize activation or a vendor write.
+Current instruction: complete the reviewed **one-contact QRZ trial**, with a
+fresh backup, at most one INSERT, exact readback and recovery. **Automatic
+exports and LoTW remain disabled** during that trial. The broader goal is to
+validate checked QRZ batches before automatic QRZ activation, then evaluate
+LoTW separately. This document records evidence; it does not itself grant write
+authority.
 
 ## What the restricted mode permits
 
@@ -40,9 +44,10 @@ not write acceptance or standing permission to export.
    immutable attempt, identity claim and source-proof facts before dispatch can
    make a mutating request. Current delivered/rejected resolution can purge the
    outbox, so an expected-record hash alone is not a recovery copy.
-5. Obtain a changed owner instruction for that exact contact, destination,
+5. Bind the actual owner instruction to that exact contact, destination,
    reviewed payload, execution window and at most one mutating transport
-   attempt. No actual trial runs under the present keep-disabled instruction.
+   attempt. The owner has authorized this singleton; automatic exports and
+   LoTW remain disabled.
 
 The protected operator packet now passes **22 native offline cases** for review,
 normal preparation/dispatch and stopped/uncertain outcomes. Its separate
@@ -98,7 +103,38 @@ hashes and exact ADIF bytes across canonical JSON storage; its separate 12-case
 suite and strict TypeScript checks pass. Helper manifest SHA256:
 `43f638a68c9431b20785d0ab34d98aef0dbf22877649d1c3ab3e63e0f6cf99ce`.
 
-## Acceptance after a separately authorized attempt
+## Authorized preparation and verified zero-attempt recovery — 2026-10-25 UTC
+
+The owner authorized the exact reviewed payload and at most one INSERT. The
+**03:15:59.683 UTC** pretrial backup contains 42,106,608 bytes, SQL SHA256
+`ea7f0ad99f11ff7c43d2a1027616954519c13cfb32c4136b1ecfae5cd3592768`.
+It passes populated evidence/credential/key checks, integrity/FKs and two
+isolated quarantines, with zero attempts and no unhashed ownership inputs.
+
+The actual invocation stopped during PREPARE at **03:20:29.264 UTC**. No
+prepared-packet acknowledgement, dispatch intent or outcome was returned. The
+host correctly recorded uncertainty and did not retry. The fixed launch burn,
+original approval, prepare intent and failure journal remain preserved.
+
+Independent **03:22:23.152 UTC** failed-prepare recovery verifies zero attempts,
+attempt identity claims, source/LoTW pins, cutovers and staging guards. The
+42,301,034-byte SQL snapshot has SHA256
+`0cb41a2ce9bcaa22703fe005082c955a9889f019f14a652d206b66a86d712d5f`.
+All 3,327 baseline claims, 2,895 QRZ owners/markers, 3,860 LoTW owners and 3,327
+exact evidence rows are unchanged. All crypto, integrity/FK and repeated
+quarantine checks pass. One unpinned diagnostic proof and retention row remain.
+This establishes no dispatch and no INSERT; it is not write acceptance. The
+historical unknown-outcome journal remains unchanged.
+
+The original tool discarded the specific preparation hold, so its cause cannot
+be reconstructed from that journal. Later context and catch-up changes occurred
+after the failure and do not establish its cause. A separate source-proof/QRZ
+diagnostic completed at **03:29:02.518 UTC** with two source and three QRZ reads,
+109 D1 RPCs / 135 SQL statements, no write capability and a disposed preview.
+All eight production controls remained closed. Fresh evidence is still required
+for a continuation; the original nonce, approval and launch burn cannot be reused.
+
+## Acceptance after the authorized attempt
 
 Use the normal guarded preparation and dispatch functions with exact singleton
 scope. Preserve all late source, proof, credential, lease, ownership and request

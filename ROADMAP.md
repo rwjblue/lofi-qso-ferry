@@ -170,9 +170,9 @@ production export capacity; see [deployment details](docs/deployment.md).
 
 The exact-release QRZ operator packet has been regenerated and independently
 reviewed: **22 native execution cases, 92 supporting cases and 21 recovery
-cases** pass, with unchanged SQL permissions. This prepares the separately
-authorized trial; it creates no approval or write authority. The specific
-one-contact trial instruction remains pending. General exports stay disabled.
+cases** pass, with unchanged SQL permissions. The owner subsequently authorized
+the reviewed one-contact trial, with a fresh backup, at most one INSERT, exact
+readback and recovery. Automatic exports and LoTW remain disabled.
 
 The **02:56:37.961 UTC** current-release SELECT-only payload review confirms the
 same original contact, book, credential/template versions, every transmitted
@@ -181,6 +181,22 @@ field and exact ADIF bytes, with no source/vendor request or attempt. The
 closed controls. This preliminary review still requires normal context refresh,
 a fresh source proof and vendor checks before an authorized trial; see
 [the pilot evidence](docs/qrz-pilot.md).
+
+The first authorized invocation stopped during preparation, before dispatch.
+Its **03:22:23.152 UTC** recovery check independently verifies **zero attempts,
+attempt claims, proof pins or cutovers**, and preserves every baseline claim,
+historical owner, association marker and exact evidence record. Credential/key
+decryption, integrity/FKs and two isolated quarantines pass. One unpinned
+diagnostic proof remains; no INSERT or acknowledgement is claimed. The original
+launch burn, approval and unknown-outcome journal are preserved.
+
+A separate **03:29:02.518 UTC** diagnostic completed normal source collection,
+final drain, proof verification and the same-contact QRZ checks, with two source
+reads, three QRZ reads and **109 D1 RPCs / 135 SQL statements**. It had no INSERT
+capability. That short-lived evidence does not authorize a later write. Next:
+finish the operator diagnostic repair, continue only from independently
+verified zero-attempt state with fresh checks, then require exact INSERT
+readback and recovery before checked QRZ batches. LoTW acceptance follows QRZ.
 
 ### Previous production — ownership bootstrap and deletion status (f2c41cb3)
 

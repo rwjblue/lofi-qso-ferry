@@ -39,9 +39,14 @@ are not established by these samples.
 
 The exact-release QRZ operator packet passes **22 native execution cases,
 92 supporting cases and 21 recovery cases**. The later current-release payload
-review is recorded in the [pilot guide](qrz-pilot.md). Fresh normal context,
-source-proof and vendor checks and the specific owner instruction remain
-required before a real trial. Production controls remain closed. Singleton QRZ
+review is recorded in the [pilot guide](qrz-pilot.md). The owner has authorized
+that reviewed singleton with a fresh backup, at most one INSERT, exact readback
+and recovery. The first invocation stopped during preparation; independent
+**03:22:23.152 UTC** recovery confirms zero attempts, claims, pins and cutovers,
+with every baseline immutable row preserved and crypto/isolated restore checks
+passing. A later source-proof/QRZ diagnostic passed without write capability.
+Continue only with fresh normal checks and preserved zero-attempt lineage;
+no INSERT acceptance is claimed. Production controls remain closed. Singleton QRZ
 acceptance, broader QRZ corrections,
 LoTW acceptance, global source authority and sustained capacity are separate
 milestones.

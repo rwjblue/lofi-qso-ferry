@@ -28,8 +28,18 @@ and the tenant-key binding, with zero changed, missing or added rows. The two
 unhashed owners in the POST snapshot were processed before **02:44:16.072 UTC**:
 policy 6 is active, the **4,161-row source index is clean**, and all **9,981
 ownership inputs are covered**, with zero pending, held or unhashed work.
-Attempts remain zero. No production restore or vendor write occurred; see
+At that checkpoint attempts were zero and no vendor write had occurred; see
 [backup receipts](rollout-checklist.md#first-export-trial-packet).
+
+The later authorized singleton received one QRZ INSERT acknowledgement by
+**03:55:14.887 UTC**. Immediate exact readback remained unresolved, so further
+writes are held. The **03:56 UTC** recovery snapshot verifies exactly one
+delivered attempt, accepted receipt, claim and source-proof pin, preserves and
+decrypts the protected original payload after normal outbox purging, and passes
+all baseline immutable-row, integrity/FK and repeated-quarantine checks. No
+production restore occurred. All eight controls remain closed. Resolve the
+read-only LOGID/field/narrative comparison before checked batches or automatic
+activation; see the [current QRZ pilot evidence](qrz-pilot.md).
 
 The first two completed new-release crons made 126/148 contact turns and
 96/156 classifications, with zero adoptions or attempt turns, and stopped at

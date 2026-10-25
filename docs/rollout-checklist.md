@@ -3,8 +3,9 @@
 Ferry is suitable for an invite-only, read-only pilot with one or two users.
 Automatic exports are still disabled. A small first-export trial requires current source
 proofs, fresh vendor evidence and exact contact review; finishing the 200,000-contact capacity
-plan is a separate expansion milestone. No real logbook entry has been inserted,
-replaced, deleted or uploaded during this implementation work.
+plan is a separate expansion milestone. One authorized QRZ INSERT has been
+acknowledged and its delivered-attempt recovery passes; exact readback remains
+unresolved. Further writes are held while that read-only check is completed.
 
 ## Current evidence (2026-10-25)
 
@@ -50,6 +51,16 @@ no INSERT acceptance is claimed. Production controls remain closed. Singleton QR
 acceptance, broader QRZ corrections,
 LoTW acceptance, global source authority and sustained capacity are separate
 milestones.
+
+The corrected singleton invocation received **one QRZ INSERT acknowledgement**
+by **03:55:14.887 UTC**. Exact readback remained unresolved, so automatic
+exports and LoTW stay disabled and no additional INSERT is allowed under this
+trial. The **03:56 UTC** post-trial backup verifies exactly one delivered
+attempt, accepted receipt, matching claim and proof pin, and decryption of the
+protected original artifact after normal database outbox purging. All baseline
+immutable rows, credentials and keys survive integrity/FK checks and two
+isolated quarantines. Resolve the exact LOGID/field/narrative readback before
+any checked batches or scheduled export activation.
 
 ### Earlier release evidence (f2c41cb3, 2026-10-24)
 

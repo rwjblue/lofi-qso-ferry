@@ -6,16 +6,16 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ### Export readiness at a glance
 
-| Work                            | Current state                                                                                       | Next acceptance evidence                                                                                       |
-| ------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                                          |
-| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                                           |
-| QRZ first-insert evidence       | Prior-release source proof and complete empty neighborhood observed for one contact                 | Renew normal evidence immediately before any separately authorized trial                                       |
-| QRZ delivery                    | Disabled; no vendor write acceptance claimed                                                        | One reviewed payload, durable recovery capture, at most one INSERT, exact acknowledged-record readback         |
-| LoTW delivery                   | Disabled; source proof, empty three-day report and unrevoked serial observed                        | Renew current checks; prove signing, upload/readback acceptance and populated-evidence recovery                |
-| Broader rollout                 | Disabled                                                                                            | Accept the restricted QRZ trial, then explicitly approve destination scope and eligible older-contact backfill |
+| Work                            | Current state                                                                                       | Next acceptance evidence                                                                                      |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                                         |
+| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                                          |
+| QRZ first-insert evidence       | Current-release source proof and fresh empty neighborhood passed for the authorized contact         | Renew normal evidence for every later contact                                                                 |
+| QRZ delivery                    | One INSERT acknowledged; delivered-attempt recovery passed; exact readback unresolved               | Resolve acknowledged LOGID readback before any further writes                                                 |
+| LoTW delivery                   | Disabled; source proof, empty three-day report and unrevoked serial observed                        | Renew current checks; prove signing, upload/readback acceptance and populated-evidence recovery               |
+| Broader rollout                 | Disabled; staged progression authorized after successful validation                                 | Accept the singleton, observe small checked QRZ batches and scheduled delivery, then consider automatic scope |
 
-The next decision is the restricted QRZ trial described in
+The next check is exact readback for the restricted QRZ trial described in
 [the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
@@ -197,6 +197,18 @@ capability. That short-lived evidence does not authorize a later write. Next:
 finish the operator diagnostic repair, continue only from independently
 verified zero-attempt state with fresh checks, then require exact INSERT
 readback and recovery before checked QRZ batches. LoTW acceptance follows QRZ.
+
+By **03:55:14.887 UTC**, the corrected operator packet completed normal
+preparation and **one QRZ INSERT**, with a valid acknowledgement and LOGID.
+Its immediate exact readback remained unresolved, so no further writes are
+permitted by this trial. Automatic exports and LoTW remain disabled. The
+**03:56 UTC** post-trial recovery verifies exactly one delivered attempt, its
+accepted receipt, identity claim and source-proof pin; the original encrypted
+artifact remains recoverable in the protected packet after normal outbox
+purging. Every pretrial immutable row is preserved, and crypto, integrity/FKs
+and two isolated quarantines pass. Next: independently FETCH the acknowledged
+LOGID and compare every transmitted field and full narrative. Acknowledgement
+and recovery alone do not establish exact readback acceptance.
 
 ### Previous production — ownership bootstrap and deletion status (f2c41cb3)
 

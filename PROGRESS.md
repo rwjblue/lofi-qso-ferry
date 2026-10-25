@@ -1,6 +1,35 @@
 # Implementation progress
 
-## Current production — ownership bootstrap and deletion status (f2c41cb3)
+## Current production and export acceptance — 2026-10-25 UTC
+
+Signed `0386af30312494bf31c2fd45f833e9c2a41534e9` serves production as Worker
+`fbaf8af8-d51c-44e9-a5ca-53e29c2eb5c3`, deployment
+`a909a390-1b0d-418b-8bfb-80a72949c9dd`, sole 100% traffic. All **1,653 tests**
+and required checks pass in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40154037329).
+There are 36 installed migrations through `0037`; all eight export controls
+remain closed. The release includes QRZ observation reuse/planning/re-entry and
+LoTW signing profile 3. See [deployment evidence](docs/deployment.md).
+
+The owner authorized the reviewed QRZ singleton with a fresh backup, at most one
+INSERT, exact readback and recovery. Two preparations stopped before any attempt
+or dispatch, independently verified by recovery. The corrected operator tool
+then received **one QRZ INSERT acknowledgement** by **03:55:14.887 UTC**. The
+normal runtime stored delivery and its LOGID; immediate exact readback remained
+unresolved. No resend or additional INSERT occurred. The temporary preview was
+disposed; automatic exports and LoTW remain disabled.
+
+The **03:56 UTC** backup and isolated recovery verify exactly one delivered
+attempt, accepted receipt, matching identity claim/source-proof pin and
+decryption of the preserved original artifact after normal outbox purging.
+Every baseline immutable row is unchanged; credential/key checks, integrity/FKs
+and two isolated quarantines pass. Next: complete a read-only exact LOGID and
+field/narrative comparison. Only after acceptance should small checked QRZ
+batches and scheduled delivery precede automatic QRZ scope; LoTW follows its
+own signing/upload/readback acceptance. The [roadmap](ROADMAP.md) and
+[pilot guide](docs/qrz-pilot.md) carry the current status. Older observations
+below retain their original release and instruction context.
+
+## Previous production — ownership bootstrap and deletion status (f2c41cb3)
 
 Signed `f2c41cb3a929ae3d3545e235894027b84fbf09fb` deployed read-only at
 **2026-10-24 21:29:41.127501 UTC**, Worker

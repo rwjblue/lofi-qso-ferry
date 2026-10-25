@@ -1,6 +1,34 @@
 # QRZ and template implementation evidence
 
-Initial implementation review: 2026-10-22, using documentation and synthetic fixtures. Subsequent read-only observations are dated below. No QRZ writes were performed; production exports remain disabled.
+Initial implementation review: 2026-10-22, using documentation and synthetic fixtures. Subsequent observations are dated below. One authorized QRZ INSERT has now been acknowledged; exact readback remains unresolved. Automatic exports remain disabled.
+
+## Authorized singleton INSERT — 2026-10-25 03:55 UTC
+
+The reviewed singleton completed normal source-proof, QRZ absence, ownership,
+preparation and dispatch checks on exact deployed `0386af30`. QRZ acknowledged
+**one INSERT** with a LOGID by **03:55:14.887 UTC**. Its immediate exact readback
+was unresolved; no retry or additional INSERT occurred. All eight production
+controls stayed closed, and the temporary preview was disposed.
+
+The **03:56 UTC** recovery check verifies exactly one delivered attempt and
+accepted receipt, its durable identity claim and source-proof pin. The normal
+ACK path purged the database outbox; the original encrypted artifact remains
+preserved and decrypts correctly from the protected pre-dispatch packet.
+All baseline claims, historical owners, association markers and exact evidence
+remain unchanged. Integrity/FKs, credential/key checks and two isolated
+quarantines pass. This proves acknowledged delivery and recovery, not exact
+readback acceptance. The next action is a read-only comparison of that LOGID
+against the immutable transmitted payload; further writes remain held.
+
+The earlier two invocations stopped before any attempt or dispatch, as verified
+by their independent recovery snapshots. An offline reproduction identified
+the operator tool's omitted bounded history-covering SELECT: QRZ's ambiguous
+empty selection triggered its fallback, which the tool's SQL allowlist denied.
+The separate corrected packet adds only that read-only template with exact
+tenant/source/destination and row-limit checks. All **32 execution, diagnostic
+and inventory cases** pass, including full fallback preparation, one synthetic
+INSERT, exact readback and replay denial. The deployed application source,
+write permissions, budgets and factual recovery schemas are unchanged.
 
 ## Same-contact cloud checkpoint — f2c41cb3, 2026-10-24 22:03 UTC
 

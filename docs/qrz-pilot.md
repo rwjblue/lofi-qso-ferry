@@ -134,6 +134,23 @@ diagnostic completed at **03:29:02.518 UTC** with two source and three QRZ reads
 All eight production controls remained closed. Fresh evidence is still required
 for a continuation; the original nonce, approval and launch burn cannot be reused.
 
+## Acknowledged INSERT and populated recovery — 2026-10-25 UTC
+
+The corrected operator packet completed normal preparation and one INSERT by
+**03:55:14.887 UTC**. QRZ returned a valid acknowledgement and LOGID, and the
+normal runtime stored delivery. The immediate exact readback remained
+unresolved; no retry or second INSERT occurred. All eight production controls
+stayed closed, and the temporary preview was disposed.
+
+The **03:56 UTC** recovery snapshot contains 42,499,980 bytes and verifies
+exactly one expected delivered QRZ attempt, accepted receipt, identity claim and
+source-proof pin. Its original encrypted payload remains preserved in the host
+packet and decrypts correctly after normal ACK outbox purging. All 3,327
+baseline claims, 2,895 QRZ owners/markers, 3,860 LoTW owners and 3,327 exact
+evidence rows are unchanged; crypto, integrity/FKs and two isolated quarantines
+pass. This does not resolve the readback. The singleton's INSERT allowance is
+exhausted; only read-only investigation follows until acceptance is established.
+
 ## Acceptance after the authorized attempt
 
 Use the normal guarded preparation and dispatch functions with exact singleton

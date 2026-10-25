@@ -1,6 +1,96 @@
 # Read-only production deployment
 
-Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Automatic exports and LoTW are disabled. One authorized singleton changed QRZ; the later scheduled two-contact trial made zero attempts or vendor writes. The resource summary reflects the latest closed deployment; dated sections retain earlier evidence.
+Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Automatic exports and LoTW are disabled. One authorized singleton changed QRZ; both later scheduled two-contact trials made zero attempts or vendor writes. The resource summary reflects the latest closed deployment; dated sections retain earlier evidence.
+
+Signed revision `87e87b2d9f02f4534a914789a9e4487f35703a43` deployed closed at
+**2026-10-25 05:50:40.674521 UTC** (initial Worker prefix `ba80`, deployment
+prefix `85ba0473`). All **1,666 tests** and required checks pass in
+[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40165603166).
+One earlier Cloudflare `10500` preflight failed without changing the old `8122`
+Worker. Independent **05:51:15.649 UTC** attestation confirmed the successful
+closed deployment. All **37 migrations through `0038`** remain installed.
+
+Trial B's exact two-contact QRZ activation intent was recorded at
+**05:59:23.886 UTC** (Worker prefix `3e6748a8`). Both contacts reached live
+selection at **06:01:30 / 06:01:45 UTC**. The first held for incomplete history;
+the second for `source_export_proof_read_failed`. There were **zero new attempts
+or vendor writes**. Closure deployed the same signed source at
+**06:05:54.576653 UTC** as Worker `7aaf4d15-66e8-48d4-ab6a-b771b02000ad`,
+deployment `0765e455-aafd-45ab-b79a-c9306a3560aa`. Independent
+**06:11:34.594 UTC** attestation confirms all eight controls closed. At least
+180 seconds of drain observation found zero new attempts and **one unfinalized
+scheduler row**; that row is not reported as a completed run.
+
+| Recovery checkpoint   | Completed UTC |  SQL bytes | Report SHA256                                                      |
+| --------------------- | ------------- | ---------: | ------------------------------------------------------------------ |
+| PRE                   | 05:46:13.212  | 41,598,715 | `77e5756f469e07b161d907c6e694629fd5aa726dfce9aa6300ea2924bc6af32b` |
+| POST                  | 05:52:02.914  | 41,600,106 | `35a88778189cfc8196b45098477afbf69b1c6234e696119f7afe734daa20bff5` |
+| After Trial B closure | 06:12:54.606  | 41,555,300 | `ea885a69c875f92fd6785c45e0da48a013eb97bdbd57e00c79e134b72f525436` |
+
+The final protected report is
+`ferry-scheduled-batch-backup-87e87b2d-result-2026-10-25T06-12-25-647Z-5c0c43ef.json`.
+It verifies 37 migrations, exactly the expected original singleton, zero new
+attempts/artifacts, every prior immutable row, integrity/FKs and repeated
+quarantine. No production restore occurred. The singleton's purged body remains
+preserved in its original protected host packet.
+
+Native Workerd proves that the coordinator called native `fetch` with an invalid
+receiver, throwing `Illegal invocation` before outbound transport. Signed,
+pushed fix `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7` changes only the call to
+`.call(globalThis, ...)`. The actual-coordinator regression and 42 focused cases
+pass; full checks and [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40168290537)
+are running. **This fix is not deployed.** The next release must finish those
+checks and take a fresh backup before deploying closed.
+
+The 05:50 UTC idle run waited for the ordinary cycle lease to expire at
+05:51:00.023 UTC. The 05:55 UTC closed run completed 189 turns in 31.837 seconds
+with zero errors. These samples do not establish sustained capacity.
+
+The release retains the mandatory LoTW ownership write bridge, permanent encrypted
+raw historical references and the guarded **±30-minute LoTW association path**.
+Comparison uses current forward/reverse uniqueness and retained ownership across
+inactive, signing-only and reconnected destinations. Minute-only times and valid
+nested grid precision remain unchanged. Raw historical references are separate
+from exact receipt identities and `ledger.remote_id`; they permanently block
+uploads for that source contact across every LoTW destination. Exact Ferry
+receipt recovery remains separate. QRZ retains its book-scoped LOGID ownership
+and association-only write blocks.
+
+The current release includes immediate QRZ history-observation reuse, bounded planning
+allowances and deferred-key re-entry without removing the final duplicate query.
+LoTW signing profile `ferry-lotw-v2-us-ca-3` holds unverified FST4W signing and
+stale prepared profiles; stable exact identities and uncertain-result recovery
+remain intact. Shared source comparisons, bounded ownership maintenance and
+partition-local history retry delays remain in place. At **02:44:16.072 UTC**,
+policy 6 is active: **9,981 covered inputs, zero pending or held inputs and zero
+unhashed owners**. The comparison index is clean at **4,161 rows**. This aggregate
+does not validate ciphertext or grant export authority; protected recovery
+evidence is recorded below.
+Remaining work includes releasing the source-transport receiver fix, successful
+checked scheduled QRZ delivery/readback, wider QRZ observation, separate LoTW
+acceptance, broader exception review and sustained capacity. The LoTW observer
+and recovery tools are ready offline only; no real-key upload acceptance is
+claimed. All export controls are closed.
+
+| Resource                  | Current value                                                                               |
+| ------------------------- | ------------------------------------------------------------------------------------------- |
+| Cloudflare account        | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                       |
+| Worker                    | `lofi-qso-ferry`, environment `production`                                                  |
+| Deployed source revision  | `87e87b2d9f02f4534a914789a9e4487f35703a43`                                                  |
+| Worker version            | `7aaf4d15-66e8-48d4-ab6a-b771b02000ad`                                                      |
+| Deployment                | `0765e455-aafd-45ab-b79a-c9306a3560aa`, `2026-10-25T06:05:54.576653Z`                       |
+| Origin / passkey RP       | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                               |
+| Dedicated D1              | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                            |
+| Migrations                | All 37 migrations through `0038_attempt_artifacts`; independently verified after deployment |
+| Sender                    | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                           |
+| Sending domain            | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled        |
+| Schedule                  | `*/5 * * * *`                                                                               |
+| Alternate origins         | workers.dev and version previews disabled                                                   |
+| Historical 05:00 artifact | 2,093.85 KiB raw / 410.43 KiB gzip; reported startup 30 ms                                  |
+
+The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
+
+## Retained-artifact release and first scheduled trial (890f714c)
 
 Signed revision `890f714c39390b71f0d4222eb03ef864981e5f98` deployed at
 **2026-10-25 05:00:29.106103 UTC**, initially Worker
@@ -16,7 +106,8 @@ A restricted two-contact QRZ scope was opened for a real scheduled trial. The
 05:10 UTC run completed 27 contact turns/22 cached classifications in 93.097
 seconds, with zero attempts, errors or vendor writes. The policy change woke the
 whole backlog, leaving the scoped contacts behind unrelated due work. Successful
-scheduled delivery remains unproved; finite-scope scheduling is the next fix.
+scheduled delivery remained unproved. The later `87e87b2d` release corrected
+finite-scope selection, as recorded above.
 
 Closure deployed the same signed source at **05:13:15.292286 UTC**, Worker
 `8122bc6c-87eb-46d0-8b2e-5e13e5cd16e3`, deployment
@@ -27,56 +118,13 @@ The 05:17 UTC backup passes isolated recovery/quarantine with exactly the origin
 one attempt, zero new scheduled attempts and zero table artifacts. The singleton's
 purged body remains preserved only in its original protected host packet.
 
-The release retains the mandatory LoTW ownership write bridge, permanent encrypted
-raw historical references and the guarded **±30-minute LoTW association path**.
-Comparison uses current forward/reverse uniqueness and retained ownership across
-inactive, signing-only and reconnected destinations. Minute-only times and valid
-nested grid precision remain unchanged. Raw historical references are separate
-from exact receipt identities and `ledger.remote_id`; they permanently block
-uploads for that source contact across every LoTW destination. Exact Ferry
-receipt recovery remains separate. QRZ retains its book-scoped LOGID ownership
-and association-only write blocks.
-
-This release adds immediate QRZ history-observation reuse, bounded planning
-allowances and deferred-key re-entry without removing the final duplicate query.
-LoTW signing profile `ferry-lotw-v2-us-ca-3` holds unverified FST4W signing and
-stale prepared profiles; stable exact identities and uncertain-result recovery
-remain intact. Shared source comparisons, bounded ownership maintenance and
-partition-local history retry delays remain in place. At **02:44:16.072 UTC**,
-policy 6 is active: **9,981 covered inputs, zero pending or held inputs and zero
-unhashed owners**. The comparison index is clean at **4,161 rows**. This aggregate
-does not validate ciphertext or grant export authority; protected recovery
-evidence is recorded below.
-Remaining work includes the scoped scheduling correction, successful checked
-scheduled QRZ delivery/readback, wider QRZ observation, separate LoTW acceptance,
-broader exception review and sustained capacity. Exports remain disabled while
-the scheduling correction is validated.
-
-| Resource                 | Current value                                                                               |
-| ------------------------ | ------------------------------------------------------------------------------------------- |
-| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                       |
-| Worker                   | `lofi-qso-ferry`, environment `production`                                                  |
-| Deployed source revision | `890f714c39390b71f0d4222eb03ef864981e5f98`                                                  |
-| Worker version           | `8122bc6c-87eb-46d0-8b2e-5e13e5cd16e3`, created `2026-10-25T05:13:14.307258Z`               |
-| Deployment               | `b1542925-2e7d-4a0f-a76e-2dfd978ebc26`, `2026-10-25T05:13:15.292286Z`, 100% of traffic      |
-| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                               |
-| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                            |
-| Migrations               | All 37 migrations through `0038_attempt_artifacts`; independently verified after deployment |
-| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                           |
-| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled        |
-| Schedule                 | `*/5 * * * *`                                                                               |
-| Alternate origins        | workers.dev and version previews disabled                                                   |
-| 05:00 source artifact    | 2,093.85 KiB raw / 410.43 KiB gzip; reported startup 30 ms                                  |
-
-The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
-
 ## QRZ request reuse and LoTW profile 3 release (0386af30)
 
 The standard `deploy-readonly` task ran from an exact signed-release checkout.
 No migration, credential or export-control change was required, and no new
-assets were uploaded. The immediate attestation above verifies the actual
-Worker, deployment, revision, assets and closed controls independently of build
-labels.
+assets were uploaded. The **02:32:22.968 UTC** attestation verified that release’s
+actual Worker, deployment, revision, assets and closed controls independently of
+build labels.
 
 The **02:30:14.652 UTC PRE** snapshot contains **40,422,594 bytes**, SQL SHA256
 `0773b9369aa7312d37212d8d4b91d993ee9f583f31718b5cb4840c576f618fdc`.

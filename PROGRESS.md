@@ -2,25 +2,39 @@
 
 ## Current production and export acceptance — 2026-10-25 UTC
 
-Signed `890f714c39390b71f0d4222eb03ef864981e5f98` serves production as Worker
-`8122bc6c-87eb-46d0-8b2e-5e13e5cd16e3`, deployment
-`b1542925-2e7d-4a0f-a76e-2dfd978ebc26`, sole 100% traffic. All **1,663 tests**
-and required checks pass in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40162836106).
-There are 37 installed migrations through `0038`; all eight export controls
-are closed. Original encrypted attempt artifacts now survive terminal outbox
-cleanup with their original AAD and seven-day expiry. Native tests cover atomic
-capture, uncertain delivery, expiry, KEKs and populated full-SQL recovery.
-The PRE/POST backups preserve the existing delivered singleton and all immutable
-evidence. See [deployment evidence](docs/deployment.md).
+Signed `87e87b2d9f02f4534a914789a9e4487f35703a43` serves production as Worker
+`7aaf4d15-66e8-48d4-ab6a-b771b02000ad`, deployment
+`0765e455-aafd-45ab-b79a-c9306a3560aa`. All **1,666 tests** and required checks
+pass in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40165603166).
+All **37 migrations through `0038`** remain installed. The source deployed closed
+at **05:50:40.674521 UTC**; the later exact two-contact scope closed at
+**06:05:54.576653 UTC**. Independent **06:11:34.594 UTC** attestation confirms all
+eight controls closed. Original encrypted artifacts retain their original AAD
+and seven-day expiry through terminal outbox cleanup.
 
-The restricted two-contact scheduled trial made **zero new attempts or writes**.
-Its 05:10 UTC run processed 27 contacts/22 classifications before its 93.097-second
-deadline. Opening the scope woke the whole backlog, leaving the selected contacts
-behind unrelated due work. Scope closure deployed at 05:13:15 UTC; independent
-05:17:40 UTC attestation confirms all eight closed controls. Both runs are complete,
-and the 05:17 UTC backup verifies exactly the original one attempt with no new
-artifacts. Next: fix finite-scope scheduling, validate the large-backlog regression,
-then repeat the checked QRZ trial. No queue timestamps or claims were forced.
+The deployed finite-scope scheduler correction reached both Trial B contacts at
+**06:01:30 / 06:01:45 UTC**. One held for incomplete history and the other for
+`source_export_proof_read_failed`; **zero new attempts or vendor writes** occurred.
+At least 180 seconds of drain observation found zero new attempts and **one
+unfinalized scheduler row**. The **06:12:54.606 UTC** recovery snapshot verifies
+exactly the original singleton, zero new artifacts, all prior immutable rows,
+integrity/FKs and two quarantines. Its SQL contains **41,555,300 bytes**. See
+[deployment evidence](docs/deployment.md) for PRE/POST and recovery hashes.
+
+Native Workerd reproduces a coordinator transport bug: method-style native
+`fetch` invocation throws `Illegal invocation` before outbound transport. Signed
+fix `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7` binds `globalThis`; the actual
+coordinator regression and **42 focused cases pass**. Full checks and
+[CI 40168290537](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40168290537)
+are running; **the fix is not deployed**. Next: finish checks, take a fresh backup,
+deploy closed and repeat the checked scheduled trial. Successful scheduled QRZ
+delivery/readback and populated live artifact recovery remain open.
+
+The earlier **05:10 UTC** `890f714c` trial made zero attempts because unrelated
+policy-woken backlog preceded its scope; its **05:17 UTC** recovery remains a
+historical receipt. The **05:50 UTC** idle run waited on the ordinary cycle lease
+until **05:51:00.023 UTC**. A **05:55 UTC** closed run completed 189 turns in
+31.837 seconds with zero errors; this does not establish sustained capacity.
 
 On preceding `0386af30`, the owner authorized the reviewed QRZ singleton with a fresh backup, at most one
 INSERT, exact readback and recovery. Two preparations stopped before any attempt
@@ -45,7 +59,9 @@ unresolved literal-readback outcome or uncertain recovery. All eight controls
 remain closed. Retained-artifact recovery is now deployed; successful scheduled
 delivery and populated live table-artifact recovery remain unobserved.
 Small checked QRZ batches must precede automatic QRZ scope; LoTW follows its
-own signing/upload/readback acceptance. The [roadmap](ROADMAP.md) and
+own signing/upload/readback acceptance. Its one-contact observer and recovery
+tools are ready offline only; no actual LoTW signing or upload has been proved.
+The [roadmap](ROADMAP.md) and
 [pilot guide](docs/qrz-pilot.md) carry the current status. Older observations
 below retain their original release and instruction context.
 

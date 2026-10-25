@@ -6,14 +6,50 @@ All checked-in environments disable exports. Local tests and synthetic signature
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
-Current signed release `890f714c39390b71f0d4222eb03ef864981e5f98` includes
+Current signed release `87e87b2d9f02f4534a914789a9e4487f35703a43` passes
+**1,666 tests** and [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40165603166).
+All **37 migrations through `0038`** remain installed. Worker
+`7aaf4d15-66e8-48d4-ab6a-b771b02000ad`, deployment
+`0765e455-aafd-45ab-b79a-c9306a3560aa`, is the closed deployment from
+**06:05:54.576653 UTC**; independent **06:11:34.594 UTC** attestation confirms all
+eight controls closed.
+
+Trial B reached both exact QRZ contacts at 06:01:30 / 06:01:45 UTC. Incomplete
+history and `source_export_proof_read_failed` held them; zero attempts or vendor
+writes occurred. After at least 180 seconds of drain observation, zero new
+attempts and one unfinalized scheduler row remain. Preserve that unfinished
+telemetry. The **06:12:54.606 UTC** recovery snapshot contains **41,555,300 bytes**
+and verifies exactly the prior singleton, zero new artifacts, all immutable
+prior rows, integrity/FKs and two quarantines. PRE/POST hashes are in
+[deployment evidence](deployment.md).
+
+Native Workerd reproduces the source coordinator's invalid native-fetch receiver
+before outbound transport. Signed `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7`
+fixes the call with `globalThis`; 42 focused cases pass, while full checks and
+[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40168290537) are running.
+It is **not deployed**. Finish checks and take a new backup before deploying it
+closed, then renew the checked scheduled trial. Keep normal history/proof holds;
+do not reset queue timestamps, clear claims or bypass budgets.
+
+The LoTW one-contact report observer and recovery tools are ready offline only.
+They preserve exact raw report bytes and immutable artifact/certificate/pin links,
+use the normal background budget, and distinguish submitted from observed
+acceptance. They supply no signing/upload authority or actual ARRL acceptance.
+QRZ scheduled acceptance remains first; automatic QRZ and LoTW remain disabled.
+The 05:50 UTC idle run waited on the ordinary cycle lease until 05:51:00.023 UTC;
+the 05:55 UTC closed run's 189 turns / 31.837 seconds / zero errors is a sample,
+not sustained capacity evidence.
+
+### Earlier 890f714c scheduled checkpoint
+
+Signed release `890f714c39390b71f0d4222eb03ef864981e5f98` includes
 retained original encrypted attempt artifacts with unchanged AAD and seven-day
 expiry. All 1,663 tests and required checks pass in
 [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40162836106).
 There are 37 installed migrations through `0038`. The scheduled two-contact QRZ
 trial made zero new attempts or writes: global policy wake placed unrelated work
-ahead of the scoped contacts until the run's deadline. Its scope is closed while
-finite-scope scheduling is corrected. Worker
+ahead of the scoped contacts until the run's deadline. Its scope was closed pending the
+finite-scope correction later deployed in `87e87b2d`. Worker
 `8122bc6c-87eb-46d0-8b2e-5e13e5cd16e3`, deployment
 `b1542925-2e7d-4a0f-a76e-2dfd978ebc26`, serves sole 100% traffic as of
 05:13:15 UTC. Independent 05:17:40 UTC attestation confirms all eight controls

@@ -4,6 +4,36 @@ Initial adapter review: 2026-10-22, before live requests. The dated observations
 below record subsequent read-only vendor evidence; fixture results alone do not
 establish server compatibility or production coverage.
 
+## Current scheduled source-proof checkpoint — 2026-10-25 UTC
+
+Signed `87e87b2d9f02f4534a914789a9e4487f35703a43` is deployed with all 37
+migrations and passing 1,666-test release checks. Trial B reached both scoped
+QRZ contacts at **06:01:30 / 06:01:45 UTC**: incomplete history held the first;
+`source_export_proof_read_failed` held the second. No attempt or vendor write
+occurred. The scope closed at **06:05:54.576653 UTC**, and independent
+**06:11:34.594 UTC** attestation confirms all eight controls closed. The drain
+observation retains one unfinalized scheduler row. The **06:12:54.606 UTC**
+recovery preserves exactly the prior singleton and all immutable evidence.
+
+A native Workerd regression proves an adapter error before outbound transport:
+calling `options.rawFetcher(...)` as a method gives native `fetch` the wrong
+receiver and throws `Illegal invocation`. Signed, pushed
+`c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7` uses
+`options.rawFetcher.call(globalThis, url, request)`. The actual coordinator now
+passes collection and final drain in the regression; all **42 focused cases**
+pass. Full checks and [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40168290537)
+are running, and **the fix is not deployed**. This is a reproduced client
+transport failure, not evidence of a LoFi server rejection or a change to source
+completeness. The first contact's incomplete history is a separate hold.
+
+Next, finish release checks, take a fresh backup and deploy closed before
+renewing normal scheduled source-proof and QRZ acceptance checks. Earlier
+preview proofs below are finite historical evidence; they do not substitute for
+the scheduled path or renew an expired proof. `SOURCE_BOUNDARY_VERIFIED` remains
+false. See [current deployment](deployment.md) and [QRZ evidence](evidence-qrz.md).
+
+## Earlier source-proof observations
+
 Source-proof checkpoint, **2026-10-24 22:03:28.032 UTC**: exact signed
 `f2c41cb3a929ae3d3545e235894027b84fbf09fb` modules completed one positive collection
 and the mandatory final canonical drain, covering two dependencies and zero

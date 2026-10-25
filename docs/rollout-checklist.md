@@ -10,6 +10,33 @@ recoverable artifacts through normal ACK cleanup and actual scheduled acceptance
 
 ## Current evidence (2026-10-25)
 
+Signed `87e87b2d9f02f4534a914789a9e4487f35703a43` passes **1,666 tests** and
+[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40165603166).
+All 37 migrations through `0038` remain installed. Finite-scope selection is
+deployed: Trial B reached both contacts at **06:01:30 / 06:01:45 UTC**, then held
+for incomplete history and `source_export_proof_read_failed`. **Zero attempts or
+vendor writes** occurred.
+
+Worker `7aaf4d15-66e8-48d4-ab6a-b771b02000ad`, deployment
+`0765e455-aafd-45ab-b79a-c9306a3560aa`, closed the scope at
+**06:05:54.576653 UTC**. Independent **06:11:34.594 UTC** attestation confirms all
+eight controls closed. At least 180 seconds of drain observation found zero new
+attempts and **one unfinalized scheduler row**. The **06:12:54.606 UTC** recovery
+snapshot verifies exactly the prior singleton, zero new artifacts, all immutable
+prior rows, integrity/FKs and repeated quarantine. It contains **41,555,300 bytes**;
+see [deployment evidence](deployment.md) for all three new recovery receipts.
+
+Native Workerd proves the coordinator's native-fetch receiver failure before
+outbound transport. Signed fix `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7`
+uses `.call(globalThis, ...)`; 42 focused cases pass. Full checks and
+[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40168290537) are running;
+**the fix is not deployed**. Finish checks, take a fresh backup and deploy closed
+before repeating scheduled acceptance. The LoTW observer/recovery tools are
+ready offline only; personal-key signing, upload and accepted-report evidence
+remain open. Automatic exports and LoTW remain disabled.
+
+### Earlier evidence (890f714c, 2026-10-25)
+
 Signed `890f714c39390b71f0d4222eb03ef864981e5f98` passes all **1,663 tests** and
 required checks in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40162836106).
 Migration `0038` retains original encrypted attempt artifacts through ACK cleanup,
@@ -24,8 +51,8 @@ The scope is closed. Worker `8122bc6c-87eb-46d0-8b2e-5e13e5cd16e3` serves sole
 controls, health/assets and KEK 1. Both runs are complete. The 05:17 UTC recovery
 check verifies exactly the prior one attempt and zero new table artifacts.
 Successful scheduled delivery and populated live table-artifact recovery remain
-open. Fix finite-scope cohort scheduling before repeating the trial; do not
-force queue timestamps or remove claims. See [current deployment](deployment.md).
+open at that checkpoint. The later finite-scope correction and Trial B are
+recorded above; no queue timestamps or claims were forced.
 
 ### Earlier evidence (0386af30, 2026-10-25)
 
@@ -520,14 +547,14 @@ Source review separately includes eight test contacts and one blocked contact.
 Waiting for cron advances available inventory, retry work and newly compatible
 LoTW associations; unresolved identity, location and route conflicts remain held.
 
-| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                                                                      |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed.                                             |
-| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                                                                          |
-| Source boundary           | Production baseline/handoff is ready with all 4,500 retained rows witnessed. At 08:12:53, a protected diagnostic minted a current proof and verified fresh QRZ absence for the same contact. Scheduled Worker validation remains open; expiring evidence must be refreshed. Global purge/replay guarantees remain unproved.                                      |
-| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                                                                         |
-| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Guarded broader LoTW history preserves raw time and valid nested grid precision in a separate reference. Ownership bootstrap and exact-evidence recovery pass; populated raw recovery and ARRL acceptance remain open.            |
-| First vendor writes       | The authorized singleton is accepted at returned minute precision; seconds remain unverified. The later scheduled two-contact trial made zero attempts and is closed. The owner authorizes checked QRZ batches and gradual activation after validation. Current source proof, exact scope, fresh vendor checks, backup and independent readback remain required. |
+| Readiness item            | Evidence and remaining work                                                                                                                                                                                                                                                                                                                                         |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Accounts and connections  | Owner enrollment and all three connections are complete. One active passkey is registered; a second key is recommended, not an export gate. The protected local key backup exists and its encryption key decrypted current credentials for the scoped audits. Off-device secret-manager storage remains unconfirmed.                                                |
+| Reconciliation throughput | Batched intake, guarded classification, shared history, indexed retries, account admission, context index and QRZ Unicode decoding are deployed. Sustained capacity and remaining vendor errors still need measurement.                                                                                                                                             |
+| Source boundary           | Production baseline/handoff is ready with all 4,500 retained rows witnessed. At 08:12:53, a protected diagnostic minted a current proof and verified fresh QRZ absence for the same contact. Scheduled Worker validation remains open; expiring evidence must be refreshed. Global purge/replay guarantees remain unproved.                                         |
+| Outbound identities       | Durable whole-second claims now protect preparation, adoption and dispatch. Race, rollback, migration, uncertainty, expiry and source-change tests pass. Deployed ownership and closed gates are independently verified.                                                                                                                                            |
+| LoTW station location     | Lossless per-contact 4/6/8-character signing is implemented with released TQSL evidence and independent fixed-vector coverage. Guarded broader LoTW history preserves raw time and valid nested grid precision in a separate reference. Ownership bootstrap and exact-evidence recovery pass; populated raw recovery and ARRL acceptance remain open.               |
+| First vendor writes       | The authorized singleton is accepted at returned minute precision; seconds remain unverified. Both later scheduled two-contact trials made zero attempts and are closed. The owner authorizes checked QRZ batches and gradual activation after validation. Current source proof, exact scope, fresh vendor checks, backup and independent readback remain required. |
 
 ## Verify the deployed LoTW ownership release (5a427a30)
 
@@ -742,7 +769,9 @@ a finite-scope scheduling defect and was closed. The **05:17 UTC** backup of
 `890f714c` verifies 37 migrations, exactly the original delivered attempt and no
 new artifacts; every prior immutable row survives isolated restore and repeated
 quarantine. Successful scheduled delivery and populated live table-artifact
-recovery remain open. See the current checkpoint at the top of this document and
+recovery remain open. Trial B subsequently reached both contacts but held before
+preparation; its 06:12 UTC recovery again preserves only the original singleton.
+See the current checkpoint at the top of this document and
 [the roadmap](../ROADMAP.md#remaining-work-before-exports).
 
 Use a fresh backup, current release-bound evidence and exact QRZ contact and

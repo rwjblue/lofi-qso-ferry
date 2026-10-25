@@ -2,8 +2,9 @@
 
 The reviewed **one-contact QRZ trial** is acknowledged and accepted at returned
 minute precision, with seconds unverified and populated recovery passing. Its
-one-INSERT allowance is exhausted. A later two-contact scheduled trial made zero
-attempts; its scope is closed while finite-scope scheduling is fixed. **Automatic
+one-INSERT allowance is exhausted. Both later two-contact scheduled trials made
+zero attempts. Trial B reached both contacts but held on incomplete history and a
+source-proof transport failure; its scope is closed. **Automatic
 exports and LoTW remain disabled**. The broader goal is to validate checked QRZ
 batches before automatic QRZ activation, then evaluate
 LoTW separately. This document records evidence; it does not itself grant write
@@ -21,14 +22,39 @@ For the initial trial, both the source QSO and QRZ destination must be explicit
 singletons. Historical associations, existing mappings, unresolved attempts and
 competing owners cannot be converted into trial candidates by clearing data.
 
-The deployed `890f714c` implementation, 1,663-test release checks, completed ownership
+The deployed `87e87b2d` implementation, 1,666-test release checks, completed ownership
 bootstrap and populated exact-evidence recovery are recorded in
 [deployment evidence](deployment.md). The dated prior-release cloud observation
 in [QRZ evidence](evidence-qrz.md) exercises source collection, final drain, proof
 creation and fresh absence for one contact. Such a proof expires normally; it is
 not write acceptance or standing permission to export.
 
-## Scheduled two-contact trial — zero attempts, 2026-10-25 UTC
+## Scheduled Trial B — selected contacts held, 2026-10-25 UTC
+
+The finite-scope scheduling correction is deployed in signed `87e87b2d`, with
+**1,666 tests** and [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40165603166)
+passing. Trial B's two exact QRZ contacts both reached live selection at
+**06:01:30 / 06:01:45 UTC**. One held for incomplete history and the other for
+`source_export_proof_read_failed`; **zero attempts or vendor writes** occurred.
+The scope closed at **06:05:54.576653 UTC**; independent **06:11:34.594 UTC**
+attestation verifies all eight controls closed. After at least 180 seconds of
+drain observation, zero new attempts and **one unfinalized scheduler row** remain.
+The **06:12:54.606 UTC**, **41,555,300-byte** recovery snapshot preserves the
+original singleton and all immutable prior rows, with zero new artifacts and
+passing integrity/FK/repeated-quarantine checks. See [deployment evidence](deployment.md).
+
+Native Workerd reproduces the coordinator's invalid receiver on native `fetch`:
+`options.rawFetcher(...)` throws `Illegal invocation` before outbound transport.
+Signed fix `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7` binds `globalThis`; the
+actual-coordinator regression and 42 focused cases pass. Full checks and
+[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40168290537) are running;
+the fix is **not deployed**. Release it closed after checks and a fresh backup,
+then repeat the checked scheduled trial with normal source, history, ownership
+and budget checks. Successful scheduled delivery/readback and populated live
+artifact recovery remain open. The earlier singleton's minute-consistent
+acceptance and unverified seconds are unchanged.
+
+## Earlier scheduled Trial A — zero attempts, 2026-10-25 UTC
 
 Migration `0038` now retains original encrypted artifacts through normal ACK
 cleanup, with original AAD and seven-day expiry. The signed release, full CI and
@@ -45,12 +71,10 @@ acceptance. The scope was closed at 05:13:15 UTC. Independent checks after the d
 period confirm all eight closed controls, completed runs and only the original
 singleton attempt. The 05:17 UTC recovery snapshot passes with no new artifacts.
 
-Next: prioritize a finite authorized cohort within the normal scheduler, keeping
-all current eligibility, quiet, context, proof, ownership and request guards.
-Repeat the checked trial after its regression and release checks; no direct
-queue reset, claim clearing or vendor retry is part of the remedy.
+That finite-scope correction subsequently deployed in `87e87b2d` and reached
+both Trial B contacts. No queue reset, claim clearing or vendor retry was used.
 
-## Complete the one-contact packet while disabled
+## Historical one-contact packet preparation
 
 1. Pin the signed runtime and independently verify its Worker, healthy origin,
    matching assets and all eight closed controls. Verify a protected current
@@ -105,9 +129,9 @@ local files, with all eight production controls closed before and after. It made
 no source/vendor request and created no attempt. Earlier binding changes stopped
 before saving a review; the later review explicitly re-read that same contact,
 without substituting another. Current context still needs the normal refresh,
-so its metadata/proof/readiness flags remain false. A specific owner instruction
-for the actual trial is pending. No vendor acknowledgement or readback acceptance
-has occurred.
+so its metadata/proof/readiness flags remained false. At that checkpoint the
+specific owner instruction was pending and no acknowledgement or readback
+acceptance had occurred. Later authorization and acceptance are recorded below.
 
 The exact-`0386af30` SELECT-only review succeeded at **2026-10-25 02:56:37.961
 UTC**, again using **52 D1 RPCs / 58 SQL statements**. It independently re-read
@@ -196,13 +220,14 @@ neighborhood cases, types and bundle pass. Both read-only previews are disposed;
 all eight controls remain closed. No further INSERT occurred.
 
 The singleton is accepted at returned minute precision, with seconds unverified.
-Next, preserve encrypted artifacts through normal ACK cleanup and verify recovery
-for a checked two-contact scope before actual scheduled delivery. The existing
-runtime supports two QSO IDs and one QRZ destination without wider authority.
+Migration `0038` now preserves encrypted artifacts through normal ACK cleanup.
+Successful checked two-contact scheduled delivery and populated live artifact
+recovery remain open. The runtime supports two QSO IDs and one QRZ destination
+without wider authority.
 
-## Acceptance after the authorized attempt
+## Readback and recovery for later checked batches
 
-Use the normal guarded preparation and dispatch functions with exact singleton
+Use the normal guarded preparation and dispatch functions with exact authorized
 scope. Preserve all late source, proof, credential, lease, ownership and request
 checks after vendor-budget admission. Permit only the expected QRZ INSERT body;
 do not retry a lost preparation or dispatch acknowledgement blindly.
@@ -224,8 +249,8 @@ insufficient. Repeat isolated quarantine without losing immutable evidence.
 
 ## Expanding to one or two users
 
-After real acceptance and explicit expansion approval, existing scope parsing
-supports `ROLLOUT_QSO_IDS_JSON=["*"]` with exact QRZ destination IDs. This includes
+After checked scheduled batches pass, the owner’s authorized gradual expansion
+can use the existing scope parsing for `ROLLOUT_QSO_IDS_JSON=["*"]` with exact QRZ destination IDs. This includes
 eligible older missing contacts as well as future arrivals. It is not a
 future-only cutoff. Use explicit QSO IDs if that backfill scope is unwanted.
 Empty or missing scopes authorize nothing.
@@ -237,7 +262,7 @@ budgets. Stale known-unsent work is cancelled and rebuilt with a new proof;
 uncertain/submitted work instead enters read-only reconciliation. Thirteen
 targeted native scheduler/delivery and gate cases passed in the later audit.
 Actual successful scheduled preparation/dispatch remains unobserved while
-exports are disabled. Observe a singleton scheduled turn before broadening QSO
+exports are disabled. Complete the checked scheduled scope before broadening QSO
 scope. The one-contact operator trial separately supplies durable expected bytes
 and exact post-ACK readback; normal clean-ACK delivery does not automatically
 perform that extra field comparison.

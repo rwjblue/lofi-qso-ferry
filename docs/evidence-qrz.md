@@ -2,7 +2,32 @@
 
 Initial implementation review: 2026-10-22, using documentation and synthetic fixtures. Subsequent observations are dated below. One authorized QRZ INSERT has been acknowledged, recovered and independently observed with a unique neighborhood. Its returned UTC minute agrees; seconds remain unverified. Automatic exports remain disabled.
 
-## Scheduled trial and recovery retention — 2026-10-25 UTC
+## Current scheduled checkpoint — 87e87b2d, 2026-10-25 UTC
+
+The finite-scope scheduling correction is deployed in signed `87e87b2d`, with
+**1,666 tests** and [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40165603166)
+passing. Trial B's two exact QRZ contacts both reached live selection at
+**06:01:30 / 06:01:45 UTC**. One held for incomplete history and the other for
+`source_export_proof_read_failed`; **zero attempts or vendor writes** occurred.
+The scope closed at **06:05:54.576653 UTC**; independent **06:11:34.594 UTC**
+attestation verifies all eight controls closed. After at least 180 seconds of
+drain observation, zero new attempts and **one unfinalized scheduler row** remain.
+The **06:12:54.606 UTC**, **41,555,300-byte** recovery snapshot preserves the
+original singleton and all immutable prior rows, with zero new artifacts and
+passing integrity/FK/repeated-quarantine checks. See [deployment evidence](deployment.md).
+
+Native Workerd reproduces the coordinator's invalid receiver on native `fetch`:
+`options.rawFetcher(...)` throws `Illegal invocation` before outbound transport.
+Signed fix `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7` binds `globalThis`; the
+actual-coordinator regression and 42 focused cases pass. Full checks and
+[CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40168290537) are running;
+the fix is **not deployed**. Release it closed after checks and a fresh backup,
+then repeat the checked scheduled trial with normal source, history, ownership
+and budget checks. Successful scheduled delivery/readback and populated live
+artifact recovery remain open. The earlier singleton's minute-consistent
+acceptance and unverified seconds are unchanged.
+
+## Earlier scheduled trial and recovery retention — 890f714c, 2026-10-25 UTC
 
 Signed `890f714c` deploys migration `0038`: original encrypted attempt artifacts
 survive terminal outbox cleanup with unchanged AAD and seven-day expiry. All
@@ -17,8 +42,8 @@ behind unrelated due rows. The 05:10 UTC invocation processed 27 contacts and 22
 cached classifications before a 93.097-second deadline, with no errors. This is
 not scheduled export acceptance. After closure and drain, both runs are complete,
 all eight controls are independently closed, and the 05:17 UTC backup verifies
-exactly the prior one attempt and no new table artifacts. Finite-scope scheduling
-must be corrected before retrying with normal proof/absence/ownership guards.
+exactly the prior one attempt and no new table artifacts. This led to the
+finite-scope correction deployed in `87e87b2d`; the later trial is recorded above.
 
 ## Authorized singleton INSERT — 2026-10-25 03:55 UTC
 
@@ -64,8 +89,8 @@ with all eight production controls independently verified closed. No additional
 INSERT or source request occurred.
 
 This accepts the singleton at the precision returned by QRZ, with seconds
-unverified. Before scheduled batches, retain encrypted artifacts after terminal
-outbox cleanup and verify recovery for the approved attempt set. The singleton's
+unverified. Migration `0038` now retains encrypted artifacts after terminal
+outbox cleanup; actual scheduled batches still need approved-set recovery. The singleton's
 one-INSERT allowance is exhausted; later batches use separate bounded scope.
 
 The earlier two invocations stopped before any attempt or dispatch, as verified

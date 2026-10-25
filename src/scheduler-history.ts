@@ -2,8 +2,36 @@ import { sampleAdminBacklog } from "./admin-metrics.ts";
 import { createFailureDiagnostics } from "./failure-diagnostics.ts";
 import { tick } from "./service.ts";
 
+interface RunMetadata {
+  runId: string;
+  startedAt: number;
+  scheduledTime: number | null;
+}
+
+function reportLifecycle(
+  metadata: RunMetadata,
+  phase: "started" | "heartbeat_recorded" | "completed",
+) {
+  try {
+    console.log(
+      JSON.stringify({
+        event: "ferry_scheduler_lifecycle",
+        phase,
+        ...metadata,
+      }),
+    );
+  } catch {
+    // Diagnostic delivery must not change work or its recorded outcome.
+  }
+}
+
 function reportFailure(
-  phase: "work" | "failure_recording" | "completion_recording",
+  metadata: RunMetadata,
+  phase:
+    | "heartbeat_recording"
+    | "work"
+    | "failure_recording"
+    | "completion_recording",
   error: unknown,
 ) {
   try {
@@ -13,6 +41,7 @@ function reportFailure(
       JSON.stringify({
         event: "ferry_scheduler_failure",
         phase,
+        ...metadata,
         failures: diagnostics.counts,
       }),
     );
@@ -24,24 +53,48 @@ function reportFailure(
 /** Persist the heartbeat before work, so interrupted runs remain visible. */
 export async function runScheduledTick(
   env: Env,
-  options: { run?: typeof tick; now?: () => number } = {},
+  options: {
+    run?: typeof tick;
+    now?: () => number;
+    scheduledTime?: number;
+  } = {},
 ) {
   const clock = options.now ?? Date.now;
   const startedAt = clock();
   const id = crypto.randomUUID();
-  await env.DB.batch([
-    env.DB.prepare("DELETE FROM scheduler_runs WHERE started_at<?").bind(
-      startedAt - 7 * 86_400_000,
-    ),
-    env.DB.prepare(
-      "INSERT INTO scheduler_runs(id,started_at,status) VALUES(?,?,'running')",
-    ).bind(id, startedAt),
-  ]);
+  const metadata: RunMetadata = {
+    runId: id,
+    startedAt,
+    // This is diagnostic correlation, never a scheduling or authority input.
+    scheduledTime:
+      typeof options.scheduledTime === "number" &&
+      Number.isSafeInteger(options.scheduledTime) &&
+      options.scheduledTime >= 0
+        ? options.scheduledTime
+        : null,
+  };
+  reportLifecycle(metadata, "started");
+  try {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM scheduler_runs WHERE started_at<?").bind(
+        startedAt - 7 * 86_400_000,
+      ),
+      env.DB.prepare(
+        "INSERT INTO scheduler_runs(id,started_at,status) VALUES(?,?,'running')",
+      ).bind(id, startedAt),
+    ]);
+  } catch (error) {
+    reportFailure(metadata, "heartbeat_recording", error);
+    // A lost acknowledgement may leave a running row. Do not fabricate its
+    // terminal status or start/retry work when heartbeat admission is unknown.
+    throw new Error("Scheduled heartbeat recording failed");
+  }
+  reportLifecycle(metadata, "heartbeat_recorded");
   let result: Awaited<ReturnType<typeof tick>>;
   try {
     result = await (options.run ?? tick)(env);
   } catch (error) {
-    reportFailure("work", error);
+    reportFailure(metadata, "work", error);
     const finishedAt = clock();
     try {
       await env.DB.prepare(
@@ -50,7 +103,7 @@ export async function runScheduledTick(
         .bind(finishedAt, Math.max(0, finishedAt - startedAt), id)
         .run();
     } catch (recordingError) {
-      reportFailure("failure_recording", recordingError);
+      reportFailure(metadata, "failure_recording", recordingError);
       throw new Error("Scheduled failure recording failed");
     }
     // A vendor exception can contain a credential-bearing URL or raw payload.
@@ -78,9 +131,10 @@ export async function runScheduledTick(
       )
       .run();
   } catch (error) {
-    reportFailure("completion_recording", error);
+    reportFailure(metadata, "completion_recording", error);
     throw new Error("Scheduled completion recording failed");
   }
+  reportLifecycle(metadata, "completed");
   try {
     const backlog = await sampleAdminBacklog(env.DB, finishedAt, env);
     await env.DB.prepare(

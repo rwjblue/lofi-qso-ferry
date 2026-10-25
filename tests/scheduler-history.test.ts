@@ -9,6 +9,8 @@ import {
 } from "./runtime-fixtures.ts";
 
 interface RunRow {
+  id: string;
+  started_at: number;
   status: string;
   finished_at: number | null;
   contact_turns: number;
@@ -31,6 +33,8 @@ const fakeResult = {
   stopReason: "deadline" as const,
 };
 const scenarios = [
+  "heartbeat_reject",
+  "heartbeat_committed_ack_lost",
   "sample_pending",
   "sample_reject",
   "sample_update_reject",
@@ -42,7 +46,9 @@ const scenarios = [
 ] as const;
 test("scheduler preserves actual work and separate safe failure phases without replay", async (t) => {
   let logs: string[] = [];
+  let lifecycle: string[] = [];
   t.mock.method(console, "error", (message: string) => logs.push(message));
+  t.mock.method(console, "log", (message: string) => lifecycle.push(message));
   const mf = new Miniflare(
     convertV4MiniflareOptions({
       cf: false,
@@ -62,6 +68,7 @@ test("scheduler preserves actual work and separate safe failure phases without r
     for (const mode of scenarios)
       await t.test(mode, async () => {
         logs = [];
+        lifecycle = [];
         let sampleStarted!: () => void, sampleRelease!: () => void;
         const started = new Promise<void>((resolve) => {
           sampleStarted = resolve;
@@ -72,12 +79,25 @@ test("scheduler preserves actual work and separate safe failure phases without r
         let batchCalls = 0,
           workCalls = 0,
           terminalCalls = 0,
+          failureCalls = 0,
           sampleCalls = 0;
         const wrapped = new Proxy(db, {
           get(target, key) {
             if (key === "batch")
               return async (statements: D1PreparedStatement[]) => {
                 batchCalls++;
+                if (batchCalls === 1) {
+                  if (mode === "heartbeat_reject")
+                    throw new Error(
+                      "D1_ERROR: private heartbeat SQL password=secret",
+                    );
+                  if (mode === "heartbeat_committed_ack_lost") {
+                    await target.batch(statements);
+                    throw new Error(
+                      "D1_ERROR: private heartbeat acknowledgement credential",
+                    );
+                  }
+                }
                 if (batchCalls === 2) {
                   sampleCalls++;
                   sampleStarted();
@@ -108,6 +128,7 @@ test("scheduler preserves actual work and separate safe failure phases without r
                           wrap(object.bind(...args));
                       if (property === "run")
                         return async () => {
+                          if (failure) failureCalls++;
                           if (failure && mode === "work_and_recording_reject")
                             throw new Error(
                               "D1_ERROR: private failed-recording SQL and credential",
@@ -142,6 +163,7 @@ test("scheduler preserves actual work and separate safe failure phases without r
         let now = 1000;
         const completion = runScheduledTick(fixtureEnvironment(wrapped), {
           now: () => now++,
+          scheduledTime: 500,
           run: async () => {
             workCalls++;
             if (mode === "work_and_recording_reject")
@@ -170,26 +192,101 @@ test("scheduler preserves actual work and separate safe failure phases without r
           assert.equal(pending.finished_at, 1001);
           assert.equal(pending.contact_turns, 7);
           assert.equal(pending.source_live, null);
+          assert.equal(JSON.parse(lifecycle.at(-1)!).phase, "completed");
           sampleRelease();
         }
         const outcome = await settled;
         const row = await db
           .prepare("SELECT * FROM scheduler_runs")
           .first<RunRow>();
+        const failures = logs.map((line) => JSON.parse(line));
+        const phases = lifecycle.map((line) => JSON.parse(line));
+        const correlation = {
+          runId: phases[0].runId,
+          startedAt: 1000,
+          scheduledTime: 500,
+        };
+        assert.match(correlation.runId, /^[0-9a-f-]{36}$/);
+        for (const event of [...phases, ...failures]) {
+          const { runId, startedAt, scheduledTime } = event;
+          assert.deepEqual({ runId, startedAt, scheduledTime }, correlation);
+        }
+        assert(
+          ![...logs, ...lifecycle]
+            .join(" ")
+            .match(/password|private|credential|vendor.example|SQL/),
+        );
+        for (const event of phases) {
+          assert.equal(event.event, "ferry_scheduler_lifecycle");
+          assert.deepEqual(Object.keys(event).sort(), [
+            "event",
+            "phase",
+            "runId",
+            "scheduledTime",
+            "startedAt",
+          ]);
+        }
+        for (const failure of failures)
+          assert.equal(failure.event, "ferry_scheduler_failure");
+        if (
+          mode === "heartbeat_reject" ||
+          mode === "heartbeat_committed_ack_lost"
+        ) {
+          assert(outcome.error instanceof Error);
+          assert.equal(
+            outcome.error.message,
+            "Scheduled heartbeat recording failed",
+          );
+          assert.equal(workCalls, 0);
+          assert.equal(batchCalls, 1);
+          assert.equal(terminalCalls, 0);
+          assert.equal(failureCalls, 0);
+          assert.equal(sampleCalls, 0);
+          assert.deepEqual(
+            phases.map((p) => p.phase),
+            ["started"],
+          );
+          assert.deepEqual(
+            failures.map((f) => f.phase),
+            ["heartbeat_recording"],
+          );
+          assert.deepEqual(Object.keys(failures[0].failures), [
+            "scheduler:none:db_d1",
+          ]);
+          if (mode === "heartbeat_reject") assert.equal(row, null);
+          else {
+            assert(row);
+            assert.equal(row.id, correlation.runId);
+            assert.equal(row.started_at, correlation.startedAt);
+            assert.equal(row.status, "running");
+            assert.equal(row.finished_at, null);
+            assert.equal(row.failure, null);
+            assert.equal(row.contact_turns, 0);
+          }
+          await db.prepare("DELETE FROM scheduler_runs").run();
+          return;
+        }
         assert(row);
+        assert.equal(row.id, correlation.runId);
+        assert.equal(row.started_at, correlation.startedAt);
+        assert.deepEqual(
+          phases.slice(0, 2).map((p) => p.phase),
+          ["started", "heartbeat_recorded"],
+        );
+        assert.equal(
+          phases.some((p) => p.phase === "completed"),
+          [
+            "sample_pending",
+            "sample_reject",
+            "sample_update_reject",
+            "success",
+          ].includes(mode),
+        );
         assert.equal(workCalls, 1);
         assert.equal(
           terminalCalls,
           ["work_reject", "work_and_recording_reject"].includes(mode) ? 0 : 1,
         );
-        const failures = logs.map((line) => JSON.parse(line));
-        assert(
-          !logs
-            .join(" ")
-            .match(/password|private|credential|vendor.example|SQL/),
-        );
-        for (const failure of failures)
-          assert.equal(failure.event, "ferry_scheduler_failure");
         if (mode === "work_and_recording_reject") {
           assert(outcome.error instanceof Error);
           assert.equal(
@@ -261,6 +358,53 @@ test("scheduler preserves actual work and separate safe failure phases without r
         }
         await db.prepare("DELETE FROM scheduler_runs").run();
       });
+    await t.test(
+      "repeated old scheduled time identifies distinct current invocations",
+      async () => {
+        lifecycle = [];
+        logs = [];
+        let now = 10_000;
+        let workCalls = 0;
+        for (let invocation = 0; invocation < 2; invocation++) {
+          await runScheduledTick(fixtureEnvironment(db), {
+            scheduledTime: 500,
+            now: () => now++,
+            run: async () => {
+              workCalls++;
+              return fakeResult;
+            },
+          });
+          now += 1000;
+        }
+        const rows: RunRow[] = (
+          await db
+            .prepare("SELECT * FROM scheduler_runs ORDER BY started_at")
+            .all<RunRow>()
+        ).results;
+        assert.equal(rows.length, 2);
+        assert.notEqual(rows[0].id, rows[1].id);
+        assert.deepEqual(
+          rows.map((row) => row.started_at),
+          [10_000, 11_002],
+        );
+        assert.equal(workCalls, 2);
+        assert.deepEqual(logs, []);
+        const events = lifecycle.map((line) => JSON.parse(line));
+        assert.equal(events.length, 6);
+        for (const row of rows) {
+          assert.equal(row.status, "completed");
+          const correlated = events.filter((event) => event.runId === row.id);
+          assert.deepEqual(
+            correlated.map((event) => event.phase),
+            ["started", "heartbeat_recorded", "completed"],
+          );
+          for (const event of correlated) {
+            assert.equal(event.startedAt, row.started_at);
+            assert.equal(event.scheduledTime, 500);
+          }
+        }
+      },
+    );
   } finally {
     await mf.dispose();
   }

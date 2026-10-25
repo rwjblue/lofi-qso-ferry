@@ -305,14 +305,16 @@ export default {
     }
   },
   async scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: Env,
     context: ExecutionContext,
   ) {
     context.waitUntil(
-      runScheduledTick(env).then((result) => {
-        console.log(JSON.stringify({ event: "ferry_tick", ...result }));
-      }),
+      runScheduledTick(env, { scheduledTime: controller.scheduledTime }).then(
+        (result) => {
+          console.log(JSON.stringify({ event: "ferry_tick", ...result }));
+        },
+      ),
     );
   },
 } satisfies ExportedHandler<Env>;

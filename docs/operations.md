@@ -6,14 +6,17 @@ Checked-in environments default to disabled exports. The first LoTW contact now 
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
-The current runtime is signed `dd173803dc81096115eb554d55da4a5a2eb0f701`,
-with 37 migrations and all **1,701 tests and required checks** passing locally
-and in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40203904797).
-The latest **15:58 UTC** attestation confirms all eight controls closed on Worker
-`3c8cb733-2605-41fd-9c36-a7e9d4ee3db2`, after pair D and its defensive supervisor
-closure. No future closure timer remains pending. This release adds safe
-scheduler/D1/source-proof diagnostics; guards, budgets, matching, cryptography
-and retries are unchanged.
+The current runtime is signed `8f5c0b9c9d9ca5b57573ad3c3c38c324d8e2ee12`,
+with 37 migrations and all **1,720 tests and required checks** passing locally
+and in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40211266073).
+The latest **16:57:25.703 UTC** attestation confirms all eight controls closed on
+Worker `abf51751-d9a5-481c-ac99-f667b346f598`. The LoTW response-cleanup fix
+preserves existing outcomes without awaiting potentially pending cleanup.
+PRE/POST full recovery at **16:51:56.340 / 16:57:25.734 UTC** preserves all
+fourteen accepted attempts and thirteen artifacts, full crypto/restore and both
+quarantines. Fresh before/after receipts require the same closed deployment;
+original SQL capture and receipt times remain separate. See the
+[cleanup release receipt](deployment.md#closed-lotw-cleanup-release-and-full-recovery-2026-10-25-utc).
 
 LoTW trial C's one native upload is accepted, with strict readback and full
 fourteen-attempt/thirteen-artifact recovery completed at **14:37:53.975 UTC**.
@@ -27,9 +30,9 @@ fourteen accepted attempts and thirteen artifacts with full crypto/restore and
 both quarantines passing. Its scheduler run is still unfinalized; zero active
 leases at 16:02 UTC does not establish completed interval accounting. Diagnose
 that invocation and the history-read hold before another write window. The cause
-is not proven to be vendor failure, D1 quota or CPU. General recovery and ordinary
-activation helpers remain private/offline-reviewed; ordinary activation has not
-been used. See the [pair-D receipt](deployment.md#lotw-pair-d-history-hold-closed-recovery-and-unfinished-invocation-2026-10-25-utc).
+is not proven to be vendor failure, D1 quota or CPU. The new mixed recovery and
+ordinary-activation helpers remain private/offline-reviewed; the new mixed
+activation helper has not been used. See the [pair-D receipt](deployment.md#lotw-pair-d-history-hold-closed-recovery-and-unfinished-invocation-2026-10-25-utc).
 
 The following records retain prior accepted QRZ and closed LoTW checkpoints.
 QRZ's automatic trial is accepted: two clean 13:15/13:20 cycles made one attempt

@@ -2,12 +2,30 @@
 
 ## Current production and export acceptance — 2026-10-25 UTC
 
+Signed **`8f5c0b9c`** is deployed closed on Worker
+`abf51751-d9a5-481c-ac99-f667b346f598`, independently verified at
+**16:55:06.651 UTC**. All **1,720 tests**, required local checks and
+[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40211266073)
+pass. The native LoTW fix prevents response cleanup from delaying a determined
+failure or uncertain upload; it does not prove the earlier production cause.
+
+PRE/POST recovery at **16:51:56.340 / 16:57:25.734 UTC** preserves all fourteen
+accepted attempts and thirteen artifacts, original historical evidence, full
+cryptography, integrity/FK, restore and both quarantines. Independent checks
+before and after verification require the same closed deployment. All eight
+controls remain closed, with zero new attempts/uploads. Clean scheduled work,
+the next checked LoTW pair and its accepted-report recovery remain pending;
+the old unfinished invocation is not relabeled complete. See the
+[cleanup release receipt](docs/deployment.md#closed-lotw-cleanup-release-and-full-recovery-2026-10-25-utc).
+
+## Earlier LoTW pair D checkpoint — 2026-10-25 UTC
+
 **LoTW pair D held before signing/staging, with zero new attempts/uploads.**
 Both selected routes report bounded history-read retry. The scheduler run that
 began at 15:46:03.522 UTC has a recorded heartbeat but remains unfinalized;
 its default counters do not establish zero work or completed interval accounting.
 
-Production runs signed `dd173803`, with **1,701 passing tests and required
+At that checkpoint production ran signed `dd173803`, with **1,701 passing tests and required
 checks**, [exact-release CI 40203904797](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40203904797)
 green and schema 37. All eight controls were attested closed at **15:58 UTC** on
 Worker `3c8cb733-2605-41fd-9c36-a7e9d4ee3db2`; no future closure timer is pending.
@@ -18,9 +36,9 @@ crypto/pin/signature, restore, integrity/FK and two-quarantine checks.
 The first LoTW contact remains accepted with QSL confirmation false. Pair D is
 not accepted. Zero active leases at 16:02 UTC does not resolve the unfinished
 invocation. Diagnose it and the history-read hold before further write windows;
-vendor failure, D1 quota and CPU causes remain unproven. General recovery and
-ordinary activation tools remain private/offline-reviewed, with no ordinary
-activation used. The [pair-D checkpoint](docs/deployment.md#lotw-pair-d-history-hold-closed-recovery-and-unfinished-invocation-2026-10-25-utc)
+vendor failure, D1 quota and CPU causes remain unproven. The new mixed recovery
+and ordinary-activation tools remain private/offline-reviewed; the new mixed
+activation helper has not been used. The [pair-D checkpoint](docs/deployment.md#lotw-pair-d-history-hold-closed-recovery-and-unfinished-invocation-2026-10-25-utc)
 records the immutable receipt, closure and recovery details.
 
 ## Earlier QRZ Trial D2 checkpoint — 2026-10-25 UTC

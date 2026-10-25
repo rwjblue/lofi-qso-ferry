@@ -6,14 +6,14 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ### Export readiness at a glance
 
-| Work                            | Current state                                                                                       | Next acceptance evidence                                                             |
-| ------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                |
-| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                 |
-| QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                                        |
-| QRZ delivery                    | Automatic trial accepted: all thirteen ACKs assessed; temporarily closed for LoTW preparation       | Preserve accepted QRZ evidence through the separate LoTW trial; continue monitoring  |
-| LoTW delivery                   | First trial accepted; pair D held before signing/staging with zero new attempts/uploads             | Diagnose the history-read hold and unfinished invocation before another write window |
-| Broader rollout                 | All controls closed; fourteen prior accepted attempts preserved by full recovery                    | Further LoTW batches, small automatic scope and sustained scale remain pending       |
+| Work                            | Current state                                                                                       | Next acceptance evidence                                                                          |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                             |
+| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                              |
+| QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                                                     |
+| QRZ delivery                    | Automatic trial accepted: all thirteen ACKs assessed; temporarily closed for LoTW preparation       | Preserve accepted QRZ evidence through the separate LoTW trial; continue monitoring               |
+| LoTW delivery                   | First trial accepted; pair D held before signing/staging with zero new attempts/uploads             | Validate completed scheduled work and a fresh reviewed pair; retain the unresolved historical row |
+| Broader rollout                 | All controls closed; fourteen prior accepted attempts preserved by full recovery                    | Further LoTW batches, small automatic scope and sustained scale remain pending                    |
 
 The receiver fix is deployed; checked pairs C, D2 and F4 passed scheduled delivery,
 recovery and known-ACK assessment at the observed minute/sideband representation.
@@ -26,7 +26,37 @@ not because the trial failed, as described in
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
 
-### Current checkpoint — LoTW pair D held; all controls closed
+### Current checkpoint — LoTW cleanup deployed; all controls closed
+
+Signed `8f5c0b9c` passes all **1,720 tests**, required local checks and
+[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40211266073).
+At **16:55:06.651 UTC**, independent verification confirmed Worker
+`abf51751-d9a5-481c-ac99-f667b346f598` healthy with all eight controls closed.
+LoTW response cleanup can no longer indefinitely delay an already determined
+read failure or uncertain upload outcome. This fixes a demonstrated native
+Worker hazard; it does not establish pair D's production failure cause.
+
+Fresh PRE and POST recovery completed at **16:51:56.340 / 16:57:25.734 UTC**,
+preserving all **fourteen accepted attempts and thirteen artifacts**, original
+historical evidence, full cryptography, restore and both quarantines. The backup
+workflow now independently checks the same closed deployment after verification,
+preserving the original receipt and SQL capture times. It does not promote an
+earlier freshness-held capture. No new attempt/upload occurred.
+
+The first captured new-Worker cron completed at **17:02:36.477 UTC**: 143
+contact turns, zero attempts and three QRZ history-validation errors, stopping
+at its deadline. Native lifecycle and the persisted row agree; zero active
+leases were observed afterward. This establishes completion, not an error-free
+cycle or LoTW pair acceptance.
+
+Next: renew the pair's current review/evidence after settled-cycle admission,
+then run and independently assess another checked LoTW pair.
+The prior unfinished invocation remains unresolved. Pair acceptance, a small
+automatic LoTW scope and sustained capacity remain pending. The matching QRZ
+cleanup hazard has a private tested proposal and still needs its own release.
+See the [closed cleanup checkpoint](docs/deployment.md#closed-lotw-cleanup-release-and-full-recovery-2026-10-25-utc).
+
+### Earlier checkpoint — LoTW pair D held; all controls closed
 
 Trial C’s one native LoTW upload now has a strict accepted-report observation
 and full fourteen-attempt/thirteen-artifact recovery, completed at
@@ -38,15 +68,15 @@ new attempts/uploads**. Its scheduler invocation remains unfinalized; default
 zero counters do not establish zero work or completed interval accounting.
 
 All eight controls were independently attested closed at **15:58 UTC**, on
-current Worker `3c8cb733-2605-41fd-9c36-a7e9d4ee3db2`. Full POST recovery at
+then-current Worker `3c8cb733-2605-41fd-9c36-a7e9d4ee3db2`. Full POST recovery at
 **15:59:40.327 UTC** preserves all fourteen accepted attempts and thirteen
 artifacts, with crypto/pins/signatures, full restore and both quarantines passing.
 The latest 16:02 UTC check found zero active leases. Diagnose the history-read
 failure and unfinished invocation before another write window; no vendor, D1
 quota or CPU cause is established. Broader LoTW acceptance remains pending.
 Release `dd173803` passes all **1,701 tests**, required checks and exact-release
-CI. General recovery and ordinary activation tools remain private/offline;
-ordinary activation has not been used. See the
+CI. The new mixed recovery and ordinary-activation tools remain private/offline;
+the new mixed activation helper has not been used. See the
 [pair-D checkpoint](docs/deployment.md#lotw-pair-d-history-hold-closed-recovery-and-unfinished-invocation-2026-10-25-utc)
 for the immutable receipt and closure details.
 

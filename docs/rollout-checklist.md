@@ -13,6 +13,20 @@ now pass known-ACK observed-precision assessment and populated recovery.
 
 ## Current evidence (2026-10-25)
 
+- [x] Deploy signed `8f5c0b9c` after all **1,720 tests**, required local checks
+  and [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40211266073) pass.
+  Independent 16:55:06.651 UTC verification confirms Worker `abf51751` and all
+  eight closed controls. The LoTW cleanup fix preserves validation/outcomes and
+  introduces no retries; pair D's actual failure cause remains unproven.
+- [x] Complete fresh PRE/POST recovery at 16:51:56.340 / 16:57:25.734 UTC,
+  preserving all fourteen accepted attempts, thirteen artifacts and original
+  historical evidence, full crypto/restore and both quarantines. Separate fresh
+  before/after receipts require the same closed deployment; no capture is relabeled.
+- [ ] Observe clean scheduled work on the cleanup release, renew current pair
+  review/evidence, then complete and independently assess another checked LoTW pair.
+- [ ] Qualify and release the separately demonstrated QRZ cleanup fix before
+  persistent rollout. Its proposal and native fixtures remain private.
+
 - [x] Deploy signed observability release `dd173803` after all 1,701 tests and
   required local/[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40203904797) checks pass.
   Schema 37 and native guards/budgets/retries are unchanged. The initial
@@ -25,8 +39,9 @@ now pass known-ACK observed-precision assessment and populated recovery.
 - [x] Complete 15:59:40.327 UTC POST recovery: all fourteen prior accepted
   attempts and thirteen artifacts unchanged, full crypto/pins/signatures,
   restore, integrity/FK and both quarantines passing.
-- [ ] Diagnose pair D's history-read failure and unfinalized 15:46 invocation
-  before further write windows. The heartbeat was recorded, but default counters
+- [ ] Retain investigation of pair D's history-read failure and unfinalized
+  15:46 invocation; require fresh completed scheduled work and guarded admission
+  for the next trial. The heartbeat was recorded, but default counters
   do not prove zero work. Zero active leases at 16:02 UTC does not establish
   completed interval accounting; vendor/D1-quota/CPU causes remain unproven.
 - [x] Verify a fresh complete mixed PRE on the new closed runtime at 15:14:13.517
@@ -42,8 +57,8 @@ now pass known-ACK observed-precision assessment and populated recovery.
   cryptography/proof/claim checks, in-memory restore, two quarantines and integrity/FK checks pass.
 - [ ] Complete the next checked two-contact LoTW batch, then assess a small
   automatic scope. Pair D activated but made no new attempt/upload and does not
-  satisfy pair acceptance. General recovery and ordinary activation tools are
-  private/offline-reviewed; ordinary activation has not been used.
+  satisfy pair acceptance. The new mixed recovery and ordinary-activation tools
+  are private/offline-reviewed; the new mixed activation helper has not been used.
 
 - [x] Exercise native expiry in monitored normal-cron window H: `expiresAt` was
   12:12:30 UTC; its tick made six contact turns/four attempts, four new QRZ ACKs

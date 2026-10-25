@@ -8,7 +8,21 @@ zero new attempts/uploads. The
 released TQSL source and local Worker compatibility; the
 [certificate checks](lotw-certificates.md) explain the preflight limits.
 
-## Current checkpoint — pair D history hold
+## Current checkpoint — response cleanup and closed recovery
+
+Signed `8f5c0b9c` is deployed closed on Worker
+`abf51751-d9a5-481c-ac99-f667b346f598`, with **1,720 passing tests**, required
+local checks and [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40211266073).
+Native Worker tests demonstrate that pending or rejected response cancellation
+cannot delay or replace determined LoTW outcomes. This does not prove pair D's
+earlier cause. The **16:57:25.734 UTC** full POST recovery preserves all fourteen
+accepted attempts and thirteen artifacts, exact historical evidence, all crypto,
+restore and both quarantines. Independent before/after checks require the same
+closed deployment. No new signing/upload acceptance is asserted; clean scheduled
+work and a newly reviewed checked pair remain pending. See the
+[cleanup release receipt](deployment.md#closed-lotw-cleanup-release-and-full-recovery-2026-10-25-utc).
+
+## Earlier checkpoint — pair D history hold
 
 Pair D activated at **15:42:16.940 UTC** on signed `dd173803`, qualified by all
 **1,701 tests and required checks** and

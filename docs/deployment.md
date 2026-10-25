@@ -1,6 +1,59 @@
 # Production deployment and rollout evidence
 
-Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. QRZ’s automatic trial remains accepted with thirteen ACKs assessed at known-ACK minute/sideband precision. LoTW trial C establishes accepted processing for one native upload; QSL confirmation is false. Later LoTW pair D held before signing/staging and made zero new attempts/uploads. All fourteen prior accepted attempts and thirteen artifacts pass POST recovery. All eight controls are closed; the history-read failure and unfinished invocation require diagnosis before another write window. Earlier dated holds and literal QRZ comparison limits remain unchanged.
+Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. QRZ’s automatic trial remains accepted with thirteen ACKs assessed at known-ACK minute/sideband precision. LoTW trial C establishes accepted processing for one native upload; QSL confirmation is false. Later LoTW pair D held before signing/staging and made zero new attempts/uploads. All fourteen prior accepted attempts and thirteen artifacts pass POST recovery. All eight controls are closed. The cleanup release and fresh scheduled evidence below qualify the next guarded trial; the historical history-read cause and unfinished invocation remain unresolved. Earlier dated holds and literal QRZ comparison limits remain unchanged.
+
+## Closed LoTW cleanup release and full recovery (2026-10-25 UTC)
+
+Signed `8f5c0b9c9d9ca5b57573ad3c3c38c324d8e2ee12` passes all **1,720 tests**,
+formatting, lint, both type checks and Worker build, plus
+[exact-release CI 40211266073](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40211266073).
+Independent **16:55:06.651 UTC** verification confirms sole 100% Worker
+**`abf51751-d9a5-481c-ac99-f667b346f598`**, deployment
+`53a0dcb5-4e84-4da2-bd2f-567fc0ee8610`, healthy HTTPS, matching assets, KEK 1
+and all eight controls closed. Schema remains 37.
+
+The LoTW client initiates best-effort response cancellation without waiting for
+cleanup to settle. Native Worker regressions cover pending and rejected cleanup
+for failed queries, bounded responses, certificate checks and uncertain uploads.
+Validation, guards, budgets, timeouts and retry behavior remain unchanged.
+This fixes a demonstrated liveness hazard, not the established cause of pair D.
+Stored-event searches by both its run ID and provider request ID show only its
+start and heartbeat; no terminal error or trace span was available.
+
+Fresh PRE recovery completed at **16:51:56.340 UTC**, verifying **42,422,921 SQL
+bytes** on the prior closed runtime. Receipt
+`ferry-lotw-mixed-backup-dd173803-result-2026-10-25T16-51-32-865Z-d7b5cbf2.json`
+has SHA256 `9338cd5004a8dcacc7f30aab4d17103334676bd79dd3b9fac6024606f9af30ba`.
+POST recovery completed at **16:57:25.734 UTC** on the new closed runtime,
+verifying **42,424,313 SQL bytes**. Receipt
+`ferry-lotw-mixed-backup-8f5c0b9c-result-2026-10-25T16-57-05-065Z-57d710b5.json`
+has SHA256 `2b6c8795fbcb617f40e90a9512587912416d1ee3bed56e7953f426b5c343565b`.
+Both preserve **all fourteen accepted attempts (thirteen QRZ and one LoTW)**,
+thirteen retained artifacts and the original historical capture. Full
+cryptography, proof/ownership pins, signatures, integrity, zero FK violations,
+in-memory restore and both quarantines pass. There are no new attempts/uploads,
+production restores or production migrations.
+
+An earlier full capture held when its initial 120-second receipt expired during
+verification; its SQL remains protected and is not accepted evidence. The
+append-only backup successor retains the initial fresh receipt and SQL capture
+times, then obtains a separate fresh closing receipt after unchanged full
+verification. It requires the exact same deployment ID and sole 100% Worker,
+all eight closed controls, health, assets, KEK and source. Both receipts and
+their hashes/times remain separate; no timestamp is rewritten or export retried.
+
+The first captured new-Worker cron, run `722d59b1-4457-4426-aa7a-bf91ecfcf3d7`,
+completed at **17:02:36.477 UTC** after 143 contact turns and zero attempts.
+Its three errors were QRZ history validation: one affected contact with an
+invalid/repeated log ID and two with missing history identities. Native
+lifecycle, provider outcome and the persisted row agree; a later check found
+zero active leases. This is completed scheduled work, not an error-free cycle
+or LoTW pair acceptance. Renew the next pair's review and normal evidence only
+after the unchanged settled-cycle admission checks pass. Pair D's unfinished row remains unresolved; this
+release/recovery does not establish completed accounting for that interval.
+Checked-pair and automatic LoTW acceptance remain pending. The separately
+demonstrated QRZ cleanup hazard has a private reviewed proposal and native
+fixtures, but its follow-up is not deployed.
 
 ## LoTW pair D: history hold, closed recovery and unfinished invocation (2026-10-25 UTC)
 
@@ -23,8 +76,8 @@ not established as a vendor fault, D1 quota or CPU limit.
 
 The operator closed the scope at **15:50:59.337 UTC** on Worker
 `847fcc91-e284-4db0-b019-192b4b4cf204`. The supervisor's defensive second
-all-disabled deployment completed at **15:51:11.920 UTC**, leaving current
-Worker **`3c8cb733-2605-41fd-9c36-a7e9d4ee3db2`**, deployment
+all-disabled deployment completed at **15:51:11.920 UTC**, leaving
+then-current Worker **`3c8cb733-2605-41fd-9c36-a7e9d4ee3db2`**, deployment
 `3958a66d-999f-419e-920b-7c5248f87ea4`. Independent **15:58 UTC** attestation
 confirms all eight controls closed. No future closure timer remains pending.
 The latest **16:02 UTC** check found zero active leases; the unfinished run
@@ -41,8 +94,8 @@ has SHA256
 
 This verifies recovery, not pair acceptance or completed interval accounting.
 Diagnose the history-read failure and unfinished invocation before further write
-windows. General recovery and ordinary activation helpers remain private,
-offline-reviewed tooling; ordinary activation has not been used.
+windows. The new mixed recovery and ordinary-activation helpers remain private,
+offline-reviewed tooling; the new mixed activation helper has not been used.
 
 At **16:17:32.423 UTC**, a separate root-operated diagnostic completed one
 native LoTW history query for a selected contact's weekly range. The normal
@@ -681,9 +734,9 @@ capacity remain open. All eight controls are currently closed as recorded above.
 | ------------------------- | ------------------------------------------------------------------------------------------- |
 | Cloudflare account        | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                       |
 | Worker                    | `lofi-qso-ferry`, environment `production`                                                  |
-| Deployed source revision  | `dd173803dc81096115eb554d55da4a5a2eb0f701`                                                  |
-| Worker version            | `3c8cb733-2605-41fd-9c36-a7e9d4ee3db2`                                                      |
-| Closure attestation       | 2026-10-25 15:58 UTC; all eight controls closed                                             |
+| Deployed source revision  | `8f5c0b9c9d9ca5b57573ad3c3c38c324d8e2ee12`                                                  |
+| Worker version            | `abf51751-d9a5-481c-ac99-f667b346f598`                                                      |
+| Closure attestation       | 2026-10-25 16:57:25.703 UTC; all eight controls closed                                      |
 | Origin / passkey RP       | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                               |
 | Dedicated D1              | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                            |
 | Migrations                | All 37 migrations through `0038_attempt_artifacts`; independently verified after deployment |

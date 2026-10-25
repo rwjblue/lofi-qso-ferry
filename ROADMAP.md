@@ -32,13 +32,17 @@ Trial C’s one native LoTW upload now has a strict accepted-report observation
 and full fourteen-attempt/thirteen-artifact recovery, completed at
 **14:37:53.975 UTC**. All thirteen prior QRZ attempts are preserved. The report
 confirms accepted processing of the new contact; **QSL confirmation is false**.
-All eight controls remain closed on runtime `7738f7d7`, Worker
-`0f72b254-16b1-4d91-8bbb-6ecce2ee5e27`.
+The trial closed on historical runtime `7738f7d7`, Worker
+`0f72b254-16b1-4d91-8bbb-6ecce2ee5e27`. At **15:13:03.263 UTC**, signed
+`dd173803` deployed and was independently verified with all eight controls
+closed on Worker `3500b478-f241-4a8a-b5b5-d9968ef324c9`.
 
 A separate two-contact LoTW batch is being prepared offline and has not
 activated. Broader LoTW batch and small automatic-scope acceptance remain
-pending. Signed candidate `dd173803` contains three observability-only commits;
-its full checks and CI are in progress, and it is not deployed. See the
+pending. Release `dd173803` contains three observability-only commits; all
+**1,701 tests**, required local checks and exact-release CI pass. Scheduler
+lifecycle/run IDs, fixed D1 failure categories and source-proof phases now help
+distinguish failures without changing budgets, guards or retries. See the
 [trial-C accepted checkpoint](docs/deployment.md#lotw-trial-c-accepted-processing-and-mixed-recovery-2026-10-25-utc)
 for the immutable receipt hashes and remaining limits.
 

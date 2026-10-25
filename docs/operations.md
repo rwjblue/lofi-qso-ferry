@@ -6,21 +6,24 @@ Checked-in environments default to disabled exports. The first LoTW contact now 
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
-The current runtime remains signed `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`
-with 37 migrations and all **1,688 tests and required checks** passing in
-[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40184837953).
-LoTW trial C’s one native upload is accepted, with strict readback and full
-fourteen-attempt/thirteen-artifact recovery completed at **14:37:53.975 UTC**.
-All thirteen prior QRZ attempts are preserved; QSL confirmation is false. The
-current closed Worker is `0f72b254-16b1-4d91-8bbb-6ecce2ee5e27`, attested with
-all eight controls closed at **14:23:06.526 UTC**. See the
-[accepted trial-C receipt](deployment.md#lotw-trial-c-accepted-processing-and-mixed-recovery-2026-10-25-utc)
-for the complete backup, observer hashes and scope limits.
+The current runtime is signed `dd173803dc81096115eb554d55da4a5a2eb0f701`,
+with 37 migrations and all **1,701 tests and required checks** passing locally
+and in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40203904797).
+The independent **15:13:03.263 UTC** attestation confirms all eight controls
+closed on Worker `3500b478-f241-4a8a-b5b5-d9968ef324c9`, healthy HTTPS and matching
+assets. This release adds safe scheduler/D1/source-proof diagnostics; guards,
+budgets, matching, cryptography and retries are unchanged.
 
-The next two-contact LoTW batch is being prepared offline and has not activated.
-Signed candidate `dd173803` changes observability only; all 1,701 local tests
-and required checks pass, together with exact-release CI. At this checkpoint
-production remains on `7738f7d7`.
+LoTW trial C's one native upload is accepted, with strict readback and full
+fourteen-attempt/thirteen-artifact recovery completed at **14:37:53.975 UTC**.
+All thirteen prior QRZ attempts are preserved; QSL confirmation is false. Its
+historical source `7738f7d7` and closed Worker `0f72b254` remain pinned in the
+[accepted trial-C receipt](deployment.md#lotw-trial-c-accepted-processing-and-mixed-recovery-2026-10-25-utc).
+A fresh complete recovery on the new runtime completed at **15:14:13.517 UTC**,
+preserving all fourteen accepted attempts and original historical capture.
+The next two-contact LoTW batch is prepared but has not activated at this
+checkpoint; it retains native fresh-source, absence, certificate and ownership
+checks, with an independently armed closer.
 
 The following records retain prior accepted QRZ and closed LoTW checkpoints.
 QRZ's automatic trial is accepted: two clean 13:15/13:20 cycles made one attempt

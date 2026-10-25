@@ -13,6 +13,14 @@ now pass known-ACK observed-precision assessment and populated recovery.
 
 ## Current evidence (2026-10-25)
 
+- [x] Deploy signed observability release `dd173803` after all 1,701 tests and
+  required local/exact-release CI checks pass. Independent 15:13:03.263 UTC
+  verification confirms Worker `3500b478` healthy, matching assets and all eight
+  controls closed; schema 37 and native guards/budgets/retries are unchanged.
+- [x] Verify a fresh complete mixed PRE on the new closed runtime at 15:14:13.517
+  UTC: all fourteen accepted attempts, thirteen artifacts, original historical
+  LoTW capture and full crypto/restore/two-quarantine/integrity checks pass.
+
 - [x] Complete one native LoTW trial C upload, then close all eight controls at
   14:23:06.526 UTC on Worker `0f72b254`. The deployed runtime remains `7738f7d7`.
 - [x] After closure/drain, observe the accepted contact with one read-only LoTW

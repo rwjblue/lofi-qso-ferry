@@ -2,6 +2,32 @@
 
 Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. QRZ’s automatic trial remains accepted with thirteen ACKs assessed at known-ACK minute/sideband precision. LoTW trial C now establishes accepted processing for one native upload, backed by strict readback and fourteen-attempt/thirteen-artifact recovery. QSL confirmation is false. All eight controls remain closed. Further checked LoTW batches and a small automatic scope remain pending. Earlier dated holds and literal QRZ comparison limits remain unchanged.
 
+## Closed diagnostic release (2026-10-25, 15:13 UTC)
+
+Signed `dd173803dc81096115eb554d55da4a5a2eb0f701` passed all **1,701 tests**
+and required local checks plus [exact-release CI 40203904797](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40203904797).
+Independent verification at **15:13:03.263 UTC** confirms Worker
+`3500b478-f241-4a8a-b5b5-d9968ef324c9`, deployment
+`b320ad00-ee77-44f8-bbcc-83c7c2f5d55d`, sole 100% traffic, healthy HTTPS,
+matching homepage/application/admin assets, KEK version 1 and **all eight controls
+closed**. Schema remains 37; no production migration or restore was performed.
+
+The three commits add scheduler lifecycle/run correlation, fixed D1 provider and
+native-guard failure categories, and bounded source-proof failure phases. They
+do not change matching, cryptography, budgets, admission windows or retries.
+The earlier generic proof hold remains undiagnosed; new diagnostics do not
+retroactively identify its cause.
+
+A fresh complete recovery before deployment preserved all fourteen accepted
+attempts and thirteen artifacts. A second recovery on the new closed runtime
+completed at **15:14:13.517 UTC**, verifying **42,271,821 bytes**, the same exact
+fourteen members and thirteen artifacts, original historical LoTW capture at its
+original source/Worker, crypto/signature/proof/ownership checks, full in-memory
+restore, both quarantines, integrity and zero foreign-key violations. Its report
+SHA256 is `aff1bd3f4f3efc8b694bf1015e207f311e5b0720ad955138b4b5b0da6af60bd4`.
+This is the PRE for a prospective checked two-contact LoTW batch, not evidence
+that the pair has uploaded or been accepted.
+
 ## LoTW trial C: accepted processing and mixed recovery (2026-10-25 UTC)
 
 Trial C activated at **14:17:56.497 UTC** on exact signed runtime
@@ -48,7 +74,8 @@ check or guard was relaxed, and no upload was resent.
 | Accepted-observer summary                                                                                    | `742685d6e3a0db98bd0f03d8be42f1e07342271811d9344ca8b7f3ad2792389f` |
 | Protected raw accepted-report capture                                                                        | `66a3fe065ea7a9a4b0a2079c46af97a5fd777f2389ef61d480b0c8fe3c6e4256` |
 
-Production remains on `7738f7d7` with its 1,688-test CI qualification and schema 37.
+At the accepted trial-C checkpoint, production remained on `7738f7d7` with its
+1,688-test CI qualification and schema 37.
 Candidate `dd173803dc81096115eb554d55da4a5a2eb0f701` is signed and GitHub-verified;
 its three commits change observability only. All 1,701 local tests and required
 checks pass; [CI 40203904797](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40203904797)
@@ -597,9 +624,9 @@ claimed. Current temporary closure after accepted QRZ observation is recorded ab
 | ------------------------- | ------------------------------------------------------------------------------------------- |
 | Cloudflare account        | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                       |
 | Worker                    | `lofi-qso-ferry`, environment `production`                                                  |
-| Deployed source revision  | `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`                                                  |
-| Worker version            | `0f72b254-16b1-4d91-8bbb-6ecce2ee5e27`                                                      |
-| Closure attestation       | `2026-10-25T14:23:06.526Z`; all eight controls closed                                       |
+| Deployed source revision  | `dd173803dc81096115eb554d55da4a5a2eb0f701`                                                  |
+| Worker version            | `3500b478-f241-4a8a-b5b5-d9968ef324c9`                                                      |
+| Closure attestation       | `2026-10-25T15:13:03.263Z`; all eight controls closed                                       |
 | Origin / passkey RP       | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                               |
 | Dedicated D1              | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                            |
 | Migrations                | All 37 migrations through `0038_attempt_artifacts`; independently verified after deployment |

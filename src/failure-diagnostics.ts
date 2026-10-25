@@ -13,7 +13,8 @@ export type FailureStage =
   | "source_poll"
   | "source_rescan"
   | "context"
-  | "source_cycle";
+  | "source_cycle"
+  | "scheduler";
 export type FailureVendor = "lofi" | "qrz" | "lotw" | "none";
 export interface FailureCount {
   events: number;
@@ -41,6 +42,7 @@ const stages = new Set<FailureStage>([
   "source_rescan",
   "context",
   "source_cycle",
+  "scheduler",
 ]);
 const vendors = new Set<FailureVendor>(["lofi", "qrz", "lotw", "none"]);
 const qrzDetails = new Map([

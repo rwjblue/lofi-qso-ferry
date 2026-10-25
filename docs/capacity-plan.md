@@ -1,16 +1,51 @@
 # Capacity plan
 
-The broader LoTW historical association consumer, mandatory ownership write bridge,
-bounded ownership maintenance and shared source-comparison reads are deployed in
-signed `f2c41cb3a929ae3d3545e235894027b84fbf09fb`, including the ownership
-initialization follow-up. All **1,617 tests** and required checks passed; all
-eight export controls remain closed. The local cached 40-route
+Signed `0386af30312494bf31c2fd45f833e9c2a41534e9` is deployed with all eight
+export controls closed. It includes the LoTW historical association consumer,
+ownership write bridge and maintenance, shared source-comparison reads, and all
+three QRZ request-reduction and scheduling changes below. The runtime source
+passed **1,653 tests** and required checks. The local cached 40-route
 fixture measures **118 cohort / 222 whole-tick D1 RPCs / 1,123 SQL statements**;
 the minute-precision fixture measures **124 / 312 / 1,379**. These are local
 same-work measurements, not production speedup or capacity claims. See the
 [initial-recognition and idle measurements](#integrated-lotw-historical-recognition--local-measurements).
 
-## Current read-only release — f2c41cb3
+## Current read-only release — 0386af30
+
+[CI for deployed `0386af30`](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40154037329)
+passed **1,653 tests** and required checks at **2026-10-25 02:48:16 UTC**.
+Its runtime source also matches the earlier passing `3e46faac` revision. Deployment
+`a909a390-1b0d-418b-8bfb-80a72949c9dd` installed Worker
+`fbaf8af8-d51c-44e9-a5ca-53e29c2eb5c3` at **02:31:55.011 UTC** with all eight
+controls closed. Migrations, configuration and packages are unchanged from f2c;
+the schema remains at **36 migrations through 0037**. Fresh PRE/POST recovery
+and immutable-preservation checks passed.
+
+The deployed QRZ changes are immediate preparation reuse
+(`7760726387e7e2c37f40aad6987215038957e883`), bounded planning admission
+(`e4a1b1e2b330c151362a5360f5a79c4268f28016`), and deferred-key re-entry
+(`ddddd5e718a9e50ab64a6e51fd8867f6feed1f67`). Their enabled-path measurements below
+use fake vendors. Deployment with exports disabled supplies no live INSERT
+throughput or acceptance measurement.
+
+At **02:44:16.072 UTC**, the aggregate reports matching policy **6**, a clean
+**4,161-row source index** with zero dirty or rebuilding entries, and **9,981
+covered ownership inputs** with zero unhashed owners, pending or held inputs.
+Attempts, cutovers and raw historical references remain zero.
+
+| Completed 0386 run, 2026-10-25 UTC | Contact turns / classifications / adoptions | Errors / deferrals |  Elapsed | D1 RPCs / SQL statements |
+| ---------------------------------- | ------------------------------------------: | -----------------: | -------: | -----------------------: |
+| 02:35:42.675–02:37:13.709          |                                126 / 96 / 0 |              4 / 4 | 91.034 s |              852 / 3,355 |
+| 02:40:43.094–02:41:39.113          |                               148 / 156 / 0 |              3 / 9 | 56.019 s |              856 / 3,810 |
+
+Both runs stop at `database_budget` and have zero attempt turns. The reported
+failure/defer categories are LoTW unavailable and vendor-budget deferral; these
+are reconciliation observations, not QRZ INSERT results or capacity proof.
+Further covering-read sharing, fair account/book admission and LoTW attempt
+batching remain larger-usage work. They are not additional gates for the
+separately authorized singleton QRZ acceptance trial.
+
+## Previous read-only release — f2c41cb3
 
 [Release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40132320522)
 passed **1,617 tests** and required checks at **2026-10-24 21:26:36 UTC**.
@@ -63,9 +98,10 @@ empty, so populated raw-reference recovery is still open. Neither check restores
 production or grants export authority.
 
 The earlier **21:10 UTC** same-contact cloud proof/QRZ absence packet ran exact
-`5a427a30` code; its proof has expired. Fresh current-release source/vendor proof,
-scheduled proof-path verification, first-write acceptance, exception review and
-populated raw recovery remain open. Exports remain disabled.
+`5a427a30` code; its proof has expired. At this dated f2c checkpoint, fresh
+source/vendor proof, scheduled proof-path verification, first-write acceptance,
+exception review and populated raw recovery remained open. The current release
+status is recorded above; exports remain disabled.
 
 ## Previous read-only release — 5a427a30
 
@@ -362,10 +398,10 @@ created no approval. Its protected aggregate receipt is
 [first live QRZ acceptance trial](qrz-pilot.md) remains the priority; the larger
 usage target is not a new prerequisite for that singleton trial.
 
-### Immediate preparation reuse — local implementation, not deployed
+### Immediate preparation reuse — deployed, measured locally
 
-The first reduction below is implemented in this source revision and independently
-reviewed; production remains exact `f2c41cb3` with all eight controls closed.
+The first reduction below is independently reviewed and deployed in `0386af30`
+with all eight controls closed. The dated f2c comparison remains local evidence.
 Only an actual complete empty scan can issue an invocation-local observation.
 The successfully applied historical classification passes it to immediate
 unmapped `qrz_fresh_insert` preparation. Each opaque observation is single-use,
@@ -406,8 +442,8 @@ packet is `ferry-qrz-demand-reuse-f3rvvjrp`, with runtime/fixture and artifact
 hashes. An earlier modified-tree run saved no requests because the normal drain
 changed the diagnostic timestamp; its result remains separate. These are local
 request-demand measurements, not live vendor acceptance, production latency or
-sustained capacity. Deployment is deferred until the frozen first-QRZ acceptance
-work is complete; no export authority or limit changed.
+sustained capacity. The implementation is now deployed with exports disabled;
+no export authority or limit changed.
 
 ### Larger-cohort starvation and bounded planning admission
 
@@ -426,12 +462,13 @@ memos become due again after roughly five minutes, while the next canonical poll
 invalidates the prepared attempts' proofs before background dispatch. This is
 an inference from scheduling, not an observed multi-tick result.
 
-The follow-up local implementation admits fresh negative-history scans according
-to the current cohort's dispatch slots, after checking the exact ledger generation
-and quiet-period deadline. Positive historical matching retains its larger
+The planning-admission implementation, now deployed in `0386af30`, admits fresh
+negative-history scans according to the current cohort's dispatch slots, after
+checking the exact ledger generation and quiet-period deadline. Positive historical matching retains its larger
 cohort. Unscanned negatives receive neither an absence classification nor a new
 retry deadline, so they remain available for the next invocation. Normal
-selection still prevents their replay within this invocation.
+selection still prevents replay; the bounded deferred-key mechanism below can
+revisit exact unscanned keys in a later source round.
 
 An invocation-local planning ceiling admits at most **14 background / 110 total
 QRZ HTTP requests**, before the ordinary shared reservation. It never refills
@@ -481,19 +518,21 @@ are **24 admitted / one denied** and **10 admitted / zero denied**, with zero
 errors. This is separately pinned v1 evidence, not an exact-v2 or sustained
 capacity result.
 
-The v2 fix is signed `e4a1b1e2b330c151362a5360f5a79c4268f28016`.
+The v2 fix is signed `e4a1b1e2b330c151362a5360f5a79c4268f28016` and is deployed
+as part of `0386af30`.
 Its full local check passes **1,635 tests**, formatting, lint, both TypeScript
 projects and the Worker dry build. This is separate from the v3 checks below.
 
 V2 alone still selects the bounded cohort before scan admission, excluding its
 deferred siblings from later rounds and limiting the measured same-source work
-to two contacts. The follow-up below addresses that limit. These local
-improvements are not deployed and do not block the separately authorized
-singleton trial.
+to two contacts. The deployed follow-up below addresses that limit. The local
+measurements do not establish larger-usage capacity or add a gate to the
+separately authorized singleton trial.
 
-### Deferred-key re-entry — local implementation, not deployed
+### Deferred-key re-entry — deployed, measured locally
 
-The v3 follow-up retains at most **20 primitive work keys per invocation**;
+The v3 follow-up, signed `ddddd5e718a9e50ab64a6e51fd8867f6feed1f67` and deployed
+in `0386af30`, retains at most **20 primitive work keys per invocation**;
 invalid or consumed keys cannot refill that allowance. It stores neither
 contacts nor reusable vendor observations or source proofs. Before admitting
 work from a key, it checks the original tenant/source/destination, queue version, priority,
@@ -546,8 +585,10 @@ Thirteen native focused cases pass, including source/operation edits, queue
 and generation changes, credential/relink changes, a post-projection due race,
 and fitting neighbors progressing without repeating an oversized prefix. All
 **27 tests in the modified service suite** pass in the primary checkout, as do
-formatting, lint, both TypeScript checks and the Worker dry build. The 1,635-test
-full result above is the v2 parent, not a full v3-suite result.
+formatting, lint, both TypeScript checks and the Worker dry build. The dated
+1,635-test result above belongs to the v2 parent. The final deployed source,
+including v3 and the signing-policy correction, passed **1,653 tests** and all
+required checks as recorded in the current release section.
 
 ## First scheduled run of `12f636b3`
 
@@ -774,11 +815,11 @@ Current vendor limits are application policy shared across all accounts, not
 verified vendor quotas. They reserve capacity for live work and enforce shared
 Retry-After cooldowns. They must not be raised merely to make a benchmark pass.
 
-| Vendor | Current total requests / five minutes | Consequence at 100 accounts                                                                                                                                                                                                                                                                  |
-| ------ | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| LoFi   | 24, including at most 4 background    | Five-minute polling needs 100 requests. Equal polling takes at least about 21 minutes, or 25 minutes when all four background slots are used.                                                                                                                                                |
-| QRZ    | 120, including at most 24 background  | The measured direct-empty first-insert path needs four calls: classifier read, preparation read, dispatch read and INSERT. 40,000 calls/day exceeds the 34,560/day total before maintenance or retries; see [request demand](#qrz-first-insert-request-demand--exact-f2c-local-measurement). |
-| LoTW   | 40, including at most 8 background    | A new query-enabled contact currently needs at least six calls through observed receipt: classifier read, preparation read, two certificate checks, upload and readback. 60,000 calls/day exceeds the 11,520/day budget.                                                                     |
+| Vendor | Current total requests / five minutes | Consequence at 100 accounts                                                                                                                                                                                                                                                                                                |
+| ------ | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| LoFi   | 24, including at most 4 background    | Five-minute polling needs 100 requests. Equal polling takes at least about 21 minutes, or 25 minutes when all four background slots are used.                                                                                                                                                                              |
+| QRZ    | 120, including at most 24 background  | Deployed reuse measures three requests for a direct-empty contact and seven for a one-page fallback in local fixtures. At 10,000 contacts/day these imply 30,000 or 70,000 requests against a 34,560/day total, before maintenance/retries. Background-only work has 6,912 requests/day; no sustained rate is established. |
+| LoTW   | 40, including at most 8 background    | A new query-enabled contact currently needs at least six calls through observed receipt: classifier read, preparation read, two certificate checks, upload and readback. 60,000 calls/day exceeds the 11,520/day budget.                                                                                                   |
 
 The LoTW signer already accepts multiple contacts, but the attempt lifecycle
 currently represents one contact. Combining signed input alone would bypass
@@ -1243,7 +1284,9 @@ Share certificate validation only within its validated scope and dispatch turn.
 
 #### QRZ request reduction stages
 
-Stage 1 is implemented locally as measured above; stage 2 remains planned.
+Stage 1 is deployed with exports disabled and measured locally above; stage 2
+remains planned. Planning admission and deferred-key re-entry are also deployed,
+without changing the shared vendor budgets.
 Preserve the final write-adjacent
 duplicate query, immutable attempt and all after-budget source-proof, credential,
 book, scope, lease, identity/ownership and exact request-body checks.

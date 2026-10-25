@@ -6,7 +6,45 @@ proofs, fresh vendor evidence and exact contact review; finishing the 200,000-co
 plan is a separate expansion milestone. No real logbook entry has been inserted,
 replaced, deleted or uploaded during this implementation work.
 
-## Current evidence (2026-10-24)
+## Current evidence (2026-10-25)
+
+Signed `0386af30312494bf31c2fd45f833e9c2a41534e9` deployed at
+**02:31:55.011049 UTC**, Worker `fbaf8af8-d51c-44e9-a5ca-53e29c2eb5c3`,
+deployment `a909a390-1b0d-418b-8bfb-80a72949c9dd`, at sole 100% traffic.
+The source passes all **1,653 tests** and required checks; exact-release
+[CI 40154037329](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40154037329)
+completed successfully at **02:48:16 UTC**. Independent
+**02:32:22.968 UTC** attestation confirms all eight controls closed, active KEK
+version 1, healthy HTTPS and matching assets. All **36 migrations through 0037**
+remain installed.
+
+The **02:30:14.652 UTC PRE** and **02:33:12.483 UTC POST** recovery checks pass
+for all 3,327 exact ownership envelopes, three credentials, the tenant key,
+integrity/FKs and two isolated quarantines. The **02:39:24.873 UTC** comparison
+preserves all 3,327 claims, 2,895 QRZ owners and matching markers, 3,327 exact
+evidence records and the tenant-key binding, with zero changed, missing or added
+rows. See the [latest recovery receipt](#first-export-trial-packet) for snapshot
+sizes and hashes. No production restore or vendor write occurred.
+
+At **02:44:16.072 UTC**, policy 6 is active, the **4,161-row source index is
+clean**, and all **9,981 ownership inputs are covered**, with zero pending,
+held or unhashed work. The POST snapshot's two unhashed owners have been
+processed; attempts remain zero. The first two completed crons made 126/148
+contact turns and 96/156 classifications, with zero adoptions or attempt turns,
+stopping at `database_budget`. Two/one LoTW unavailable-history events affected
+four/three routes; four/three vendor-budget deferral events affected four/nine
+routes. Shared events are not HTTP counts. Failed or deferred reads remain held
+and cannot establish absence; the exact upstream cause and sustained capacity
+are not established by these samples.
+
+The exact-release QRZ operator packet passes **22 native execution cases,
+92 supporting cases and 21 recovery cases**. It still requires fresh same-contact
+review/proofs and the specific owner instruction before a real trial. Production
+controls remain closed. Singleton QRZ acceptance, broader QRZ corrections,
+LoTW acceptance, global source authority and sustained capacity are separate
+milestones.
+
+### Earlier release evidence (f2c41cb3, 2026-10-24)
 
 Signed `f2c41cb3a929ae3d3545e235894027b84fbf09fb` deployed at
 **21:29:41.127501 UTC**, Worker `fc1f2a5b-13e0-4509-ba03-9c93856c6464`, as the
@@ -649,24 +687,44 @@ enforced separation from the global cutover/no-query effects described above,
 then current evidence for the exact scope. The proposed order remains QRZ first,
 followed by LoTW. Keep private contact details out of repository documentation.
 
-The latest completed recovery receipt is the **22:43:13.471 UTC** postdiagnostic
-backup of `f2c41cb3`: **42,862,933 bytes**, all 36 migrations, all **3,327 populated
-exact ownership records**, one immutable source proof and its matching retention
-row. Original AAD/key/HMAC/ownership bindings, three credentials and the tenant
-key, integrity/FKs and two isolated quarantines pass. Attempts, pins, cutovers
-and raw historical references remain zero; all 9,981 ownership inputs are
-covered, with none pending, held or unhashed. The separate 22:43:58.546 UTC
-comparison preserves the complete immutable 21:28 UTC baseline. This does not
-exercise a nonzero real attempt or permit restoring production over an accepted
-vendor write. Refresh the backup and current guards before any future trial.
+The latest completed recovery receipt is the **2026-10-25 02:33:12.483 UTC**
+POST backup of signed `0386af30`: **40,449,296 bytes**, SQL SHA256
+`22180ca1ff35bdcadcba60272dd2579341ec2c96821edf6cdeb7631ebc1de109`.
+The **02:30:14.652 UTC PRE** contains **40,422,594 bytes**, SQL SHA256
+`0773b9369aa7312d37212d8d4b91d993ee9f583f31718b5cb4840c576f618fdc`.
+Both retain all 36 migrations and verify all **3,327 populated exact ownership
+records**, original AAD/key/HMAC/owner bindings, three credentials and the tenant
+key, integrity/FKs and two isolated quarantines. Attempts, proofs, pins, cutovers
+and raw historical references are zero. The POST has two unhashed owners; the
+later **02:44:16.072 UTC** aggregate has none, with all 9,981 inputs covered and
+zero pending or held inputs.
 
-The concrete packet, reviewed payload and stop/recovery rules are in the
-[restricted QRZ pilot guide](qrz-pilot.md). Its 22 native execution/review and 21
-recovery cases are offline evidence; actual first-write acceptance is still
-unproved. General automatic scope expansion requires a separate explicit
-decision after that acceptance.
+The **02:39:24.873 UTC** immutable comparison preserves every field of all
+3,327 claims, 2,895 QRZ owners and matching markers, 3,327 exact evidence records
+and the tenant-key binding, with zero changed, missing or added rows. Mutable
+intake/scheduler state is outside that comparison. This does not exercise a
+nonzero real attempt or populated raw-reference recovery, nor permit restoring
+production over an accepted vendor write. Refresh the backup and current guards
+before any future trial.
+
+The regenerated exact-`0386af30` packet, reviewed payload and stop/recovery rules
+are in the [restricted QRZ pilot guide](qrz-pilot.md). Its **22 native execution,
+92 supporting and 21 recovery cases** are offline evidence. Combined manifest
+SHA256 is `7c39915bb1ba7a1588247699367097161e04ec9c9380933c378ed6f25f5f6bc0`.
+It preserves the original packet and its expired/release-bound evidence; a fresh
+same-contact review and specific owner trial instruction remain pending. Actual
+first-write acceptance is unproved. General automatic scope expansion requires
+a separate explicit decision after that acceptance.
 
 ### Earlier recovery checkpoints
+
+The **2026-10-24 22:43:13.471 UTC** postdiagnostic backup of `f2c41cb3`
+contains **42,862,933 bytes**, all 36 migrations and 3,327 exact ownership records,
+plus one immutable source proof and matching retention. Original crypto/ownership
+bindings, three credentials, the tenant key, integrity/FKs and two quarantines
+pass; attempts, pins, cutovers and raw references are zero. The separate
+22:43:58.546 UTC comparison preserves the complete immutable 21:28 UTC baseline.
+This historical receipt does not renew that proof or authorize a trial.
 
 The earlier **21:13:06.917 UTC** postdiagnostic
 backup of `5a427a30`: **41,584,787 bytes**, all 36 migrations, **3,294 populated

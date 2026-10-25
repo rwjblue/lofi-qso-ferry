@@ -15,9 +15,9 @@ For the initial trial, both the source QSO and QRZ destination must be explicit
 singletons. Historical associations, existing mappings, unresolved attempts and
 competing owners cannot be converted into trial candidates by clearing data.
 
-The deployed implementation, 1,617-test release checks, completed ownership
+The deployed `0386af30` implementation, 1,653-test release checks, completed ownership
 bootstrap and populated exact-evidence recovery are recorded in
-[deployment evidence](deployment.md). The dated current-release cloud observation
+[deployment evidence](deployment.md). The dated prior-release cloud observation
 in [QRZ evidence](evidence-qrz.md) exercises source collection, final drain, proof
 creation and fresh absence for one contact. Such a proof expires normally; it is
 not write acceptance or standing permission to export.
@@ -50,6 +50,18 @@ recovery verifier passes **21 lifecycle and isolated-restore cases**. Independen
 source, producer/consumer, protected-file and deterministic-bundle reviews found
 no material blocker. These local tools do not change the deployed scheduler or
 authorize a write.
+
+The packet was regenerated for signed `0386af30312494bf31c2fd45f833e9c2a41534e9`
+and actual Worker `fbaf8af8-d51c-44e9-a5ca-53e29c2eb5c3`, independently verified
+after the disabled deployment. Fresh offline checks pass **22 native execution
+cases, 92 supporting cases and 21 recovery cases**. The 127 trial and 32 source
+SQL permissions are unchanged; all 123 observed SQL templates match the prior
+packet. Independent review verifies 105 protected artifacts, 290 exact Git
+archive files, 413 unique physical bundle inputs and 86 unchanged originals.
+Combined manifest SHA256:
+`7c39915bb1ba7a1588247699367097161e04ec9c9380933c378ed6f25f5f6bc0`.
+Old reviews and proofs retain their original release binding and expiry. This
+regeneration creates neither a new live proof nor trial authorization.
 
 Launch the protected host entry from a saved script with its reviewed outer
 timeout and diagnostic suppression. Do not use an eval with

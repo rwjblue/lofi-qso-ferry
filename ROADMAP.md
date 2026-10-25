@@ -9,8 +9,8 @@ This roadmap is the handoff for implementation in this repository. Checked items
 | Work                            | Current state                                                                                       | Next acceptance evidence                                                                                       |
 | ------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                                          |
-| Source comparison and ownership | Clean 4,146-contact index; all 9,981 ownership inputs covered at the recorded checkpoint            | Observe ongoing intake and sustained cost/throughput                                                           |
-| QRZ first-insert evidence       | Current-release source proof and complete empty neighborhood observed for one contact               | Renew normal evidence immediately before any separately authorized trial                                       |
+| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                                           |
+| QRZ first-insert evidence       | Prior-release source proof and complete empty neighborhood observed for one contact                 | Renew normal evidence immediately before any separately authorized trial                                       |
 | QRZ delivery                    | Disabled; no vendor write acceptance claimed                                                        | One reviewed payload, durable recovery capture, at most one INSERT, exact acknowledged-record readback         |
 | LoTW delivery                   | Disabled; source proof, empty three-day report and unrevoked serial observed                        | Renew current checks; prove signing, upload/readback acceptance and populated-evidence recovery                |
 | Broader rollout                 | Disabled                                                                                            | Accept the restricted QRZ trial, then explicitly approve destination scope and eligible older-contact backfill |
@@ -30,8 +30,8 @@ one-page model. These counts establish demand, not production completion rate.
 
 At 100 users × 100 new contacts/day, even four requests/contact exceeds the
 current total application budget before maintenance or retries. Background
-backfill has a smaller allowance. The first small optimization is implemented
-locally, **not deployed**: reuse the immediate history observation during
+backfill has a smaller allowance. The first small optimization is now deployed
+in `0386af30`: reuse the immediate history observation during
 preparation while retaining a new duplicate query before every INSERT. An
 independent native comparison measures **4→3** requests for one direct-empty
 contact, **9→7** for three candidates/two INSERTs and **10→7** for one
@@ -41,7 +41,7 @@ checks remain mandatory. All **1,628 tests** and the full local check pass;
 also passed at **2026-10-25 00:10:55 UTC**.
 A separate 20-candidate fallback probe exposed history reads consuming all
 24 background QRZ requests before dispatch: two attempts prepared, zero INSERTs.
-The local follow-up bounds fresh negative-history scans by available dispatch
+The deployed follow-up bounds fresh negative-history scans by available dispatch
 slots and caps planning HTTP requests across the entire invocation. Unscanned
 contacts retain their existing due work without an absence classification;
 positive historical matching retains the larger cohort. A native worst-case
@@ -53,7 +53,7 @@ headroom when other Workers share the same budget. Signed `e4a1b1e2` passes
 [CI run](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40146718840)
 passed at **2026-10-25 00:53:34 UTC**.
 
-The next local follow-up revisits at most 20 deferred primitive work keys in
+The deployed re-entry follow-up revisits at most 20 deferred primitive work keys in
 later normal source rounds, with current projection and exact queue guards.
 An independent 20-contact fixture completes **four direct-empty** or **three
 fallback** INSERTs within one invocation; a real following-window run completes
@@ -71,7 +71,7 @@ preserved. No quota increase or production capacity is claimed. The
 records measurements, request models and race-test acceptance criteria. This
 work does not delay the separately authorized singleton QRZ trial.
 
-### LoTW native comparison and signing-profile correction — local
+### LoTW native comparison and deployed signing-profile correction
 
 At **2026-10-25 00:51:14 UTC**, the isolated native TQSL 2.8.6 comparison passed
 both repository-public synthetic FT8 vectors. Native canonical bytes and
@@ -82,7 +82,7 @@ writer was not exercised; this does not prove ARRL upload/readback acceptance.
 See [the exact scope and pinned evidence](docs/evidence-signing.md).
 
 That comparison exposed an unverified mode in the old Ferry allowlist: native
-configuration 11.34 has no FST4W mapping. Local profile
+configuration 11.34 has no FST4W mapping. Deployed profile
 `ferry-lotw-v2-us-ca-3` holds new FST4W signing, including ADIF submode form,
 without substituting DATA. Historical matching policy 6 / candidate policy 2
 also holds that unverified LoTW mode; QRZ's separate ADIF parent-mode comparison
@@ -95,15 +95,15 @@ recovery of submitted/uncertain attempts. Both legacy recovery states and
 mutation-free prepared holds pass the **28-test LoTW delivery file**. These
 changes pass **all 1,653 tests**, formatting, lint, both TypeScript checks and
 the Worker dry build, with independent source review. The correction is signed
-and pushed as `d4dba32d`; the native evidence is in signed `3e46faac`. They are
-**not deployed**; production remains the disabled-export `f2c41cb3` release. Actual personal-key signing, accepted upload/readback,
+and pushed as `d4dba32d`; the native evidence is in signed `3e46faac`. Both are
+included in the disabled-export `0386af30` production release. Actual personal-key signing, accepted upload/readback,
 and populated raw-evidence recovery remain open. The mixed-cohort cloud resource
 observations below are complete, with per-case cost attribution unavailable.
 [CI for signed `3e46faac`](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40151923651)
 passed at **02:15:37 UTC**.
-A fresh **02:16:45.545 UTC** postexperiment production attestation confirms
-that same release, healthy responses, matching assets and all eight export
-controls closed.
+The **02:16:45.545 UTC** postexperiment attestation verified the preceding
+`f2c41cb3` release. The later `0386af30` deployment and closed-control verification
+are recorded below.
 
 ### LoTW cloud signing experiment — synthetic fixtures
 
@@ -132,7 +132,49 @@ at **02:15:31.810 UTC**, with the control secret removed. Real-credential
 signing and ARRL upload/readback acceptance remain open. See
 [the exact experiment scope](docs/evidence-signing.md#cloud-signing-experiment-2026-10-25).
 
-### Current production — ownership bootstrap and deletion status (f2c41cb3)
+### Current production — QRZ request reuse and LoTW profile 3 (0386af30)
+
+Signed revision `0386af30312494bf31c2fd45f833e9c2a41534e9` deployed at
+**2026-10-25 02:31:55.011049 UTC** as Worker
+`fbaf8af8-d51c-44e9-a5ca-53e29c2eb5c3`, deployment
+`a909a390-1b0d-418b-8bfb-80a72949c9dd`, sole 100% traffic. All **1,653 tests** and required checks pass;
+[CI for the exact deployed revision](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40154037329)
+completed successfully at **02:48:16 UTC**.
+Independent **02:32:22.968 UTC** attestation verifies healthy HTTPS, matching
+assets, active KEK 1 and all **eight export controls closed**. No migration,
+secret or vendor write occurred; the schema remains at 36 migrations through
+`0037`.
+
+The **02:30:14.652 UTC PRE** and **02:33:12.483 UTC POST** backups pass isolated
+restore, all 3,327 populated exact-evidence crypto/ownership checks, three
+credential decryptions, tenant-key verification, integrity/FKs and two
+quarantines. The separate **02:39:24.873 UTC** comparison preserves every field
+of all 3,327 claims, 2,895 QRZ owners and matching markers, 3,327 exact evidence
+records and the tenant comparison-key binding, with zero changed or missing
+rows. No production restore occurred. Raw LoTW references remain empty, so their
+populated recovery is still unverified.
+
+At **02:44:16.072 UTC**, policy 6 is active, the **4,161-row source index is
+clean**, and all **9,981 ownership inputs are covered**, with zero pending,
+held or unhashed ownership work. New intake briefly left two unhashed owners in
+the immediate POST snapshot; normal maintenance processed them before this
+later aggregate. Attempts, cutovers and temporary staging guards remain zero.
+
+The first two completed new-release crons made **126/148 contact turns** and
+**96/156 classifications**, with zero adoptions or attempt turns. They stopped
+at the database budget after **91.034/56.019 seconds**, using **852/856 D1 RPCs**.
+Fixed-category readback reports LoTW unavailable-history reads and vendor-budget
+deferrals. These remain holds, never absence evidence. The samples establish
+continued reconciliation, not the exact upstream failure cause or sustained
+production export capacity; see [deployment details](docs/deployment.md).
+
+The exact-release QRZ operator packet has been regenerated and independently
+reviewed: **22 native execution cases, 92 supporting cases and 21 recovery
+cases** pass, with unchanged SQL permissions. This prepares the separately
+authorized trial; it creates no approval or write authority. The specific
+one-contact trial instruction remains pending. General exports stay disabled.
+
+### Previous production — ownership bootstrap and deletion status (f2c41cb3)
 
 Signed revision `f2c41cb3a929ae3d3545e235894027b84fbf09fb` deployed read-only at
 **2026-10-24 21:29:41.127501 UTC** as Worker
@@ -891,7 +933,7 @@ Core feature paths, owner enrollment and service linking are implemented. The ne
 Durable outbound identity claims, bounded legacy QRZ binding, lossless eight-character LoTW signing and the aggregate source audit are implemented, tested and deployed. Claims protect adoption, preparation and dispatch across cancellation, uncertainty, source edits and payload expiry. Historical precision holds and live vendor acceptance remain separate.
 
 The [QRZ association rollout](docs/bootstrap.md#historical-association-and-vendor-matching) first deployed in `6ff685a7`; the 22:05:47.352 UTC comparison preserves all 2,689 QRZ owners and association markers from the 21:28 baseline, plus 77 guarded additions. The guarded LoTW ±30-minute consumer, cross-boundary retained coverage paths and ownership bridge first deployed in `5a427a30`. The `f2c41cb3` checkpoint verifies complete coverage of all 9,981 registry inputs and recovery of all 3,327 exact evidence copies. Remaining holds need normal reconciliation and review before they can be classified as manual exceptions. Neither historical association nor source-index coverage establishes absence, universal upstream completeness or export permission.
-1. **Current-release per-contact proof and QRZ absence were exercised read-only.**
+1. **Prior-release per-contact proof and QRZ absence were exercised read-only.**
    At 22:03:28.032 UTC, exact f2c modules completed collection, final drain, mint
    and targeted/book/covering QRZ reads in one Cloudflare preview. The same proof
    remained current afterward, with 293,053 ms then left. This is finite preview
@@ -1096,8 +1138,8 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 ## 7. Roll out personally and document operations
 
 - [x] Add a compact mobile-friendly dashboard for connection health, history adoption, pending work, submitted/observed states, and exceptions. No manual operation-release step.
-- [ ] Run a read-only reconciliation against the owner's history and review aggregate results and exceptions before enabling the service's first production writes. This is rollout verification, not the recurring logging workflow.
-- [ ] Enable a small, identifiable set of new contacts, verify both destinations, then expand normal automatic coverage. Record the deployed revision and contract evidence.
+- [ ] Complete review of the owner's read-only reconciliation results and relevant exceptions for broader rollout. The restricted QRZ singleton uses its own exact candidate, proof, ownership and absence checks; unrelated historical holds remain held.
+- [ ] Accept one specifically authorized QRZ INSERT with exact readback and recovery; observe a singleton scheduled turn before expanding QRZ scope. LoTW needs separate signing and accepted upload/readback evidence before its own activation. Record each deployed revision and contract evidence.
 - [x] Document deployment, certificate renewal, key rotation, passkey management, source cursor gaps, uncertain requests, backup restore, disabling connections, retention, and vendor throttling.
 - [ ] Measure representative monthly Worker/D1/email usage; document actual cost and tune batching/polling without weakening correctness.
 - [x] Verify a second isolated tenant with synthetic fixtures before enabling additional people.

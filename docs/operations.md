@@ -6,7 +6,44 @@ All checked-in environments disable exports. Local tests and synthetic signature
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
-Current signed release `f2c41cb3a929ae3d3545e235894027b84fbf09fb` passed
+Current signed release `0386af30312494bf31c2fd45f833e9c2a41534e9` deployed at
+**2026-10-25 02:31:55.011049 UTC** as Worker
+`fbaf8af8-d51c-44e9-a5ca-53e29c2eb5c3`, deployment
+`a909a390-1b0d-418b-8bfb-80a72949c9dd`, at sole 100% traffic. The source passes
+all **1,653 tests** and required checks; exact-release
+[CI 40154037329](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40154037329)
+completed successfully at **02:48:16 UTC**. Independent
+**02:32:22.968 UTC** verification confirmed all eight controls closed, active KEK
+version 1, healthy HTTPS and matching assets; **36 migrations through 0037** are
+installed. This release adds QRZ observation reuse and bounded planning/re-entry,
+and LoTW signing profile 3, while retaining the final duplicate query, current
+source proofs and durable ownership guards.
+
+The **02:30:14.652 UTC PRE** and **02:33:12.483 UTC POST** backups contain
+40,422,594 and 40,449,296 bytes respectively. Both verify all **3,327 exact
+ownership envelopes**, three credentials, the tenant key, integrity/FKs and two
+isolated quarantines. The **02:39:24.873 UTC** immutable comparison preserves all
+3,327 claims, 2,895 QRZ owners and matching markers, 3,327 exact evidence records
+and the tenant-key binding, with zero changed, missing or added rows. The two
+unhashed owners in the POST snapshot were processed before **02:44:16.072 UTC**:
+policy 6 is active, the **4,161-row source index is clean**, and all **9,981
+ownership inputs are covered**, with zero pending, held or unhashed work.
+Attempts remain zero. No production restore or vendor write occurred; see
+[backup receipts](rollout-checklist.md#first-export-trial-packet).
+
+The first two completed new-release crons made 126/148 contact turns and
+96/156 classifications, with zero adoptions or attempt turns, and stopped at
+`database_budget`. Fixed diagnostics identify two/one LoTW unavailable-history
+events affecting four/three routes, plus four/three vendor-budget deferral events
+affecting four/nine routes. A shared event can affect several contacts; these are
+not HTTP request counts. Sent read failures retain the partition's existing
+cursor/pages and use the guarded 15-minute retry delay, clipped to original
+retention expiry. Budget denial sends no request. Neither path proves absence,
+and these aggregates do not establish the upstream response cause, a regression
+or sustained export capacity.
+
+The following dated observations describe the earlier **2026-10-24** `f2c41cb3`
+release. That signed release `f2c41cb3a929ae3d3545e235894027b84fbf09fb` passed
 [CI 40132320522](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40132320522)
 with all **1,617 tests** and required checks at **2026-10-24 21:26:36 UTC**. It
 deployed at **21:29:41.127501 UTC** as Worker
@@ -94,7 +131,7 @@ Independent `KEK_V1`, `AUTH_SECRET` and `EMAIL_CODE_SECRET` secrets have been pr
 
 The 23:26 UTC read-only readiness audit found one active account with one active passkey. An independent backup key is recommended but is not a hard export requirement for the owner-operated pilot. An operator with database access can recover the account by associating a newly verified passkey public credential with the existing tenant; Ferry has no automated recovery command or email reset. Any manual recovery needs identity verification, a valid WebAuthn registration ceremony, review of tenant ownership, revocation of lost keys/sessions and an audit record. Database access cannot reconstruct a lost private passkey or replace missing encryption keys. The protected local application-secret backup exists with file mode `0600` and directory mode `0700`; secure secret-manager storage remains unconfirmed. See the [personal rollout checklist](rollout-checklist.md) for the exact first-write packet and the distinction between automatic inventory work and manual exception review.
 
-The checked-in production configuration keeps `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, `QRZ_FRESH_INSERTS_ENABLED=false`, `LOTW_FRESH_INSERTS_ENABLED=false`, `LIVE_WRITE_AUTHORIZATION` empty, `ROLLOUT_QSO_IDS_JSON=[]` and `ROLLOUT_DESTINATION_IDS_JSON=[]`. The independent 20:27:28.292 UTC verification of `5a427a30` confirms all eight controls closed, including `LOTW_FRESH_INSERTS_ENABLED`. Production `workers.dev` and preview URLs are disabled. The staging placeholder is intentionally undeployed.
+The checked-in production configuration keeps `EXPORTS_ENABLED=false`, `ROLLOUT_CHECKS_PASSED=false`, `SOURCE_BOUNDARY_VERIFIED=false`, `QRZ_FRESH_INSERTS_ENABLED=false`, `LOTW_FRESH_INSERTS_ENABLED=false`, `LIVE_WRITE_AUTHORIZATION` empty, `ROLLOUT_QSO_IDS_JSON=[]` and `ROLLOUT_DESTINATION_IDS_JSON=[]`. The independent 2026-10-25 02:32:22.968 UTC verification of `0386af30` confirms all eight controls closed, including `LOTW_FRESH_INSERTS_ENABLED`. Production `workers.dev` and preview URLs are disabled. The staging placeholder is intentionally undeployed.
 
 ## Prepare a disabled deployment
 
@@ -185,9 +222,11 @@ A genuinely new destination atomically requests a bounded source backfill stream
 
 ## First writes and expansion
 
-Required inputs are: Cloudflare deployment authority and resource IDs; the permanent hostname; a verified configured transactional sender; independently stored application secrets; the approved LoFi account and replay/cutover evidence; QRZ book key/identity/range plus a deliberately designated test contact/book; LoTW `.p12` import password, matching key and current certificate/serial status; optional LoTW query credentials; supported callsign/location/mode configuration; and explicit authorization naming the first genuinely new contacts and permitted destinations.
+For the restricted singleton QRZ trial, require the verified deployment and protected recovery backup, current LoFi source proof for the exact contact, the intended QRZ book/credential and fresh complete neighborhood checks, durable identity ownership, reviewed payload/narrative hashes, and explicit owner authorization naming that contact and destination. The frozen exact-`0386af30` execution packet passes 22 native and 92 supporting cases; its separate recovery packet passes 21 cases. Those checks create no approval. The specific trial instruction remains pending, and old reviews/proofs retain their original release binding and expiry. See the [restricted QRZ pilot](qrz-pilot.md).
 
-Set `ROLLOUT_QSO_IDS_JSON` to the exact authorized source QSO UUIDs for the first writes; the default empty array permits none. The explicit `["*"]` scope enables normal coverage only after scoped evidence and authorization. Preparation and dispatch both enforce the scope. Keep a small identifiable scope for the first writes. Verify QRZ INSERT/duplicate/REPLACE identity and narrative preservation on the designated test record. Verify one real Worker-signed LoTW upload reaches the queue, then separately observe its exact supported projection in readback. Confirmation is additional evidence. Record contact IDs/source generations, destination mappings, certificate/configuration versions, deployed revision, timing and redacted outcomes. Expand automatic coverage only after reviewing these results and the adopted-history exceptions. Template changes alone never authorize historical work; existing bindings remain pinned at durable export preparation.
+Set `ROLLOUT_QSO_IDS_JSON` and `ROLLOUT_DESTINATION_IDS_JSON` to the exact authorized scope; empty arrays permit none. Preparation and dispatch both enforce the scope. The first QRZ trial must verify one INSERT acknowledgement, exact LOGID readback and identity/narrative preservation, followed by post-attempt recovery checks. Retain the original encrypted prepared artifact before dispatch, and reconcile an uncertain outcome before considering another create. Record the source generation, destination mapping, payload/template/configuration versions, deployed revision, timing and redacted outcome in the protected packet.
+
+Global source cutover, QRZ REPLACE/correction validation, LoTW signing/upload/readback and sustained 200,000-contact capacity are separate follow-ups, not prerequisites for that singleton QRZ INSERT. A LoTW trial additionally requires the selected `.p12` and matching key, current certificate/serial status, query credentials, supported configuration and its own authorization. A queue acknowledgement is not observed acceptance; confirmation is separate again. General automatic expansion, including an explicit `["*"]` scope, requires a later decision after scoped acceptance. Template changes alone never authorize historical work; existing bindings remain pinned at durable export preparation.
 
 The current instruction is to keep exports disabled. After a future explicit live-write authorization and completed rollout evidence, every mode requires `EXPORTS_ENABLED=true`, `ROLLOUT_CHECKS_PASSED=true`, `LIVE_WRITE_AUTHORIZATION=I_AUTHORIZE_LIVE_VENDOR_WRITES`, and exact nonempty `ROLLOUT_QSO_IDS_JSON` and `ROLLOUT_DESTINATION_IDS_JSON` scopes. The independent first-insert flags are `QRZ_FRESH_INSERTS_ENABLED` and `LOTW_FRESH_INSERTS_ENABLED`; both default to false. QRZ remains the first rollout milestone. Keep the other vendor flag off and exclude its destination during a single-vendor trial.
 

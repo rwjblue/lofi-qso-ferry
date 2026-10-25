@@ -2,6 +2,24 @@
 
 Initial implementation review: 2026-10-22, using documentation and synthetic fixtures. Subsequent observations are dated below. One authorized QRZ INSERT has been acknowledged, recovered and independently observed with a unique neighborhood. Its returned UTC minute agrees; seconds remain unverified. Automatic exports remain disabled.
 
+## Scheduled trial and recovery retention — 2026-10-25 UTC
+
+Signed `890f714c` deploys migration `0038`: original encrypted attempt artifacts
+survive terminal outbox cleanup with unchanged AAD and seven-day expiry. All
+1,663 tests, required checks and exact-release CI pass. Native cases cover ACK
+purge, lost responses, atomic cohort rollback, expiry, old KEKs and populated
+full-SQL recovery through two quarantines. The 37-migration PRE/POST recovery
+preserves every prior immutable row and the original singleton host packet.
+
+The first real two-contact scheduled trial made **zero attempts or vendor writes**.
+Its policy change woke the whole backlog; the selected contacts remained eligible
+behind unrelated due rows. The 05:10 UTC invocation processed 27 contacts and 22
+cached classifications before a 93.097-second deadline, with no errors. This is
+not scheduled export acceptance. After closure and drain, both runs are complete,
+all eight controls are independently closed, and the 05:17 UTC backup verifies
+exactly the prior one attempt and no new table artifacts. Finite-scope scheduling
+must be corrected before retrying with normal proof/absence/ownership guards.
+
 ## Authorized singleton INSERT — 2026-10-25 03:55 UTC
 
 The reviewed singleton completed normal source-proof, QRZ absence, ownership,

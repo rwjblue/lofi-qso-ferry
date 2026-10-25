@@ -1,9 +1,11 @@
 # QRZ first-insert pilot
 
-Current instruction: complete the reviewed **one-contact QRZ trial**, with a
-fresh backup, at most one INSERT, exact readback and recovery. **Automatic
-exports and LoTW remain disabled** during that trial. The broader goal is to
-validate checked QRZ batches before automatic QRZ activation, then evaluate
+The reviewed **one-contact QRZ trial** is acknowledged and accepted at returned
+minute precision, with seconds unverified and populated recovery passing. Its
+one-INSERT allowance is exhausted. A later two-contact scheduled trial made zero
+attempts; its scope is closed while finite-scope scheduling is fixed. **Automatic
+exports and LoTW remain disabled**. The broader goal is to validate checked QRZ
+batches before automatic QRZ activation, then evaluate
 LoTW separately. This document records evidence; it does not itself grant write
 authority.
 
@@ -19,12 +21,34 @@ For the initial trial, both the source QSO and QRZ destination must be explicit
 singletons. Historical associations, existing mappings, unresolved attempts and
 competing owners cannot be converted into trial candidates by clearing data.
 
-The deployed `0386af30` implementation, 1,653-test release checks, completed ownership
+The deployed `890f714c` implementation, 1,663-test release checks, completed ownership
 bootstrap and populated exact-evidence recovery are recorded in
 [deployment evidence](deployment.md). The dated prior-release cloud observation
 in [QRZ evidence](evidence-qrz.md) exercises source collection, final drain, proof
 creation and fresh absence for one contact. Such a proof expires normally; it is
 not write acceptance or standing permission to export.
+
+## Scheduled two-contact trial — zero attempts, 2026-10-25 UTC
+
+Migration `0038` now retains original encrypted artifacts through normal ACK
+cleanup, with original AAD and seven-day expiry. The signed release, full CI and
+37-migration PRE/POST recovery pass; all prior immutable evidence is preserved.
+Two contacts were reviewed from the normal queue head without minting a proof
+or claiming fresh absence. The broader goal authorized their current validated
+payloads; the rollout flags enforce contact/destination scope, not frozen bytes.
+
+The actual 05:10 UTC scheduled invocation stopped at its deadline after 27 contact
+turns and 22 cached classifications, with zero attempts or vendor writes. The
+gate/scope policy change woke the whole backlog; the selected contacts remained
+eligible but sat behind unrelated due work. This does not prove scheduled export
+acceptance. The scope was closed at 05:13:15 UTC. Independent checks after the drain
+period confirm all eight closed controls, completed runs and only the original
+singleton attempt. The 05:17 UTC recovery snapshot passes with no new artifacts.
+
+Next: prioritize a finite authorized cohort within the normal scheduler, keeping
+all current eligibility, quiet, context, proof, ownership and request guards.
+Repeat the checked trial after its regression and release checks; no direct
+queue reset, claim clearing or vendor retry is part of the remedy.
 
 ## Complete the one-contact packet while disabled
 

@@ -6,7 +6,24 @@ All checked-in environments disable exports. Local tests and synthetic signature
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
-Current signed release `0386af30312494bf31c2fd45f833e9c2a41534e9` deployed at
+Current signed release `890f714c39390b71f0d4222eb03ef864981e5f98` includes
+retained original encrypted attempt artifacts with unchanged AAD and seven-day
+expiry. All 1,663 tests and required checks pass in
+[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40162836106).
+There are 37 installed migrations through `0038`. The scheduled two-contact QRZ
+trial made zero new attempts or writes: global policy wake placed unrelated work
+ahead of the scoped contacts until the run's deadline. Its scope is closed while
+finite-scope scheduling is corrected. Worker
+`8122bc6c-87eb-46d0-8b2e-5e13e5cd16e3`, deployment
+`b1542925-2e7d-4a0f-a76e-2dfd978ebc26`, serves sole 100% traffic as of
+05:13:15 UTC. Independent 05:17:40 UTC attestation confirms all eight controls
+closed, health/assets and KEK 1. The 05:17 UTC backup passes isolated recovery
+and repeated quarantine, preserving the original singleton and all prior
+immutable evidence. No new table artifact is claimed from the zero-attempt run.
+
+### Earlier 0386af30 checkpoints
+
+Signed release `0386af30312494bf31c2fd45f833e9c2a41534e9` deployed at
 **2026-10-25 02:31:55.011049 UTC** as Worker
 `fbaf8af8-d51c-44e9-a5ca-53e29c2eb5c3`, deployment
 `a909a390-1b0d-418b-8bfb-80a72949c9dd`, at sole 100% traffic. The source passes

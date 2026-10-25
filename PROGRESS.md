@@ -2,15 +2,27 @@
 
 ## Current production and export acceptance — 2026-10-25 UTC
 
-Signed `0386af30312494bf31c2fd45f833e9c2a41534e9` serves production as Worker
-`fbaf8af8-d51c-44e9-a5ca-53e29c2eb5c3`, deployment
-`a909a390-1b0d-418b-8bfb-80a72949c9dd`, sole 100% traffic. All **1,653 tests**
-and required checks pass in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40154037329).
-There are 36 installed migrations through `0037`; all eight export controls
-remain closed. The release includes QRZ observation reuse/planning/re-entry and
-LoTW signing profile 3. See [deployment evidence](docs/deployment.md).
+Signed `890f714c39390b71f0d4222eb03ef864981e5f98` serves production as Worker
+`8122bc6c-87eb-46d0-8b2e-5e13e5cd16e3`, deployment
+`b1542925-2e7d-4a0f-a76e-2dfd978ebc26`, sole 100% traffic. All **1,663 tests**
+and required checks pass in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40162836106).
+There are 37 installed migrations through `0038`; all eight export controls
+are closed. Original encrypted attempt artifacts now survive terminal outbox
+cleanup with their original AAD and seven-day expiry. Native tests cover atomic
+capture, uncertain delivery, expiry, KEKs and populated full-SQL recovery.
+The PRE/POST backups preserve the existing delivered singleton and all immutable
+evidence. See [deployment evidence](docs/deployment.md).
 
-The owner authorized the reviewed QRZ singleton with a fresh backup, at most one
+The restricted two-contact scheduled trial made **zero new attempts or writes**.
+Its 05:10 UTC run processed 27 contacts/22 classifications before its 93.097-second
+deadline. Opening the scope woke the whole backlog, leaving the selected contacts
+behind unrelated due work. Scope closure deployed at 05:13:15 UTC; independent
+05:17:40 UTC attestation confirms all eight closed controls. Both runs are complete,
+and the 05:17 UTC backup verifies exactly the original one attempt with no new
+artifacts. Next: fix finite-scope scheduling, validate the large-backlog regression,
+then repeat the checked QRZ trial. No queue timestamps or claims were forced.
+
+On preceding `0386af30`, the owner authorized the reviewed QRZ singleton with a fresh backup, at most one
 INSERT, exact readback and recovery. Two preparations stopped before any attempt
 or dispatch, independently verified by recovery. The corrected operator tool
 then received **one QRZ INSERT acknowledgement** by **03:55:14.887 UTC**. The
@@ -30,8 +42,8 @@ literally. QRZ returns a four-digit time matching the transmitted UTC minute;
 the source seconds remain preserved but unverified at QRZ. The separate known-ACK
 assessment passes receipt/owner/claim/proof links without changing the original
 unresolved literal-readback outcome or uncertain recovery. All eight controls
-remain closed. Next: preserve encrypted artifacts through normal ACK cleanup,
-verify recovery for a two-contact scope and observe actual scheduled delivery.
+remain closed. Retained-artifact recovery is now deployed; successful scheduled
+delivery and populated live table-artifact recovery remain unobserved.
 Small checked QRZ batches must precede automatic QRZ scope; LoTW follows its
 own signing/upload/readback acceptance. The [roadmap](ROADMAP.md) and
 [pilot guide](docs/qrz-pilot.md) carry the current status. Older observations

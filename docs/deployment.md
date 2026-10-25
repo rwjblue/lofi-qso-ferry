@@ -1,15 +1,31 @@
 # Read-only production deployment
 
-Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Vendor exports remain disabled; no real logbook entries were changed. The resource summary reflects the latest deployment; the follow-up sections retain earlier evidence.
+Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Automatic exports and LoTW are disabled. One authorized singleton changed QRZ; the later scheduled two-contact trial made zero attempts or vendor writes. The resource summary reflects the latest closed deployment; dated sections retain earlier evidence.
 
-Signed revision `0386af30312494bf31c2fd45f833e9c2a41534e9` deployed at
-**2026-10-25 02:31:55.011049 UTC**, Worker `fbaf8af8-d51c-44e9-a5ca-53e29c2eb5c3`
-at sole 100% traffic. All **1,653 tests** and required checks pass, and
-[CI for the exact deployed revision](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40154037329)
-completed successfully at **02:48:16 UTC**. The source and evidence commits are signed.
-Independent **02:32:22.968 UTC** verification confirmed all **eight export controls closed**,
-active KEK version 1, healthy HTTPS and matching assets. All **36 migrations
-through `0037`** are installed.
+Signed revision `890f714c39390b71f0d4222eb03ef864981e5f98` deployed at
+**2026-10-25 05:00:29.106103 UTC**, initially Worker
+`8a1e9a6f-12a8-49de-be65-1be1ca4f8a52`. All **1,663 tests** and required checks
+pass in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40162836106).
+The source and evidence commits are signed. Migration `0038` atomically retains
+original encrypted attempt artifacts through terminal outbox cleanup, preserving
+their original AAD and seven-day expiry. All **37 migrations through `0038`**
+are installed. The 04:58 UTC PRE and 05:03 UTC POST recovery checks pass, preserving
+all prior immutable evidence and the original delivered singleton.
+
+A restricted two-contact QRZ scope was opened for a real scheduled trial. The
+05:10 UTC run completed 27 contact turns/22 cached classifications in 93.097
+seconds, with zero attempts, errors or vendor writes. The policy change woke the
+whole backlog, leaving the scoped contacts behind unrelated due work. Successful
+scheduled delivery remains unproved; finite-scope scheduling is the next fix.
+
+Closure deployed the same signed source at **05:13:15.292286 UTC**, Worker
+`8122bc6c-87eb-46d0-8b2e-5e13e5cd16e3`, deployment
+`b1542925-2e7d-4a0f-a76e-2dfd978ebc26`, at sole 100% traffic. Independent
+**05:17:40.088 UTC** verification confirms all **eight export controls closed**,
+KEK 1, healthy HTTPS and matching assets. Both recorded runs are complete.
+The 05:17 UTC backup passes isolated recovery/quarantine with exactly the original
+one attempt, zero new scheduled attempts and zero table artifacts. The singleton's
+purged body remains preserved only in its original protected host packet.
 
 The release retains the mandatory LoTW ownership write bridge, permanent encrypted
 raw historical references and the guarded **±30-minute LoTW association path**.
@@ -31,25 +47,26 @@ policy 6 is active: **9,981 covered inputs, zero pending or held inputs and zero
 unhashed owners**. The comparison index is clean at **4,161 rows**. This aggregate
 does not validate ciphertext or grant export authority; protected recovery
 evidence is recorded below.
-Remaining work includes actual exception review, fresh exact source/vendor
-proofs for a scoped trial, first-write acceptance and sustained capacity.
-Exports remain disabled; this release authorizes no first-write trial.
+Remaining work includes the scoped scheduling correction, successful checked
+scheduled QRZ delivery/readback, wider QRZ observation, separate LoTW acceptance,
+broader exception review and sustained capacity. Exports remain disabled while
+the scheduling correction is validated.
 
-| Resource                 | Current value                                                                                          |
-| ------------------------ | ------------------------------------------------------------------------------------------------------ |
-| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                                  |
-| Worker                   | `lofi-qso-ferry`, environment `production`                                                             |
-| Deployed source revision | `0386af30312494bf31c2fd45f833e9c2a41534e9`                                                             |
-| Worker version           | `fbaf8af8-d51c-44e9-a5ca-53e29c2eb5c3`, created `2026-10-25T02:31:53.640237Z`                          |
-| Deployment               | `a909a390-1b0d-418b-8bfb-80a72949c9dd`, `2026-10-25T02:31:55.011049Z`, 100% of traffic                 |
-| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                                          |
-| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                                       |
-| Migrations               | All 36 migrations through `0037_lotw_historical_associations`; independently verified after deployment |
-| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                                      |
-| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled                   |
-| Schedule                 | `*/5 * * * *`                                                                                          |
-| Alternate origins        | workers.dev and version previews disabled                                                              |
-| Artifact                 | 2,108.88 KiB raw / 411.08 KiB gzip; reported startup 36 ms                                             |
+| Resource                 | Current value                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------- |
+| Cloudflare account       | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                       |
+| Worker                   | `lofi-qso-ferry`, environment `production`                                                  |
+| Deployed source revision | `890f714c39390b71f0d4222eb03ef864981e5f98`                                                  |
+| Worker version           | `8122bc6c-87eb-46d0-8b2e-5e13e5cd16e3`, created `2026-10-25T05:13:14.307258Z`               |
+| Deployment               | `b1542925-2e7d-4a0f-a76e-2dfd978ebc26`, `2026-10-25T05:13:15.292286Z`, 100% of traffic      |
+| Origin / passkey RP      | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                               |
+| Dedicated D1             | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                            |
+| Migrations               | All 37 migrations through `0038_attempt_artifacts`; independently verified after deployment |
+| Sender                   | Native Cloudflare `EMAIL`, restricted to `signup@ferry.n1rwj.com`                           |
+| Sending domain           | `ferry.n1rwj.com`, tag `e69af8ef82a140b38eeaef98d417ef30`, content previews disabled        |
+| Schedule                 | `*/5 * * * *`                                                                               |
+| Alternate origins        | workers.dev and version previews disabled                                                   |
+| 05:00 source artifact    | 2,093.85 KiB raw / 410.43 KiB gzip; reported startup 30 ms                                  |
 
 The existing account and native email pattern were reused. Ferry has its own database and secrets; unrelated Worker databases were not modified. Sending DNS is isolated to the new subdomain and its bounce/authentication records; existing `n1rwj.com` Fastmail MX records were checked unchanged. No subscription or billing-plan changes were made. The account Email Sending API reported an existing quota of 200 messages/day; this deployment did not change that limit.
 

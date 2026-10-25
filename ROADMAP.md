@@ -6,19 +6,53 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ### Export readiness at a glance
 
-| Work                            | Current state                                                                                          | Next acceptance evidence                                                                           |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
-| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks    | Continue guarded associations; review contradictory location evidence                              |
-| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint              | Observe ongoing intake and sustained cost/throughput                                               |
-| QRZ first-insert evidence       | Current-release source proof and fresh empty neighborhood passed for the authorized contact            | Renew normal evidence for every later contact                                                      |
-| QRZ delivery                    | One INSERT acknowledged; recovery and unique-neighbor checks pass; readback agrees at minute precision | Preserve recoverable artifacts for a checked two-contact scheduled trial                           |
-| LoTW delivery                   | Disabled; source proof, empty three-day report and unrevoked serial observed                           | Renew current checks; prove signing, upload/readback acceptance and populated-evidence recovery    |
-| Broader rollout                 | Disabled; singleton assessed with seconds unverified                                                   | Observe checked QRZ batches and scheduled delivery before automatic scope; LoTW follows separately |
+| Work                            | Current state                                                                                       | Next acceptance evidence                                                                           |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                              |
+| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                               |
+| QRZ first-insert evidence       | Current-release source proof and fresh empty neighborhood passed for the authorized contact         | Renew normal evidence for every later contact                                                      |
+| QRZ delivery                    | Singleton accepted at returned minute precision; retained-artifact recovery deployed                | Fix scoped scheduling after a zero-attempt cron trial, then repeat the checked batch               |
+| LoTW delivery                   | Disabled; source proof, empty three-day report and unrevoked serial observed                        | Renew current checks; prove signing, upload/readback acceptance and populated-evidence recovery    |
+| Broader rollout                 | Disabled; singleton assessed with seconds unverified                                                | Observe checked QRZ batches and scheduled delivery before automatic scope; LoTW follows separately |
 
-The next work is recoverable artifact capture and a checked two-contact QRZ
-trial described in [the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
+The next work is bounded scheduling for explicitly scoped contacts, then another
+checked two-contact QRZ trial described in [the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
+
+### Current production — retained artifacts and scoped scheduling (890f714c)
+
+Signed `890f714c39390b71f0d4222eb03ef864981e5f98` passes all **1,663 tests**
+and required checks, including [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40162836106).
+It deployed at **05:00:29.106103 UTC** with migration `0038`, bringing the
+installed count to **37**. Original encrypted attempt artifacts now survive
+terminal outbox cleanup with their original AAD and seven-day expiry. The
+26 focused cases cover atomic staging, lost ACKs, expiry, original KEKs and
+populated full-SQL restore. The migration rehearsal preserves all 70 prior tables;
+the **04:58 UTC PRE** and **05:03 UTC POST** recovery checks preserve the existing
+delivered singleton and all baseline immutable evidence.
+
+A restricted two-contact QRZ scope was opened for a normal scheduled trial.
+The **05:10 UTC** invocation completed **27 contact turns / 22 classifications**
+in **93.097 seconds**, stopping at its deadline with **zero attempts, errors or
+vendor writes**. The policy change woke the whole backlog, leaving the recently
+reviewed contacts behind unrelated due work; both remained eligible and untouched.
+This is a scheduling failure, not successful scheduled export acceptance.
+
+The scope was closed at **05:13:15.292286 UTC**, Worker
+`8122bc6c-87eb-46d0-8b2e-5e13e5cd16e3`, deployment
+`b1542925-2e7d-4a0f-a76e-2dfd978ebc26`, sole 100% traffic.
+Independent **05:17:40.088 UTC** attestation confirms all eight controls closed,
+healthy HTTPS, matching assets and KEK 1. Both recorded runs are complete. The
+**05:17 UTC** backup passes isolated recovery with exactly the prior one attempt,
+zero new scheduled attempts and zero retained table artifacts. The old singleton
+still uses its preserved host packet; no purged legacy body was reconstructed.
+
+Next: give a finite authorized scope its ordinary bounded cohort before unrelated
+history work, preserving all due/context/quiet/proof/ownership/budget checks and
+later fair work. Validate this against a large policy-woken backlog, then repeat
+the scoped trial with fresh backup and readback. Automatic exports and LoTW stay
+disabled. Broader QRZ scope and LoTW acceptance remain subsequent milestones.
 
 ### Throughput follow-up — request demand
 
@@ -132,7 +166,7 @@ at **02:15:31.810 UTC**, with the control secret removed. Real-credential
 signing and ARRL upload/readback acceptance remain open. See
 [the exact experiment scope](docs/evidence-signing.md#cloud-signing-experiment-2026-10-25).
 
-### Current production — QRZ request reuse and LoTW profile 3 (0386af30)
+### Previous production — QRZ request reuse and LoTW profile 3 (0386af30)
 
 Signed revision `0386af30312494bf31c2fd45f833e9c2a41534e9` deployed at
 **2026-10-25 02:31:55.011049 UTC** as Worker
@@ -1191,7 +1225,8 @@ Milestone 0's investigations can run independently. QRZ and LoTW delivery can be
 - [x] Add a compact mobile-friendly dashboard for connection health, history adoption, pending work, submitted/observed states, and exceptions. No manual operation-release step.
 - [ ] Complete review of the owner's read-only reconciliation results and relevant exceptions for broader rollout. The restricted QRZ singleton uses its own exact candidate, proof, ownership and absence checks; unrelated historical holds remain held.
 - [x] Accept one specifically authorized QRZ INSERT with populated recovery, known-ACK readback at returned minute precision and a complete unique neighborhood. All other transmitted fields match literally; seconds remain unverified.
-- [ ] Preserve original encrypted artifacts through normal delivery cleanup and verify populated approved-set recovery. Observe checked scheduled QRZ delivery before broader scope. LoTW needs separate signing and accepted upload/readback evidence before its own activation. Record each deployed revision and contract evidence.
+- [x] Deploy original encrypted artifact retention through normal delivery cleanup, preserving original AAD/expiry and native populated restore/quarantine checks. Production schema37 recovery preserves the earlier host-packet singleton; the new table has no live populated artifact yet.
+- [ ] Correct finite-scope scheduling after the zero-attempt real cron trial, then observe checked scheduled QRZ delivery and populated approved-set recovery before broader scope. LoTW needs separate signing and accepted upload/readback evidence before its own activation. Record each deployed revision and contract evidence.
 - [x] Document deployment, certificate renewal, key rotation, passkey management, source cursor gaps, uncertain requests, backup restore, disabling connections, retention, and vendor throttling.
 - [ ] Measure representative monthly Worker/D1/email usage; document actual cost and tune batching/polling without weakening correctness.
 - [x] Verify a second isolated tenant with synthetic fixtures before enabling additional people.

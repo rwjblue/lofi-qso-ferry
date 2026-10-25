@@ -10,6 +10,25 @@ recoverable artifacts through normal ACK cleanup and actual scheduled acceptance
 
 ## Current evidence (2026-10-25)
 
+Signed `890f714c39390b71f0d4222eb03ef864981e5f98` passes all **1,663 tests** and
+required checks in [CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40162836106).
+Migration `0038` retains original encrypted attempt artifacts through ACK cleanup,
+with original AAD and seven-day expiry; 37 migrations are installed. PRE/POST
+isolated recovery preserves the original delivered singleton and all immutable
+evidence. The later two-contact scheduled trial made zero attempts or writes:
+global policy wake placed unrelated work before the scoped contacts, and the
+05:10 UTC run reached its deadline after 27 contacts/22 classifications.
+
+The scope is closed. Worker `8122bc6c-87eb-46d0-8b2e-5e13e5cd16e3` serves sole
+100% traffic; independent 05:17:40 UTC verification confirms all eight closed
+controls, health/assets and KEK 1. Both runs are complete. The 05:17 UTC recovery
+check verifies exactly the prior one attempt and zero new table artifacts.
+Successful scheduled delivery and populated live table-artifact recovery remain
+open. Fix finite-scope cohort scheduling before repeating the trial; do not
+force queue timestamps or remove claims. See [current deployment](deployment.md).
+
+### Earlier evidence (0386af30, 2026-10-25)
+
 Signed `0386af30312494bf31c2fd45f833e9c2a41534e9` deployed at
 **02:31:55.011049 UTC**, Worker `fbaf8af8-d51c-44e9-a5ca-53e29c2eb5c3`,
 deployment `a909a390-1b0d-418b-8bfb-80a72949c9dd`, at sole 100% traffic.

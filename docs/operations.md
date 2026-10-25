@@ -1,6 +1,6 @@
 # Operations and personal rollout
 
-Checked-in environments default to disabled exports. Production is temporarily closed after accepted automatic QRZ observation, for LoTW preparation. Local tests and synthetic signatures establish implementation behavior; live source replay, QRZ mutation preservation and ARRL acceptance still require the inputs below. Deployment alone must not change real logs.
+Checked-in environments default to disabled exports. The first LoTW contact now has strict accepted-processing readback and full mixed recovery; QSL confirmation is false. QRZ’s automatic trial remains accepted. All eight production controls are closed. Further checked LoTW batches and a small automatic scope still need their own current evidence and recovery. Deployment alone must not change real logs.
 
 ## Current production target
 
@@ -9,6 +9,20 @@ The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.co
 The current runtime remains signed `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`
 with 37 migrations and all **1,688 tests and required checks** passing in
 [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40184837953).
+LoTW trial C’s one native upload is accepted, with strict readback and full
+fourteen-attempt/thirteen-artifact recovery completed at **14:37:53.975 UTC**.
+All thirteen prior QRZ attempts are preserved; QSL confirmation is false. The
+current closed Worker is `0f72b254-16b1-4d91-8bbb-6ecce2ee5e27`, attested with
+all eight controls closed at **14:23:06.526 UTC**. See the
+[accepted trial-C receipt](deployment.md#lotw-trial-c-accepted-processing-and-mixed-recovery-2026-10-25-utc)
+for the complete backup, observer hashes and scope limits.
+
+The next two-contact LoTW batch is being prepared offline and has not activated.
+Signed candidate `dd173803` changes observability only; all 1,701 local tests
+and required checks pass, together with exact-release CI. At this checkpoint
+production remains on `7738f7d7`.
+
+The following records retain prior accepted QRZ and closed LoTW checkpoints.
 QRZ's automatic trial is accepted: two clean 13:15/13:20 cycles made one attempt
 each, and all **thirteen QRZ ACKs** now pass known-ACK observed-precision
 assessment plus thirteen-attempt/twelve-artifact recovery. Exact seconds remain
@@ -33,7 +47,7 @@ unfinished rows and no LoTW proof pins. There was no LoTW attempt/upload; this
 does not establish signing absence. Trial B preparation stopped at **14:12:54 UTC**, before any input, intent or
 activation, with `settled_margin_not_available`. At that check 14:05 was the
 latest completed cycle and no 14:10 scheduler row was present; this does not
-establish a missed cron or its cause. All eight controls remain closed on
+establish a missed cron or its cause. At that checkpoint all eight controls remained closed on
 Worker `40991304`, with thirteen attempts. Trial A's precise proof failure
 remains undiagnosed. See the [trial-A receipt](deployment.md#lotw-trial-a-source-proof-hold-and-closed-recovery-2026-10-25-utc).
 

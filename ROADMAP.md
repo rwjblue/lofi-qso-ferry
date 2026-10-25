@@ -6,14 +6,14 @@ This roadmap is the handoff for implementation in this repository. Checked items
 
 ### Export readiness at a glance
 
-| Work                            | Current state                                                                                       | Next acceptance evidence                                                                           |
-| ------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence                              |
-| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                               |
-| QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                                                      |
-| QRZ delivery                    | Automatic trial accepted: all thirteen ACKs assessed; temporarily closed for LoTW preparation       | Preserve accepted QRZ evidence through the separate LoTW trial; continue monitoring                |
-| LoTW delivery                   | Trial A reached a source-proof hold; closed with zero new attempts and verified recovery            | Resolve the precise proof hold; renew normal checks and complete scoped upload/readback acceptance |
-| Broader rollout                 | All eight controls temporarily closed; QRZ trial accepted; LoTW acceptance pending                  | Complete the separate LoTW acceptance process; sustain measured QRZ operation                      |
+| Work                            | Current state                                                                                       | Next acceptance evidence                                                            |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence               |
+| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                |
+| QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                                       |
+| QRZ delivery                    | Automatic trial accepted: all thirteen ACKs assessed; temporarily closed for LoTW preparation       | Preserve accepted QRZ evidence through the separate LoTW trial; continue monitoring |
+| LoTW delivery                   | First trial accepted: one LoTW contact observed with full mixed recovery                            | Complete the next checked LoTW pair, then assess a small automatic scope            |
+| Broader rollout                 | All controls closed; QRZ trial and first LoTW contact accepted                                      | Further LoTW batches, small automatic scope and sustained scale remain pending      |
 
 The receiver fix is deployed; checked pairs C, D2 and F4 passed scheduled delivery,
 recovery and known-ACK assessment at the observed minute/sideband representation.
@@ -26,7 +26,23 @@ not because the trial failed, as described in
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
 
-### Current checkpoint — QRZ accepted; LoTW trial A held and closed
+### Current checkpoint — first LoTW contact accepted; all controls closed
+
+Trial C’s one native LoTW upload now has a strict accepted-report observation
+and full fourteen-attempt/thirteen-artifact recovery, completed at
+**14:37:53.975 UTC**. All thirteen prior QRZ attempts are preserved. The report
+confirms accepted processing of the new contact; **QSL confirmation is false**.
+All eight controls remain closed on runtime `7738f7d7`, Worker
+`0f72b254-16b1-4d91-8bbb-6ecce2ee5e27`.
+
+A separate two-contact LoTW batch is being prepared offline and has not
+activated. Broader LoTW batch and small automatic-scope acceptance remain
+pending. Signed candidate `dd173803` contains three observability-only commits;
+its full checks and CI are in progress, and it is not deployed. See the
+[trial-C accepted checkpoint](docs/deployment.md#lotw-trial-c-accepted-processing-and-mixed-recovery-2026-10-25-utc)
+for the immutable receipt hashes and remaining limits.
+
+### Earlier checkpoint — QRZ accepted; LoTW trial A held and closed
 
 The 13:15 and 13:20 persistent QRZ cycles completed **32 and 38 contact turns**,
 with one attempt, zero errors and two deferrals each; both stopped at
@@ -70,7 +86,7 @@ does not establish whether signing ran. Trial B
 preparation stopped at **14:12:54 UTC**, before any input, intent or activation,
 with `settled_margin_not_available`. The latest completed cycle was 14:05; no
 14:10 scheduler row was present at that check. This does not establish a missed
-cron or its cause. All eight controls remain closed on Worker `40991304`, with
+cron or its cause. At that checkpoint all eight controls remained closed on Worker `40991304`, with
 thirteen total attempts; the precise trial-A proof failure still needs diagnosis.
 Runtime `7738f7d7` and its 1,688-test CI qualification are unchanged. See the
 [LoTW trial-A receipt](docs/deployment.md#lotw-trial-a-source-proof-hold-and-closed-recovery-2026-10-25-utc).

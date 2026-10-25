@@ -1,6 +1,61 @@
 # Production deployment and rollout evidence
 
-Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. The persistent QRZ trial is accepted with all thirteen ACKs assessed at known-ACK minute/sideband precision and thirteen-attempt/twelve-artifact recovery passing. All eight controls were independently closed after LoTW trial A reached a source-proof hold with zero new attempts; its complete recovery passes. This was not a failed QRZ trial. Exact seconds remain unverified; original literal-held summaries remain intact. Earlier checked trials A, B and F2 made zero attempts. Dated sections retain earlier evidence.
+Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. QRZ’s automatic trial remains accepted with thirteen ACKs assessed at known-ACK minute/sideband precision. LoTW trial C now establishes accepted processing for one native upload, backed by strict readback and fourteen-attempt/thirteen-artifact recovery. QSL confirmation is false. All eight controls remain closed. Further checked LoTW batches and a small automatic scope remain pending. Earlier dated holds and literal QRZ comparison limits remain unchanged.
+
+## LoTW trial C: accepted processing and mixed recovery (2026-10-25 UTC)
+
+Trial C activated at **14:17:56.497 UTC** on exact signed runtime
+`7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`, Worker
+`de0b0828-f1a7-4ae1-b9e3-211c745afae1`, deployment
+`fe02d6f8-7bff-4305-b4e0-884866565025`. Its scope was one exact LoTW contact and
+route, at most one actual upload, with QRZ off and native source-proof,
+absence, certificate, ownership and dispatch checks intact. Activation
+preserved all thirteen prior attempts and created none.
+
+After **one actual upload and queue ACK**, independent closure was attested at
+**14:23:06.526 UTC** on Worker `0f72b254-16b1-4d91-8bbb-6ecce2ee5e27`;
+closure completed at **14:23:08.080 UTC**. All eight controls remain closed.
+The fsynced closer-done marker prevented another scheduled closure deployment.
+At closure, the complete census showed thirteen prior attempts and one retained,
+dispatched LoTW attempt, still submitted rather than observed. No unapproved
+attempt or changed scope/review binding was found. The scheduler row from
+14:21:30.260 to 14:23:01.514 UTC recorded 21 contact turns, two attempt turns,
+zero errors/deferrals and a 91.254-second deadline stop. Attempt turns are not
+upload counts; no provider-event correlation is inferred.
+
+After closure and drain, the read-only observer made **one LoTW GET and six D1
+calls**, with all eight controls verified closed before and after. Native strict
+report parsing and contact matching found the accepted contact. **Accepted
+processing is verified; QSL confirmation is false.**
+
+The standard recovery completed at **14:37:53.975 UTC**. Its **42,018,673-byte**
+full SQL backup preserves **fourteen accepted attempts and thirteen retained
+artifacts**, including all thirteen prior QRZ attempts unchanged. Original
+artifact decryption, signatures, source-proof and identity/ownership claims,
+full in-memory restore, two quarantines, integrity and foreign-key checks pass.
+The LoTW native observed count is one and strict accepted-raw-report verification
+is true. The initial acquisition wrapper held because its descriptor referenced
+the wrong legacy file; pointing it to the original retained, byte-identical
+legacy packet allowed the unchanged frozen verifier to pass. No cryptographic
+check or guard was relaxed, and no upload was resent.
+
+| Trial-C receipt                                                                                              | SHA256                                                             |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| PRE recovery report, 14:17:10 UTC filename                                                                   | `42a09156b6a1340689e323990e81d53156ca9c963a937fa4e15dc6fd3cdbc282` |
+| Unsigned review                                                                                              | `bd353cd485d69ccb8e0e7e41eaab33dded7085373ae6c7c99703eb8a2fa06f7e` |
+| Actual reviewed input                                                                                        | `ddbb4f3a972dc1b5eaa94535f457b9f4eff03cf497b56051cc2759b73d3859fb` |
+| Standard accepted recovery: `ferry-lotw-pilot-backup-7738f7d7-result-2026-10-25T14-37-38-588Z-defabbbe.json` | `421923970a696bca2d548034ceba26b56990388ee48901280aa5be1a1b86bd8f` |
+| Accepted-observer summary                                                                                    | `742685d6e3a0db98bd0f03d8be42f1e07342271811d9344ca8b7f3ad2792389f` |
+| Protected raw accepted-report capture                                                                        | `66a3fe065ea7a9a4b0a2079c46af97a5fd777f2389ef61d480b0c8fe3c6e4256` |
+
+Production remains on `7738f7d7` with its 1,688-test CI qualification and schema 37.
+Candidate `dd173803dc81096115eb554d55da4a5a2eb0f701` is signed and GitHub-verified;
+its three commits change observability only. All 1,701 local tests and required
+checks pass; [CI 40203904797](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40203904797)
+also passes. At this checkpoint it is **not deployed**. Native cryptography and schema remain
+byte-compatible with the pinned `890f714c` contract. The next two-contact LoTW
+packet is under offline preparation, with no activation. Further checked batches,
+small automatic scope and sustained scale remain separate acceptance work.
 
 ## LoTW trial A: source-proof hold and closed recovery (2026-10-25 UTC)
 
@@ -29,9 +84,9 @@ establish whether signing ran. Trial B
 preparation stopped at **14:12:54 UTC** with `settled_margin_not_available`,
 before any input, intent or activation. The latest completed cycle was 14:05;
 no 14:10 scheduler row was present at that check. This does not establish a
-missed cron or its cause. All eight controls remain closed on Worker `40991304`,
+missed cron or its cause. At that checkpoint all eight controls remained closed on Worker `40991304`,
 with thirteen total attempts. Trial A's precise proof failure remains under
-diagnosis; no further activation is asserted.
+diagnosis. The subsequent trial-C activation is recorded above.
 
 | Trial-A receipt                                | SHA256                                                             |
 | ---------------------------------------------- | ------------------------------------------------------------------ |
@@ -543,8 +598,8 @@ claimed. Current temporary closure after accepted QRZ observation is recorded ab
 | Cloudflare account        | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                       |
 | Worker                    | `lofi-qso-ferry`, environment `production`                                                  |
 | Deployed source revision  | `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`                                                  |
-| Worker version            | `40991304-8c5e-422e-bb41-61deb79b08c7`                                                      |
-| Closure attestation       | `2026-10-25T14:02:46.080Z`; all eight controls closed                                       |
+| Worker version            | `0f72b254-16b1-4d91-8bbb-6ecce2ee5e27`                                                      |
+| Closure attestation       | `2026-10-25T14:23:06.526Z`; all eight controls closed                                       |
 | Origin / passkey RP       | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                               |
 | Dedicated D1              | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                            |
 | Migrations                | All 37 migrations through `0038_attempt_artifacts`; independently verified after deployment |

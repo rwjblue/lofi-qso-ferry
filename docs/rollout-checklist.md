@@ -1,8 +1,8 @@
 # Personal rollout acceptance
 
-The automatic QRZ trial is accepted; all eight controls are temporarily closed
-for independent observation and LoTW preparation. Current source proofs, fresh
-vendor evidence and ownership checks remain mandatory. LoTW acceptance and
+The automatic QRZ trial and first LoTW contact are accepted. All eight controls
+are closed. Current source proofs, fresh vendor evidence and ownership checks
+remain mandatory. Further LoTW batches, a small automatic scope and
 200,000-contact capacity remain separate milestones. The singleton and checked pairs C/D2/F4
 account for seven QRZ ACKs assessed at observed minute/sideband precision.
 Window H adds four assessed ACKs: all eleven trial records are accepted at
@@ -12,6 +12,16 @@ persistent activation. Two active cycles add two more ACKs; all thirteen records
 now pass known-ACK observed-precision assessment and populated recovery.
 
 ## Current evidence (2026-10-25)
+
+- [x] Complete one native LoTW trial C upload, then close all eight controls at
+  14:23:06.526 UTC on Worker `0f72b254`. The deployed runtime remains `7738f7d7`.
+- [x] After closure/drain, observe the accepted contact with one read-only LoTW
+  GET and six D1 calls. Native strict matching passes; QSL confirmation is false.
+- [x] Complete standard recovery at 14:37:53.975 UTC: fourteen accepted attempts,
+  thirteen retained artifacts, all thirteen prior QRZ attempts preserved, full
+  cryptography/proof/claim checks, in-memory restore, two quarantines and integrity/FK checks pass.
+- [ ] Complete the next checked two-contact LoTW batch, then assess a small
+  automatic scope. Its tooling is under offline preparation; it has not activated.
 
 - [x] Exercise native expiry in monitored normal-cron window H: `expiresAt` was
   12:12:30 UTC; its tick made six contact turns/four attempts, four new QRZ ACKs
@@ -59,10 +69,11 @@ now pass known-ACK observed-precision assessment and populated recovery.
   zero new attempts, zero unfinished window invocations, 31 inherited unfinished
   rows, no LoTW proof pins, full restore and both quarantines passing. There was
   no LoTW attempt/upload; zero attempts alone does not prove signing absence.
-- [ ] Resolve the precise source-proof hold and complete separate LoTW acceptance.
+- [ ] Diagnose trial A’s original source-proof hold; subsequent trial C acceptance
+  is recorded above.
   Trial B preparation stopped at 14:12:54 UTC, before input, intent or activation,
-  with `settled_margin_not_available`; all eight controls remain closed on
-  Worker `40991304` and attempts remain thirteen. The latest completed cycle
+  with `settled_margin_not_available`; all eight controls then remained closed on
+  Worker `40991304` and attempts were thirteen. The latest completed cycle
   was 14:05 with no 14:10 scheduler row yet; this establishes neither a missed
   cron nor its cause. Offline V5 selection and its 23 checks/peer
   reviews are preparation evidence, not upload acceptance.
@@ -97,10 +108,11 @@ now pass known-ACK observed-precision assessment and populated recovery.
   no provider fault is established. Cause remains unknown. D/E preflights stopped before
   activation; an unfinished row's zero default counters do not prove zero work.
   Actual window recovery and full observed-precision readback/acceptance now pass.
-- [ ] Prove LoTW signing/upload/accepted-report recovery separately after QRZ.
+- [x] Prove one native LoTW signing/upload/accepted-report recovery separately after QRZ;
+  broader LoTW rollout remains pending.
 
-See the [current LoTW trial-A checkpoint](deployment.md#lotw-trial-a-source-proof-hold-and-closed-recovery-2026-10-25-utc) for the current Worker and
-receipt timestamps/hashes. QRZ is temporarily closed for the LoTW phase; LoTW remains disabled.
+See the [current LoTW trial-C checkpoint](deployment.md#lotw-trial-c-accepted-processing-and-mixed-recovery-2026-10-25-utc) for the current Worker and
+receipt timestamps/hashes. All eight controls are closed; the first LoTW contact is accepted, and further checked batches remain pending.
 
 ### Earlier evidence (87e87b2d, 2026-10-25)
 

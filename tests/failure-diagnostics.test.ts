@@ -413,3 +413,47 @@ test("actual native D1 ownership guard rejection stays rejected and emits only i
     await mf.dispose();
   }
 });
+
+test("source proof diagnostics use exact own-message codes without nested or lookalike authority", () => {
+  const known = [
+    "invalid_source_export_snapshot_request",
+    "invalid_source_export_proof_expiry_cap",
+    "invalid_source_export_proof_request",
+    "source_export_proof_lease_scope",
+    "source_export_proof_snapshot_unavailable",
+    "duplicate_source_export_dependency",
+    "source_export_positive_unavailable",
+    "source_export_dependency_set_invalid",
+    "source_export_positive_expired",
+    "source_export_dependency_limit",
+    "source_export_proof_admission_deadline",
+    "source_export_proof_admission_unavailable",
+    "source_export_proof_admission_expired",
+    "source_export_proof_clock_unavailable",
+    "source_export_proof_result_mismatch",
+  ];
+  for (const message of known) {
+    const diagnostics = createFailureDiagnostics();
+    diagnostics.record(new Error(message), "source_proof");
+    assert.deepEqual(Object.keys(diagnostics.counts), [
+      `source_proof:none:${message}`,
+    ]);
+  }
+  for (const error of [
+    new Error("source_export_proof_admission_deadline: private detail"),
+    new Error("private message", {
+      cause: new Error("source_export_proof_admission_deadline"),
+    }),
+    Object.defineProperty(new Error(), "message", {
+      get() {
+        throw new Error("must not inspect getter");
+      },
+    }),
+  ]) {
+    const diagnostics = createFailureDiagnostics();
+    diagnostics.record(error, "source_proof");
+    assert.deepEqual(Object.keys(diagnostics.counts), [
+      "source_proof:none:unknown",
+    ]);
+  }
+});

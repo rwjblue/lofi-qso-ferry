@@ -1,3 +1,4 @@
+import { createFailureDiagnostics } from "./failure-diagnostics.ts";
 import { type IntakeContact, observeContacts, pollSource } from "./intake.ts";
 import { canonical } from "./security.ts";
 import { openSourceCredentials } from "./source-credentials.ts";
@@ -43,6 +44,36 @@ export interface SourceExportCohortResult {
 class CohortHeld extends Error {
   constructor(readonly reason: Hold) {
     super(reason);
+  }
+}
+
+type FailurePhase =
+  | "initial_scope"
+  | "initial_snapshot"
+  | "presence"
+  | "credentials"
+  | "collection"
+  | "credential_renewal"
+  | "drain"
+  | "refreshed_snapshot"
+  | "observation"
+  | "mint"
+  | "result";
+
+function reportFailure(phase: FailurePhase, error: unknown) {
+  try {
+    const diagnostics = createFailureDiagnostics();
+    // The phase identifies our caller boundary, not an upstream provider.
+    diagnostics.record(error, "source_proof");
+    console.error(
+      JSON.stringify({
+        event: "ferry_source_export_failure",
+        phase,
+        failures: diagnostics.counts,
+      }),
+    );
+  } catch {
+    // A logging failure must not change the existing held result.
   }
 }
 
@@ -170,8 +201,10 @@ export async function ensureSourceExportProofs(
     attempts++;
     return options.rawFetcher.call(globalThis, url, request);
   };
+  let phase: FailurePhase = "initial_scope";
   try {
     if (!(await currentScope())) return result("source_unavailable");
+    phase = "initial_snapshot";
     const before = await loadSourceExportSnapshots(store, scope, qsos, time());
     if (before.length !== qsos.length) return result("source_unavailable");
     const targets = new Map<string, SourcePresenceTarget>();
@@ -185,6 +218,7 @@ export async function ensureSourceExportProofs(
       }
     if (targets.size > 64) return result("invalid_input");
     const allTargets = [...targets.values()];
+    phase = "presence";
     const cached = await loadSourcePresence(store, scope, allTargets, time());
     const anchors = await sourcePresenceAnchors(
       store,
@@ -192,7 +226,9 @@ export async function ensureSourceExportProofs(
       allTargets,
       time(),
     );
+    phase = "credentials";
     const session = await openSourceCredentials(store, before[0].source);
+    phase = "collection";
     const collected = await collectSourcePresence(
       {
         scope,
@@ -213,6 +249,7 @@ export async function ensureSourceExportProofs(
         now: time,
       },
     );
+    phase = "credential_renewal";
     await session.persistRenewal(collected.credentials);
     if (collected.retryAt !== undefined) retryAt = collected.retryAt;
     const partial =
@@ -246,6 +283,7 @@ export async function ensureSourceExportProofs(
     if (!selected.length) return result("request_budget");
     // This shared canonical read includes newly arrived/previously unknown
     // events. A terminal page that started from a continuation cannot qualify.
+    phase = "drain";
     const drained = await pollSource(
       store,
       before[0].source,
@@ -255,6 +293,7 @@ export async function ensureSourceExportProofs(
       null,
     );
     if (!drained.complete) return result("drain_incomplete");
+    phase = "refreshed_snapshot";
     const after = await loadSourceExportSnapshots(
       store,
       scope,
@@ -284,6 +323,7 @@ export async function ensureSourceExportProofs(
     }
     // Refresh the normal ledger projection after the final drain. Proof creation
     // fences this exact ledger, dependency set and lease in one transaction.
+    phase = "observation";
     const observed = await observeContacts(
       store,
       after[0].source,
@@ -295,6 +335,7 @@ export async function ensureSourceExportProofs(
     );
     if (observed.some((item) => item.status === "rejected"))
       return result("source_changed");
+    phase = "mint";
     const proofs = await mintSourceExportProofs(
       store,
       after.map((snapshot) => ({
@@ -307,10 +348,14 @@ export async function ensureSourceExportProofs(
       { deadline, expiresAtCap, now: time },
     );
     time();
+    phase = "result";
     const ready: SourceExportCohortResult["ready"] = [];
     for (const proof of proofs) {
       const snapshot = after.find((item) => item.contact.id === proof.qso);
-      if (!snapshot) return result("proof_unavailable");
+      if (!snapshot) {
+        reportFailure(phase, new Error("source_export_proof_result_mismatch"));
+        return result("proof_unavailable");
+      }
       ready.push({
         contact: snapshot.contact,
         proofId: proof.id,
@@ -323,8 +368,8 @@ export async function ensureSourceExportProofs(
       retryAt = error.retryAt;
       return result("vendor_deferred");
     }
-    return result(
-      error instanceof CohortHeld ? error.reason : "proof_unavailable",
-    );
+    if (error instanceof CohortHeld) return result(error.reason);
+    reportFailure(phase, error);
+    return result("proof_unavailable");
   }
 }

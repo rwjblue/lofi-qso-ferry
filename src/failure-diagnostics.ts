@@ -13,6 +13,7 @@ export type FailureStage =
   | "source_poll"
   | "source_rescan"
   | "context"
+  | "source_proof"
   | "source_cycle"
   | "scheduler";
 export type FailureVendor = "lofi" | "qrz" | "lotw" | "none";
@@ -41,6 +42,7 @@ const stages = new Set<FailureStage>([
   "source_poll",
   "source_rescan",
   "context",
+  "source_proof",
   "source_cycle",
   "scheduler",
 ]);
@@ -70,6 +72,52 @@ const qrzDetails = new Map([
   ["Invalid ADIF date/time", "adif_time_invalid"],
 ]);
 const internalMessages = new Map([
+  [
+    "invalid_source_export_snapshot_request",
+    "invalid_source_export_snapshot_request",
+  ],
+  [
+    "invalid_source_export_proof_expiry_cap",
+    "invalid_source_export_proof_expiry_cap",
+  ],
+  [
+    "invalid_source_export_proof_request",
+    "invalid_source_export_proof_request",
+  ],
+  ["source_export_proof_lease_scope", "source_export_proof_lease_scope"],
+  [
+    "source_export_proof_snapshot_unavailable",
+    "source_export_proof_snapshot_unavailable",
+  ],
+  ["duplicate_source_export_dependency", "duplicate_source_export_dependency"],
+  ["source_export_positive_unavailable", "source_export_positive_unavailable"],
+  [
+    "source_export_dependency_set_invalid",
+    "source_export_dependency_set_invalid",
+  ],
+  ["source_export_positive_expired", "source_export_positive_expired"],
+  ["source_export_dependency_limit", "source_export_dependency_limit"],
+  [
+    "source_export_proof_admission_deadline",
+    "source_export_proof_admission_deadline",
+  ],
+  [
+    "source_export_proof_admission_unavailable",
+    "source_export_proof_admission_unavailable",
+  ],
+  [
+    "source_export_proof_admission_expired",
+    "source_export_proof_admission_expired",
+  ],
+  [
+    "source_export_proof_clock_unavailable",
+    "source_export_proof_clock_unavailable",
+  ],
+  [
+    "source_export_proof_result_mismatch",
+    "source_export_proof_result_mismatch",
+  ],
+
   ["Invalid history coverage manifest", "history_manifest_invalid"],
   [
     "History destination credentials are unavailable",

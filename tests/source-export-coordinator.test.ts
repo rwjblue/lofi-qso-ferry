@@ -11,7 +11,12 @@ import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
 async function fixture(
   t: TestContext,
-  options: { count?: number; baselineAgeMs?: number; stampStep?: number } = {},
+  options: {
+    count?: number;
+    baselineAgeMs?: number;
+    stampStep?: number;
+    qsoTimeOffsetMs?: number;
+  } = {},
 ) {
   const h = await database();
   t.after(() => h.mf.dispose());
@@ -42,7 +47,8 @@ async function fixture(
       uuid: `q${i}`,
       operation: "op",
       syncedAtMillis: 100 + i * (options.stampStep ?? 1),
-      startAtMillis: 1_792_684_800_000 + i * 1000,
+      startAtMillis:
+        1_792_684_800_000 + i * 1000 + (options.qsoTimeOffsetMs ?? 0),
       band: "20m",
       mode: "FT8",
       freq: 14074,
@@ -150,12 +156,12 @@ async function fixture(
         )
         .first<{ cursor: string }>())!.cursor,
     ) as { completeReadStartedAt?: number; qsos: { cursor?: string } };
-  const run = async (ids = ["q0"], remainingRequests = 4) => {
+  const run = async (ids = ["q0"], remainingRequests = 4, store = h.store) => {
     await h.store.statement("DELETE FROM vendor_requests").run();
     const lease = await h.store.claim("a", "cycle:source", Date.now(), 120_000);
     assert(lease);
     try {
-      return await ensureSourceExportProofs(h.store, scope, ids, lease, {
+      return await ensureSourceExportProofs(store, scope, ids, lease, {
         rawFetcher,
         deadline: Date.now() + 90_000,
         remainingRequests,
@@ -693,4 +699,187 @@ test("window cap stays original through collection and final drain; elapsed cap 
         );
       },
     );
+});
+
+test("proof diagnostics: native millisecond source time survives collection, drain and proof mint", async (t) => {
+  const h = await fixture(t, { count: 1, qsoTimeOffsetMs: 123 });
+  await h.clearPresence();
+  const logged: unknown[] = [];
+  t.mock.method(console, "error", (...values: unknown[]) =>
+    logged.push(values),
+  );
+  const result = await h.run();
+  assert.equal(result.held, null);
+  assert.equal(result.ready.length, 1);
+  assert.equal(result.actualAttempts, 2);
+  assert.equal(result.ready[0].contact.startAtMillis, 1_792_684_800_123);
+  assert.equal(await h.proofCount(), 1);
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) FROM attempts")
+      .first<number>("count(*)"),
+    0,
+  );
+  assert.deepEqual(logged, []);
+});
+
+test("proof diagnostics: slow native clock read keeps the generic hold and submits no proof", async (t) => {
+  const h = await fixture(t, { count: 1 });
+  const logged: unknown[][] = [];
+  t.mock.method(console, "error", (...values: unknown[]) =>
+    logged.push(values),
+  );
+  const statement = h.store.statement.bind(h.store);
+  let reads = 0;
+  t.mock.method(
+    h.store,
+    "statement",
+    (sql: string, ...values: (string | number | null)[]) => {
+      const prepared = statement(sql, ...values);
+      if (sql.includes("AS database_now") && sql.includes("FROM leases")) {
+        return {
+          first: async () => {
+            reads++;
+            const row = await prepared.first();
+            await new Promise((resolve) => setTimeout(resolve, 510));
+            return row;
+          },
+        } as D1PreparedStatement;
+      }
+      return prepared;
+    },
+  );
+  const result = await h.run();
+  assert.equal(result.held, "proof_unavailable");
+  assert.deepEqual(result.ready, []);
+  assert.equal(reads, 1);
+  assert.equal(await h.proofCount(), 0);
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) FROM attempts")
+      .first<number>("count(*)"),
+    0,
+  );
+  assert.equal(logged.length, 1);
+  assert.deepEqual(JSON.parse(String(logged[0][0])), {
+    event: "ferry_source_export_failure",
+    phase: "mint",
+    failures: {
+      "source_proof:none:source_export_proof_admission_deadline": {
+        events: 1,
+        affected: 1,
+      },
+    },
+  });
+});
+
+test("proof diagnostics: failed and committed-ack-loss proof batches are never retried", async (t) => {
+  for (const committed of [false, true])
+    await t.test(String(committed), async (t) => {
+      const h = await fixture(t, { count: 1 });
+      const logged: unknown[][] = [];
+      t.mock.method(console, "error", (...values: unknown[]) =>
+        logged.push(values),
+      );
+      const statement = h.store.statement.bind(h.store);
+      const proofInserts = new WeakSet<object>();
+      t.mock.method(
+        h.store,
+        "statement",
+        (sql: string, ...values: (string | number | null)[]) => {
+          const prepared = statement(sql, ...values);
+          if (sql.startsWith("INSERT INTO source_export_proofs("))
+            proofInserts.add(prepared);
+          return prepared;
+        },
+      );
+      let submissions = 0;
+      const store = new Proxy(h.store, {
+        get(target, property, receiver) {
+          if (property === "db")
+            return new Proxy(target.db, {
+              get(db, key, dbReceiver) {
+                if (key === "batch")
+                  return async (statements: D1PreparedStatement[]) => {
+                    if (
+                      !statements.some((statement) =>
+                        proofInserts.has(statement),
+                      )
+                    )
+                      return db.batch(statements);
+                    submissions++;
+                    if (committed) await db.batch(statements);
+                    throw new Error(
+                      "D1_ERROR: private SQL and credential-bearing detail",
+                      {
+                        cause: new Error(
+                          "source_export_proof_admission_expired",
+                        ),
+                      },
+                    );
+                  };
+                return Reflect.get(db, key, dbReceiver);
+              },
+            });
+          return Reflect.get(target, property, receiver);
+        },
+      });
+      const result = await h.run(["q0"], 4, store);
+      assert.equal(result.held, "proof_unavailable");
+      assert.deepEqual(result.ready, []);
+      assert.equal(submissions, 1);
+      assert.equal(await h.proofCount(), committed ? 1 : 0);
+      assert.equal(
+        await h.store
+          .statement("SELECT count(*) FROM attempts")
+          .first<number>("count(*)"),
+        0,
+      );
+      assert.deepEqual(
+        logged.map((args) => JSON.parse(String(args[0]))),
+        [
+          {
+            event: "ferry_source_export_failure",
+            phase: "mint",
+            failures: { "source_proof:none:db_d1": { events: 1, affected: 1 } },
+          },
+        ],
+      );
+      assert.doesNotMatch(
+        JSON.stringify(logged),
+        /private|credential|expired|SELECT|INSERT/,
+      );
+    });
+});
+
+test("proof diagnostics: reporting failure cannot replace the original held result", async (t) => {
+  const h = await fixture(t, { count: 1 });
+  t.mock.method(console, "error", () => {
+    throw new Error("synthetic logging unavailable");
+  });
+  const statement = h.store.statement.bind(h.store);
+  t.mock.method(
+    h.store,
+    "statement",
+    (sql: string, ...values: (string | number | null)[]) => {
+      const prepared = statement(sql, ...values);
+      if (sql.includes("SELECT 1 AS current FROM source_read_policy_ready")) {
+        return new Proxy(prepared, {
+          get(target, property, receiver) {
+            if (property === "first")
+              return async () => {
+                throw new Error("private initial-scope read failure");
+              };
+            return Reflect.get(target, property, receiver);
+          },
+        });
+      }
+      return prepared;
+    },
+  );
+  const result = await h.run();
+  assert.equal(result.held, "proof_unavailable");
+  assert.deepEqual(result.ready, []);
+  assert.equal(result.actualAttempts, 0);
+  assert.equal(await h.proofCount(), 0);
 });

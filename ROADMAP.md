@@ -40,9 +40,25 @@ exception remains unresolved. All **1,688 local tests** and required checks pass
 [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40184837953)
 also passed all **1,688 tests and required checks** at **10:56:43 UTC**.
 
-The prepared next pair never activated and its backup aged out while CI ran.
-Take fresh backup/review evidence for a new two-contact scope,
-then verify the bounded normal-cron window before automatic QRZ. LoTW remains
+The first prepared pair never activated and aged out while CI ran. The subsequent
+F2 scope activated but made **zero new attempts** and closed at **11:09:28.973 UTC**.
+Current closed Worker is `17c17e12-db38-48da-9773-ca8df18268ef`; independent
+11:22:46 UTC attestation confirms all eight controls closed. The 11:14:21 UTC
+POST recovery preserves all five attempts and four artifacts through decryption,
+restore and repeated quarantine.
+
+F2's original 11:00 scheduler row remains unfinalized. A separate invocation
+received at 11:15:50 UTC carried the old scheduled time and completed on the
+closed Worker; it did not resume or finish that original row. The cause remains
+unknown. Later closed cycles complete and release leases. Their handled route
+exceptions are separate from a scheduler failure: the 11:25 cycle's five errors
+are LoTW history unavailability, with budget deferrals recorded separately.
+
+The next finite QRZ pair requires fresh backup/review, an exact completed closed
+cycle, no recent running invocation or active lease, and more than two minutes
+before the intended next cron. Timing reduces overlap; native finite scope,
+proofs and durable claims remain necessary when delayed events arrive. Then
+verify the bounded normal-cron window before automatic QRZ. LoTW remains
 separate. See [deployment evidence](docs/deployment.md#closed-scheduler-and-qrz-deadline-release-2026-10-25-utc).
 
 ### Previous production — accepted D2 checkpoint (c88d413e)

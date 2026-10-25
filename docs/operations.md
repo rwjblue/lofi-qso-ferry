@@ -8,8 +8,13 @@ The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.co
 
 The latest closed checkpoint is signed 7738f7d7/schema 37, with scheduler
 diagnostics and the optional native QRZ proof deadline deployed. Fresh populated
-PRE/POST recovery and exact-release CI pass; the initial scheduled cycles
-complete. A fresh next QRZ scope remains pending at the dated checkpoint. See the
+PRE/POST recovery and exact-release CI pass. F2 closed with zero new attempts;
+current closed Worker is `17c17e12-db38-48da-9773-ca8df18268ef`. Its original
+unfinished scheduler row remains unresolved, while later closed cycles complete.
+A separate later invocation with the old scheduled time is not recovery of that
+row. Before another finite scope, check the exact completed current cycle and
+leases, retain a next-cron margin and review handled route failures separately
+from scheduler failures. Native proofs and full accounting still apply. See the
 [current deployment record](deployment.md#closed-scheduler-and-qrz-deadline-release-2026-10-25-utc).
 
 Accepted Trial D2 supplies the existing field-acceptance evidence:

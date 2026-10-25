@@ -15,9 +15,12 @@ Further checked batches are required before automatic scope.
   The scheduler diagnostics and optional native QRZ deadline are deployed;
   initial scheduled cycles complete. All 1,688 local tests and checks pass.
 - [x] Exact-release CI passes all 1,688 tests and required checks.
-- [ ] Refresh the next pair's backup/review and
-  validate its normal scheduled QRZ delivery. The older prepared input never
-  activated and is stale.
+- [x] Close F2 with zero new attempts and verify the populated five-attempt,
+  four-artifact POST recovery. The original unfinished scheduler row remains
+  unresolved; a separate late invocation completed on the closed Worker.
+- [ ] Refresh the next pair's backup/review, completed-cycle and lease checks,
+  then validate its normal scheduled QRZ delivery. Preserve the never-activated
+  stale input and closed F2 input; neither authorizes reactivation.
 - [x] Exact c88d413e source and the test-only follow-up have green CI; schema 37
   remains deployed with all eight controls closed.
 - [x] Trial D2 delivered two new QRZ ACKs; all three prior attempts are unchanged.
@@ -35,7 +38,7 @@ Further checked batches are required before automatic scope.
   actual complete window before automatic scope. These tools remain offline.
 - [ ] Prove LoTW signing/upload/accepted-report recovery separately after QRZ.
 
-See the [D2 deployment checkpoint](deployment.md#accepted-trial-d2-and-current-closed-state-2026-10-25-utc) for the current Worker and
+See the [current deployment checkpoint](deployment.md#closed-scheduler-and-qrz-deadline-release-2026-10-25-utc) for the current Worker and
 all detailed receipt timestamps/hashes. Automatic QRZ and LoTW remain disabled.
 
 ### Earlier evidence (87e87b2d, 2026-10-25)

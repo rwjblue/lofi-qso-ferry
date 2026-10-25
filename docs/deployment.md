@@ -42,11 +42,36 @@ phase logs in these observed cycles. These samples do not establish sustained
 capacity or explain the old initiating exception. The old **10:30 UTC** run
 remains unfinalized; no active lease or default-zero counters prove completion.
 
-The prospective two-contact pair passed local inspection but never activated.
-Its backup aged out while CI continued; preserve that input and take fresh
-release-bound backup/review evidence for the next scope. QRZ window capture,
-all-member readback and automatic activation remain open, followed by separate
-LoTW acceptance.
+The first prospective pair passed local inspection but never activated; its
+backup aged out while CI continued. The subsequent F2 scope activated at
+11:01 UTC but created **zero attempts**. It closed at **11:09:28.973 UTC**, as
+Worker `17c17e12-db38-48da-9773-ca8df18268ef`, deployment
+`a00abbc3-dde4-4478-a4bf-5bafe9e839b4` (installed 11:09:24.874248 UTC).
+Independent **11:22:46.092 UTC** attestation confirms sole 100% traffic, all
+eight controls closed, matching assets and KEK 1.
+
+F2 POST recovery completed **11:14:21.734 UTC**, containing **40,751,978 bytes**
+and exactly the prior **five QRZ attempts/four artifacts**. All artifact/key,
+proof/claim, immutable-row, integrity/FK, isolated restore and repeated-quarantine
+checks pass. Report
+`ferry-scheduled-batch-backup-7738f7d7-result-2026-10-25T11-14-09-503Z-aaeb7fda.json`,
+SHA256 `305dc3d863d331b2d797e5048eb79034353ebe23b967fdc0c9a8b03d071c30cc`.
+No vendor mutation or production restore occurred during recovery.
+
+The original **11:00:57.934 UTC** scheduler row remains unfinalized. A distinct
+invocation received at **11:15:50.284 UTC**, with scheduled time
+**11:00:42.021 UTC**, ran on closed Worker `17c17e12` and completed a new row
+with 105 turns, zero attempts/errors and one deferral. This establishes later
+delivery associated with the old schedule, not recovery of the original row
+or a proven deployment-interruption cause. The 11:20 closed cycle completed
+42 turns with zero errors; the 11:25 cycle completed 144 turns with five handled
+LoTW history errors and 13 budget deferrals. Neither is a capacity measurement.
+
+Take fresh release-bound backup/review and completed-cycle/lease evidence for
+the next finite pair. Preserve expired inputs and unfinalized rows. A scheduling
+margin cannot exclude delayed events; finite native authority and full accounting
+remain required. QRZ window capture, all-member readback and automatic
+activation remain open, followed by separate LoTW acceptance.
 
 ## Accepted Trial D2 and earlier closed state (2026-10-25 UTC)
 

@@ -33,6 +33,15 @@ interface Budget {
   cooldown_until: number;
 }
 
+/** The persisted cooldown determines the outcome, independently of cleanup. */
+function cancelBestEffort(stream: { cancel(): Promise<void> } | null): void {
+  try {
+    void stream?.cancel().catch(() => undefined);
+  } catch {
+    // A synchronous cleanup failure cannot replace the typed deferral.
+  }
+}
+
 function retryAfter(value: string | null, now: number): number | null {
   if (value === null || value.length > 128) return null;
   const header = value.trim();
@@ -133,7 +142,7 @@ export function vendorFetch(
       )
       .first<Budget>();
     if (response.status === 429) {
-      await response.body?.cancel();
+      cancelBestEffort(response.body);
       throw new VendorDeferredError(cooldown?.cooldown_until ?? until, true);
     }
     return response;

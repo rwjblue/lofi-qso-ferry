@@ -111,6 +111,15 @@ class Held extends Error {
   }
 }
 
+/** A rejected scope/deadline remains authoritative even if cleanup cannot finish. */
+function cancelBestEffort(stream: { cancel(): Promise<void> } | null): void {
+  try {
+    void stream?.cancel().catch(() => undefined);
+  } catch {
+    // Preserve the original hold rather than a cleanup exception.
+  }
+}
+
 const stamp = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 const text = (value: unknown): value is string =>
@@ -292,7 +301,7 @@ export async function collectSourcePresence(
     try {
       await checkScope();
     } catch (error) {
-      await response.body?.cancel();
+      cancelBestEffort(response.body);
       throw error;
     }
     if (sync && response.ok) syncRequestStartedAt = requestStartedAt;

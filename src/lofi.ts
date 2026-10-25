@@ -91,13 +91,22 @@ function count(value: unknown): number | undefined {
     : undefined;
 }
 
+/** Cleanup cannot delay or replace an already determined response outcome. */
+function cancelBestEffort(stream: { cancel(): Promise<void> } | null): void {
+  try {
+    void stream?.cancel().catch(() => undefined);
+  } catch {
+    // A synchronous cleanup failure likewise cannot change the outcome.
+  }
+}
+
 async function boundedJson(response: Response): Promise<SourceRecord> {
   if (untrustedResponse(response)) {
-    await response.body?.cancel();
+    cancelBestEffort(response.body);
     throw new LoFiError("vendor_redirect_or_opaque_response", response.status);
   }
   if (!response.ok) {
-    await response.body?.cancel();
+    cancelBestEffort(response.body);
     throw new LoFiError("vendor_http_error", response.status);
   }
   if (!response.body) throw new LoFiError("empty_response");
@@ -111,7 +120,7 @@ async function boundedJson(response: Response): Promise<SourceRecord> {
       if (chunk.done) break;
       size += chunk.value.byteLength;
       if (size > 2 * 1024 * 1024) {
-        await reader.cancel();
+        cancelBestEffort(reader);
         throw new LoFiError("response_too_large");
       }
       text += decoder.decode(chunk.value, { stream: true });
@@ -216,7 +225,7 @@ export class LoFiClient {
         attempt === 0 &&
         !untrustedResponse(response)
       ) {
-        await response.body?.cancel();
+        cancelBestEffort(response.body);
         this.credentials.token = undefined;
         continue;
       }

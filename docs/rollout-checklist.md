@@ -38,9 +38,11 @@ and cannot establish absence; the exact upstream cause and sustained capacity
 are not established by these samples.
 
 The exact-release QRZ operator packet passes **22 native execution cases,
-92 supporting cases and 21 recovery cases**. It still requires fresh same-contact
-review/proofs and the specific owner instruction before a real trial. Production
-controls remain closed. Singleton QRZ acceptance, broader QRZ corrections,
+92 supporting cases and 21 recovery cases**. The later current-release payload
+review is recorded in the [pilot guide](qrz-pilot.md). Fresh normal context,
+source-proof and vendor checks and the specific owner instruction remain
+required before a real trial. Production controls remain closed. Singleton QRZ
+acceptance, broader QRZ corrections,
 LoTW acceptance, global source authority and sustained capacity are separate
 milestones.
 
@@ -711,10 +713,13 @@ The regenerated exact-`0386af30` packet, reviewed payload and stop/recovery rule
 are in the [restricted QRZ pilot guide](qrz-pilot.md). Its **22 native execution,
 92 supporting and 21 recovery cases** are offline evidence. Combined manifest
 SHA256 is `7c39915bb1ba7a1588247699367097161e04ec9c9380933c378ed6f25f5f6bc0`.
-It preserves the original packet and its expired/release-bound evidence; a fresh
-same-contact review and specific owner trial instruction remain pending. Actual
-first-write acceptance is unproved. General automatic scope expansion requires
-a separate explicit decision after that acceptance.
+It preserves the original packet and its expired/release-bound evidence. The
+**02:56:37.961 UTC** current-release SELECT-only review confirms the same
+contact and exact payload. That preliminary review grants no proof or absence
+authority. Fresh normal context/source/vendor checks and the specific owner trial
+instruction remain required. Actual first-write acceptance is unproved. General
+automatic scope expansion requires a separate explicit decision after that
+acceptance.
 
 ### Earlier recovery checkpoints
 

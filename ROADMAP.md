@@ -174,6 +174,14 @@ cases** pass, with unchanged SQL permissions. This prepares the separately
 authorized trial; it creates no approval or write authority. The specific
 one-contact trial instruction remains pending. General exports stay disabled.
 
+The **02:56:37.961 UTC** current-release SELECT-only payload review confirms the
+same original contact, book, credential/template versions, every transmitted
+field and exact ADIF bytes, with no source/vendor request or attempt. The
+**02:56:39.484 UTC** independent post-review attestation reconfirms all eight
+closed controls. This preliminary review still requires normal context refresh,
+a fresh source proof and vendor checks before an authorized trial; see
+[the pilot evidence](docs/qrz-pilot.md).
+
 ### Previous production — ownership bootstrap and deletion status (f2c41cb3)
 
 Signed revision `f2c41cb3a929ae3d3545e235894027b84fbf09fb` deployed read-only at

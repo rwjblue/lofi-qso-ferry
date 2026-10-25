@@ -80,6 +80,24 @@ so its metadata/proof/readiness flags remain false. A specific owner instruction
 for the actual trial is pending. No vendor acknowledgement or readback acceptance
 has occurred.
 
+The exact-`0386af30` SELECT-only review succeeded at **2026-10-25 02:56:37.961
+UTC**, again using **52 D1 RPCs / 58 SQL statements**. It independently re-read
+the original contact and confirms the same book, credential version, template,
+every transmitted field, canonical record hash and exact serialized ADIF bytes.
+The new protected review packet SHA256 is
+`c4fc7203222276277b0b585fd720723d96b12f4a89e69b7dd3b5bf38a2877e80`.
+Independent before/after attestations verify the actual deployed release and
+all eight closed controls, last checked at **02:56:39.484 UTC**. No source/vendor
+request, attempt, approval or write was created.
+
+This is still a preliminary payload review: context refresh is required and
+metadata/proof/readiness flags remain false. It does not renew the earlier source
+proof or establish QRZ absence. Fresh normal checks belong immediately before
+the separately authorized trial. The reviewed helper preserves both original
+hashes and exact ADIF bytes across canonical JSON storage; its separate 12-case
+suite and strict TypeScript checks pass. Helper manifest SHA256:
+`43f638a68c9431b20785d0ab34d98aef0dbf22877649d1c3ab3e63e0f6cf99ce`.
+
 ## Acceptance after a separately authorized attempt
 
 Use the normal guarded preparation and dispatch functions with exact singleton

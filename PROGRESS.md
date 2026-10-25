@@ -2,7 +2,77 @@
 
 ## Current production and export acceptance — 2026-10-25 UTC
 
-Signed `87e87b2d9f02f4534a914789a9e4487f35703a43` serves production as Worker
+Signed `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7` deployed with all eight
+controls closed at **06:29:17.891099 UTC** as Worker
+`a948328a-6098-4cbb-957f-9813f5383e4b`, deployment
+`b0efece0-a12f-46c0-95e2-fb5161234adf`. Independent **06:29:31.791 UTC**
+attestation confirms healthy HTTPS, matching assets, KEK 1 and closed controls.
+All **37 migrations through `0038`** remain installed. This release binds the
+source coordinator's native fetch receiver with `.call(globalThis, ...)`;
+Trial C below supplies actual scheduled source-proof and QRZ delivery evidence.
+
+The full local run completed **1,667 cases: 1,666 passed, one failed**. The
+failure was a privacy-test assertion that searched random ciphertext for the
+literal `W1AW`, not a runtime failure. Signed test-only follow-up
+`738fea2527c3fb714faa326f130b496eed7da5ed` corrects that assertion; the complete
+history file passes **62/62** and the build passes. The actual-coordinator
+regression and 42 focused cases already pass. [CI for c88d413e](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40168290537)
+subsequently passed all **1,667 tests and required checks** at approximately
+**06:37 UTC**. That CI result is separate from the earlier local failure.
+
+The **06:26:18.568 UTC PRE** recovery contains **41,687,430 bytes**, with 37
+migrations, exactly the prior singleton, zero new attempts/artifacts, all
+immutable prior evidence preserved and repeated quarantine passing. The
+**06:29:50.913 UTC POST** recovery also passes with **41,687,430 bytes**, the
+same expected singleton and zero new attempts/artifacts. The later Trial C
+results and subsequent closed state are recorded below.
+
+Trial C activated exactly two QRZ contacts at **06:37:46.525 UTC** as Worker
+`dd1a74fc-0bad-4391-aabf-ae2f35533555`. The ordinary scheduled turn created two
+attempts at **06:41:13.566 / 06:41:15.969 UTC**; both received INSERT ACKs and
+are delivered, with two retained encrypted artifacts. Actual record, template,
+credential and source hashes match the preliminary review. The original
+singleton is unchanged; the global attempt count is now **three**.
+
+All eight controls closed at **06:41:42.213147 UTC** as Worker
+`297b7d45-4fc3-4c0d-af79-d1e0dde1b4b4`; independent attestation passed at
+**06:41:46.035 UTC**, with closure recorded at **06:41:46.124 UTC**. After at
+least 180 seconds of drain, there are **zero running invocations, two new
+delivered attempts and zero unresolved attempts**. The **06:45:24.184 UTC**
+recovery contains **40,811,177 bytes**, verifies all three expected attempts and
+two new retained artifacts, and passes pins/claims/decryption, integrity/FKs and
+two quarantines.
+
+The **06:46:10.218 UTC** read-only observer completed five QRZ reads and 24 D1
+calls with book/current scope and closed controls verified. Both complete
+neighborhoods contain exactly one candidate and one occurrence of the accepted
+LOGID, matching exact-LOGID readback. Its literal result remains **held**:
+the 14-field contact matches 13 fields, with only six-digit `TIME_ON` returned
+as the same UTC minute; the 15-field contact matches 12 fields, with the same
+minute reduction plus transmitted `MODE=SSB,SUBMODE=LSB` returned as `MODE=LSB`
+and no `SUBMODE`. Both full eight-character grids are retained. No further
+INSERT or retry occurred.
+
+At **06:55:09.986 UTC**, a separate append-only offline assessment verified both
+known ACKs against the hash-bound captures and reloaded retained artifacts,
+including crypto, claims, proof pins and the original reviewed records. **Trial C
+is accepted at returned minute precision and the observed sideband
+representation only.** Both results have `representationConsistent=true`, while
+`literalExact=false` and `exactSeconds=false`; source seconds remain preserved
+but unverified at QRZ. Every other transmitted field matches literally.
+
+The assessor permits only exact `SSB+LSB` ↔ flat `LSB` (or the corresponding USB
+form) and valid same-date minute reduction. Its **53 focused cases**, strict
+TypeScript and independent review pass. This records the actual QRZ observations,
+not a general vendor conversion guarantee. The original held literal report and
+uncertain/no-ACK matcher remain unchanged. Assessment made no additional vendor,
+source or database calls and grants no retry authority. Further checked QRZ
+batches remain required before automatic scope; all eight controls are closed,
+and LoTW signing/upload acceptance remains unproved.
+
+## Previous production and Trial B — 2026-10-25 UTC
+
+Signed `87e87b2d9f02f4534a914789a9e4487f35703a43` served production as Worker
 `7aaf4d15-66e8-48d4-ab6a-b771b02000ad`, deployment
 `0765e455-aafd-45ab-b79a-c9306a3560aa`. All **1,666 tests** and required checks
 pass in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40165603166).
@@ -26,9 +96,9 @@ Native Workerd reproduces a coordinator transport bug: method-style native
 fix `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7` binds `globalThis`; the actual
 coordinator regression and **42 focused cases pass**. Full checks and
 [CI 40168290537](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40168290537)
-are running; **the fix is not deployed**. Next: finish checks, take a fresh backup,
-deploy closed and repeat the checked scheduled trial. Successful scheduled QRZ
-delivery/readback and populated live artifact recovery remain open.
+were running at that checkpoint. The fix subsequently deployed closed at
+06:29 UTC; Trial C subsequently supplied scheduled QRZ delivery, assessed
+readback and populated live artifact recovery, as recorded above.
 
 The earlier **05:10 UTC** `890f714c` trial made zero attempts because unrelated
 policy-woken backlog preceded its scope; its **05:17 UTC** recovery remains a
@@ -56,8 +126,9 @@ literally. QRZ returns a four-digit time matching the transmitted UTC minute;
 the source seconds remain preserved but unverified at QRZ. The separate known-ACK
 assessment passes receipt/owner/claim/proof links without changing the original
 unresolved literal-readback outcome or uncertain recovery. All eight controls
-remain closed. Retained-artifact recovery is now deployed; successful scheduled
-delivery and populated live table-artifact recovery remain unobserved.
+remain closed. At that singleton checkpoint, successful scheduled delivery and
+populated table-artifact recovery were unobserved; the later Trial C supplied
+both, together with the separate minute/sideband assessment above.
 Small checked QRZ batches must precede automatic QRZ scope; LoTW follows its
 own signing/upload/readback acceptance. Its one-contact observer and recovery
 tools are ready offline only; no actual LoTW signing or upload has been proved.

@@ -181,7 +181,8 @@ test("QRZ resumes bounded pages, completes modification catch-up, and reuses enc
       )
       .all<{ envelope: string }>();
     assert.equal(data.results.length, 3);
-    assert(!JSON.stringify(data.results).includes("W1AW"));
+    // A short callsign can occur by chance inside valid base64url ciphertext.
+    assert(data.results.every(({ envelope }) => !/"CALL"\s*:/.test(envelope)));
     for (const row of await store
       .statement("SELECT payload_id FROM history_inventory_pages")
       .all<{ payload_id: string }>()

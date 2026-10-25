@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { serializeAdifRecord } from "../src/adif.ts";
 import {
   createFailureDiagnostics,
@@ -9,6 +10,8 @@ import {
 import { LotwClient, LotwLoginError } from "../src/lotw.ts";
 import { QrzError } from "../src/qrz.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
+import { applyMigration } from "./helpers.ts";
+import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
 test("shared failures count one event and all affected routes per fixed key", () => {
   const diagnostics = createFailureDiagnostics();
@@ -263,4 +266,150 @@ test("invalid dimensions and numeric inputs cannot create unbounded or unsafe te
     events: 1,
     affected: Number.MAX_SAFE_INTEGER,
   });
+});
+
+test("fixed D1 provider categories distinguish transport, limits and native holds without changing outcomes", () => {
+  const cases = [
+    ["D1 DB reset because its code was updated.", "db_reset"],
+    [
+      "Internal error while starting up D1 DB storage caused object to be reset.",
+      "db_reset",
+    ],
+    ["Internal error in D1 DB storage caused object to be reset.", "db_reset"],
+    ["Network connection lost.", "db_connection_lost"],
+    ["Replica disconnected from primary.", "db_connection_lost"],
+    [
+      "Cannot resolve D1 DB due to transient issue on remote node.",
+      "db_remote_unavailable",
+    ],
+    [
+      "Can't read from request stream because client disconnected.",
+      "db_request_disconnected",
+    ],
+    [
+      "D1 DB storage operation exceeded timeout which caused object to be reset.",
+      "db_storage_timeout",
+    ],
+    ["D1 DB is overloaded. Requests queued for too long.", "db_queue_timeout"],
+    ["D1 DB is overloaded. Too many requests queued.", "db_queue_full"],
+    [
+      "D1 DB's isolate exceeded its memory limit and was reset.",
+      "db_memory_limit",
+    ],
+    ["D1 DB exceeded its CPU time limit and was reset.", "db_cpu_limit"],
+    [
+      "source historical index publication stale: SQLITE_CONSTRAINT",
+      "source_index_stale",
+    ],
+    ["LoTW ownership changed: SQLITE_CONSTRAINT", "lotw_ownership_changed"],
+    [
+      "LoTW historical publication changed: SQLITE_CONSTRAINT",
+      "lotw_history_publication_changed",
+    ],
+    ["CHECK constraint failed: private table / SQL", "db_constraint"],
+    ["UNIQUE constraint failed: private table / SQL", "db_constraint"],
+    ["NOT NULL constraint failed: private table / SQL", "db_constraint"],
+    ["FOREIGN KEY constraint failed: private table / SQL", "db_constraint"],
+  ];
+  for (const [message, code] of cases) {
+    const error = new Error(`D1_ERROR: ${message}`);
+    const diagnostics = createFailureDiagnostics();
+    diagnostics.record(error, "contact");
+    diagnostics.record(error, "source_cycle", "lofi");
+    assert.deepEqual(Object.keys(diagnostics.counts), [
+      `contact:none:${code}`,
+      `source_cycle:lofi:${code}`,
+    ]);
+    assert.equal(error.message, `D1_ERROR: ${message}`);
+    assert.doesNotMatch(
+      JSON.stringify(diagnostics.counts),
+      /private|SQLITE|D1_ERROR|table/,
+    );
+  }
+  for (const message of [
+    "Too many API requests by single Worker invocation",
+    "Too many API requests by single Worker invocation.",
+    "D1_ERROR: Too many API requests by single Worker invocation",
+  ]) {
+    const diagnostics = createFailureDiagnostics();
+    diagnostics.record(new Error(message), "scheduler");
+    assert.deepEqual(Object.keys(diagnostics.counts), [
+      "scheduler:none:db_invocation_limit",
+    ]);
+  }
+});
+
+test("D1 diagnostic text inside private context or causes does not become provider evidence", () => {
+  for (const error of [
+    new Error("D1_ERROR: private SQL contains Network connection lost."),
+    new Error("D1_ERROR: Network connection lost-ish private detail"),
+    new Error("D1_ERROR: LoTW ownership changed privately"),
+    new Error("D1_ERROR: provider detail unavailable", {
+      cause: new Error("D1_ERROR: Network connection lost."),
+    }),
+  ]) {
+    const diagnostics = createFailureDiagnostics();
+    diagnostics.record(error, "contact");
+    assert.deepEqual(Object.keys(diagnostics.counts), ["contact:none:db_d1"]);
+  }
+  const wrapped = new Error("private wrapper", {
+    cause: new Error("D1_ERROR: Network connection lost."),
+  });
+  const diagnostics = createFailureDiagnostics();
+  diagnostics.record(wrapped, "contact");
+  assert.deepEqual(Object.keys(diagnostics.counts), ["contact:none:unknown"]);
+});
+
+test("actual native D1 ownership guard rejection stays rejected and emits only its fixed category", async () => {
+  const mf = new Miniflare(
+    convertV4MiniflareOptions({
+      cf: false,
+      modules: true,
+      script: 'export default {fetch(){return new Response("local")}}',
+      compatibilityDate: "2026-10-22",
+      d1Databases: ["DB"],
+      outboundService: () => {
+        throw new Error("outbound forbidden");
+      },
+    }),
+  );
+  try {
+    const db = await mf.getD1Database("DB");
+    await applyMigration(db, "0001_foundation.sql");
+    await applyAdditionalMigrations(db);
+    const now = Date.now();
+    const diagnostics = createFailureDiagnostics();
+    await assert.rejects(
+      db
+        .prepare(
+          "INSERT INTO lotw_ownership_write_guards(id,tenant,phase,key_id,clock,comparison_policy,plan,lease_token,lease_fence,checked_at,expires_at) VALUES('private-guard','private-tenant','mapping','private-key',0,1,json_array(json_object('generation','g','sourceHash','h')),'private-lease',1,?,?)",
+        )
+        .bind(now, now + 1000)
+        .run(),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(
+          error.message,
+          /^D1_ERROR: LoTW ownership unavailable(?::|$)/,
+        );
+        diagnostics.record(error, "reconciliation", "lotw");
+        assert.deepEqual(Object.keys(diagnostics.counts), [
+          "reconciliation:lotw:lotw_ownership_unavailable",
+        ]);
+        return true;
+      },
+    );
+    assert.equal(
+      await db
+        .prepare("SELECT COUNT(*) FROM lotw_ownership_write_guards")
+        .first("COUNT(*)"),
+      0,
+    );
+    assert.doesNotMatch(
+      JSON.stringify(diagnostics.counts),
+      /private|SQLITE|D1_ERROR/,
+    );
+  } finally {
+    await mf.dispose();
+  }
 });

@@ -175,7 +175,52 @@ const databaseGuards = new Map([
   ["source row changed", "source_row_changed"],
   ["lease lost", "lease_lost"],
   ["cursor changed", "cursor_changed"],
+  ["source historical index publication stale", "source_index_stale"],
+  ["LoTW ownership unavailable", "lotw_ownership_unavailable"],
+  ["LoTW ownership changed", "lotw_ownership_changed"],
+  ["LoTW ownership mapping unavailable", "lotw_mapping_unavailable"],
+  ["LoTW ownership mapping changed", "lotw_mapping_changed"],
+  [
+    "LoTW historical ownership unavailable",
+    "lotw_history_ownership_unavailable",
+  ],
+  ["LoTW historical source changed", "lotw_history_source_changed"],
+  ["LoTW historical publication changed", "lotw_history_publication_changed"],
+  ["LoTW historical prior delivery", "lotw_history_prior_delivery"],
 ]);
+
+// Fixed documented provider messages only. These are diagnostic categories, not
+// retry advice; a failed write can have an unknown committed outcome.
+const databaseProviderFailures = new Map([
+  ["D1 DB reset because its code was updated.", "db_reset"],
+  [
+    "Internal error while starting up D1 DB storage caused object to be reset.",
+    "db_reset",
+  ],
+  ["Internal error in D1 DB storage caused object to be reset.", "db_reset"],
+  ["Network connection lost.", "db_connection_lost"],
+  ["Replica disconnected from primary.", "db_connection_lost"],
+  [
+    "Cannot resolve D1 DB due to transient issue on remote node.",
+    "db_remote_unavailable",
+  ],
+  [
+    "Can't read from request stream because client disconnected.",
+    "db_request_disconnected",
+  ],
+  [
+    "D1 DB storage operation exceeded timeout which caused object to be reset.",
+    "db_storage_timeout",
+  ],
+  ["D1 DB is overloaded. Requests queued for too long.", "db_queue_timeout"],
+  ["D1 DB is overloaded. Too many requests queued.", "db_queue_full"],
+  [
+    "D1 DB's isolate exceeded its memory limit and was reset.",
+    "db_memory_limit",
+  ],
+  ["D1 DB exceeded its CPU time limit and was reset.", "db_cpu_limit"],
+]);
+const invocationLimit = "Too many API requests by single Worker invocation";
 
 /** Read only bounded own strings; never inspect names, stacks or nested causes. */
 function ownString(error: object, key: string, limit = 512): string {
@@ -221,6 +266,8 @@ function failureCode(error: unknown): string {
   }
   const exact = internalMessages.get(message);
   if (exact) return exact;
+  if (message === invocationLimit || message === `${invocationLimit}.`)
+    return "db_invocation_limit";
   // D1 may append query context. Match only fixed prefixes of bounded text and
   // never retain the remainder, which can contain SQL or private bound values.
   const raw: unknown = Object.getOwnPropertyDescriptor(error, "message")?.value;
@@ -229,6 +276,16 @@ function failureCode(error: unknown): string {
     const detail = prefix.slice(10);
     for (const [guard, code] of databaseGuards)
       if (detail === guard || detail.startsWith(`${guard}:`)) return code;
+    for (const [known, code] of databaseProviderFailures)
+      if (detail === known || detail.startsWith(`${known}:`)) return code;
+    if (detail === invocationLimit || detail === `${invocationLimit}.`)
+      return "db_invocation_limit";
+    for (const constraint of ["CHECK", "UNIQUE", "NOT NULL", "FOREIGN KEY"])
+      if (
+        detail === `${constraint} constraint failed` ||
+        detail.startsWith(`${constraint} constraint failed:`)
+      )
+        return "db_constraint";
     if (detail.startsWith("too many SQL variables")) return "db_bind_limit";
     if (detail.startsWith("Expression tree is too large"))
       return "db_expression_limit";

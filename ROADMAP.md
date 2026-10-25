@@ -49,7 +49,9 @@ test completes one nine-read final neighborhood and INSERT within the unchanged
 24-request budget after another planning scan stops partway. This prevents the
 reproduced starvation; it does not establish larger-scale throughput or guarantee
 headroom when other Workers share the same budget. Signed `e4a1b1e2` passes
-**1,635 tests** and the full local check.
+**1,635 tests** and the full local check. Its
+[CI run](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40146718840)
+passed at **2026-10-25 00:53:34 UTC**.
 
 The next local follow-up revisits at most 20 deferred primitive work keys in
 later normal source rounds, with current projection and exact queue guards.
@@ -60,13 +62,44 @@ source proofs, final duplicate checks and recovery remain mandatory. These are
 fake-vendor/native-D1 results, not production capacity. Review, all **27 modified
 service tests**, formatting, lint, both TypeScript checks and the Worker dry
 build pass. The 1,635-test full result above belongs to the parent commit.
-Then evaluate bounded
-earlier covering reads and
-LoTW batches, with per-contact ownership, proofs and uncertain-result recovery
+[CI for signed `ddddd5e7`](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40146967034)
+passed at **2026-10-25 00:59:39 UTC**.
+Then evaluate bounded earlier covering reads and LoTW batches, with per-contact
+ownership, proofs and uncertain-result recovery
 preserved. No quota increase or production capacity is claimed. The
 [capacity plan](docs/capacity-plan.md#qrz-first-insert-request-demand--exact-f2c-local-measurement)
 records measurements, request models and race-test acceptance criteria. This
 work does not delay the separately authorized singleton QRZ trial.
+
+### LoTW native comparison and signing-profile correction — local
+
+At **2026-10-25 00:51:14 UTC**, the isolated native TQSL 2.8.6 comparison passed
+both repository-public synthetic FT8 vectors. Native canonical bytes and
+separately generated public-API signatures equal Ferry/OpenSSL output, including
+the complete six- and eight-character grids. The independently audited packet
+used no production credential or vendor request. The native full signed-contact
+writer was not exercised; this does not prove ARRL upload/readback acceptance.
+See [the exact scope and pinned evidence](docs/evidence-signing.md).
+
+That comparison exposed an unverified mode in the old Ferry allowlist: native
+configuration 11.34 has no FST4W mapping. Local profile
+`ferry-lotw-v2-us-ca-3` holds new FST4W signing, including ADIF submode form,
+without substituting DATA. Historical matching policy 6 / candidate policy 2
+also holds that unverified LoTW mode; QRZ's separate ADIF parent-mode comparison
+is unchanged. Other verified modes remain supported.
+
+Prepared LoTW artifacts must now have the current profile and supported fields
+before dispatch can acquire a lease, reserve vendor budget or submit. Existing
+exact FST4W identities remain unchanged for permanent claims and read-only
+recovery of submitted/uncertain attempts. Both legacy recovery states and
+mutation-free prepared holds pass the **28-test LoTW delivery file**. These
+changes pass **all 1,653 tests**, formatting, lint, both TypeScript checks and
+the Worker dry build, with independent source review. They are **not deployed**;
+production remains the disabled-export
+`f2c41cb3` release. Actual personal-key signing, accepted upload/readback,
+populated raw-evidence recovery and deployed resource measurements remain open.
+A fresh **01:00:22.495 UTC** production attestation confirms that same release,
+healthy responses, matching assets and all eight export controls closed.
 
 ### Current production — ownership bootstrap and deletion status (f2c41cb3)
 

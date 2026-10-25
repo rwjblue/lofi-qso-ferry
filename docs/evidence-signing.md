@@ -1,10 +1,14 @@
 # Direct LoTW signing evidence
 
-Updated 2026-10-23. This is local compatibility evidence, not ARRL acceptance.
+Updated 2026-10-25. This is local compatibility evidence, not ARRL acceptance. Production remains on release `f2c41cb3` and signing profile 2; the local profile 3 changes described below await deployment.
 
 The Worker imports legacy RC2/3DES and current PBES2/AES PKCS#12 files, verifies their integrity MAC, requires exactly one matching RSA key/certificate, extracts LoTW callsign/DXCC and separate QSO authorization dates, then normalizes to PKCS#8. Import is bounded at 256 KiB, eight certificates, 100,000 KDF iterations, 12,000 decoded nodes and 32 inspected levels. Signing requires current certificate validity and an unrevoked serial status checked within 24 hours. Ferry leaves certificate-authority validation to LoTW when it processes the signed upload; local import does not prove ARRL issuance or upload acceptance. Passwords and original PKCS#12 bytes are not part of normalized credentials.
 
-The signing profile is `ferry-lotw-v2-us-ca-2`. This revision adds lossless eight-character station grids to the existing four/six-character support; other signed fields and ordering are unchanged. US and Canadian subdivisions and a conservative explicit mode/band set are supported. SSB with USB/LSB ADIF submodes uses the supported SSB parent mapping, while FT4 remains exact. Other subdivision schemes, unknown modes and satellite names not yet accepted by ARRL require configuration evidence before rollout; values are never silently dropped or mapped to DATA. US county syntax is checked, but the full current ARRL county enumeration still requires rollout validation. Mixed callsigns, DXCC or locations must be separate artifacts. Each artifact carries exact source UUID/generation members, credential version and configuration version. The coordinator durably encrypts it before dispatch. The adapter limits an artifact to 100 contacts; initial orchestration can use one contact.
+The local signing profile is `ferry-lotw-v2-us-ca-3`. It preserves profile 2's lossless four/six/eight-character station grids and existing signed-field order, but excludes FST4W as a direct mode or submode for new signing: pinned native TQSL configuration 11.34 has no verified mapping for it. The remaining 18 supported modes and 29 bands agree with that configuration; this is configuration agreement, not an execution test of every mode/band combination. SSB with USB/LSB ADIF submodes uses the supported SSB parent mapping, while FT4 remains exact. Unknown modes are never silently dropped or mapped to DATA.
+
+The separate `lotwIdentityMode` helper retains the stable exact FST4W identity used by existing claims and recovery/readback; that preservation grants no new signing authority. Unsupported or stale-profile prepared dispatch remains held. FST4W is also excluded from LoTW historical DATA grouping, with local historical matcher version 6 and candidate policy version 2 invalidating older comparison results. These local changes do not describe the currently deployed profile.
+
+US and Canadian subdivisions and the conservative explicit mode/band set are supported. Other subdivision schemes and satellite names not yet accepted by ARRL require configuration evidence before rollout. US county syntax is checked, but the full current ARRL county enumeration still requires rollout validation. Mixed callsigns, DXCC or locations must be separate artifacts. Each artifact carries exact source UUID/generation members, credential version and configuration version. The coordinator durably encrypts it before dispatch. The adapter limits an artifact to 100 contacts; initial orchestration can use one contact.
 
 The field order and legacy RSA SHA-1 wire signature were compared with [Wavelog's pinned direct signer](https://github.com/wavelog/wavelog/blob/7f8eef4de94c674f73c6859ed4e0b0247f68dcd9/application/views/lotw_views/adif_views/adif_export.php) and [certificate import/status handling](https://github.com/wavelog/wavelog/blob/7f8eef4de94c674f73c6859ed4e0b0247f68dcd9/application/controllers/Lotw.php). Adapted ordering retains its MIT notice in `fixtures/signing/WAVELOG-LICENSE.txt`. Application hashes remain SHA-256. `fixtures/signing/vector.json` has exact canonical bytes and an independent `openssl dgst -sha1` signature using the explicitly synthetic private key. No personal key or contact was used.
 
@@ -23,7 +27,26 @@ The older [Trusted GAbbI specification, version 0.25 from 2002](https://www.rick
 
 Historical association has a separate deployed policy: valid nested 2/4/6/8-character grids may agree under the inclusive ±30-minute matcher when every other location, uniqueness, coverage and ownership check passes. Both original grid values remain intact and the association remains blocked from upload. This does not acknowledge a newly transmitted artifact or relax its exact full-grid readback. See [LoTW evidence](evidence-lotw.md).
 
-The released-source inspection and synthetic signatures establish the local representation and comparison policy. They are not a native TQSL execution comparison or live ARRL upload/readback acceptance test. Exact eight-character server readback still needs the authorized rollout check below; exports remain disabled.
+The released-source inspection and the native synthetic comparison below establish local representation evidence. Exact eight-character server readback still needs the authorized rollout check below; exports remain disabled.
+
+## Native TQSL comparison, 2026-10-25
+
+The protected version 2 harness completed successfully; its result was verified at **00:51:14 UTC** and independently audited afterward. It used the installed TQSL 2.8.6 library and configuration 11.34, the final local profile 3 Ferry modules, and only the repository-public synthetic RSA key. Two FT8 vectors, with six- and eight-character station grids, produced native canonical SIGNDATA and separately generated RSA/SHA-1 signatures exactly equal to the independent OpenSSL fixtures. Both native station grids retained their complete precision; the Ferry comparison passed the same vectors.
+
+Canonical extraction called `tqsl_getGABBItCONTACTData` with `do_not_sign=true` and discarded its dummy contact output. Signing used the separate public `tqsl_getMaxSignatureSize` / `tqsl_signDataBlock` path with a 256-byte buffer. **The full signed-contact writer was not exercised.** Released `src/location.cpp:3824` has a fixed 129-byte signature buffer in that path, while this fixture's 2048-bit key produces a 256-byte signature. The successful separate API comparison does not validate that writer, the converter or GUI.
+
+The native import used explicitly synthetic derived issuer/leaf certificates with raw-text authorization extensions, retaining the original public fixture signing key. Original fixtures were unchanged. This adaptation tests native parsing and byte/signature compatibility; it does not establish a trusted certificate chain, ARRL issuance or personal-credential signing.
+
+| Pinned item                  | SHA-256                                                            |
+| ---------------------------- | ------------------------------------------------------------------ |
+| Actual result                | `fac8b2ee8066c2889433072daa6fda7dfd816d141758d1a9b1116c115fa5847f` |
+| Version 2 input manifest     | `1e0c8f42f9256e626e28fda8e6591593d553081d4bdec71fd892b270898a054e` |
+| Installed native library     | `eca3883071062191200bdd58f8c287efb325ff4a80b94e76839bcf4dff158d23` |
+| Native configuration 11.34   | `9f75745e761e6ca09de333433309f5cc9a28c8cc94f975a1284de5bf28d80def` |
+| TQSL 2.8.6 source archive    | `182e5f2ac35a3db8b409b45d96505e6bd265ae4668ed064754209c4b8e7bdf37` |
+| Postexecution audit manifest | `ac21802024babf1a064cdee7a2a812a76272010d2e01b39e0997d321e4351866` |
+
+The result is retained at `/private/tmp/ferry-native-tqsl-comparison-v2-6ol1w7pz/work/result.json`; the separate audit receipt and README are under `/private/tmp/ferry-native-tqsl-postexecution-v2-44yteshl/`. These are private local records, not portable public artifacts or repository fixtures. The audit verified all 91 immutable inputs, the preserved 90-file original packet and seven original fixture files. All nine generated files were regular, owner-only 0600 files; all four work/store directories were 0700, with no symlinks. The reviewed sandbox denied network and Mach/keychain services and confined child writes to the isolated work directory without redirecting HOME. This is enforced sandbox-policy evidence, not an independent network syscall trace or whole-host filesystem comparison. No vendor upload or production key was used, and no ARRL acceptance follows.
 
 ## Runtime experiment
 
@@ -48,7 +71,7 @@ Readback frequency has five decimal MHz places (10 Hz); finer transmitted precis
 - A certificate-only `.tq6` is insufficient; signing requires a matching `.p12` private key.
 - The owner's normalized signing credential and query credentials are present. The current same-contact unsigned preflight finds one certificate covering the QSO date, with locally valid certificate dates and key material present. At **2026-10-24 23:00:35.114 UTC**, one budgeted serial-status GET reported that certificate unrevoked. This finite observation does not prove signing or upload acceptance; see [actual-contact evidence](evidence-lotw.md). A new import is needed only if those inputs require correction.
 - Optional LoTW website username/password allow full accepted-history adoption and uncertain-result readback. Without them prior history stays unverified.
-- The disabled-export Worker is deployed. Billed CPU/memory for representative signing batches and a native TQSL synthetic-vector comparison remain separate validation work.
+- The disabled-export Worker remains deployed at `f2c41cb3` with profile 2. The native canonical/public-sign synthetic comparison above is complete; deployed billed CPU/peak-memory measurements and larger representative signing batches remain open. Local profile 3 still awaits deployment.
 - Obtain separate explicit authorization for one identifiable first INSERT; upload it, observe its exact supported projection at LoTW, separately record confirmation, and record revision/credential/configuration versions before expanding. The current keep-disabled instruction and any QRZ-only permission do not authorize this.
 
 The synthetic signing experiments made no live certificate import or upload. A later scoped live read-only LoTW query is recorded in [live read-only evidence](evidence-live-readonly.md); it does not prove signed-upload acceptance. No production compatibility claim follows from fixture success.

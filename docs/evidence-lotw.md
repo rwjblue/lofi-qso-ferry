@@ -6,6 +6,13 @@ records unsigned checks, history queries and a serial-status observation for one
 released TQSL source and local Worker compatibility; the
 [certificate checks](lotw-certificates.md) explain the preflight limits.
 
+The separate **2026-10-25** native synthetic comparison now verifies canonical
+bytes and public-API signatures for six- and eight-character grid fixtures.
+Local profile 3 also holds unverified FST4W signing while preserving old exact
+identities for recovery. These changes are not deployed; the dated actual-contact
+checks below used production `f2c41cb3` / profile 2. Neither the synthetic result
+nor the profile correction proves personal-key signing or ARRL acceptance.
+
 ## Current-release certificate status
 
 At **23:00:35.114 UTC**, a separate exact-`f2c41cb3` diagnostic completed one
@@ -132,8 +139,9 @@ signature acceptance or ARRL processing.
 
 The eight-character grid belongs to this contact. Ferry preserves each contact's
 supported four-, six- or eight-character grid; this result imposes no
-eight-character requirement on other contacts. The deployed historical matcher now accepts valid nested 2/4/6/8-character grids
-for a unique exact contact identity when every other current comparison agrees.
+eight-character requirement on other contacts. The deployed historical matcher
+accepts valid nested 2/4/6/8-character grids for a unique historical candidate
+within the inclusive ±30-minute window when every other current comparison agrees.
 Both original grids and durable ownership remain intact. This association does
 not establish exact full-grid upload acceptance; strict readback remains separate.
 

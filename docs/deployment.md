@@ -2,7 +2,53 @@
 
 Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Automatic exports and LoTW are disabled. The singleton and checked pairs C and D2 account for five QRZ ACKs, accepted at the observed returned precision with seconds unverified. Trials A and B made zero attempts. The resource summary reflects the latest closed deployment; dated sections retain earlier evidence.
 
-## Accepted Trial D2 and current closed state (2026-10-25 UTC)
+## Closed scheduler and QRZ deadline release (2026-10-25 UTC)
+
+Signed `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382` deployed with all eight
+controls closed at **10:34:26.259635 UTC**, Worker
+`661afffe-a4f1-48ea-90ad-94572c8afea0`, deployment
+`a517e3e7-5263-4877-904d-6948c0ad074e`. GitHub verifies all four pushed commit
+signatures with reason `valid`. The runtime changes are scheduler result/failure
+preservation and the optional QRZ proof-expiry bound. No migration was needed;
+all 37 migrations through `0038` remain installed.
+
+Independent **10:35:00.183 UTC** attestation confirms sole 100% traffic, healthy
+HTTPS, matching assets, KEK 1 and all eight controls closed. The optional expiry
+binding is absent. Automatic QRZ and LoTW exports remain disabled. All **1,688
+local tests**, formatting, lint, both type checks and the Worker dry build pass.
+[CI 40184837953](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40184837953)
+passed all **1,688 tests and required checks** at **10:56:43 UTC**. Its test phase
+took **1,723,459.995668 ms**.
+
+Fresh PRE recovery completed at **10:31:35.981 UTC**, followed by POST recovery
+at **10:35:35.019 UTC**. Both contain **42,295,682 bytes**, SQL SHA256
+`4122c32e087f78e50898e73405a2499d9e262a64f15ea7ee05ed3e7e157dccec`.
+The complete set remains **five delivered QRZ attempts and four retained
+artifacts**, with zero new attempts. Original keys, AAD/artifacts, proof pins,
+claims and prior immutable rows pass decryption, integrity/FK and two isolated
+quarantines. No production restore occurred.
+
+| Recovery | Report                                                                                | Report SHA256                                                      |
+| -------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| PRE      | `ferry-scheduled-batch-backup-c88d413e-result-2026-10-25T10-31-23-706Z-f82b5930.json` | `0cd574fa231f029103732d80339626e1f8f8c9c298797457e58e0bb3d98e91ee` |
+| POST     | `ferry-scheduled-batch-backup-7738f7d7-result-2026-10-25T10-35-22-382Z-da73d103.json` | `970839eb651dade1433b521209b41c8b9b110ea63ffafc48ea5440a69a9b63ae` |
+
+The first new scheduled run was idle and completed cleanly. Later provider-`ok`
+cycles processed **56 / 51 / 30 contact turns**, with **0 / 6 / 3** handled
+errors and zero export attempts. The six-error cycle records two
+`history_read:qrz:history_identity_missing` events affecting six routes; its
+completed status and throughput were retained. There were no scheduler-failure
+phase logs in these observed cycles. These samples do not establish sustained
+capacity or explain the old initiating exception. The old **10:30 UTC** run
+remains unfinalized; no active lease or default-zero counters prove completion.
+
+The prospective two-contact pair passed local inspection but never activated.
+Its backup aged out while CI continued; preserve that input and take fresh
+release-bound backup/review evidence for the next scope. QRZ window capture,
+all-member readback and automatic activation remain open, followed by separate
+LoTW acceptance.
+
+## Accepted Trial D2 and earlier closed state (2026-10-25 UTC)
 
 Production remains on signed `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7`,
 with all **37 migrations through `0038`**. The closed deployment at

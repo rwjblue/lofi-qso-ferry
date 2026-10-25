@@ -6,7 +6,13 @@ All checked-in environments disable exports. Local tests and synthetic signature
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
-The latest closed checkpoint is accepted Trial D2 on c88d413e/schema 37:
+The latest closed checkpoint is signed 7738f7d7/schema 37, with scheduler
+diagnostics and the optional native QRZ proof deadline deployed. Fresh populated
+PRE/POST recovery and exact-release CI pass; the initial scheduled cycles
+complete. A fresh next QRZ scope remains pending at the dated checkpoint. See the
+[current deployment record](deployment.md#closed-scheduler-and-qrz-deadline-release-2026-10-25-utc).
+
+Accepted Trial D2 supplies the existing field-acceptance evidence:
 **five approved QRZ attempts and four retained artifacts**, with prior evidence
 unchanged. Closed-control drain, exact recovery and unique ACK neighborhoods
 pass. The separate assessment accepts the observed minute/sideband representation;

@@ -22,7 +22,30 @@ Next: continue small checked QRZ batches before automatic scope, as described in
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
 
-### Current production — accepted D2 checkpoint (c88d413e)
+### Current production — closed scheduler/deadline release (7738f7d7)
+
+The signing blocker is resolved. Signed `7738f7d7d733e67ef1fa9567eb3c2683d1a5f382`
+deployed closed at **10:34:26.259635 UTC**; GitHub verifies all four new commit
+signatures. Independent **10:35:00.183 UTC** checks confirm sole 100% traffic,
+healthy assets, KEK 1 and all eight controls closed. Schema remains 37 migrations.
+Fresh PRE/POST recovery preserves exactly **five QRZ attempts and four original
+artifacts**, with crypto, immutable-row, integrity/FK and repeated-quarantine
+checks passing. No new export occurred.
+
+The scheduler diagnostics and optional native QRZ proof deadline are deployed.
+Three work cycles completed with 56, 51 and 30 contact turns; the middle cycle's
+six handled errors are missing QRZ history identity fields. These are turn
+counts, not unique-contact or capacity measurements. The historical initiating
+exception remains unresolved. All **1,688 local tests** and required checks pass;
+[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40184837953)
+also passed all **1,688 tests and required checks** at **10:56:43 UTC**.
+
+The prepared next pair never activated and its backup aged out while CI ran.
+Take fresh backup/review evidence for a new two-contact scope,
+then verify the bounded normal-cron window before automatic QRZ. LoTW remains
+separate. See [deployment evidence](docs/deployment.md#closed-scheduler-and-qrz-deadline-release-2026-10-25-utc).
+
+### Previous production — accepted D2 checkpoint (c88d413e)
 
 Trial D2 adds two delivered QRZ ACKs to the prior three, with **five approved
 attempts and four retained artifacts** verified through restore and repeated
@@ -37,15 +60,16 @@ diagnose the unresolved scheduler exception, and verify the full window before
 automatic scope. Wider-window tooling remains offline; actual window validation remains pending; LoTW
 acceptance follows separately.
 
-### Local readiness follow-up — not deployed
+### Readiness follow-up — implementation deployed closed
 
 The scheduler follow-up preserves a completed tick before optional backlog
 sampling and reports the original work failure separately from a failure to
 record status. The optional QRZ window deadline caps native source proofs and
 the final pre-INSERT admission check. The combined local source passes **all
 1,688 tests**, formatting, lint, both TypeScript checks and the Worker dry build.
-These changes remain local: 1Password signing failed, so they are not pushed or
-deployed. Production remains the closed c88 checkpoint above.
+The signer was subsequently unlocked; the changes are signed, pushed and
+deployed closed in the current checkpoint above. The native deadline has not yet
+been exercised by an actual automatic QRZ window.
 - [x] Review and locally validate scheduler failure preservation and the native
   QRZ deadline, including expiry during vendor-budget admission.
 - [x] Independently review complete-window recovery, explicit one/two-member
@@ -56,8 +80,10 @@ deployed. Production remains the closed c88 checkpoint above.
   closer and the original native expiry fixed to the intended close time.
   Fourteen focused cases pass, including launcher exit, late deployment/audit
   and closure-journal failures; no actual window has been activated.
-- [ ] Resolve signing, push, deploy closed, and verify fresh backup/recovery and
-  scheduler diagnostics on the actual release.
+- [x] Resolve signing, push, deploy closed, and verify fresh backup/recovery and
+  completed scheduler runs on the actual release. Historical failure diagnosis
+  remains open.
+- [x] Obtain green exact-release CI before the next live QRZ scope.
 - [ ] Complete the next checked QRZ pair, then the bounded normal-cron window
   with full attempt accounting, readback and recovery before automatic scope.
 - [ ] Validate LoTW separately after QRZ, preserving the complete prior QRZ

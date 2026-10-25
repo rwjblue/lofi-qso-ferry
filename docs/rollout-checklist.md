@@ -10,6 +10,14 @@ Further checked batches are required before automatic scope.
 
 ## Current evidence (2026-10-25)
 
+- [x] Signing is resolved; 7738f7d7 is pushed and deployed closed, with fresh
+  PRE/POST recovery preserving all five attempts and four retained artifacts.
+  The scheduler diagnostics and optional native QRZ deadline are deployed;
+  initial scheduled cycles complete. All 1,688 local tests and checks pass.
+- [x] Exact-release CI passes all 1,688 tests and required checks.
+- [ ] Refresh the next pair's backup/review and
+  validate its normal scheduled QRZ delivery. The older prepared input never
+  activated and is stale.
 - [x] Exact c88d413e source and the test-only follow-up have green CI; schema 37
   remains deployed with all eight controls closed.
 - [x] Trial D2 delivered two new QRZ ACKs; all three prior attempts are unchanged.

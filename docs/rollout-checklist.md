@@ -14,22 +14,36 @@ now pass known-ACK observed-precision assessment and populated recovery.
 ## Current evidence (2026-10-25)
 
 - [x] Deploy signed observability release `dd173803` after all 1,701 tests and
-  required local/exact-release CI checks pass. Independent 15:13:03.263 UTC
-  verification confirms Worker `3500b478` healthy, matching assets and all eight
-  controls closed; schema 37 and native guards/budgets/retries are unchanged.
+  required local/[exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40203904797) checks pass.
+  Schema 37 and native guards/budgets/retries are unchanged. The initial
+  15:13:03.263 UTC closed verification of Worker `3500b478` is historical.
+- [x] Activate pair D for two exact LoTW contacts at 15:42:16.940 UTC, then close
+  after both hold for bounded history-read retry before signing/staging. Zero
+  new attempts/uploads occurred. The defensive supervisor closure leaves Worker
+  `3c8cb733`; all eight controls were attested closed at 15:58 UTC, with no future
+  closure timer pending.
+- [x] Complete 15:59:40.327 UTC POST recovery: all fourteen prior accepted
+  attempts and thirteen artifacts unchanged, full crypto/pins/signatures,
+  restore, integrity/FK and both quarantines passing.
+- [ ] Diagnose pair D's history-read failure and unfinalized 15:46 invocation
+  before further write windows. The heartbeat was recorded, but default counters
+  do not prove zero work. Zero active leases at 16:02 UTC does not establish
+  completed interval accounting; vendor/D1-quota/CPU causes remain unproven.
 - [x] Verify a fresh complete mixed PRE on the new closed runtime at 15:14:13.517
   UTC: all fourteen accepted attempts, thirteen artifacts, original historical
   LoTW capture and full crypto/restore/two-quarantine/integrity checks pass.
 
 - [x] Complete one native LoTW trial C upload, then close all eight controls at
-  14:23:06.526 UTC on Worker `0f72b254`. The deployed runtime remains `7738f7d7`.
+  14:23:06.526 UTC on historical Worker `0f72b254` and runtime `7738f7d7`.
 - [x] After closure/drain, observe the accepted contact with one read-only LoTW
   GET and six D1 calls. Native strict matching passes; QSL confirmation is false.
 - [x] Complete standard recovery at 14:37:53.975 UTC: fourteen accepted attempts,
   thirteen retained artifacts, all thirteen prior QRZ attempts preserved, full
   cryptography/proof/claim checks, in-memory restore, two quarantines and integrity/FK checks pass.
 - [ ] Complete the next checked two-contact LoTW batch, then assess a small
-  automatic scope. Its tooling is under offline preparation; it has not activated.
+  automatic scope. Pair D activated but made no new attempt/upload and does not
+  satisfy pair acceptance. General recovery and ordinary activation tools are
+  private/offline-reviewed; ordinary activation has not been used.
 
 - [x] Exercise native expiry in monitored normal-cron window H: `expiresAt` was
   12:12:30 UTC; its tick made six contact turns/four attempts, four new QRZ ACKs
@@ -119,8 +133,9 @@ now pass known-ACK observed-precision assessment and populated recovery.
 - [x] Prove one native LoTW signing/upload/accepted-report recovery separately after QRZ;
   broader LoTW rollout remains pending.
 
-See the [current LoTW trial-C checkpoint](deployment.md#lotw-trial-c-accepted-processing-and-mixed-recovery-2026-10-25-utc) for the current Worker and
-receipt timestamps/hashes. All eight controls are closed; the first LoTW contact is accepted, and further checked batches remain pending.
+See the [current pair-D checkpoint](deployment.md#lotw-pair-d-history-hold-closed-recovery-and-unfinished-invocation-2026-10-25-utc) for the current Worker and
+receipt timestamps/hashes. All eight controls are closed; the first LoTW contact
+is accepted, while pair acceptance and completed interval accounting remain pending.
 
 ### Earlier evidence (87e87b2d, 2026-10-25)
 

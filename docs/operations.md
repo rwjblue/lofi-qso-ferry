@@ -9,21 +9,27 @@ The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.co
 The current runtime is signed `dd173803dc81096115eb554d55da4a5a2eb0f701`,
 with 37 migrations and all **1,701 tests and required checks** passing locally
 and in [exact-release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40203904797).
-The independent **15:13:03.263 UTC** attestation confirms all eight controls
-closed on Worker `3500b478-f241-4a8a-b5b5-d9968ef324c9`, healthy HTTPS and matching
-assets. This release adds safe scheduler/D1/source-proof diagnostics; guards,
-budgets, matching, cryptography and retries are unchanged.
+The latest **15:58 UTC** attestation confirms all eight controls closed on Worker
+`3c8cb733-2605-41fd-9c36-a7e9d4ee3db2`, after pair D and its defensive supervisor
+closure. No future closure timer remains pending. This release adds safe
+scheduler/D1/source-proof diagnostics; guards, budgets, matching, cryptography
+and retries are unchanged.
 
 LoTW trial C's one native upload is accepted, with strict readback and full
 fourteen-attempt/thirteen-artifact recovery completed at **14:37:53.975 UTC**.
 All thirteen prior QRZ attempts are preserved; QSL confirmation is false. Its
 historical source `7738f7d7` and closed Worker `0f72b254` remain pinned in the
 [accepted trial-C receipt](deployment.md#lotw-trial-c-accepted-processing-and-mixed-recovery-2026-10-25-utc).
-A fresh complete recovery on the new runtime completed at **15:14:13.517 UTC**,
-preserving all fourteen accepted attempts and original historical capture.
-The next two-contact LoTW batch is prepared but has not activated at this
-checkpoint; it retains native fresh-source, absence, certificate and ownership
-checks, with an independently armed closer.
+Pair D activated for two exact LoTW contacts at **15:42:16.940 UTC**, then held
+both routes for bounded history-read retry before signing/staging. Zero new
+attempts/uploads occurred. POST recovery at **15:59:40.327 UTC** preserves all
+fourteen accepted attempts and thirteen artifacts with full crypto/restore and
+both quarantines passing. Its scheduler run is still unfinalized; zero active
+leases at 16:02 UTC does not establish completed interval accounting. Diagnose
+that invocation and the history-read hold before another write window. The cause
+is not proven to be vendor failure, D1 quota or CPU. General recovery and ordinary
+activation helpers remain private/offline-reviewed; ordinary activation has not
+been used. See the [pair-D receipt](deployment.md#lotw-pair-d-history-hold-closed-recovery-and-unfinished-invocation-2026-10-25-utc).
 
 The following records retain prior accepted QRZ and closed LoTW checkpoints.
 QRZ's automatic trial is accepted: two clean 13:15/13:20 cycles made one attempt

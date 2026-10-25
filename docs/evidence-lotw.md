@@ -1,10 +1,38 @@
-# LoTW actual-contact preflight evidence
+# LoTW actual-contact evidence
 
-Updated **2026-10-25 UTC**. Production exports remain disabled. This page
-records unsigned checks, history queries and a serial-status observation for one actual contact. The
+Updated **2026-10-25 UTC**. All eight production controls are closed. The first
+LoTW contact has strict accepted-processing readback and full mixed recovery;
+QSL confirmation is false. The later pair D held before signing/staging and made
+zero new attempts/uploads. The
 [signing evidence](evidence-signing.md) separately documents synthetic signatures,
 released TQSL source and local Worker compatibility; the
 [certificate checks](lotw-certificates.md) explain the preflight limits.
+
+## Current checkpoint — pair D history hold
+
+Pair D activated at **15:42:16.940 UTC** on signed `dd173803`, qualified by all
+**1,701 tests and required checks** and
+[exact-release CI 40203904797](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40203904797).
+Both selected contacts remained `inventory_pending` with the public reason
+**“Destination history read failed; bounded retry is scheduled”**. This can be
+a retained shared-partition retry; it does not identify the failing request or
+prove vendor fault, D1 quota or CPU exhaustion.
+
+The 15:46 invocation has a heartbeat but remains unfinalized, so default counters
+cannot establish zero work. All eight controls were attested closed at
+**15:58 UTC** on current Worker `3c8cb733-2605-41fd-9c36-a7e9d4ee3db2`.
+Full POST recovery completed at **15:59:40.327 UTC**: all fourteen prior accepted
+attempts (thirteen QRZ and one LoTW) and thirteen artifacts remain unchanged;
+crypto/pins/signatures, full restore, integrity/FK and both quarantines pass.
+Zero active leases at 16:02 UTC does not establish completed interval accounting.
+Diagnose the history-read hold and unfinished invocation before further write
+windows. Pair acceptance and a small automatic LoTW scope remain pending. See
+the [pair-D receipt](deployment.md#lotw-pair-d-history-hold-closed-recovery-and-unfinished-invocation-2026-10-25-utc)
+for the closure and recovery hash, and the
+[accepted trial-C receipt](deployment.md#lotw-trial-c-accepted-processing-and-mixed-recovery-2026-10-25-utc)
+for the first contact's strict report evidence.
+
+## Earlier preflight evidence
 
 The separate **2026-10-25** native synthetic comparison now verifies canonical
 bytes and public-API signatures for six- and eight-character grid fixtures.
@@ -34,8 +62,8 @@ eight controls closed; the proxy was disposed afterward.
 This is a finite serial-status observation, not certificate-issuer verification,
 proof that the private key can sign an accepted artifact, or ARRL upload
 acceptance. It neither renews the earlier source/history evidence nor supplies
-write authority. Signing, upload and exact supported-projection readback remain
-unobserved. The normal path must repeat current checks before any separately
+write authority. At that checkpoint, signing, upload and exact supported-projection
+readback were unobserved. The normal path must repeat current checks before any separately
 authorized LoTW trial; a QRZ-only authorization cannot authorize that trial.
 
 ## Three-day diagnostic checkpoint — f2c41cb3
@@ -100,7 +128,7 @@ vendor mutation occurred. The verified **22:29:48.108 UTC** pre-run backup has
 36 migrations, all 3,327 exact ownership records, zero attempts/proofs/pins and
 two isolated quarantines. The separate later serial-status observation is
 recorded above; actual signing/upload acceptance and supported-projection
-readback remain open. This diagnostic
+readback remained open at that checkpoint. This diagnostic
 does not delay the restricted QRZ first-insert trial.
 
 ## Unsigned snapshot check

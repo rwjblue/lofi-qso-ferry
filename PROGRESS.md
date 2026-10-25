@@ -2,22 +2,47 @@
 
 ## Current production and export acceptance — 2026-10-25 UTC
 
+**LoTW pair D held before signing/staging, with zero new attempts/uploads.**
+Both selected routes report bounded history-read retry. The scheduler run that
+began at 15:46:03.522 UTC has a recorded heartbeat but remains unfinalized;
+its default counters do not establish zero work or completed interval accounting.
+
+Production runs signed `dd173803`, with **1,701 passing tests and required
+checks**, [exact-release CI 40203904797](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40203904797)
+green and schema 37. All eight controls were attested closed at **15:58 UTC** on
+Worker `3c8cb733-2605-41fd-9c36-a7e9d4ee3db2`; no future closure timer is pending.
+The **15:59:40.327 UTC** full POST recovery preserves all **fourteen prior accepted
+attempts (thirteen QRZ and one LoTW)** and thirteen artifacts, passing all
+crypto/pin/signature, restore, integrity/FK and two-quarantine checks.
+
+The first LoTW contact remains accepted with QSL confirmation false. Pair D is
+not accepted. Zero active leases at 16:02 UTC does not resolve the unfinished
+invocation. Diagnose it and the history-read hold before further write windows;
+vendor failure, D1 quota and CPU causes remain unproven. General recovery and
+ordinary activation tools remain private/offline-reviewed, with no ordinary
+activation used. The [pair-D checkpoint](docs/deployment.md#lotw-pair-d-history-hold-closed-recovery-and-unfinished-invocation-2026-10-25-utc)
+records the immutable receipt, closure and recovery details.
+
+## Earlier QRZ Trial D2 checkpoint — 2026-10-25 UTC
+
 **Trial D2 is accepted at observed minute/sideband precision.** Its two new QRZ
 ACKs bring the complete approved set to **five attempts and four retained
 artifacts**, with prior rows unchanged. Closed-control drain, populated recovery
 and unique acknowledged-record neighborhoods pass. The append-only assessment
 preserves the original literal holds: exact seconds remain unverified.
 
-Production remains c88d413e with schema 37. All eight controls are closed on
+At that checkpoint production remained c88d413e with schema 37. All eight controls were closed on
 Worker `0d70f4c8-e136-429b-a540-58ecca58c931`; both exact-release and test-only
 follow-up CI are green. The [D2 deployment receipt](docs/deployment.md#accepted-trial-d2-and-current-closed-state-2026-10-25-utc)
 contains the deployment, backup, readback and assessment hashes and timestamps.
 
 The next checked pair E, the unresolved scheduler exception and full-window
-verification remain open. D/E preflights stopped before activation; an unfinished
+verification remained open. D/E preflights stopped before activation; an unfinished
 scheduler row's default zero counters are not evidence of zero work. A later
-closed run completed without errors. Automatic QRZ and LoTW remain disabled;
-wider-window recovery and the all-member observer are still offline; actual window validation remains pending.
+closed run completed without errors. Automatic QRZ and LoTW were disabled;
+wider-window recovery and the all-member observer were still offline. Subsequent
+QRZ automatic and first-contact LoTW acceptance are recorded in the current
+checkpoint above.
 
 ## Previous production and Trial B — 2026-10-25 UTC
 

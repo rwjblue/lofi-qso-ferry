@@ -337,6 +337,14 @@ runtime authority; drift from the reviewed accounting scope holds window
 acceptance. Recovery and observer provenance inventories need a successor when
 their pinned source dependencies change.
 
+For a monitored window, fix the original native expiry to its intended close
+time. An independent closer must use the saved input and frozen release checkout
+even if activation acknowledgement is lost or the primary checkout changes.
+Early gate closure cannot revoke an invocation's already captured gates; allow
+at least 180 seconds after both actual closure and the original expiry before
+evaluating drain. Elapsed time alone never proves completion: account for every
+actual attempt, outstanding invocation and request admitted before expiry.
+
 Each first-insert mode requires an unmapped, unaccepted contact, a current immutable source proof and durable identity ownership while retaining `SOURCE_BOUNDARY_VERIFIED=false`. LoTW additionally requires query credentials, a complete empty history report for the previous/current/following UTC dates before signing and again before dispatch, current certificate checks, and validation of the exact immutable single-contact upload after vendor-budget admission. Any returned record or unavailable report holds. This conservative policy does not establish global uniqueness. Submitted, uncertain, missing-state and previously accepted attempts cannot become fresh inserts; only a prepared attempt proven unsent can retry. An upload acknowledgement is submitted, not observed acceptance.
 
 Neither first-insert mode authorizes replacements, corrections, source-wide cutovers or no-query inference. Broader source-boundary mode separately requires `SOURCE_BOUNDARY_VERIFIED=true` and its independent evidence. Preparation pins the selected mode; changing a flag cannot promote an old attempt. Keep exact contact UUIDs and destination IDs initially; a sole `["*"]` is an explicit later expansion for that scope. Empty, missing or malformed scopes cannot authorize exports. The combined `fresh_inserts` health/admin label reports both independent capabilities, never source completeness. Scopes do not approve source evidence or vendor compatibility. The LoTW mode and migration `0032` are deployed with all eight controls closed; actual ARRL acceptance remains unverified.

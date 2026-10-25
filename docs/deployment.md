@@ -64,16 +64,21 @@ The **07:50 UTC** closed cycle was idle, with zero attempts and provider outcome
 `ok`; this is not resumed export acceptance.
 
 The local scheduler follow-up contains the reviewed diagnostic preservation and
-completed-before-sampler fix; **23 focused cases, TypeScript, lint and build**
-pass. Its push is blocked by 1Password's failed fill-buffer operation. It is
-not recorded as signed, pushed or deployed; production remains c88 with all
-eight controls closed.
+completed-before-sampler fix. The subsequent optional QRZ window deadline caps
+native source proofs and the final pre-INSERT admission check. The combined
+local source passes **all 1,688 tests**, formatting, lint, both TypeScript checks
+and the Worker dry build. Its push is blocked by 1Password's failed fill-buffer
+operation. These changes are not recorded as signed, pushed or deployed;
+production remains c88 with all eight controls closed.
 
 The next checked pair E, exception diagnosis and full-window verification remain
 open. Wider QRZ window recovery and an observer covering every new member are
-still offline. Recovery passes nine native/host cases; its source and complete
-protected inventory pass independent review. The selected-member observer
-passes 13 native and 33 host/selection cases with independent review. It retains
+still offline. Recovery retains ten passing native/host cases and adds a passing
+native capped-proof cancellation and repeated-quarantine case. Its source and
+complete protected inventory pass independent review. The selected-member observer
+retains 13 native and 33 host/selection cases with independent review. Mechanical
+dependency successors pass static, import and TypeScript checks; their inherited
+native receipts are not new live runs. The observer retains
 the complete window census while observing one or two native ACKs at a time;
 no report alone claims that every member is accepted. Actual window capture,
 all-member readback and aggregate acceptance remain open. No automatic scope

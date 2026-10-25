@@ -37,6 +37,32 @@ diagnose the unresolved scheduler exception, and verify the full window before
 automatic scope. Wider-window tooling remains offline; actual window validation remains pending; LoTW
 acceptance follows separately.
 
+### Local readiness follow-up — not deployed
+
+The scheduler follow-up preserves a completed tick before optional backlog
+sampling and reports the original work failure separately from a failure to
+record status. The optional QRZ window deadline caps native source proofs and
+the final pre-INSERT admission check. The combined local source passes **all
+1,688 tests**, formatting, lint, both TypeScript checks and the Worker dry build.
+These changes remain local: 1Password signing failed, so they are not pushed or
+deployed. Production remains the closed c88 checkpoint above.
+- [x] Review and locally validate scheduler failure preservation and the native
+  QRZ deadline, including expiry during vendor-budget admission.
+- [x] Independently review complete-window recovery, explicit one/two-member
+  readback and aggregation covering every actual new attempt. These are offline
+  tools; original literal holds, unknown states and incomplete coverage remain
+  explicit.
+- [x] Finish and review the offline window controller with an independent
+  closer and the original native expiry fixed to the intended close time.
+  Fourteen focused cases pass, including launcher exit, late deployment/audit
+  and closure-journal failures; no actual window has been activated.
+- [ ] Resolve signing, push, deploy closed, and verify fresh backup/recovery and
+  scheduler diagnostics on the actual release.
+- [ ] Complete the next checked QRZ pair, then the bounded normal-cron window
+  with full attempt accounting, readback and recovery before automatic scope.
+- [ ] Validate LoTW separately after QRZ, preserving the complete prior QRZ
+  ledger in its recovery checks.
+
 ### Previous production — scoped selection reached; source transport held (87e87b2d)
 
 Signed `87e87b2d9f02f4534a914789a9e4487f35703a43` passes **1,666 tests** and

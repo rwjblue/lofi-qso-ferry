@@ -6,67 +6,20 @@ All checked-in environments disable exports. Local tests and synthetic signature
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
 
-The coordinator receiver fix `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7`
-deployed closed at **06:29:17.891099 UTC** as Worker
-`a948328a-6098-4cbb-957f-9813f5383e4b`, deployment
-`b0efece0-a12f-46c0-95e2-fb5161234adf`. Independent **06:29:31.791 UTC**
-attestation verifies healthy HTTPS/assets, KEK 1 and all eight closed controls.
-Schema remains at 37 migrations. The **06:26:18.568 UTC PRE** recovery passes
-with exactly the original singleton and zero new attempts/artifacts. The
-**06:29:50.913 UTC POST** also passes with **41,687,430 bytes**, schema 37,
-all prior immutable evidence preserved and repeated quarantine passing. Trial C
-subsequently produced the two acknowledgements recorded below.
+The latest closed checkpoint is accepted Trial D2 on c88d413e/schema 37:
+**five approved QRZ attempts and four retained artifacts**, with prior evidence
+unchanged. Closed-control drain, exact recovery and unique ACK neighborhoods
+pass. The separate assessment accepts the observed minute/sideband representation;
+literal holds and unverified seconds remain recorded. The current Worker and
+immutable receipts are in the [D2 deployment record](deployment.md#accepted-trial-d2-and-current-closed-state-2026-10-25-utc).
 
-The local full run completed 1,667 cases with 1,666 passing and one random
-ciphertext privacy-assertion failure. Test-only signed `738fea2527c3fb714faa326f130b496eed7da5ed`
-corrects that assertion; the history file passes 62/62 and the build passes.
-The 42 focused coordinator cases pass. [c88d413e CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40168290537)
-subsequently passed all **1,667 tests and required checks** at approximately
-**06:37 UTC**, separately from the earlier local failure. See
-[current deployment](deployment.md) for the exact recovery and validation scope.
-
-Trial C activated exactly two QRZ contacts at **06:37:46.525 UTC** as Worker
-`dd1a74fc-0bad-4391-aabf-ae2f35533555`. The ordinary scheduled turn created two
-attempts at **06:41:13.566 / 06:41:15.969 UTC**; both received INSERT ACKs and
-are delivered, with two retained encrypted artifacts. Actual record, template,
-credential and source hashes match the preliminary review. The original
-singleton is unchanged; the global attempt count is now **three**.
-
-All eight controls closed at **06:41:42.213147 UTC** as Worker
-`297b7d45-4fc3-4c0d-af79-d1e0dde1b4b4`; independent attestation passed at
-**06:41:46.035 UTC**, with closure recorded at **06:41:46.124 UTC**. After at
-least 180 seconds of drain, there are **zero running invocations, two new
-delivered attempts and zero unresolved attempts**. The **06:45:24.184 UTC**
-recovery contains **40,811,177 bytes**, verifies all three expected attempts and
-two new retained artifacts, and passes pins/claims/decryption, integrity/FKs and
-two quarantines.
-
-The **06:46:10.218 UTC** read-only observer completed five QRZ reads and 24 D1
-calls with book/current scope and closed controls verified. Both complete
-neighborhoods contain exactly one candidate and one occurrence of the accepted
-LOGID, matching exact-LOGID readback. Its literal result remains **held**:
-the 14-field contact matches 13 fields, with only six-digit `TIME_ON` returned
-as the same UTC minute; the 15-field contact matches 12 fields, with the same
-minute reduction plus transmitted `MODE=SSB,SUBMODE=LSB` returned as `MODE=LSB`
-and no `SUBMODE`. Both full eight-character grids are retained. No further
-INSERT or retry occurred.
-
-At **06:55:09.986 UTC**, a separate append-only offline assessment verified both
-known ACKs against the hash-bound captures and reloaded retained artifacts,
-including crypto, claims, proof pins and the original reviewed records. **Trial C
-is accepted at returned minute precision and the observed sideband
-representation only.** Both results have `representationConsistent=true`, while
-`literalExact=false` and `exactSeconds=false`; source seconds remain preserved
-but unverified at QRZ. Every other transmitted field matches literally.
-
-The assessor permits only exact `SSB+LSB` ↔ flat `LSB` (or the corresponding USB
-form) and valid same-date minute reduction. Its **53 focused cases**, strict
-TypeScript and independent review pass. This records the actual QRZ observations,
-not a general vendor conversion guarantee. The original held literal report and
-uncertain/no-ACK matcher remain unchanged. Assessment made no additional vendor,
-source or database calls and grants no retry authority. Further checked QRZ
-batches remain required before automatic scope; all eight controls are closed,
-and LoTW signing/upload acceptance remains unproved.
+Continue with fresh reviewed scope, backup and ordinary guarded evidence for each
+checked batch. Pair E, exception diagnosis and full-window verification remain
+open; wider-window recovery and all-member observation are offline; actual window validation remains pending.
+An unfinished scheduler row is unresolved even when its default counters are
+zero. Close the scope, drain at least 180 seconds and account for actual attempts
+and running invocations before accepting a batch. Automatic QRZ and LoTW remain
+disabled.
 
 ### Previous 87e87b2d checkpoint
 
@@ -353,13 +306,13 @@ A genuinely new destination atomically requests a bounded source backfill stream
 
 ## First writes and expansion
 
-For the restricted singleton QRZ trial, require the verified deployment and protected recovery backup, current LoFi source proof for the exact contact, the intended QRZ book/credential and fresh complete neighborhood checks, durable identity ownership, reviewed payload/narrative hashes, and explicit owner authorization naming that contact and destination. The frozen exact-`0386af30` execution packet passes 22 native and 92 supporting cases; its separate recovery packet passes 21 cases. The owner has authorized the reviewed singleton with at most one INSERT. Its first invocation stopped during preparation; independent recovery verified zero attempts and no dispatch. Preserve that invocation's original burn and journal; a continuation requires fresh evidence and verified zero-attempt lineage. Old reviews/proofs retain their original release binding and expiry. See the [restricted QRZ pilot](qrz-pilot.md).
+For each checked QRZ batch, require a verified deployment and fresh protected recovery backup, current LoFi source proofs for the exact contacts, the intended QRZ book/credential and fresh complete neighborhoods, durable identity ownership, and reviewed payload/narrative hashes within the owner's authorized scope. The singleton's one-INSERT allowance is exhausted; its earlier failed preparations, burns and zero-attempt recovery remain historical evidence. Trials C and D2 are accepted at the observed returned precision. Use fresh release-bound evidence for the next scope; do not reuse an expired proof or prior one-use intent. See the [restricted QRZ pilot](qrz-pilot.md).
 
-Set `ROLLOUT_QSO_IDS_JSON` and `ROLLOUT_DESTINATION_IDS_JSON` to the exact authorized scope; empty arrays permit none. Preparation and dispatch both enforce the scope. The first QRZ trial must verify one INSERT acknowledgement, exact LOGID readback and identity/narrative preservation, followed by post-attempt recovery checks. Retain the original encrypted prepared artifact before dispatch, and reconcile an uncertain outcome before considering another create. Record the source generation, destination mapping, payload/template/configuration versions, deployed revision, timing and redacted outcome in the protected packet.
+Set `ROLLOUT_QSO_IDS_JSON` and `ROLLOUT_DESTINATION_IDS_JSON` to the exact authorized scope; empty arrays permit none. Preparation and dispatch both enforce the scope. Each batch must verify every INSERT acknowledgement, exact LOGID readback and identity/narrative preservation, followed by post-attempt recovery checks. Retain the original encrypted artifact through dispatch and normal outbox cleanup, and reconcile an uncertain outcome before considering another create. Record the source generation, destination mapping, payload/template/configuration versions, deployed revision, timing and redacted outcome in the protected packet.
 
 Global source cutover, QRZ REPLACE/correction validation, LoTW signing/upload/readback and sustained 200,000-contact capacity are separate follow-ups, not prerequisites for that singleton QRZ INSERT. A LoTW trial additionally requires the selected `.p12` and matching key, current certificate/serial status, query credentials, supported configuration and its own authorization. A queue acknowledgement is not observed acceptance; confirmation is separate again. General automatic expansion, including an explicit `["*"]` scope, requires a later decision after scoped acceptance. Template changes alone never authorize historical work; existing bindings remain pinned at durable export preparation.
 
-Automatic exports and LoTW remain disabled during the singleton QRZ trial. The owner has authorized progression through checked QRZ batches and automatic activation only after successful validation, followed by a separate LoTW acceptance process. Every enabled mode requires `EXPORTS_ENABLED=true`, `ROLLOUT_CHECKS_PASSED=true`, `LIVE_WRITE_AUTHORIZATION=I_AUTHORIZE_LIVE_VENDOR_WRITES`, and exact nonempty `ROLLOUT_QSO_IDS_JSON` and `ROLLOUT_DESTINATION_IDS_JSON` scopes. The independent first-insert flags are `QRZ_FRESH_INSERTS_ENABLED` and `LOTW_FRESH_INSERTS_ENABLED`; both default to false. QRZ remains the first rollout milestone. Keep the other vendor flag off and exclude its destination during a single-vendor trial.
+Automatic exports and LoTW remain disabled at the current closed checkpoint. The owner has authorized progression through checked QRZ batches and automatic activation only after successful validation, followed by a separate LoTW acceptance process. Every enabled mode requires `EXPORTS_ENABLED=true`, `ROLLOUT_CHECKS_PASSED=true`, `LIVE_WRITE_AUTHORIZATION=I_AUTHORIZE_LIVE_VENDOR_WRITES`, and exact nonempty `ROLLOUT_QSO_IDS_JSON` and `ROLLOUT_DESTINATION_IDS_JSON` scopes. The independent first-insert flags are `QRZ_FRESH_INSERTS_ENABLED` and `LOTW_FRESH_INSERTS_ENABLED`; both default to false. QRZ remains the first rollout milestone. Keep the other vendor flag off and exclude its destination during a single-vendor trial.
 
 Each first-insert mode requires an unmapped, unaccepted contact, a current immutable source proof and durable identity ownership while retaining `SOURCE_BOUNDARY_VERIFIED=false`. LoTW additionally requires query credentials, a complete empty history report for the previous/current/following UTC dates before signing and again before dispatch, current certificate checks, and validation of the exact immutable single-contact upload after vendor-budget admission. Any returned record or unavailable report holds. This conservative policy does not establish global uniqueness. Submitted, uncertain, missing-state and previously accepted attempts cannot become fresh inserts; only a prepared attempt proven unsent can retry. An upload acknowledgement is submitted, not observed acceptance.
 

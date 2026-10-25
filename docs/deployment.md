@@ -1,6 +1,85 @@
 # Read-only production deployment
 
-Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Automatic exports and LoTW are disabled. One authorized singleton changed QRZ; Trials A and B made zero attempts; Trial C delivered two additional QRZ contacts, accepted by the separate known-ACK assessment at returned minute/sideband representation with seconds unverified. The resource summary reflects the latest closed deployment; dated sections retain earlier evidence.
+Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. Automatic exports and LoTW are disabled. The singleton and checked pairs C and D2 account for five QRZ ACKs, accepted at the observed returned precision with seconds unverified. Trials A and B made zero attempts. The resource summary reflects the latest closed deployment; dated sections retain earlier evidence.
+
+## Accepted Trial D2 and current closed state (2026-10-25 UTC)
+
+Production remains on signed `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7`,
+with all **37 migrations through `0038`**. The closed deployment at
+**07:28:17.57008 UTC** is Worker `0d70f4c8-e136-429b-a540-58ecca58c931`,
+deployment `26717a85-e1c7-458f-a305-7418d876160b`. The **07:28:21.817 UTC**
+closure packet verifies all eight controls closed. Automatic QRZ exports and
+LoTW remain disabled. Exact c88 source passed **1,667 tests and required checks**
+in [CI 40168290537](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40168290537);
+the test-only `738fea2527c3fb714faa326f130b496eed7da5ed` follow-up also passed
+[CI 40169168017](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40169168017).
+
+Trial D2 produced **two new delivered QRZ attempts with INSERT ACKs**. The
+three prior attempts are unchanged: the complete approved set is now **five
+attempts and four retained encrypted artifacts**. After at least **180 seconds**
+of drain, accounting found **zero new unresolved attempts and zero running
+trial invocations**. This does not assert that every unrelated scheduler row
+has completed.
+
+The **07:34:45.497 UTC** POST recovery contains **41,300,020 bytes**. It verifies
+the exact five-attempt set, original artifacts and keys, source-proof pins,
+claims, prior immutable rows, integrity and foreign keys through two isolated
+quarantines. Report:
+`ferry-scheduled-batch-backup-c88d413e-result-2026-10-25T07-34-34-137Z-a13be64f.json`.
+Report SHA256:
+`eb83e468f96314302c586294deda5c569717d698cb97a6f09cc11be9aa948ea8`.
+
+The **07:35:26.384 UTC** read-only observer used **five QRZ reads and 24 D1
+calls**. Exact-LOGID readback and complete neighborhoods both contain precisely
+the acknowledged record. Both contacts transmitted six-digit `TIME_ON`, which
+QRZ returned at four-digit minute precision; one transmitted `MODE=SSB,SUBMODE=LSB` returned flat `MODE=LSB`.
+Every other transmitted field matches literally, including the selected contacts'
+full eight-character grids. This is evidence for those records; other valid
+user grid precisions remain supported.
+
+The separate append-only assessment at **07:36:22.631 UTC** records both as
+`representationConsistent=true`, with **`literalExact=false` and
+`exactSeconds=false`**. Its SHA256 is
+`7a8d591e73f9afd0de778c2a6c7d232dbe007e893a780fbe3efda6811f521bf8`.
+**Trial D2 is accepted only at the observed minute/sideband representation.**
+The original held literal report, source seconds, historical singleton/Trial C
+receipts and uncertain-result matcher remain unchanged. This assessment does
+not authorize another INSERT or infer a general vendor normalization contract.
+
+The separate **D and E preflights stopped before activation intent**, so neither
+preflight made a write or deployment. E's **07:35:55.394 UTC** closed-state check
+found an unfinished scheduler row; its default zero counters do not prove zero
+work. The provider reported `scriptThrewException` for **07:35:42 UTC**, with
+cause still unknown. The next closed run at **07:40 UTC** completed **147 contact
+turns in 91.494 seconds with zero errors**. That recovery does not identify the
+previous exception's cause or establish sustained throughput.
+
+At **07:45 UTC**, a later closed invocation failed while writing the scheduler's
+FAILED status: the native D1 error points to `scheduler-history.ts:26:5`.
+The provider recorded an exception with **46 ms CPU / 10,135 ms wall time**.
+The old catch discarded the original tick error before this status-write failure,
+so the evidence does **not** establish that the original error was D1-related.
+The two-stage failure mechanism is known; its initiating cause remains unknown.
+The **07:50 UTC** closed cycle was idle, with zero attempts and provider outcome
+`ok`; this is not resumed export acceptance.
+
+The local scheduler follow-up contains the reviewed diagnostic preservation and
+completed-before-sampler fix; **23 focused cases, TypeScript, lint and build**
+pass. Its push is blocked by 1Password's failed fill-buffer operation. It is
+not recorded as signed, pushed or deployed; production remains c88 with all
+eight controls closed.
+
+The next checked pair E, exception diagnosis and full-window verification remain
+open. Wider QRZ window recovery and an observer covering every new member are
+still offline. Recovery passes nine native/host cases; its source and complete
+protected inventory pass independent review. The selected-member observer
+passes 13 native and 33 host/selection cases with independent review. It retains
+the complete window census while observing one or two native ACKs at a time;
+no report alone claims that every member is accepted. Actual window capture,
+all-member readback and aggregate acceptance remain open. No automatic scope
+or LoTW signing/upload has been enabled. See [the pilot](qrz-pilot.md) for the continuing boundaries.
+
+## Historical receiver-fix deployment and accepted Trial C
 
 Signed `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7` deployed with all eight
 controls closed at **06:29:17.891099 UTC** as Worker
@@ -158,8 +237,8 @@ policy 6 is active: **9,981 covered inputs, zero pending or held inputs and zero
 unhashed owners**. The comparison index is clean at **4,161 rows**. This aggregate
 does not validate ciphertext or grant export authority; protected recovery
 evidence is recorded below.
-Trial C validates the deployed receiver fix through normal scheduled delivery
-and assessed readback. Remaining work includes further checked QRZ batches,
+Trials C and D2 validate the deployed receiver fix through normal scheduled
+delivery and assessed readback. Remaining work includes further checked QRZ batches,
 wider QRZ observation, separate LoTW acceptance, broader exception review and
 sustained capacity. The LoTW observer
 and recovery tools are ready offline only; no real-key upload acceptance is
@@ -170,8 +249,8 @@ claimed. All export controls are closed.
 | Cloudflare account        | `478f5e15ae2afa01364d19f42a3e06f2` (existing account)                                       |
 | Worker                    | `lofi-qso-ferry`, environment `production`                                                  |
 | Deployed source revision  | `c88d413e52c8d3ebd5ed7bff4eab10ec6fbf2dd7`                                                  |
-| Worker version            | `297b7d45-4fc3-4c0d-af79-d1e0dde1b4b4`                                                      |
-| Deployment                | Closed deployment at `2026-10-25T06:41:42.213147Z`                                          |
+| Worker version            | `0d70f4c8-e136-429b-a540-58ecca58c931`                                                      |
+| Deployment                | `26717a85-e1c7-458f-a305-7418d876160b`, closed at `2026-10-25T07:28:17.57008Z`              |
 | Origin / passkey RP       | `https://ferry.n1rwj.com` / `ferry.n1rwj.com`                                               |
 | Dedicated D1              | `ferry-production`, `45ad64ad-92bb-491a-b6e6-1d2b17450144`, ENAM                            |
 | Migrations                | All 37 migrations through `0038_attempt_artifacts`; independently verified after deployment |

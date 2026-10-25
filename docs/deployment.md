@@ -447,13 +447,13 @@ ROLLOUT_DESTINATION_IDS_JSON=[]
 
 [Health](https://ferry.n1rwj.com/health) returns `{"status":"ok","exportsEnabled":false,"exportMode":null,"sourceBoundaryVerified":false}`. No contact or destination scope is enabled. The scheduled service can poll and adopt configured history after the owner connects accounts; it cannot sign, insert, replace, delete or upload contacts with these gates closed. Signup email and LoFi approval/client renewal are separate provider interactions.
 
-## Live checks
+## Historical live checks
 
 - HTTPS UI and static assets load in Chromium with no console errors; secure context confirmed. At 375×812 there is no horizontal overflow.
 - Session endpoint returns unauthenticated state with `signupAllowed=false`. The public landing shows an invite-only notice and passkey sign-in; the signup form is hidden. A live uninvited signup probe returned 403 before proof creation or sending.
 - Following the invitation link stays at `/join`, serves the app without the asset-canonicalization redirect, reveals invited enrollment and focuses its email field. Both confirmation inputs expose six-digit numeric/one-time-code attributes.
 - Remote settings independently confirm every closed gate, exact origin/RP, dedicated D1 and sender allowlist. Production local-mailbox and alternate workers.dev endpoints return 404. Email-content previews remain disabled, and no secrets were rotated.
-- The current release passes **1,429 tests** and all required checks in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40108165167).
+- The earlier association release passed **1,429 tests** and all required checks in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40108165167). Current `0386af30` qualification and its 1,653-test result are recorded above.
 - Read-only remote D1 probes verified that the invite task must use query results, rather than bulk-file import summaries, to establish an exact email/deadline grant. Existing OAuth includes Email Sending write access. No real invitation grant/send was performed; CLI sends still require recipient-specific delivery confirmation.
 - The initial deployment delivered one real verification message to the owner's inbox through the same native provider path; only fixed delivery metadata was inspected. That smoke test enrolled no production account and initially observed zero account/connection/ledger/attempt rows. These are historical counts, not a claim about subsequent personal use. New branded mail was rendered/tested locally; email-client/device autofill remains unverified.
 

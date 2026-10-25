@@ -1,16 +1,29 @@
 # Adopting existing QRZ and LoTW history
 
-Status: guarded QRZ historical association, the lookup/coverage follow-up and fixed scope diagnostics are deployed in `c4f51de8`; all eight export controls remain closed. Broader LoTW association and universal source-boundary verification remain separate work. See [rollout checklist](rollout-checklist.md). Bootstrap first inventories and adopts existing contacts without remote writes. Any later first insert requires explicit export authorization, a current source proof and the normal fresh destination checks. Adoption itself must not re-upload existing history, regenerate its comments, reset confirmations, or re-sign every QSO.
+Status: signed `0386af30` is deployed with historical matching policy 6, all 36
+migrations through `0037`, guarded QRZ and LoTW historical association, durable
+ownership and the exact-receipt write bridge. LoTW signing profile
+`ferry-lotw-v2-us-ca-3` is deployed; all eight export controls remain closed.
+See the [current deployment and recovery record](deployment.md#qrz-request-reuse-and-lotw-profile-3-release-0386af30)
+and [remaining acceptance work](../ROADMAP.md#export-readiness-at-a-glance).
+Populated raw LoTW association recovery, actual vendor write acceptance,
+universal source completeness and broader rollout remain open.
 
-## Current diagnostic release — c4f51de8
+Bootstrap first inventories and adopts existing contacts without remote writes.
+Any later first insert requires explicit export authorization, a current source
+proof and the normal fresh destination checks. Adoption itself must not re-upload
+existing history, regenerate its comments, reset confirmations, or re-sign every
+QSO. The following release observations retain their original dates and scope.
+
+## Historical diagnostic release — c4f51de8 (2026-10-24)
 
 Signed `c4f51de8` deployed at **2026-10-24 17:28:57.761108 UTC**, after all
 **1,488 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40114936899).
 Independent **17:33:39.140 UTC** verification confirmed the sole Worker deployment,
 eight closed controls, active KEK version 1, healthy HTTPS and matching assets.
-All 33 migrations through `0034` are unchanged. This release only distinguishes
+All 33 migrations through `0034` were unchanged. This release only distinguishes
 fixed history-scope failure categories; it does not accept previously invalid
-reports or change matching/export authority. See the [current deployment receipt](deployment.md#fixed-history-scope-diagnostics-release-c4f51de8).
+reports or change matching/export authority. See the [dated deployment receipt](deployment.md#fixed-history-scope-diagnostics-release-c4f51de8).
 
 The first completed c4f cron, **17:30:42.737–17:31:25.276 UTC**, processed 100
 contact turns, 110 classifications and 72 adoptions, with zero errors, deferrals
@@ -20,8 +33,9 @@ At **17:33:38 UTC**, all 13 aggregate checks passed: 797 QRZ mappings had comple
 owner/marker/write-block coverage, the 4,141-row index was clean, and 3,327 LoTW
 exact claims remained covered. The 778 legitimate archives and 3,722 retained
 source bodies had no unexplained gaps; attempts, cutovers, proofs and pins were zero.
-The latest verified backup remains the dated **17:04:57 UTC** 33-migration receipt
-below, not a backup of these later counts. Exports remain disabled.
+The latest verified backup at that checkpoint was the **17:04:57 UTC**
+33-migration receipt below, not a backup of those later counts. Exports remained
+disabled.
 
 ### Previous lookup and coverage release — 9aeab582
 
@@ -30,12 +44,12 @@ Signed follow-up `9aeab582149baa8af8fd6db8cc9cc318b2bc3739` deployed at
 `950c081c-03b4-455f-8e31-b579fec56788`, at 100% traffic. All **1,485 tests** and
 required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40112629290).
 Independent **17:04:50.692 UTC** verification confirmed all eight controls closed,
-healthy HTTPS and matching assets; all 33 migrations through `0034` remain installed.
+healthy HTTPS and matching assets; all 33 migrations through `0034` were installed.
 It adds audit visibility for permanent write
 blocks (`dd544316`), one fewer index-lookup RPC (`805952c6`), LoTW neighboring-date
 coverage only (`07b26b8b`), and QRZ retained-split date-path correctness (`9aeab582`).
 All 122 focused history cases passed before the full release checks. Broader LoTW
-matching/ownership and all export acceptance remain separate work; dated `6ff685a7`
+matching/ownership and all export acceptance remained separate work at that checkpoint; dated `6ff685a7`
 observations below retain their original scope.
 
 At **17:05:22.396 UTC**, all 13 aggregate checks passed: 4,141 clean published
@@ -47,7 +61,7 @@ completed new-runtime cron. The **17:04:57 UTC** backup passed key/credential
 decryption, integrity/FK and twice-quarantine checks. Exact comparison preserved
 all 3,327 prior claims and 39 prior owners/markers unchanged, including creation
 timestamps; 423 owners/markers were added. See the
-[current deployment and recovery receipt](deployment.md#lookup-and-coverage-release-verification-9aeab582).
+[dated deployment and recovery receipt](deployment.md#lookup-and-coverage-release-verification-9aeab582).
 
 The first completed `9aeab582` cron, **17:05:42.632–17:07:16.980 UTC**, made 38
 adoptions with zero attempt turns or deferrals. Fifteen affected-contact errors
@@ -133,9 +147,11 @@ A minute-only value represents an interval, not invented `00` seconds. The new Q
 path applies the published ±30-minute candidate policy, includes adjacent UTC
 coverage and requires uniqueness in both source-to-remote and remote-to-source
 directions. An exact candidate plus another plausible coarse-time candidate stays
-held; there is no closest-time tie-break. LoTW still uses its existing exact
-normalized identity/six-digit-time association path. Its broader time-window
-adoption requires a separate retained-coverage and ownership integration.
+held; there is no closest-time tie-break. LoTW's deployed broader time-window
+association also requires retained coverage, reverse uniqueness and durable
+ownership. Exact normalized identities and six-digit times remain separate for
+outbound claims and receipt recovery; a historical association does not fabricate
+an exact receipt identity.
 
 QRZ's [file-import duplicate rules](https://www.qrz.com/docs/logbook30/adif-import)
 define a ±30-minute window, but their replacement behavior differs from the API
@@ -201,28 +217,29 @@ repeated-quarantine checks, preserving the initialized comparison key, all 4,141
 index rows and 39 owners/markers. All 3,176 predeployment claim rows were unchanged;
 151 additions brought the total to 3,327, with none missing. See the
 [capacity and backup observations](capacity-plan.md#historical-comparison-index-integration--deployed).
-The deployed `9aeab582` follow-up implements the LoTW UTC day/week coverage prerequisite;
-broader LoTW adoption still needs its separate ownership and classifier integration.
+The `9aeab582` follow-up supplied the LoTW UTC day/week coverage prerequisite;
+the later `5a427a30` release deployed its ownership bridge and guarded broader
+association consumer. Both are included in current `0386af30`.
 No historical association supplies first-insert absence, a current source proof
 or write permission.
 
 Two source UUIDs must not silently claim one remote record. Remote records without a source match remain untouched. Never fabricate source UUIDs for remote history or upload a marker merely to establish ownership.
 
-### Remaining LoTW time-window association work
+### Deployed LoTW time-window association and remaining acceptance
 
-A separate **undeployed** ownership-evidence foundation has passed 20 focused
-foundation/store cases and four selected LoTW delivery/recovery cases. It has no
-adoption or write authority. The exact-receipt write bridge and association-only
-integration below remain necessary. Its immutable copied evidence envelopes
-currently require retaining their original KEKs; an envelope-only guarded rewrap
-must precede retirement of those keys. Its proposed migration `0035` is not
-installed, and the tests do not establish production coverage.
+The ownership-evidence foundation (`0035`), mandatory exact-receipt write bridge
+(`0036`) and raw historical association storage/consumer (`0037`) are deployed.
+The **2026-10-25 02:44 UTC** checkpoint verifies all 9,981 ownership inputs covered,
+with no pending, held or unhashed ownership work. Populated exact-evidence recovery
+verifies all 3,327 copied tuples; raw historical references remain empty, so their
+populated recovery is still unverified. These facts grant no export authority.
+The immutable copied evidence envelopes still require their original KEKs;
+an envelope-only guarded rewrap must precede retirement of those keys.
 
-The coverage-only step in signed `07b26b8b` is **deployed in `9aeab582`**. Its 100 prior
-history cases plus 22 QRZ coverage regressions all pass. Broader LoTW ownership
-and adoption remain planned. This sequence extends historical
-recognition only; it does not change exact Ferry receipts, signing, first-insert
-absence checks or export permissions. Keep all export controls closed.
+The coverage-only step in signed `07b26b8b` first deployed in `9aeab582`, with
+100 prior history cases and 22 QRZ coverage regressions passing. The subsequent
+ownership and association integration preserves exact Ferry receipts and
+first-insert absence checks. Keep all export controls closed.
 
 LoTW's [QSL matching rules](https://lotw.arrl.org/lotw-help/frequently-asked-questions/#datamatch)
 compare reciprocal submissions within 30 minutes, on the same band, with matching
@@ -252,8 +269,8 @@ fields should be presented as such an identifier.
    tests fail before and pass after. There is no current QRZ split writer or live
    split partition, so this is not evidence of the live QRZ scope-error cause.
 
-2. **Add separate historical ownership and an exact-receipt bridge.** Use an
-   additive migration and bounded helper, preserving the existing QRZ tables and
+2. **Preserve deployed historical ownership and the exact-receipt bridge.** The
+   additive migrations and bounded helpers preserve the existing QRZ tables and
    exact LoTW identity claims. Store an internal association reference and encrypted
    original LoTW identity evidence in a separate namespace; never manufacture
    seconds or put a coarse/mode-group identity into `ledger.remote_id` or exact
@@ -273,10 +290,11 @@ fields should be presented as such an identifier.
    each encrypted tuple against its owner-hash prefix and original exact hash.
    Hash-only, missing or unreadable relevant evidence stays an explicit hold.
 
-   Before broader adoption activates, require an exact-identity bridge reservation
-   at stage, new mapping and dispatch. Its immutable pin must bind owner, payload
-   identity, station namespace and coverage epoch/clock. Older writers without that
-   pin cannot create mappings or dispatch; dirtying coverage after a write alone
+   The deployed bridge requires an exact-identity reservation at stage, new
+   mapping and dispatch. Its immutable pin binds owner, payload identity and
+   station namespace; renewable checks bind current coverage, clock and comparison
+   policy. Older writers without that pin cannot create mappings or dispatch;
+   dirtying coverage after a write alone
    cannot protect an association already committed. Actual submitted/uncertain
    receipt recovery must still record the vendor outcome and maintain or dirty
    coverage atomically. Preserve existing legacy write holds. Atomic historical
@@ -285,26 +303,29 @@ fields should be presented as such an identifier.
    aliases, archived owners, unreadable evidence, interrupted backfill and old-worker
    writes. Unrelated indexed cohorts must remain bounded and able to proceed.
 
-3. **Wire guarded association-only recognition.** Extend
-   `classifyHistoricalAssociation`, service classification and adoption only after
-   those guards exist. Reuse the pure LoTW candidate policy and bounded reverse
-   source census; require uniqueness before location/frequency comparison, preserve
+3. **Preserve guarded association-only recognition.** The deployed
+   `classifyHistoricalAssociation`, service classification and adoption consume
+   these guards. They use the LoTW candidate policy and bounded reverse
+   source census, require uniqueness before location/frequency comparison, preserve
    every original remote value, and recheck both inventory leaves, source/context,
-   comparison clock and historical ownership in the adoption transaction. Extend
-   the association-only write-block view to LoTW so edits and same-account relinks
-   cannot grant upload authority. Do not treat the existing same-day targeted read
-   as complete adjacent-day coverage. Acceptance: exact plus coarse competitors,
+   comparison clock and historical ownership in the adoption transaction. The
+   association-only write block permanently covers the source/QSO across every
+   LoTW route, so edits and relinks cannot grant upload authority. Do not treat a
+   same-day targeted read as complete adjacent-day coverage. Acceptance: exact plus coarse competitors,
    mode-group/APP-only records, substantive mismatches, late source/event changes,
    direct stage/dispatch attempts and relinks. Exact receipt recovery and
    submitted/uncertain outcomes must remain unchanged; empty history never permits
    their automatic resend.
 
-4. **Verify and measure before rollout.** Run populated-migration rehearsal and
-   complete regression checks, then observe guarded adoption with exports disabled.
-   Change the matching-policy fingerprint once at integration to revisit held work.
-   Measure two-leaf and reverse-ownership cost; do not infer large-log capacity from
-   focused fixtures. These checks establish retained-observation associations, not
-   an immutable LoTW snapshot, universal source completeness or first-insert absence.
+4. **Complete remaining live acceptance and capacity evidence.** Release checks,
+   production ownership bootstrap and populated exact-evidence recovery are
+   complete. Observe guarded raw association outcomes with exports disabled and
+   verify populated raw-reference recovery when such records exist. Actual vendor
+   write acceptance and broader rollout require their separate authorization and
+   checks. Measure sustained two-leaf and reverse-ownership cost; do not infer
+   large-log capacity from focused fixtures. Historical recognition establishes
+   retained-observation associations, not an immutable LoTW snapshot, universal
+   source completeness or first-insert absence.
 
 ## Minimal adoption ledger
 

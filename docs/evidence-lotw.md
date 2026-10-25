@@ -1,6 +1,6 @@
 # LoTW actual-contact preflight evidence
 
-Updated **2026-10-24 19:00 EDT**. Production exports remain disabled. This page
+Updated **2026-10-25 UTC**. Production exports remain disabled. This page
 records unsigned checks, history queries and a serial-status observation for one actual contact. The
 [signing evidence](evidence-signing.md) separately documents synthetic signatures,
 released TQSL source and local Worker compatibility; the
@@ -8,12 +8,13 @@ released TQSL source and local Worker compatibility; the
 
 The separate **2026-10-25** native synthetic comparison now verifies canonical
 bytes and public-API signatures for six- and eight-character grid fixtures.
-Local profile 3 also holds unverified FST4W signing while preserving old exact
-identities for recovery. These changes are not deployed; the dated actual-contact
-checks below used production `f2c41cb3` / profile 2. Neither the synthetic result
+Deployed profile 3 holds unverified FST4W signing while preserving old exact
+identities for recovery. Signed `0386af30` includes these changes with all eight
+controls closed; see [the deployment receipt](deployment.md). The dated
+actual-contact checks below used the earlier `f2c41cb3` / profile 2. Neither the synthetic result
 nor the profile correction proves personal-key signing or ARRL acceptance.
 
-## Current-release certificate status
+## Certificate-status checkpoint — f2c41cb3
 
 At **23:00:35.114 UTC**, a separate exact-`f2c41cb3` diagnostic completed one
 normal, budgeted certificate-status GET. ARRL reported the selected certificate
@@ -37,7 +38,7 @@ write authority. Signing, upload and exact supported-projection readback remain
 unobserved. The normal path must repeat current checks before any separately
 authorized LoTW trial; a QRZ-only authorization cannot authorize that trial.
 
-## Current-release three-day diagnostic
+## Three-day diagnostic checkpoint — f2c41cb3
 
 The separately reviewed exact-`f2c41cb3` packet passes **24 native offline cases**,
 strict types and formatting. A SELECT-only plan for the same contact succeeded

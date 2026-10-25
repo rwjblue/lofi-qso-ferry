@@ -2,7 +2,7 @@
 
 Initial implementation review: 2026-10-22, using documentation and synthetic fixtures. Subsequent read-only observations are dated below. No QRZ writes were performed; production exports remain disabled.
 
-## Current-release same-contact cloud check — 2026-10-24 22:03 UTC
+## Same-contact cloud checkpoint — f2c41cb3, 2026-10-24 22:03 UTC
 
 The exact signed `f2c41cb3a929ae3d3545e235894027b84fbf09fb` modules, matching
 production Worker `fc1f2a5b-13e0-4509-ba03-9c93856c6464` and all 36 migrations,

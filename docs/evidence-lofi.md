@@ -4,7 +4,7 @@ Initial adapter review: 2026-10-22, before live requests. The dated observations
 below record subsequent read-only vendor evidence; fixture results alone do not
 establish server compatibility or production coverage.
 
-Latest current-release check, **2026-10-24 22:03:28.032 UTC**: exact signed
+Source-proof checkpoint, **2026-10-24 22:03:28.032 UTC**: exact signed
 `f2c41cb3a929ae3d3545e235894027b84fbf09fb` modules completed one positive collection
 and the mandatory final canonical drain, covering two dependencies and zero
 events, in one Cloudflare preview invocation. A native atomic batch minted one
@@ -22,11 +22,11 @@ for the same candidate preceded the success. The preview was disposed and
 independent attestation at **22:03:29.573 UTC** reconfirmed the same production
 Worker and all eight closed controls. No attempt, stage, pin, cutover, signature
 or vendor mutation occurred; normal guarded source/proof/lease/read-budget
-bookkeeping did occur. This verifies a finite current-release preview path,
+bookkeeping did occur. This verifies a finite `f2c41cb3` preview path,
 not scheduled-Worker execution, universal deletion delivery, capacity or write
 authority. Refresh exact evidence during any later separately authorized trial;
 `SOURCE_BOUNDARY_VERIFIED` remains false. See
-[the current QRZ observation](evidence-qrz.md#current-release-same-contact-cloud-check--2026-10-24-2203-utc).
+[the dated QRZ observation](evidence-qrz.md#same-contact-cloud-checkpoint--f2c41cb3-2026-10-24-2203-utc).
 
 The **22:04:34.745 UTC** post-proof backup preserves the one immutable proof and
 its matching retention row through isolated restore and two quarantines. It
@@ -584,8 +584,10 @@ allows a cursorless page to expand across an entire edge millisecond. Ferry's
 `a8ba8dd92a15` introduced a bounded 100-record collector. A reviewed follow-up
 keeps nominal requests at 25 while accepting up to 100 per stream: requesting
 100 can reach another timestamp group and exceed the response ceiling even
-when the required positives arrived first. The final refinement is committed
-locally but awaiting 1Password signing; neither change is deployed yet.
+when the required positives arrived first. At this checkpoint the final
+refinement awaited signing and neither change was deployed. Both later shipped
+in signed `12f636b3`; the dated 08:12 combined observation below records the
+subsequent finite source-proof/QRZ check.
 All 1,184 tests and required local checks pass for the final collector behavior.
 The collector has a combined 1 MiB parsed-record limit and the existing 2 MiB
 transport limit.

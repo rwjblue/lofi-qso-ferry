@@ -1,6 +1,13 @@
 # Reconciliation exceptions and capacity
 
-## Current fixed scope diagnostics — deployed c4f51de8
+The current disabled-export release is `0386af30`, with matching policy 6,
+36 migrations and the deployed LoTW ownership/association bridge. Current
+coverage, recovery and remaining acceptance are recorded in the
+[deployment evidence](deployment.md) and [roadmap](../ROADMAP.md). The diagnostic
+runs below retain their original release scope and do not establish current
+source/vendor freshness or export permission.
+
+## Fixed scope diagnostic checkpoint — c4f51de8
 
 Signed `c4f51de8` deployed at **2026-10-24 17:28:57.761108 UTC**, after all
 **1,488 tests** and required checks passed in [release CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40114936899).
@@ -32,8 +39,10 @@ LoTW claims, 778 legitimate archives and 3,722 bodies with no unexplained gaps.
 Attempts, cutovers, proofs and pins were zero. Expected runtime labels in aggregate
 output are not attestation; the separate release receipt supplies that evidence.
 
-The bounded partition-retry patch and LoTW ownership foundation remain undeployed.
-No export permission, exact receipt rule or historical matching policy changed.
+At that checkpoint the bounded partition-retry patch and LoTW ownership
+foundation were undeployed; both later shipped in `5a427a30`. The diagnostic-only
+release changed no export permission, exact receipt rule or historical matching
+policy.
 
 ## Lookup and coverage follow-up — deployed 9aeab582
 

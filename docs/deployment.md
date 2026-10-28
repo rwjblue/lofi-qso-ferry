@@ -1,6 +1,114 @@
 # Production deployment and rollout evidence
 
-Verified 2026-10-25 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner selected this permanent hostname. QRZ’s automatic trial remains accepted with thirteen ACKs assessed at known-ACK minute/sideband precision. LoTW trial C and pair G2 establish accepted processing for three native uploads. All sixteen attempts and fifteen artifacts pass accepted recovery. All eight controls are closed. Monitored automatic LoTW scope and sustained scale remain pending. Historical unfinished invocations, dated holds and literal QRZ comparison limits remain unchanged.
+Verified 2026-10-28 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner's QRZ destination is enabled for monitored uploads of missing contacts. Nineteen QRZ records and three LoTW trial records pass verification; all twenty-two attempts pass recovery. LoTW uploads, general corrections and source-boundary authority remain disabled. Automatic LoTW acceptance and sustained scale remain pending. Historical unfinished invocations, dated holds and original literal QRZ comparison limits remain preserved.
+
+## QRZ resumed with ongoing monitoring (2026-10-28 UTC)
+
+Fresh PRE recovery completed at **00:30:18.066 UTC**, preserving all twenty-two
+native accepted attempts with full cryptography, isolated restore, both
+quarantines, integrity and zero foreign-key violations. There were zero new
+attempts, unfinished interval invocations or active leases. The **43,825,053-byte**
+SQL capture was taken at **00:29:50.338–00:29:55.410 UTC**; its original capture
+times remain distinct from verification and activation. Report SHA256 is
+`28416bc37adf39a1c5c1719a62452439fe475f5b97b711be1afd5f05c6ea1e45`.
+An unused earlier preparation was not activated. The final preparation performs
+fresh native replay immediately before one activation, with the independent
+closer armed first.
+
+QRZ-only activation was independently verified at **00:38:31.972 UTC**, Worker
+`6b2af686-73f0-4084-bec2-d0ae165e990b`, deployment
+`b13083ad-cbf2-481e-8e74-9bdf8a1e98b8`, source `50c19ad3`. Health, assets,
+KEK 1 and sole 100% deployment passed. The exact existing QRZ destination has
+wildcard eligible-contact scope; LoTW uploads and source-boundary authority
+remain false. Initial accounting preserves all twenty-two prior attempts,
+with no new, rejected or unresolved members and no active leases.
+
+The first actual ongoing check at **00:39:09.572 UTC** passes full bounded
+metadata, source/configuration/schema continuity and new-run liveness checks.
+It records forty-one pre-activation unfinished rows separately, with zero new
+unfinished or failed invocations. Monitoring uses five-minute heartbeat
+`monitor-ferry-qrz-uploads`. The timed closer was disarmed only after this real
+check and active heartbeat were verified. Its closure authority remains separate
+from readback or crypto acceptance.
+
+The operator monitor stops for unresolved/rejected or out-of-scope attempts,
+new failed invocations, ten-minute nonterminal/stalled work, fifteen-minute
+completion or monitoring gaps, schema/configuration changes and bounded census
+overflow. Young work and handled per-contact errors remain progress. It can
+delegate one guarded closure and never enables exports or retries uploads.
+Input/journal uncertainty requires independent inspection; original locks and
+evidence remain. The monitor depends on its local execution environment running.
+
+The readback-policy, chain, activation-host and monitor successors passed
+independent reviews. Evidence includes 74 policy, 37 composition, three packaging,
+55 host, 44 monitor and three monitor-durability cases, with type/format and
+actual local integrity checks. These operator-tool changes do not change
+the deployed Worker or its vendor budgets. The production source still has its
+original 1,775-test release qualification; sustained capacity remains open.
+
+## QRZ-only reactivation and six-contact verification (2026-10-27 UTC)
+
+The owner authorized a fresh backup, QRZ-only automatic activation, independent
+verification of the first contacts and continued monitoring. Signed runtime
+`50c19ad3` is unchanged; these deployments change export controls only.
+
+PRE recovery completed at **23:40:18.585 UTC**, preserving all sixteen accepted
+attempts. The full **42,803,974-byte** SQL capture was taken at
+**23:39:51.719–23:39:56.876 UTC**. Cryptography, ownership and proof pins,
+isolated restore, both quarantines, integrity and foreign-key checks passed.
+Its manifest SHA256 is
+`8b0d29c865488888cafa05e8810b5b1f3112d8b1a6e8ebfed9ed8be1a737c298`.
+The complete original QRZ evidence chain independently replays all thirteen
+prior records; its summary SHA256 is
+`b0abf5c836f98b7669bb8dabfca4c06b98d419c66370537d25b7c2757fdfb4cc`.
+
+Activation was verified at **23:43:58.442 UTC** on Worker
+`1a7d8815-c3f7-4d84-9903-0aef0145a6de`, deployment
+`cc940273-d4ce-421a-bdce-8ed938d94cfc`, with the independent closer already
+armed. One exact QRZ destination has wildcard eligible-contact scope; this can
+include older missing contacts. LoTW and source-boundary authority remain false.
+Health, assets, KEK 1 and sole 100% deployment passed.
+
+The **23:45** normal-cron invocation completed thirty contact turns and six
+attempt turns in **56.987 seconds**, with zero errors or deferrals, stopping at
+`database_budget`. Complete accounting establishes exactly **six new delivered
+QRZ ACKs**, all sixteen prior attempts preserved, **twenty-two global attempts**,
+zero new LoTW attempts and zero rejected or unresolved outcomes. These are six
+actual deliveries, established by durable attempt records.
+
+The supervisor closed all eight controls at **23:47:59.420 UTC** on Worker
+`fea963c3-0c0d-4d49-bf46-b11736a5ff32`, deployment
+`b1448437-8dd3-426c-8456-7297b39e4135`. It finished at **23:47:59.457 UTC**;
+no closer for that activation remains pending. The following closed-control
+cron completed 148 contact turns with zero errors or attempts.
+
+Full POST recovery completed at **23:53:32.428 UTC**, with **42,374,407 SQL
+bytes**, all twenty-two native accepted receipts, nineteen delivered QRZ and
+three observed LoTW attempts, no unfinished interval invocations or active
+leases, full cryptography, isolated restore, both quarantines and zero FK
+violations. Actual SQL capture was **23:53:05.657–23:53:11.361 UTC**. Manifest
+SHA256 is
+`dd31e730139290fc9479c4bc2a8f5079a1fe2808956f6d02741921826e2b83ba`.
+The inherited unfinished invocations remain separate and unchanged.
+
+Independent readback covers all six new contacts in three two-member captures,
+using fifteen QRZ reads with all controls closed before and after. Every record
+has the acknowledged LOGID and exactly one matching complete neighborhood.
+QRZ returns minute precision; original seconds remain preserved and unverified.
+Five transmitted COMMENT fields were exactly empty and absent from readback;
+the one nonempty COMMENT is exact. All other transmitted fields match. Original
+literal-held summaries remain intact.
+
+The append-only known-ACK policy successor accepts only an explicitly empty
+transmitted COMMENT omitted from readback. Nonempty or whitespace-only comments,
+other missing fields and identity/location differences remain strict. Its
+74 public cases, 37 composition cases and three packaging cases pass; independent
+reviews preserve original policy evaluation for older evidence. Full actual
+replay now verifies **nineteen QRZ records** with the three original accepted
+LoTW records retained. The new chain summary SHA256 is
+`98d6da0e7284887918e8a31f0c82ee2f30b4e9f9e5fef892aaa8dd7a80fb7f77`.
+This assessment supplies no retry or write authority and does not rewrite any
+original observation or timestamp.
 
 ## Accepted LoTW pair G2 and closed recovery (2026-10-25 UTC)
 

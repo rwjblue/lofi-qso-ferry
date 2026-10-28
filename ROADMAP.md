@@ -2,31 +2,58 @@
 
 This roadmap is the handoff for implementation in this repository. Checked items have implementation and local evidence. Unchecked items retain external verification or rollout work; they must not be inferred from synthetic success. The owner authorized small signed commits directly to `origin/main` for implementation; no implementation PRs are opened. Retain the product decisions in [README](README.md). Each milestone should update its evidence and remaining questions here.
 
-## Next milestones (2026-10-25 UTC)
+## Next milestones (2026-10-27/28 UTC)
 
 ### Export readiness at a glance
 
-| Work                            | Current state                                                                                       | Next acceptance evidence                                                            |
-| ------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence               |
-| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                                |
-| QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                                       |
-| QRZ delivery                    | Automatic trial accepted: all thirteen ACKs assessed; temporarily closed for LoTW preparation       | Preserve accepted QRZ evidence through the separate LoTW trial; continue monitoring |
-| LoTW delivery                   | First trial and pair G2 accepted: three contacts with strict reports and full recovery              | Complete mixed evidence and a monitored automatic scope                             |
-| Broader rollout                 | All controls closed; sixteen accepted attempts and fifteen artifacts recovered                      | Monitored automatic scope remains pending; sustained scale is separate              |
+| Work                            | Current state                                                                                       | Next acceptance evidence                                              |
+| ------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence |
+| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                  |
+| QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                         |
+| QRZ delivery                    | QRZ-only scope enabled; nineteen records verified, including six additional automatic uploads       | Continue five-minute monitoring and review any unresolved outcome     |
+| LoTW delivery                   | First trial and pair G2 accepted: three contacts with strict reports and full recovery              | Complete mixed evidence and a monitored automatic scope               |
+| Broader rollout                 | One QRZ destination enabled; twenty-two accepted attempts recovered; LoTW uploads remain disabled   | Separate automatic LoTW acceptance and sustained capacity             |
 
 The receiver fix is deployed; checked pairs C, D2 and F4 passed scheduled delivery,
 recovery and known-ACK assessment at the observed minute/sideband representation.
 Window H has now run and closed; all four additional ACKs pass complete-window
 readback and assessment. Two persistent QRZ cycles added two more ACKs; all
 thirteen records now pass observed-precision assessment and populated recovery.
-QRZ was temporarily closed for independent observation and LoTW preparation,
-not because the trial failed, as described in
+QRZ's later six-contact automatic cycle and complete readback are accepted;
+the owner's destination is enabled again with ongoing monitoring. See
 [the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
 
-### Current checkpoint — LoTW pair G2 accepted; controls remain closed
+### Current checkpoint — QRZ enabled with ongoing monitoring
+
+The owner authorized QRZ-only reactivation after a fresh backup. One normal cron
+completed six new delivered QRZ attempts with zero errors or deferrals. All six
+passed independent readback: complete unique neighborhoods and matching ACKs,
+identity, location and nonempty narrative. Five empty COMMENT fields were omitted
+from readback; a narrowly tested, independently reviewed verifier successor
+accepts that representation while preserving the original literal-held results
+and unverified seconds. Full original-evidence replay accepts **nineteen QRZ
+records**, retaining all three accepted LoTW records.
+
+Fresh **2026-10-28 00:30:18.066 UTC** recovery preserves **twenty-two accepted
+attempts** with full cryptography, isolated restore, both quarantines and no
+unfinished interval invocations or active leases. QRZ-only activation was verified
+at **00:38:31.972 UTC** on Worker `6b2af686`, unchanged signed source `50c19ad3`.
+One exact QRZ destination has wildcard eligible-contact scope. LoTW uploads,
+general corrections and source-boundary authority remain disabled.
+
+The first actual ongoing monitor check passed. Five-minute monitoring is active
+in this chat, checking complete bounded metadata, scope/schema continuity,
+unresolved attempts, failed or stalled new invocations and monitoring gaps.
+The independent timed closer was handed off after the real check and active
+heartbeat were verified. Forty-one older unfinished rows remain labeled as
+inherited facts. This adds operator detection and guarded closure; it does not
+establish the causes of those rows or sustained capacity. See the
+[QRZ reactivation receipt](docs/deployment.md#qrz-resumed-with-ongoing-monitoring-2026-10-28-utc).
+
+### Previous checkpoint — LoTW pair G2 accepted; controls closed
 
 Both new contacts pass independent strict accepted-processing readback, with
 one GET and six D1 calls each. One is QSL-confirmed and one is not. Full
@@ -1423,15 +1450,14 @@ The 100-account fixture proves background admission order, including restarts;
 it does not prove full live/vendor fairness or 200,000-contact import capacity.
 Timestamp/grid precision, routing and source-validity holds still require review.
 
-## Remaining work before exports
+## Remaining work before broader exports
 
-The singleton, checked pairs C/D2/F4 and monitored window H now account for
-**eleven QRZ ACKs accepted at known-ACK minute/sideband precision**. Actual
-eleven-attempt/ten-artifact recovery and complete-window assessment pass. Exact
-seconds remain unverified, and original literal-held summaries are preserved.
-All thirteen QRZ records now pass observed-precision assessment and recovery.
-QRZ is temporarily closed for independent observation and LoTW preparation;
-LoTW acceptance remains pending.
+The owner's QRZ destination is enabled for monitored uploads of missing contacts.
+Six additional automatic deliveries passed independent readback; **nineteen QRZ
+records and three LoTW trial records** are verified, with full twenty-two-attempt
+recovery. Exact QRZ seconds remain unverified, and original literal-held
+summaries are preserved. Five-minute monitoring is active. LoTW uploads,
+general corrections and source-boundary authority remain disabled.
 Linking accounts or waiting for cron does not establish readiness for expansion.
 
 Durable outbound claims, the ±30-minute historical matcher, nested valid grid
@@ -1447,20 +1473,22 @@ unproved.
    proof/history checks for every later contact and verify retained artifacts
    and accepted records. Neither representation differences nor an unresolved
    `db_d1` category authorizes a retry or bypass.
-2. **Preserve accepted automatic QRZ evidence.** Two activation-B cycles added
-   two ACKs; thirteen total now pass observed-precision assessment and recovery.
-   QRZ is temporarily closed for the separate LoTW phase, not a failed trial. Keep exact destination IDs, expand contacts
-   gradually, and verify created records after each batch. First-insert authority
+2. **Operate the monitored QRZ scope.** Preserve the nineteen independently
+   verified records and original twenty-two-attempt recovery. Review any monitor
+   stop, stalled queue, unresolved outcome or bounded-census limit before
+   expanding rollout. Monitoring depends on its local execution environment
+   running. Keep exact destination IDs and verify created records. First-insert authority
    does not enable replacements, corrections, deletion, source-wide cutovers or
    LoTW. Unrelated historical exceptions and 200,000-contact capacity do not block
    this restricted pilot. A second passkey remains recommended rather than an
    export gate; operator account recovery is documented.
-3. **Accept LoTW separately after QRZ.** Obtain fresh complete three-day absence
-   evidence for the station/worked-call pair, current certificate and revocation
-   checks, actual personal-key
-   signing and upload, then accepted-report readback and populated artifact
-   recovery. An upload acknowledgement is submitted status, not accepted
-   observation. Keep LoTW disabled until this separate process succeeds. Current
+3. **Accept a monitored automatic LoTW scope separately.** Three actual
+   personal-key trial uploads already pass strict accepted-processing readback
+   and populated recovery. Renew complete three-day absence evidence,
+   certificate/revocation checks and full mixed evidence before a small monitored
+   automatic scope; independently verify its reports and recovery. An upload
+   acknowledgement is submitted status, not accepted observation. Keep ordinary
+   LoTW uploads disabled until separately authorized and qualified. Current
    raw historical-reference tables are empty; verify their populated recovery
    when such records exist.
 4. **Finish reconciliation and review actual exceptions.** Preserve historical

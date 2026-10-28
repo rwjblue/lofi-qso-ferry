@@ -1,8 +1,10 @@
 # Personal rollout acceptance
 
-The automatic QRZ trial and first LoTW contact are accepted. All eight controls
-are closed. Current source proofs, fresh vendor evidence and ownership checks
-remain mandatory. Further LoTW batches, a small automatic scope and
+The owner's QRZ destination is enabled for monitored uploads of missing contacts.
+Six additional automatic contacts passed independent readback; nineteen QRZ
+records and three LoTW trial records are verified. LoTW uploads remain disabled.
+Current source proofs, fresh vendor evidence and ownership checks remain
+mandatory. A small automatic LoTW scope and
 200,000-contact capacity remain separate milestones. The singleton and checked pairs C/D2/F4
 account for seven QRZ ACKs assessed at observed minute/sideband precision.
 Window H adds four assessed ACKs: all eleven trial records are accepted at
@@ -11,7 +13,23 @@ recovery passes. Exact seconds remain unverified. The eleven attempts predate
 persistent activation. Two active cycles add two more ACKs; all thirteen records
 now pass known-ACK observed-precision assessment and populated recovery.
 
-## Current evidence (2026-10-25)
+## Current evidence (2026-10-27/28 UTC)
+
+### QRZ monitoring handoff (2026-10-27/28 UTC)
+
+- [x] Complete fresh recovery, enable one exact QRZ destination and account for
+  six native automatic deliveries with no errors, unknown outcomes or new LoTW uploads.
+- [x] Independently read back all six, preserving original literal outcomes and
+  exact source seconds; qualify the narrow omitted-empty-COMMENT verifier and
+  replay all nineteen QRZ records with the three accepted LoTW records retained.
+- [x] Renew full twenty-two-attempt recovery before one QRZ-only activation on
+  signed source `50c19ad3`; verify health, assets, exact scope and closed LoTW controls.
+- [x] Pass a real ongoing metadata check and activate five-minute monitoring;
+  hand off the independent timed closer only after both succeed.
+- [ ] Continue observing queue progress and review any stop, unresolved outcome,
+  configuration change or bounded-census limit before expanding rollout.
+
+### Earlier LoTW pair G2 evidence
 
 - [x] Qualify the bounded policy-wake review successor: nineteen focused cases,
   types, format, inventories and both source reviews pass. Actual review selects
@@ -49,10 +67,10 @@ now pass known-ACK observed-precision assessment and populated recovery.
 - [x] Diagnose E/F preparation holds without activation: E had one NULL owner
   hash; F inspected 44 due nonfresh entries while 385 native fresh routes were
   source/context ready and ledger-due but reconciliation-deferred. No signature/upload occurred.
-- [ ] Qualify bounded offline review selection that models the normal activation
+- [x] Qualify bounded offline review selection that models the normal activation
   wake, then renew current evidence after settled admission and accept another
   checked LoTW pair with strict readback and full recovery.
-- [ ] Qualify complete cumulative mixed evidence for the next small automatic
+- [x] Qualify complete cumulative mixed evidence for the next small automatic
   scope; private adapter tests alone are not actual acceptance.
 
 ### Earlier cleanup and trial checkpoints

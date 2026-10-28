@@ -1,15 +1,13 @@
 # QRZ first-insert pilot
 
-The reviewed **one-contact QRZ trial** is acknowledged and accepted at returned
-minute precision, with seconds unverified and populated recovery passing. Its
-one-INSERT allowance is exhausted. Trials A and B made zero attempts. Checked
-pairs C and D2 then delivered four contacts through the normal scheduler, for
-five global ACKs. Populated recovery and separate known-ACK assessments pass at
-the observed minute/sideband representation; literal holds and unverified
-seconds remain recorded. Both scopes are closed. **Automatic exports and LoTW remain disabled**. The broader goal is to validate checked QRZ
-batches before automatic QRZ activation, then evaluate
-LoTW separately. This document records evidence; it does not itself grant write
-authority.
+The owner's **QRZ destination is enabled for monitored automatic uploads of
+missing contacts**. Six additional deliveries passed independent readback;
+nineteen QRZ records are verified at observed minute/sideband precision, with
+source seconds preserved and unverified. Full recovery preserves all twenty-two
+accepted attempts, including three separate LoTW trial records. LoTW uploads
+remain disabled. Earlier finite trial allowances remain exhausted or closed;
+the current scope has its own explicit authorization and evidence. This document
+records evidence; it does not itself grant write authority.
 
 ## What the restricted mode permits
 
@@ -23,14 +21,31 @@ For the initial trial, both the source QSO and QRZ destination must be explicit
 singletons. Historical associations, existing mappings, unresolved attempts and
 competing owners cannot be converted into trial candidates by clearing data.
 
-The deployed `c88d413e` implementation, its exact validation scope, completed
+The earlier `c88d413e` implementation, its exact validation scope, completed
 ownership bootstrap and populated exact-evidence recovery are recorded in
 [deployment evidence](deployment.md). The dated prior-release cloud observation
 in [QRZ evidence](evidence-qrz.md) exercises source collection, final drain, proof
 creation and fresh absence for one contact. Such a proof expires normally; it is
 not write acceptance or standing permission to export.
 
-## Current closed checkpoint — accepted D2, 2026-10-25 UTC
+## Current monitored QRZ scope — 2026-10-28 UTC
+
+Fresh full recovery completed at **00:30:18.066 UTC**, followed by independent
+activation verification at **00:38:31.972 UTC** on Worker `6b2af686`, source
+`50c19ad3`. The exact existing QRZ destination has wildcard eligible-contact
+scope, including older missing contacts. Every contact still needs normal fresh
+source, absence, identity and ownership checks. General edits, LoTW uploads and
+source-boundary authority remain disabled.
+
+The first real metadata check passed at **00:39:09.572 UTC**. Five-minute
+monitoring checks for unresolved attempts, stalled progress and scope changes;
+the temporary closer was disarmed after the active heartbeat and actual check
+were verified. Monitoring can delegate one guarded closure and depends on the
+local execution environment running. See the
+[activation receipt](deployment.md#qrz-resumed-with-ongoing-monitoring-2026-10-28-utc)
+and [six-contact readback and recovery](deployment.md#qrz-only-reactivation-and-six-contact-verification-2026-10-27-utc).
+
+## Earlier closed checkpoint — accepted D2, 2026-10-25 UTC
 
 Trial D2 adds two normal scheduled deliveries to the prior three ACKs. Exact
 recovery verifies **five attempts and four retained artifacts**; complete

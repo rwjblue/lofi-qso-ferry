@@ -1,10 +1,23 @@
 # Operations and personal rollout
 
-Checked-in environments default to disabled exports. The first LoTW contact now has strict accepted-processing readback and full mixed recovery; QSL confirmation is false. QRZ’s automatic trial remains accepted. All eight production controls are closed. Further checked LoTW batches and a small automatic scope still need their own current evidence and recovery. Deployment alone must not change real logs.
+Checked-in environments default to disabled exports. The owner's production QRZ destination is enabled for monitored uploads of missing contacts. Six additional automatic QRZ deliveries passed independent readback; nineteen QRZ records and three LoTW trial records are verified, with full twenty-two-attempt recovery. LoTW uploads, general corrections and source-boundary authority remain disabled. Deployment alone must not change real logs.
 
 ## Current production target
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
+
+QRZ activation was independently verified at **00:38:31.972 UTC on October 28**,
+Worker `6b2af686-73f0-4084-bec2-d0ae165e990b`, source `50c19ad3`.
+Fresh full recovery completed at **00:30:18.066 UTC**. Five-minute heartbeat
+`monitor-ferry-qrz-uploads` checks durable attempts, new-run liveness and exact
+scope/configuration continuity, and can delegate one guarded closure on a stop.
+Its first real check passed at **00:39:09.572 UTC**; only then was the independent
+timed closer disarmed. Monitoring depends on the local execution environment
+running. Forty-one inherited unfinished rows remain separate from new work;
+they have not been marked complete. See the
+[current activation and monitoring receipt](deployment.md#qrz-resumed-with-ongoing-monitoring-2026-10-28-utc).
+
+The following record retains the earlier closed checkpoint.
 
 Pair G2 is accepted after two independent strict reports and full
 **19:05:40.015 UTC** recovery: sixteen accepted attempts and fifteen artifacts,

@@ -4,7 +4,7 @@ Automatic, one-way delivery of Ham2K LoFi contacts to QRZ and ARRL Logbook of Th
 
 Log in PoLo or HaLo, let the contact settle, and Ferry handles delivery and subsequent corrections. The service runs on Cloudflare Workers with D1, supports multiple independent users, and keeps a small delivery ledger instead of a permanent copy of everyone's logbook.
 
-**Status: deployed read-only at [ferry.n1rwj.com](https://ferry.n1rwj.com); all vendor exports remain disabled.** The initial release is for the repository owner's use, with tenant isolation built in from the beginning. See the [rollout checklist](docs/rollout-checklist.md) for exact remaining inputs and verification boundaries.
+**Status: monitored QRZ uploads of missing contacts are enabled for the owner's destination at [ferry.n1rwj.com](https://ferry.n1rwj.com). LoTW uploads and edits to existing records remain disabled.** Six additional automatic QRZ uploads passed independent readback; nineteen QRZ records and three LoTW trial records are verified. Five-minute monitoring checks for unresolved outcomes, stalled runs and scope changes. See the [rollout checklist](docs/rollout-checklist.md) for current evidence and remaining boundaries.
 
 ## Product decisions
 
@@ -14,7 +14,7 @@ Log in PoLo or HaLo, let the contact settle, and Ferry handles delivery and subs
 - **Templates go forward only:** a contact pins its QRZ template version when its first validated export is durably prepared. Later template changes do not revisit history. Existing contacts adopted from QRZ retain their remote narrative.
 - **Invited, email-confirmed signup; passkey-only login:** hosted enrollment requires an invitation and email ownership, then all sign-ins use a passkey. Register a second passkey or use a recoverable synced provider; v1 has no email account-reset path.
 - **Correct operating location:** resolve the station callsign, activation references, and location for each contact, including operation segments. Route QRZ to the appropriate logbook and LoTW to the appropriate certificate and station data.
-- **Hosted signing:** import and encrypt the user's LoTW certificate/private key and sign inside the Worker. Synthetic vectors, native canonical/signature comparisons and bounded aggregate cloud resource observations pass. Actual personal-credential signing and scoped ARRL upload/readback acceptance remain rollout checks.
+- **Hosted signing:** import and encrypt the user's LoTW certificate/private key and sign inside the Worker. Synthetic vectors, native canonical/signature comparisons and bounded aggregate cloud resource observations pass. Three personal-credential trial uploads have accepted-processing readback and populated recovery; a monitored automatic LoTW scope remains a separate rollout check.
 - **Small retained state:** store source IDs, destination associations, versioned hashes, immutable template bindings, encrypted credentials, and bounded temporary delivery/reconciliation data.
 
 LoTW has no supported narrative destination for QRZ-style comments or POTA text. Ferry will include the operator's activated park in QRZ templates and transmit LoTW's supported station/location fields. See the [destination contracts](docs/design.md#destination-contracts) and their primary references for update limitations.
@@ -31,7 +31,7 @@ LoTW has no supported narrative destination for QRZ-style comments or POTA text.
 | [Admin console](docs/admin.md)                       | Operational metrics, invitations, access boundaries, and prioritized follow-ups      |
 | [Credential security](docs/security.md)              | Encryption, key rotation, tenant isolation, and retention                            |
 
-## Use the read-only deployment
+## Use the hosted deployment
 
 Open [Ferry](https://ferry.n1rwj.com) and sign in with your passkey. Hosted enrollment is invite only: invited users follow `/join`, confirm the exact invited email address and create a passkey in their own browser. Register an independent backup passkey, then connect only the services you use. No individual service is required to save account settings or template preferences. The permanent passkey RP is `ferry.n1rwj.com`; there is no email login or reset.
 

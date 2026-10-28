@@ -4,7 +4,7 @@ Automatic, one-way delivery of Ham2K LoFi contacts to QRZ and ARRL Logbook of Th
 
 Log in PoLo or HaLo, let the contact settle, and Ferry handles delivery and subsequent corrections. The service runs on Cloudflare Workers with D1, supports multiple independent users, and keeps a small delivery ledger instead of a permanent copy of everyone's logbook.
 
-**Status: monitored QRZ uploads of missing contacts are enabled for the owner's destination at [ferry.n1rwj.com](https://ferry.n1rwj.com). LoTW uploads and edits to existing records remain disabled.** Six additional automatic QRZ uploads passed independent readback; nineteen QRZ records and three LoTW trial records are verified. Five-minute monitoring checks for unresolved outcomes, stalled runs and scope changes. See the [rollout checklist](docs/rollout-checklist.md) for current evidence and remaining boundaries.
+**Status: exports are disabled at [ferry.n1rwj.com](https://ferry.n1rwj.com) after monitoring stopped QRZ on a known-unsent source-proof cancellation.** The continuous run recorded 66 QRZ acknowledgements at about 31/hour, bringing the lifetime total to 85. Nineteen QRZ records and three LoTW trial records have independent verification and prior recovery; later acknowledgements still need their own verification/recovery evidence. Qualify the monitor's handling of expected unsent cancellations before another activation. LoTW uploads and edits to existing records remain disabled. See the [rollout checklist](docs/rollout-checklist.md).
 
 ## Product decisions
 

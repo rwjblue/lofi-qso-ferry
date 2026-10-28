@@ -1,8 +1,10 @@
 # Personal rollout acceptance
 
-The owner's QRZ destination is enabled for monitored uploads of missing contacts.
-Six additional automatic contacts passed independent readback; nineteen QRZ
-records and three LoTW trial records are verified. LoTW uploads remain disabled.
+All production export controls are closed after the monitor stopped on a
+known-unsent source-proof cancellation. The continuous QRZ run delivered 66
+native ACKs at about 31/hour; the lifetime total is 85. Nineteen QRZ records and
+three LoTW trial records have prior independent verification and recovery.
+Later ACKs and the cancellation need their own evidence. LoTW remains disabled.
 Current source proofs, fresh vendor evidence and ownership checks remain
 mandatory. A small automatic LoTW scope and
 200,000-contact capacity remain separate milestones. The singleton and checked pairs C/D2/F4
@@ -14,6 +16,22 @@ persistent activation. Two active cycles add two more ACKs; all thirteen records
 now pass known-ACK observed-precision assessment and populated recovery.
 
 ## Current evidence (2026-10-27/28 UTC)
+
+### QRZ cancellation investigation and closure (2026-10-28 UTC)
+
+- [x] Confirm sixty-six native ACKs, one cancellation and twenty-six completed
+  invocations with zero processing errors; retain all original evidence.
+- [x] Confirm all eight controls closed at 02:47:40.478 UTC on Worker `54ca3fb3`,
+  source `50c19ad3`, and remove the recurring monitor after confirmed closure.
+- [x] Trace unchanged QSO/operation inputs, advanced sync/context generations and
+  the known-unsent source-proof cancellation with 30.814 seconds of TTL remaining.
+  Both existing focused cancellation/reprepare regressions pass.
+- [ ] Qualify a narrow monitor rule for independently proven never-dispatched
+  cancellations while retaining stops for uncertain, rejected and unexplained states.
+- [ ] Review dispatch headroom near the scheduler deadline and verify/recover the
+  later ACKs before renewing monitoring and separately enabling a scope.
+- [ ] Reduce measured database/reconciliation overhead before claiming larger
+  service volume; 30.7 uploads/hour is the observed continuous-run rate.
 
 ### QRZ monitoring handoff (2026-10-27/28 UTC)
 

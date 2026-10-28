@@ -1,10 +1,21 @@
 # Operations and personal rollout
 
-Checked-in environments default to disabled exports. The owner's production QRZ destination is enabled for monitored uploads of missing contacts. Six additional automatic QRZ deliveries passed independent readback; nineteen QRZ records and three LoTW trial records are verified, with full twenty-two-attempt recovery. LoTW uploads, general corrections and source-boundary authority remain disabled. Deployment alone must not change real logs.
+Checked-in environments default to disabled exports. All production controls are closed after monitoring stopped QRZ on a known-unsent source-proof cancellation. The continuous run delivered 66 native ACKs at about 31/hour, bringing the QRZ lifetime total to 85. Nineteen QRZ records and three LoTW trial records have prior independent verification and twenty-two-attempt recovery; the later ACKs and cancellation need their own evidence. LoTW uploads, general corrections and source-boundary authority remain disabled. Deployment alone must not change real logs.
 
 ## Current production target
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
+
+Closure was independently verified at **02:47:40.478 UTC on October 28**, Worker
+`54ca3fb3-b536-41c6-9932-29f8d4520b7b`, source `50c19ad3`. A normal source poll
+invalidated one prepared attempt's immutable proof; the contact was unchanged
+and no dispatch was recorded. The monitor stopped on that supported cancellation.
+The recurring heartbeat was deleted after closure. Qualify narrow cancellation
+monitoring, review deadline headroom, complete closed recovery/later readback and
+renew the monitored handoff before reactivation. See the
+[cancellation investigation](deployment.md#qrz-cancellation-investigation-and-confirmed-closure-2026-10-28-utc).
+
+The following record retains the preceding active checkpoint.
 
 QRZ activation was independently verified at **00:38:31.972 UTC on October 28**,
 Worker `6b2af686-73f0-4084-bec2-d0ae165e990b`, source `50c19ad3`.

@@ -1,13 +1,14 @@
 # QRZ first-insert pilot
 
-The owner's **QRZ destination is enabled for monitored automatic uploads of
-missing contacts**. Six additional deliveries passed independent readback;
-nineteen QRZ records are verified at observed minute/sideband precision, with
-source seconds preserved and unverified. Full recovery preserves all twenty-two
-accepted attempts, including three separate LoTW trial records. LoTW uploads
-remain disabled. Earlier finite trial allowances remain exhausted or closed;
-the current scope has its own explicit authorization and evidence. This document
-records evidence; it does not itself grant write authority.
+**QRZ and LoTW uploads are disabled** after monitoring stopped on a known-unsent
+source-proof cancellation. The continuous QRZ run added 66 native ACKs at about
+31/hour; the lifetime QRZ total is 85. Nineteen QRZ records have independent
+verification at observed minute/sideband precision, with source seconds preserved
+and unverified. Prior full recovery preserves twenty-two accepted attempts,
+including three separate LoTW trial records. Later ACKs and the cancellation need
+their own evidence before another monitored activation. Earlier finite trial
+allowances remain exhausted or closed. This document records evidence; it does
+not itself grant write authority.
 
 ## What the restricted mode permits
 
@@ -28,7 +29,19 @@ in [QRZ evidence](evidence-qrz.md) exercises source collection, final drain, pro
 creation and fresh absence for one contact. Such a proof expires normally; it is
 not write acceptance or standing permission to export.
 
-## Current monitored QRZ scope — 2026-10-28 UTC
+## Current closed checkpoint — 2026-10-28 UTC
+
+Independent closure at **02:47:40.478 UTC** verifies Worker `54ca3fb3`, source
+`50c19ad3`, all eight controls closed and healthy HTTPS/assets. One attempt was
+cancelled before recorded dispatch when a canonical source read advanced the
+proof's sync/context snapshot. Its data was unchanged and its proof had not
+expired. The monitor treats every new cancellation as requiring review and
+stopped the rollout. The recurring monitor was deleted after confirmed closure.
+Qualify narrow handling of proven never-dispatched cancellations and renew
+recovery/readback plus the monitoring handoff before another activation. See the
+[investigation and throughput record](deployment.md#qrz-cancellation-investigation-and-confirmed-closure-2026-10-28-utc).
+
+## Earlier monitored QRZ scope — 2026-10-28 UTC
 
 Fresh full recovery completed at **00:30:18.066 UTC**, followed by independent
 activation verification at **00:38:31.972 UTC** on Worker `6b2af686`, source

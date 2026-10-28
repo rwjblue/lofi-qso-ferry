@@ -11,9 +11,9 @@ This roadmap is the handoff for implementation in this repository. Checked items
 | Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence |
 | Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                  |
 | QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                         |
-| QRZ delivery                    | QRZ-only scope enabled; nineteen records verified, including six additional automatic uploads       | Continue five-minute monitoring and review any unresolved outcome     |
+| QRZ delivery                    | Closed after known-unsent cancellation; 66 later ACKs, 85 lifetime; nineteen independently verified | Qualify cancellation monitoring, closed recovery and later readback   |
 | LoTW delivery                   | First trial and pair G2 accepted: three contacts with strict reports and full recovery              | Complete mixed evidence and a monitored automatic scope               |
-| Broader rollout                 | One QRZ destination enabled; twenty-two accepted attempts recovered; LoTW uploads remain disabled   | Separate automatic LoTW acceptance and sustained capacity             |
+| Broader rollout                 | All controls closed; prior twenty-two-attempt recovery; later ACKs need their own evidence          | Renew monitored QRZ handoff; separate LoTW acceptance and capacity    |
 
 The receiver fix is deployed; checked pairs C, D2 and F4 passed scheduled delivery,
 recovery and known-ACK assessment at the observed minute/sideband representation.
@@ -21,12 +21,41 @@ Window H has now run and closed; all four additional ACKs pass complete-window
 readback and assessment. Two persistent QRZ cycles added two more ACKs; all
 thirteen records now pass observed-precision assessment and populated recovery.
 QRZ's later six-contact automatic cycle and complete readback are accepted;
-the owner's destination is enabled again with ongoing monitoring. See
+the later continuous run delivered 66 ACKs before monitoring closed the scope
+on a known-unsent source-proof cancellation. See
 [the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
 
-### Current checkpoint — QRZ enabled with ongoing monitoring
+### Current checkpoint — QRZ closed after supported unsent cancellation
+
+The continuous QRZ scope recorded **66 delivered ACKs in 129.142 minutes**,
+about **30.7 uploads/hour** across 26 completed invocations with zero processing
+errors. Fourteen runs reached the database RPC budget and twelve the time budget.
+Including the six earlier verified uploads, the evening added 72 QRZ contacts;
+85 lifetime QRZ attempts are delivered. Later ACKs have not received new
+independent readback or full recovery acceptance.
+
+One attempt carried over from a deadline-limited run. The next canonical source
+read advanced sync/context generations, invalidating its immutable proof while
+the contact and operation inputs stayed unchanged and 30.814 seconds of proof
+TTL remained. Its only events are prepared/cancelled; no dispatch or remote ID
+is recorded. This is an existing tested cancellation/reprepare path. The
+monitor's rule stops on every new cancellation and caused the global closure.
+
+Independent **02:47:40.478 UTC** attestation confirms all controls closed on
+Worker `54ca3fb3`, unchanged source `50c19ad3`; the recurring monitor was deleted.
+Current read-only reconciliation has **391 possible automatic entries** (one
+missing, 390 awaiting inventory) and **555 history-review labels** (538 mismatch,
+seventeen ambiguous). These are current counts, not a shutdown-instant census.
+
+Next: qualify narrow monitoring of proven never-dispatched cancellations, review
+deadline dispatch headroom, verify/recover later ACKs and renew the monitored
+handoff before reactivation. Sustained throughput remains open: the window used
+18,931 D1 RPCs and 34,414 SQL statements across all reconciliation/delivery work.
+See the [cancellation investigation](docs/deployment.md#qrz-cancellation-investigation-and-confirmed-closure-2026-10-28-utc).
+
+### Previous checkpoint — QRZ enabled with ongoing monitoring
 
 The owner authorized QRZ-only reactivation after a fresh backup. One normal cron
 completed six new delivered QRZ attempts with zero errors or deferrals. All six
@@ -1452,12 +1481,13 @@ Timestamp/grid precision, routing and source-validity holds still require review
 
 ## Remaining work before broader exports
 
-The owner's QRZ destination is enabled for monitored uploads of missing contacts.
-Six additional automatic deliveries passed independent readback; **nineteen QRZ
-records and three LoTW trial records** are verified, with full twenty-two-attempt
-recovery. Exact QRZ seconds remain unverified, and original literal-held
-summaries are preserved. Five-minute monitoring is active. LoTW uploads,
-general corrections and source-boundary authority remain disabled.
+All export controls are closed after the monitor stopped on a known-unsent
+source-proof cancellation. **Nineteen QRZ records and three LoTW trial records**
+have independent verification and full twenty-two-attempt recovery. The later
+continuous run added 66 ACKs and one cancellation whose verification/recovery
+still needs completion. Exact QRZ seconds remain unverified, and original
+literal-held summaries are preserved. The recurring monitor was deleted after
+confirmed closure. LoTW, corrections and source-boundary authority remain off.
 Linking accounts or waiting for cron does not establish readiness for expansion.
 
 Durable outbound claims, the ±30-minute historical matcher, nested valid grid
@@ -1473,11 +1503,12 @@ unproved.
    proof/history checks for every later contact and verify retained artifacts
    and accepted records. Neither representation differences nor an unresolved
    `db_d1` category authorizes a retry or bypass.
-2. **Operate the monitored QRZ scope.** Preserve the nineteen independently
-   verified records and original twenty-two-attempt recovery. Review any monitor
-   stop, stalled queue, unresolved outcome or bounded-census limit before
-   expanding rollout. Monitoring depends on its local execution environment
-   running. Keep exact destination IDs and verify created records. First-insert authority
+2. **Renew the monitored QRZ scope after cancellation review.** Preserve the
+   nineteen independently verified records and original twenty-two-attempt
+   recovery. Qualify narrow handling of proven never-dispatched cancellations,
+   review scheduler deadline headroom, verify/recover later ACKs and renew the
+   monitoring handoff before enabling uploads. Keep exact destination IDs and
+   verify created records. First-insert authority
    does not enable replacements, corrections, deletion, source-wide cutovers or
    LoTW. Unrelated historical exceptions and 200,000-contact capacity do not block
    this restricted pilot. A second passkey remains recommended rather than an

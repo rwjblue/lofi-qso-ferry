@@ -1,6 +1,79 @@
 # Production deployment and rollout evidence
 
-Verified 2026-10-28 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). The owner's QRZ destination is enabled for monitored uploads of missing contacts. Nineteen QRZ records and three LoTW trial records pass verification; all twenty-two attempts pass recovery. LoTW uploads, general corrections and source-boundary authority remain disabled. Automatic LoTW acceptance and sustained scale remain pending. Historical unfinished invocations, dated holds and original literal QRZ comparison limits remain preserved.
+Verified 2026-10-28 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). All production export controls are closed after the monitor stopped on a known-unsent source-proof cancellation. The continuous QRZ run recorded sixty-six delivered acknowledgements, bringing QRZ's lifetime total to eighty-five. Nineteen QRZ records and three LoTW trial records have prior independent verification and twenty-two-attempt recovery; the later sixty-six ACKs and one cancellation still need their own readback/recovery evidence. LoTW uploads, general corrections and source-boundary authority remain disabled. Historical unfinished invocations and original literal QRZ comparison limits remain preserved.
+
+## QRZ cancellation investigation and confirmed closure (2026-10-28 UTC)
+
+The continuous QRZ scope ran from **00:38:31.972 to 02:47:40.478 UTC**:
+**129.142 minutes**, sixty-six delivered ACKs and one cancelled attempt.
+That is **30.664 uploads/hour**, or 2.54 delivered uploads per five-minute
+invocation. All twenty-six invocations completed with zero processing errors;
+fourteen reached the database RPC budget and twelve reached the time budget.
+They recorded 716 contact turns, 66 attempt turns and 17 deferrals. Turns are
+work counters, not unique completed contacts. Including the six earlier checked
+uploads on October 27, the evening added **seventy-two QRZ uploads**; thirteen
+older QRZ attempts bring the lifetime total to **eighty-five**. Native ACKs do
+not extend independent readback or cryptographic acceptance.
+
+The qualified PRE SQL capture at **00:29:55.410 UTC** contains 2,896 adopted QRZ
+records, nineteen delivered records, four missing identities, 469 inventory-pending
+entries, 524 history mismatches and fifteen ambiguities. A read-only in-memory
+query verifies these counts against the original SQL SHA256. The current
+**11:00:57.786 UTC** metadata snapshot contains the same 2,896 adopted records,
+eighty-five delivered records, **one missing identity, 390 inventory-pending,
+538 mismatches and seventeen ambiguities**. Thus 391 contacts remain in possible
+automatic processing and 555 have history-review labels: 946 unresolved QRZ
+ledger entries. These current counts include read-only reconciliation after
+closure; they are not a captured queue census at the exact shutdown instant.
+Incomplete comparison does not establish how many of the 390 need an INSERT.
+
+The immutable event history for the cancelled member contains only
+`prepared` at **02:42:13.655 UTC** and `cancelled` at **02:46:25.780 UTC**,
+reason `source_export_proof_unavailable`. There is no recorded dispatch, remote
+ID or second attempt for this contact. Its source hash and ledger generation
+remain unchanged. The original QSO and operation revisions, sync timestamps and
+body versions also remain unchanged in the current retained inputs.
+
+The proof was minted at **02:42:04.956 UTC**, expiring at **02:46:56.594 UTC**;
+**30.814 seconds remained at cancellation**. The 02:40 invocation prepared it
+near the end of its deadline-limited run and recorded zero attempt turns. A new
+proof for a different contact and operation was minted at **02:46:16.496 UTC**
+with sync generation **1607** and context generation **2274**, replacing the
+cancelled proof's **1605 / 2272** source-validation snapshot. Its complete-read
+boundary also advanced. The shared current-proof guard therefore rejects the
+old pin independently of TTL or payload edits. The scheduler explicitly retires
+known-unsent stale pins so fresh preparation can collect current evidence while
+preserving destination ownership. It cannot rebind an uncertain dispatched pin.
+
+The operator monitor instead classifies every new cancelled member as
+`factual_state_requires_review`. That conservative rule caused the global stop
+for this supported cancellation. Independent closure verifies Worker
+`54ca3fb3-b536-41c6-9932-29f8d4520b7b`, deployment
+`a79acc89-9562-47ac-8525-6f60d1131c23`, source `50c19ad3`, sole 100% traffic,
+all eight controls closed, healthy HTTPS and matching assets at
+**02:47:40.478 UTC**. The recurring monitor was deleted after closure was
+confirmed. No upload was retried or gate re-enabled during investigation.
+
+Two focused local regressions pass: stale prepared pins can be replaced without
+rebinding uncertain dispatched work, and a delayed known-unsent attempt can be
+cancelled/reprepared after a canonical source generation change. The actual
+native event/proof diagnostic SHA256 is
+`2ab775460fa40a6ec736b8bcd4e93ee27f9297283f630306684ebf661dc2c9a4`;
+the separate generation/throughput diagnostic SHA256 is
+`aeef3e26d73192ba40dc4aa5b6a744bddc15b4e1b875586f84a9be74427b2456`.
+
+The window consumed **18,931 D1 RPCs / 34,414 SQL statements**, with 1,706.862
+seconds of measured database wall time across 1,973.353 seconds of cumulative
+invocation duration. History-stage time was 975.827 seconds; it includes database
+work and must not be added to database time. These are whole-run reconciliation
+and delivery costs, not the isolated cost of an INSERT. The observed throughput
+does not qualify the larger service-volume target.
+
+Before another activation, qualify a narrow monitor rule for independently proven
+never-dispatched cancellations, preserving stops for uncertain/rejected or
+unexplained outcomes. Review dispatch headroom near the scheduler deadline,
+complete fresh closed recovery and later-ACK verification, and renew the monitored
+handoff. Keep QRZ and LoTW disabled until that separate work is complete.
 
 ## QRZ resumed with ongoing monitoring (2026-10-28 UTC)
 

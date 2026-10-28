@@ -96,6 +96,8 @@ export interface DeliveryDependencies {
   qrzEmptyObservation?: QrzEmptyObservation;
   /** Invocation-local planning reads only; dispatch and recovery never consume it. */
   qrzPlanning?: QrzPlanningAllowance;
+  /** Scheduler capacity only; cannot authorize or extend any export proof. */
+  preparationAllowed?: () => boolean;
 }
 /** An injected test origin cannot freeze expiry while asynchronous work runs. */
 function deliveryClock(origin?: number): () => number {
@@ -893,6 +895,8 @@ export async function prepareDue(
 ): Promise<DeliveryResult> {
   const currentTime = deliveryClock(deps.now);
   const now = currentTime();
+  if (deps.preparationAllowed?.() === false)
+    return { state: "blocked", reason: "dispatch_headroom_unavailable" };
   if (testContact(contact))
     return { state: "blocked", reason: "test_operation_not_exported" };
   if (gates.allowedQsoIds && !gates.allowedQsoIds.includes(key.qso))
@@ -1456,6 +1460,11 @@ export async function prepareDue(
         state: "blocked",
         reason: freshInsertUnavailable(authorizationMode),
       };
+    const identityClaim = await preparedIdentityClaim(payload);
+    // Planning, history and signing can consume the caller's remaining budget.
+    // Yield before persisting an artifact that cannot get a dispatch turn.
+    if (deps.preparationAllowed?.() === false)
+      return { state: "blocked", reason: "dispatch_headroom_unavailable" };
     attemptId = await store.stage(
       key,
       contact.generation,
@@ -1467,7 +1476,7 @@ export async function prepareDue(
       lotwIdentityId,
       deps.priority ?? "live",
       {
-        claim: await preparedIdentityClaim(payload),
+        claim: identityClaim,
         sourceVersion: sourceProof.reconciliationVersion,
       },
       { ...sourceProof, authorizationMode },

@@ -231,6 +231,40 @@ async function fixture(
   };
 }
 
+test("a late source poll leaves dispatch headroom without preparing an upload", async (t) => {
+  const h = await fixture(t);
+  await h.observeDueEdit();
+  h.enable();
+  const started = Date.now();
+  let clock = started;
+  t.mock.method(Date, "now", () => clock);
+  const pollsBefore = h.calls.sourceSync;
+  const result = await tick(h.env, async (input, init) => {
+    const response = await h.fetcher(input, init);
+    if (new URL(String(input)).pathname === "/v1/sync")
+      clock = started + 76_000;
+    return response;
+  });
+  assert.equal(result.errors, 0);
+  assert.equal(h.calls.sourceSync - pollsBefore, 1);
+  assert.equal(h.calls.qrzWrites, 0);
+  assert.equal(await h.count("attempts"), 0);
+  assert.equal(
+    await h.store
+      .statement("SELECT count(*) AS n FROM attempt_artifacts")
+      .first("n"),
+    0,
+  );
+  assert.equal(await h.count("attempt_source_export_proofs"), 0);
+  const route = await h.store.ledger({
+    tenant: "a",
+    source: "source",
+    qso: "q1",
+    destination: "destination",
+  });
+  assert.equal(route?.state, "changed");
+});
+
 test("enabled due correction collects once and dispatches its immutable proof in the same source turn", async (t) => {
   const h = await fixture(t);
   await h.observeDueEdit();

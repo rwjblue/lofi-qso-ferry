@@ -1155,6 +1155,10 @@ export async function tick(
   // Leave request headroom for a bounded in-flight operation and cleanup.
   // A checkpoint sends many statements in one D1 request; retain both counts.
   const expired = () => Date.now() >= deadline || metered.metrics.calls >= 850;
+  // Keep time and RPC capacity for staging, final guards and transport. These
+  // admission margins only shorten preparation; normal proof/lease gates remain.
+  const preparationAllowed = () =>
+    Date.now() + 15_000 < deadline && metered.metrics.calls + 100 < 850;
   const diagnostics = createFailureDiagnostics();
   const throughput: ThroughputMetrics = {
     sourceRecords: 0,
@@ -1345,7 +1349,11 @@ export async function tick(
       priorBudgetHolds: Set<string>,
       budgetBackoffs: Map<string, number>,
     ) => {
-      if (!exportsEffective(gates) || expired() || attemptSlots[priority] <= 0)
+      if (
+        !exportsEffective(gates) ||
+        !preparationAllowed() ||
+        attemptSlots[priority] <= 0
+      )
         return;
       const at = currentTime();
       // History failures never enter this list. Re-read eligibility after every
@@ -1377,7 +1385,7 @@ export async function tick(
           )
           .all<{ qso: string; destination: string; generation: string }>()
       ).results;
-      if (!due.length || expired()) return;
+      if (!due.length || !preparationAllowed()) return;
       const hold = async (reason: string, rows = due) => {
         if (!rows.length) return;
         await store.db.batch(
@@ -1417,9 +1425,9 @@ export async function tick(
         retry ? [retry.qso] : [...new Set(due.map((row) => row.qso))],
         Math.min(20, attemptSlots[priority]),
         currentTime,
-        expired,
+        () => !preparationAllowed(),
       );
-      if (!snapshots.length || expired()) {
+      if (!snapshots.length || !preparationAllowed()) {
         await hold("source_export_proof_unavailable");
         return;
       }
@@ -1481,7 +1489,8 @@ export async function tick(
             {
               rawFetcher: fetcher,
               now: currentTime,
-              deadline: currentTime() + Math.max(0, deadline - Date.now()),
+              deadline:
+                currentTime() + Math.max(0, deadline - 15_000 - Date.now()),
               expiresAtCap: gates.qrzFreshInsertExpiresAt,
               remainingRequests,
               priority,
@@ -1532,7 +1541,7 @@ export async function tick(
         for (const destination of uniqueRoutes(destinations, item.contact)) {
           if (!qrzWindowProofAllowed(gates, item.expiresAt, currentTime()))
             continue;
-          if (expired() || attemptSlots[priority] <= 0) return;
+          if (!preparationAllowed() || attemptSlots[priority] <= 0) return;
           if (!eligible.has(JSON.stringify([item.contact.id, destination.id])))
             continue;
           const authorizationMode = routeDeliveryMode(
@@ -1552,6 +1561,7 @@ export async function tick(
               ...deps,
               priority,
               qrzPlanning,
+              preparationAllowed,
               qrzEmptyObservation: routes.find(
                 (route) =>
                   route.contact.id === item.contact.id &&

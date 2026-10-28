@@ -87,6 +87,67 @@ async function setup(
   return { ...h, ...evidence, mint, key, state, claims };
 }
 
+test("closed scheduler preparation admission performs no reads, signing or staging", async (t) => {
+  const h = await setup(t);
+  for (const destination of ["destination", "lotw"]) {
+    assert.deepEqual(
+      await prepareDue(h.store, h.key(destination), h.contact, gates, {
+        sourceProof: h.sourceProof,
+        preparationAllowed: () => false,
+        fetcher: async () => assert.fail("Admission reached vendor reads"),
+        sign: async () => assert.fail("Admission reached signing"),
+      }),
+      { state: "blocked", reason: "dispatch_headroom_unavailable" },
+    );
+  }
+  assert.equal(await h.claims(), 0);
+  assert.equal(
+    await h.store.statement("SELECT count(*) AS n FROM attempts").first("n"),
+    0,
+  );
+});
+
+test("preparation that loses dispatch headroom during vendor work creates no saved artifact", async (t) => {
+  for (const destination of ["destination", "lotw"]) {
+    await t.test(destination, async (t) => {
+      const h = await setup(t);
+      let allowed = true;
+      let reads = 0;
+      const result = await prepareDue(
+        h.store,
+        h.key(destination),
+        h.contact,
+        gates,
+        {
+          sourceProof: h.sourceProof,
+          preparationAllowed: () => allowed,
+          fetcher: async (...args) => {
+            const response = await h.fetcher(...args);
+            reads++;
+            allowed = false;
+            return response;
+          },
+        },
+      );
+      assert(reads > 0);
+      assert.deepEqual(result, {
+        state: "blocked",
+        reason: "dispatch_headroom_unavailable",
+      });
+      for (const table of ["attempts", "attempt_artifacts", "attempt_events"])
+        assert.equal(
+          await h.store
+            .statement(`SELECT count(*) AS n FROM ${table}`)
+            .first("n"),
+          0,
+        );
+      assert.equal(await h.claims(), 0);
+      assert.equal(h.calls.qrzWrites, 0);
+      assert.equal(h.calls.lotwUploads, 0);
+    });
+  }
+});
+
 test("source proof is mandatory before either vendor read or signature, with no missing-policy shortcut", async (t) => {
   const h = await setup(t);
   for (const destination of ["destination", "lotw"]) {

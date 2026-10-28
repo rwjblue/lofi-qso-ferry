@@ -1,10 +1,22 @@
 # Operations and personal rollout
 
-Checked-in environments default to disabled exports. All production controls are closed after monitoring stopped QRZ on a known-unsent source-proof cancellation. The continuous run delivered 66 native ACKs at about 31/hour, bringing the QRZ lifetime total to 85. Nineteen QRZ records and three LoTW trial records have prior independent verification and twenty-two-attempt recovery; the later ACKs and cancellation need their own evidence. LoTW uploads, general corrections and source-boundary authority remain disabled. Deployment alone must not change real logs.
+Checked-in environments default to disabled exports. Signed release `c0090b52` is deployed with all eight controls closed. All 66 later QRZ uploads now pass independent readback at returned minute precision, and full terminal-snapshot recovery preserves 89 attempts: 85 delivered QRZ, three observed LoTW trials and one proven unsent cancellation. The monitor successor is qualified but inactive. Renew a compatible activation checkpoint and monitoring handoff before a separately authorized restart. LoTW uploads, general corrections and source-boundary authority remain disabled. Deployment alone must not change real logs.
 
 ## Current production target
 
 The selected production origin/RP is `https://ferry.n1rwj.com` / `ferry.n1rwj.com`, in Cloudflare account `478f5e15ae2afa01364d19f42a3e06f2` using its existing Workers Standard usage model. The dedicated D1 database is `ferry-production` (`45ad64ad-92bb-491a-b6e6-1d2b17450144`) and Worker is `lofi-qso-ferry`. The current signed revision, deployed Worker version, migration count, traffic and independent HTTPS/gate checks are recorded in [deployment evidence](deployment.md). Use that release record rather than an older snapshot in the operational history below.
+
+The current **13:14:11.559 UTC on October 28** attestation verifies closed
+Worker `679cbd43-7169-4756-97c3-43a4d13afa5c`, signed source `c0090b52`,
+healthy HTTPS, matching assets and KEK 1. Preparation reserves 15 seconds and
+100 D1 RPCs for dispatch and checks admission again before staging. The monitor
+permits only complete native evidence of a never-dispatched cancellation; unknown,
+contradictory or dispatched outcomes still stop. All 1,795 release tests and
+50 operator monitor cases pass. No monitor is running and no upload was retried.
+The original 30.7/hour observation does not measure this release's throughput.
+See the [closed release and evidence](deployment.md#closed-dispatch-release-66-upload-readback-and-terminal-recovery-2026-10-28-utc).
+
+The following record retains the original closure and investigation checkpoint.
 
 Closure was independently verified at **02:47:40.478 UTC on October 28**, Worker
 `54ca3fb3-b536-41c6-9932-29f8d4520b7b`, source `50c19ad3`. A normal source poll

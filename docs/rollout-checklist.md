@@ -1,10 +1,12 @@
 # Personal rollout acceptance
 
-All production export controls are closed after the monitor stopped on a
-known-unsent source-proof cancellation. The continuous QRZ run delivered 66
-native ACKs at about 31/hour; the lifetime total is 85. Nineteen QRZ records and
-three LoTW trial records have prior independent verification and recovery.
-Later ACKs and the cancellation need their own evidence. LoTW remains disabled.
+All production export controls remain closed on signed release `c0090b52`.
+All 66 later QRZ uploads pass independent readback at returned minute precision,
+bringing the verified QRZ total to 85. Full terminal recovery preserves all 89
+attempts, including three observed LoTW trials and one proven unsent cancellation.
+Dispatch capacity is reserved and the monitor successor is qualified but inactive.
+A compatible activation checkpoint and new monitoring handoff remain separate
+work; LoTW remains disabled.
 Current source proofs, fresh vendor evidence and ownership checks remain
 mandatory. A small automatic LoTW scope and
 200,000-contact capacity remain separate milestones. The singleton and checked pairs C/D2/F4
@@ -26,10 +28,24 @@ now pass known-ACK observed-precision assessment and populated recovery.
 - [x] Trace unchanged QSO/operation inputs, advanced sync/context generations and
   the known-unsent source-proof cancellation with 30.814 seconds of TTL remaining.
   Both existing focused cancellation/reprepare regressions pass.
-- [ ] Qualify a narrow monitor rule for independently proven never-dispatched
-  cancellations while retaining stops for uncertain, rejected and unexplained states.
-- [ ] Review dispatch headroom near the scheduler deadline and verify/recover the
-  later ACKs before renewing monitoring and separately enabling a scope.
+- [x] Qualify a narrow monitor rule for complete native never-dispatched evidence,
+  including exact event counts/times, proof pin, artifact and permanent owner claim;
+  retain all other stop rules. Fifty monitor/journal/durability cases and actual
+  local inventory checks pass. No monitor is running.
+- [x] Reserve 15 seconds and 100 D1 RPCs before upload preparation, checking again
+  immediately before staging; preserve final proof/ownership/transport guards.
+  Deploy signed `c0090b52` after all 1,795 release tests pass; independent
+  13:14:11.559 UTC verification confirms Worker `679cbd43` and all controls closed.
+- [x] Verify all 66 later QRZ uploads through complete unique neighborhoods and
+  original native encrypted artifacts; preserve source seconds as unverified,
+  accepted minute/sideband/empty-COMMENT representations and all partial captures.
+- [x] Complete 13:09:38.038 UTC full terminal-snapshot recovery: 89 native attempts,
+  88 artifacts and accepted receipts, one known-unsent cancellation, preserved
+  prior twenty-two rows, full crypto, isolated restore and both quarantines.
+  Bind the separate 66-member readback without rewriting the original interval.
+- [ ] Compose a compatible current full activation checkpoint and a new monitoring
+  handoff for this release/census before a separately authorized QRZ restart.
+  The terminal report alone has no activation compatibility or write authority.
 - [ ] Reduce measured database/reconciliation overhead before claiming larger
   service volume; 30.7 uploads/hour is the observed continuous-run rate.
 

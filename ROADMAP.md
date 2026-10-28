@@ -2,18 +2,18 @@
 
 This roadmap is the handoff for implementation in this repository. Checked items have implementation and local evidence. Unchecked items retain external verification or rollout work; they must not be inferred from synthetic success. The owner authorized small signed commits directly to `origin/main` for implementation; no implementation PRs are opened. Retain the product decisions in [README](README.md). Each milestone should update its evidence and remaining questions here.
 
-## Next milestones (2026-10-27/28 UTC)
+## Next milestones (2026-10-28 UTC)
 
 ### Export readiness at a glance
 
-| Work                            | Current state                                                                                       | Next acceptance evidence                                              |
-| ------------------------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks | Continue guarded associations; review contradictory location evidence |
-| Source comparison and ownership | Clean 4,161-contact index; all 9,981 ownership inputs covered at the 02:44 UTC checkpoint           | Observe ongoing intake and sustained cost/throughput                  |
-| QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally       | Renew normal evidence for every later contact                         |
-| QRZ delivery                    | Closed after known-unsent cancellation; 66 later ACKs, 85 lifetime; nineteen independently verified | Qualify cancellation monitoring, closed recovery and later readback   |
-| LoTW delivery                   | First trial and pair G2 accepted: three contacts with strict reports and full recovery              | Complete mixed evidence and a monitored automatic scope               |
-| Broader rollout                 | All controls closed; prior twenty-two-attempt recovery; later ACKs need their own evidence          | Renew monitored QRZ handoff; separate LoTW acceptance and capacity    |
+| Work                            | Current state                                                                                         | Next acceptance evidence                                              |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Historical matching             | Deployed: inclusive ±30 minutes, compatible grid precision, reverse uniqueness and ownership checks   | Continue guarded associations; review contradictory location evidence |
+| Source comparison and ownership | Clean 4,235-contact index; complete ownership coverage at the fresh closed snapshot                   | Observe ongoing intake and sustained cost/throughput                  |
+| QRZ first-insert evidence       | Earlier singleton source proof and fresh empty neighborhood passed; evidence expires normally         | Renew normal evidence for every later contact                         |
+| QRZ delivery                    | Closed; all 85 QRZ deliveries independently verified at returned precision; dispatch reserve deployed | Renew compatible activation checkpoint and monitoring handoff         |
+| LoTW delivery                   | First trial and pair G2 accepted: three contacts with strict reports and full recovery                | Complete mixed evidence and a monitored automatic scope               |
+| Broader rollout                 | All controls closed; complete 89-attempt terminal recovery; monitor qualified but inactive            | Renew monitored QRZ handoff; separate LoTW acceptance and capacity    |
 
 The receiver fix is deployed; checked pairs C, D2 and F4 passed scheduled delivery,
 recovery and known-ACK assessment at the observed minute/sideband representation.
@@ -22,12 +22,56 @@ readback and assessment. Two persistent QRZ cycles added two more ACKs; all
 thirteen records now pass observed-precision assessment and populated recovery.
 QRZ's later six-contact automatic cycle and complete readback are accepted;
 the later continuous run delivered 66 ACKs before monitoring closed the scope
-on a known-unsent source-proof cancellation. See
+on a known-unsent source-proof cancellation. All 66 later uploads now pass
+independent readback and full terminal recovery; the monitor fix and dispatch
+reserve are qualified with exports still closed. See
 [the pilot guide](docs/qrz-pilot.md). Historical exceptions, general corrections
 and source-wide cutovers remain separate work. Detailed dated observations below
 are evidence checkpoints, not a claim that every backlog item has been resolved.
 
-### Current checkpoint — QRZ closed after supported unsent cancellation
+### Current checkpoint — monitor qualified, dispatch reserve deployed, 66 uploads verified
+
+Signed release `c0090b52` is deployed as Worker `679cbd43`, independently verified
+at **13:14:11.559 UTC** with all eight controls closed, healthy HTTPS, matching
+assets and KEK 1. All **1,795 tests and required checks** pass in
+[exact-source CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40684417375).
+No upload, retry, production restore, migration or secret change occurred.
+
+Preparation requires more than 15 seconds and 100 D1 RPCs of soft budget,
+shortens proof collection accordingly and checks again immediately before
+staging. Final source-proof/ownership/transport guards remain unchanged. Native
+regressions cover late polling and capacity lost during QRZ/LoTW preparation.
+The monitor successor permits only a complete ordered prepared/cancelled event
+pair with native no-dispatch evidence, retained artifact, exact proof pin and
+permanent same-source/contact claim. It keeps unsafe states and all existing
+liveness/configuration/census stops. Fifty monitor/journal/durability cases,
+strict types and actual inventory checks pass. It remains inactive.
+
+All **66 later QRZ deliveries** now pass independent complete-neighborhood
+readback against their original native encrypted artifacts and exact ACK IDs.
+All are verified at returned minute precision; exact seconds remain unverified.
+Thirty-two use the existing SSB/sideband representation and five omit an explicit
+empty COMMENT. Original grids, seconds and nonempty narrative remain preserved.
+The earlier nineteen QRZ readbacks and three LoTW trial reports retain their
+original evidence. No upload was repeated.
+
+Fresh **13:07:33.343–13:07:37.789 UTC** full SQL capture passed complete terminal
+recovery at **13:09:38.038 UTC**: **89 attempts, 88 retained artifacts, 88 accepted
+receipts and one proven unsent cancellation**, original prior twenty-two rows,
+full cryptography/pins/signatures, isolated restore, both quarantines, integrity
+and zero foreign-key violations. The separate 66-member readback is bound into
+the report. This is a terminal snapshot, with no activation-input compatibility;
+the original 32-new-member/one-hour window and stopped journal remain unchanged.
+
+Current snapshot QRZ work remains **391 possible automatic entries** and **555
+history-review labels** (946 unresolved). Next is a compatible full activation
+checkpoint and a new monitoring handoff before a separately authorized restart.
+LoTW, corrections and source-boundary authority remain disabled. Sustained
+capacity and the 41 inherited unfinished rows remain open; the earlier 30.7/hour
+measurement does not establish this release's performance. See the
+[closed release and verification receipt](docs/deployment.md#closed-dispatch-release-66-upload-readback-and-terminal-recovery-2026-10-28-utc).
+
+### Previous checkpoint — QRZ closed after supported unsent cancellation
 
 The continuous QRZ scope recorded **66 delivered ACKs in 129.142 minutes**,
 about **30.7 uploads/hour** across 26 completed invocations with zero processing
@@ -1481,14 +1525,15 @@ Timestamp/grid precision, routing and source-validity holds still require review
 
 ## Remaining work before broader exports
 
-All export controls are closed after the monitor stopped on a known-unsent
-source-proof cancellation. **Nineteen QRZ records and three LoTW trial records**
-have independent verification and full twenty-two-attempt recovery. The later
-continuous run added 66 ACKs and one cancellation whose verification/recovery
-still needs completion. Exact QRZ seconds remain unverified, and original
-literal-held summaries are preserved. The recurring monitor was deleted after
-confirmed closure. LoTW, corrections and source-boundary authority remain off.
-Linking accounts or waiting for cron does not establish readiness for expansion.
+All export controls remain closed on signed release `c0090b52`. **All 85 QRZ
+deliveries** have independent verification at returned precision; full terminal
+recovery preserves **89 attempts**, including three observed LoTW trials and one
+proven unsent cancellation. The monitor successor is qualified but inactive, and
+dispatch headroom is deployed. Exact QRZ seconds remain unverified; original
+literal-held summaries, automatic interval and stopped journal remain preserved.
+The terminal recovery report is not an activation input. LoTW, corrections and
+source-boundary authority remain off. Linking accounts or waiting for cron does
+not establish readiness for expansion.
 
 Durable outbound claims, the ±30-minute historical matcher, nested valid grid
 matching, full supported LoTW grid precision, per-contact source proofs, guarded
@@ -1503,12 +1548,12 @@ unproved.
    proof/history checks for every later contact and verify retained artifacts
    and accepted records. Neither representation differences nor an unresolved
    `db_d1` category authorizes a retry or bypass.
-2. **Renew the monitored QRZ scope after cancellation review.** Preserve the
-   nineteen independently verified records and original twenty-two-attempt
-   recovery. Qualify narrow handling of proven never-dispatched cancellations,
-   review scheduler deadline headroom, verify/recover later ACKs and renew the
-   monitoring handoff before enabling uploads. Keep exact destination IDs and
-   verify created records. First-insert authority
+2. **Renew the monitored QRZ scope after the closed fixes.** Cancellation
+   classification, dispatch reserve, later 66-member readback and full terminal
+   recovery are complete. Compose a compatible current full activation checkpoint
+   for the deployed source and complete census, retaining the original interval,
+   before a separately authorized activation and new monitoring handoff. Keep exact
+   destination IDs and verify created records. First-insert authority
    does not enable replacements, corrections, deletion, source-wide cutovers or
    LoTW. Unrelated historical exceptions and 200,000-contact capacity do not block
    this restricted pilot. A second passkey remains recommended rather than an

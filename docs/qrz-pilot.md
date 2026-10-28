@@ -1,14 +1,15 @@
 # QRZ first-insert pilot
 
-**QRZ and LoTW uploads are disabled** after monitoring stopped on a known-unsent
-source-proof cancellation. The continuous QRZ run added 66 native ACKs at about
-31/hour; the lifetime QRZ total is 85. Nineteen QRZ records have independent
-verification at observed minute/sideband precision, with source seconds preserved
-and unverified. Prior full recovery preserves twenty-two accepted attempts,
-including three separate LoTW trial records. Later ACKs and the cancellation need
-their own evidence before another monitored activation. Earlier finite trial
-allowances remain exhausted or closed. This document records evidence; it does
-not itself grant write authority.
+**QRZ and LoTW uploads remain disabled.** All 66 later QRZ uploads now pass
+independent readback at returned minute precision; the verified QRZ total is 85.
+Original source seconds remain preserved and unverified. Full terminal-snapshot
+recovery preserves all 89 attempts, including three observed LoTW trials and one
+proven unsent cancellation. Signed release `c0090b52` reserves dispatch capacity;
+the qualified monitor permits only complete evidence of never-dispatched
+cancellations and remains inactive. Renew a compatible checkpoint and monitoring
+handoff before a separately authorized restart. Earlier finite trial allowances
+remain exhausted or closed. This document records evidence; it does not itself
+grant write authority.
 
 ## What the restricted mode permits
 
@@ -30,6 +31,16 @@ creation and fresh absence for one contact. Such a proof expires normally; it is
 not write acceptance or standing permission to export.
 
 ## Current closed checkpoint — 2026-10-28 UTC
+
+Independent **13:14:11.559 UTC** attestation confirms Worker `679cbd43`, signed
+source `c0090b52`, all eight controls closed, healthy HTTPS and matching assets.
+The 66-member readback and full 89-attempt terminal recovery both pass; the
+original automatic interval and stopped journal remain unchanged. Current QRZ
+work has 391 possible automatic entries and 555 history-review labels. Sustained
+capacity and inherited unfinished runs remain open. No active monitor or export
+scope was created. See the [release/readback/recovery receipt](deployment.md#closed-dispatch-release-66-upload-readback-and-terminal-recovery-2026-10-28-utc).
+
+## Earlier closure checkpoint — 2026-10-28 UTC
 
 Independent closure at **02:47:40.478 UTC** verifies Worker `54ca3fb3`, source
 `50c19ad3`, all eight controls closed and healthy HTTPS/assets. One attempt was

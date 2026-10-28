@@ -1,6 +1,100 @@
 # Production deployment and rollout evidence
 
-Verified 2026-10-28 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). All production export controls are closed after the monitor stopped on a known-unsent source-proof cancellation. The continuous QRZ run recorded sixty-six delivered acknowledgements, bringing QRZ's lifetime total to eighty-five. Nineteen QRZ records and three LoTW trial records have prior independent verification and twenty-two-attempt recovery; the later sixty-six ACKs and one cancellation still need their own readback/recovery evidence. LoTW uploads, general corrections and source-boundary authority remain disabled. Historical unfinished invocations and original literal QRZ comparison limits remain preserved.
+Verified 2026-10-28 UTC at [https://ferry.n1rwj.com](https://ferry.n1rwj.com). Signed release `c0090b52` is deployed with all eight export controls closed. All 66 later QRZ uploads now pass independent readback at returned minute precision; full terminal-snapshot recovery preserves 89 attempts, including 85 QRZ deliveries, three observed LoTW trials and one proven unsent cancellation. The monitor successor is qualified but inactive. A renewed compatible activation checkpoint and monitoring handoff remain separate work. LoTW uploads, general corrections and source-boundary authority remain disabled. Historical unfinished invocations and original literal QRZ comparison limits remain preserved.
+
+## Closed dispatch release, 66-upload readback and terminal recovery (2026-10-28 UTC)
+
+Signed source `c0090b52ad9a24bc9299cee1ecaee0da56d95fc9` is deployed as
+Worker `679cbd43-7169-4756-97c3-43a4d13afa5c`, deployment
+`a4d61e2c-71f3-44fa-9ccd-6be66e998f44`. Independent **13:14:11.559 UTC**
+attestation verifies sole 100% traffic, all eight controls closed, healthy HTTPS,
+matching assets and KEK 1. Schema remains at 37 migrations; no production restore,
+migration, secret change, upload or retry occurred during this work. All
+**1,795 tests and required checks** pass in
+[exact-source CI](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40684417375).
+
+The scheduler now requires more than **15 seconds and 100 D1 RPCs** of remaining
+soft budget before preparing fresh uploads. Proof collection ends 15 seconds
+before the invocation deadline, and preparation rechecks admission immediately
+before staging after vendor work/signing. Closed admission creates no attempt,
+artifact, event or claim. Final source-proof, ownership, transport and uncertainty
+guards remain intact. Regressions cover late source polling, capacity lost during
+QRZ/LoTW preparation and normal same-turn dispatch. The earlier measured rate
+of 30.664 uploads/hour remains the production observation; exports stayed closed,
+so no throughput improvement is claimed from this deployment.
+
+The committed cancellation classifier requires QRZ fresh-insert scope, no native
+dispatch or remote ID, exactly the ordered prepared/cancelled event pair with
+consistent immutable times and an enumerated pre-dispatch reason, a retained
+artifact, the exact proof pin and a permanent same-source/contact identity claim.
+Missing, extra or contradictory evidence remains a stop. The actual cancelled
+member passes both this classifier and the unchanged native artifact verifier.
+The operator monitor projects complete native event counts plus a bounded event
+sentinel in its existing census query. Known-unsent cancellations have a separate
+counter and never count as acknowledgements, independent readback or permission
+to retry. Existing scope/schema, uncertainty, liveness, monitoring-gap and census
+bounds remain. All **50 monitor/journal/durability cases**, strict types and actual
+local inventory checks pass. The corrected append-only monitor v4 manifest is
+`7c12a369972a616ed278afed186b907c66105adc7a1305e095d9b7eb7ffc8bd1`.
+No heartbeat was recreated and the stopped journal was not resumed.
+
+Independent readback completed at **13:06:07.503 UTC** for all **66 later delivered
+QRZ members**. Every exact native ACK has a complete unique neighborhood and
+matching returned fields against its original encrypted artifact, canonical hash,
+source proof and permanent owner. All 66 are verified at returned UTC-minute
+precision; **exact seconds remain unverified**. Thirty-two records use the already
+qualified SSB/sideband representation and five omit an explicitly empty COMMENT.
+Original seconds, grids and nonempty narrative remain exact in the retained
+artifacts. The proven unsent cancellation is excluded from delivered/readback
+counts. The earlier nineteen verified QRZ members and three accepted LoTW trials
+retain their original evidence, yielding **85 verified QRZ deliveries** overall.
+
+The read-only observer made **175 QRZ reads**, zero vendor mutations and zero
+production application writes. Thirty-three complete two-member pairs account
+for all 66 records; three partial read-only captures remain preserved and
+unaccepted. Transport/interruption/transient holds were followed only by new
+bounded read-only captures; no INSERT was retried. Readback summary SHA256:
+`5891fc8c6b0f025b37353e5008d31c02b910440d8e38fff82a6c8fb67dea0557`.
+Final observer inventory v5 SHA256:
+`9ac6d1b429887371f4ad5a33158419e7816a9590585fb6899c6d709fe9bb549d`.
+The committed readback-member helper has eleven focused native/tampering cases;
+the classifier has four top-level cases including adversarial event/claim variants.
+
+A fresh full **42,641,951-byte** SQL snapshot was captured at
+**13:07:33.343–13:07:37.789 UTC**, while the original closed Worker/source was
+independently unchanged. SQL SHA256:
+`ff2e038cb09fabf61190b518c9ea21b1d2a72c66681c29afccc9b9bd7c589ba1`;
+capture report SHA256:
+`b1b222f7fcc3896b3ca83af5aebe822ac5c6a408d93125244fa146d2aaa453e9`.
+At **13:09:38.038 UTC**, the existing full verification kernel passed all
+**89 native attempts, 88 retained artifacts, 88 accepted receipts and one known
+unsent cancellation**, with original prior twenty-two rows preserved. It verifies
+all expected artifact/credential decryptions, source-proof/claim/ownership pins,
+LoTW signatures and original historical anchor, isolated restore, both quarantine
+passes, integrity and zero foreign-key violations. Terminal recovery report SHA256:
+`d65d3e7941c3e9830b6069c86b6f1a11a7470384ec546a262b41beddcd6aa8ac`.
+The observer's 66-member readback summary is separately bound into that report.
+
+This is a **closed terminal-snapshot recovery**, not a rewritten automatic-window
+acceptance. All 89 attempts predate the real snapshot. The original automatic
+32-new-member/one-hour interval limits were not widened or subdivided, and the
+original stopped journal and times remain unchanged. The new report explicitly
+has no activation-input compatibility or export/retry authority. Before another
+QRZ restart, compose a compatible current full checkpoint and a new monitoring
+handoff against this release and complete census. Keep LoTW off unless separately
+authorized and qualified. The 41 inherited unfinished rows and sustained capacity
+remain open; this fix does not establish their causes or complete exception review.
+
+The frozen monitor, observer, recovery and release-controller source inventories
+are preserved in the protected local operator archive
+`qrz-monitor-readback-recovery-20261028.tar.gz`, SHA256
+`c93c52d0d5d55bbd6bc0f61138fae7e37a0a22d7aa04022720624f05ec6cb5c2`.
+It contains source only, with no production secrets, SQL or installed dependency
+runtime. Current snapshot QRZ work remains **391 possible automatic entries**
+(one missing, 390 inventory-pending) plus **555 history-review labels**
+(538 mismatch, seventeen ambiguous), or **946 unresolved ledger entries**.
+These are post-closure reconciliation counts, not an exact shutdown census or
+946 proven missing contacts.
 
 ## QRZ cancellation investigation and confirmed closure (2026-10-28 UTC)
 

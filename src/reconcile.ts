@@ -7,6 +7,7 @@ import {
 } from "./historical-associations.ts";
 import { historicalGridsCompatible } from "./historical-location.ts";
 import { historicalCandidates } from "./historical-matching.ts";
+import { historicalOperatingDetails } from "./historical-operating-details.ts";
 import {
   availableIdentityClaim,
   destinationIdentityClaim,
@@ -468,30 +469,7 @@ export function classifyHistoricalAssociation(
   if (!/^[0-9]{1,64}$/.test(candidate.record.APP_QRZLOG_LOGID ?? ""))
     return held("Matched QRZ record has no verified LOGID");
 
-  // Identity has already been compared by the vendor policy. Align only a
-  // temporary comparison view so the existing operating-detail checks can run
-  // independently; original records and receipt comparisons remain untouched.
-  const operating = { ...source };
-  for (const field of [
-    "QSO_DATE",
-    "TIME_ON",
-    "MODE",
-    "SUBMODE",
-    "PROP_MODE",
-    "SAT_NAME",
-  ]) {
-    delete operating[field];
-    if (candidate.record[field] !== undefined)
-      operating[field] = candidate.record[field];
-  }
-  if (
-    historicalGridsCompatible(
-      source.MY_GRIDSQUARE,
-      candidate.record.MY_GRIDSQUARE,
-    )
-  )
-    operating.MY_GRIDSQUARE = candidate.record.MY_GRIDSQUARE;
-  const match = matchQrzHistory(operating, [candidate.record]);
+  const match = historicalOperatingDetails("qrz", source, candidate.record);
   if (match.state !== "adopted_existing")
     return {
       state: match.state,

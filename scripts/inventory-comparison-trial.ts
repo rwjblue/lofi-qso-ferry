@@ -16,12 +16,13 @@ import {
 } from "../src/inventory-comparison-lookup.ts";
 import { inventoryComparisonHint } from "../src/inventory-comparison-pages.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
+import { InventoryMatchingInvalidations } from "../src/inventory-matching-invalidations.ts";
+import { InventoryMatchingPairs } from "../src/inventory-matching-pairs.ts";
 import {
   InventoryMatchingResults,
   type InventoryMatchingWorkClaim,
 } from "../src/inventory-matching-results.ts";
 import { InventoryMatchingWork } from "../src/inventory-matching-work.ts";
-import { InventoryMatchingInvalidations } from "../src/inventory-matching-invalidations.ts";
 import {
   InventoryMatchingWorkspace,
   type PreparedInventoryMatchingSnapshot,
@@ -61,6 +62,27 @@ async function matchingDependencyState(db: D1Database) {
       "SELECT (SELECT count(*) FROM inventory_match_live_sets WHERE tenant='trial') AS sets,(SELECT coalesce(sum(ref_count),0) FROM inventory_match_live_sets WHERE tenant='trial') AS refs,(SELECT count(*) FROM inventory_matching_bucket_dependents WHERE tenant='trial') AS buckets,(SELECT count(*) FROM inventory_matching_bucket_jobs WHERE tenant='trial' AND completed_version<work_version) AS pending",
     )
     .first<MatchingDependencyState>();
+}
+
+async function matchingPairState(db: D1Database) {
+  const [jobs, pages, rows] = await Promise.all([
+    db
+      .prepare(
+        "SELECT * FROM inventory_matching_pair_jobs WHERE tenant='trial' ORDER BY generation_id,destination,source_scope",
+      )
+      .all(),
+    db
+      .prepare(
+        "SELECT * FROM inventory_matching_pair_pages WHERE tenant='trial' ORDER BY page_id",
+      )
+      .all(),
+    db
+      .prepare(
+        "SELECT * FROM inventory_matching_pair_rows WHERE tenant='trial' ORDER BY page_id,record_key",
+      )
+      .all(),
+  ]);
+  return { jobs: jobs.results, pages: pages.results, rows: rows.results };
 }
 
 /** Offline replay of the encrypted three-provider run capture. The original is
@@ -155,6 +177,8 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0059_inventory_live_bucket_dependencies.sql",
       "0060_inventory_matching_bucket_pages.sql",
       "0061_inventory_matching_coverage_clocks.sql",
+      "0062_inventory_matching_pair_jobs.sql",
+      "0063_inventory_matching_pair_pages.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -342,6 +366,17 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       )
       .first();
     const matchingSnapshots: PreparedInventoryMatchingSnapshot[] = [];
+    const pairTurns = [];
+    for (const _scope of scopes.filter((row) => row.provider !== "lofi")) {
+      const result = await new InventoryMatchingPairs(store).step("trial");
+      if (
+        result.kind !== "enrolled" ||
+        result.records !== 200 ||
+        result.complete
+      )
+        throw new Error("comparison_trial_pair_enrollment_incomplete");
+      pairTurns.push(result);
+    }
     const matchingWorkSnapshots: {
       setId: string;
       matchingDigest: string;
@@ -490,6 +525,19 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
         )
         .all()
     ).results;
+    const pairState = await matchingPairState(db);
+    if (
+      pairState.jobs.length !== pairTurns.length ||
+      pairState.pages.length !== pairTurns.length ||
+      pairState.rows.length !==
+        pairTurns.reduce((sum, turn) => sum + turn.records, 0)
+    )
+      throw new Error("comparison_trial_pair_state_incomplete");
+    await writeFile(
+      join(directory, "matching-pairs.json"),
+      JSON.stringify(pairState),
+      { mode: 0o600, flag: "wx" },
+    );
     const changed = {
       credentials: before.credentials !== (await credentials()),
       observations: before.observations !== (await observations()),
@@ -511,6 +559,14 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
         sampled: true,
         ...matchingWorkCounts,
         manifestDigest: await sha256(canonical(matchingWorkSnapshots)),
+      },
+      matchingPairs: {
+        sampled: true,
+        turns: pairTurns,
+        jobs: pairState.jobs.length,
+        pages: pairState.pages.length,
+        rows: pairState.rows.length,
+        manifestDigest: await sha256(canonical(pairState)),
       },
       matchingInvalidation: {
         sampled: true,
@@ -603,6 +659,14 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       sampled: boolean;
       kind: string;
       state: MatchingDependencyState;
+    };
+    matchingPairs?: {
+      sampled: boolean;
+      turns: { pageId: string; records: number; complete: boolean }[];
+      jobs: number;
+      pages: number;
+      rows: number;
+      manifestDigest: string;
     };
     historicalAdoption?: { evaluated: boolean; associationsCreated: number };
     projectionJobs?: {
@@ -1024,6 +1088,39 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       )
         throw new Error("comparison_trial_matching_work_counts_changed");
     }
+    let matchingPairRowsValidated: number | undefined;
+    if (report.matchingPairs?.sampled) {
+      const saved = JSON.parse(
+        await readFile(join(directory, "matching-pairs.json"), "utf8"),
+      ) as Awaited<ReturnType<typeof matchingPairState>>;
+      const actual = await matchingPairState(db);
+      if (
+        (await sha256(canonical(saved))) !==
+          report.matchingPairs.manifestDigest ||
+        canonical(actual) !== canonical(saved) ||
+        actual.jobs.length !== report.matchingPairs.jobs ||
+        actual.pages.length !== report.matchingPairs.pages ||
+        actual.rows.length !== report.matchingPairs.rows
+      )
+        throw new Error("comparison_trial_pair_state_not_recovered");
+      for (const turn of report.matchingPairs.turns) {
+        const page = actual.pages.find((row) => row.page_id === turn.pageId);
+        if (
+          page?.state !== "committed" ||
+          page.row_count !== turn.records ||
+          !!page.complete !== turn.complete
+        )
+          throw new Error("comparison_trial_pair_receipt_not_recovered");
+      }
+      const validated = await db
+        .prepare(
+          `SELECT count(*) AS n FROM inventory_matching_pair_rows q JOIN inventory_matching_pair_pages p ON p.tenant=q.tenant AND p.page_id=q.page_id AND p.state='committed' JOIN inventory_matching_pair_guards g ON g.tenant=p.tenant AND g.page_id=p.page_id JOIN matching_work w ON w.tenant=q.tenant AND w.generation_id=p.generation_id AND w.destination=p.destination AND w.source_scope=p.source_scope AND w.record_key=q.record_key AND w.source_config_version=p.source_config_version AND w.destination_config_version=p.destination_config_version AND w.work_version>q.expected_work_version AND w.completed_version>=q.expected_completed_version WHERE q.tenant='trial'`,
+        )
+        .first<{ n: number }>();
+      if (validated?.n !== report.matchingPairs.rows)
+        throw new Error("comparison_trial_pair_work_not_recovered");
+      matchingPairRowsValidated = validated.n;
+    }
     let matchingInvalidationStateRecovered: boolean | undefined;
     if (report.matchingInvalidation?.sampled) {
       if (
@@ -1056,6 +1153,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       coordinatorProjectionsValidated,
       matchingWorkValidated,
       matchingInvalidationStateRecovered,
+      matchingPairRowsValidated,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

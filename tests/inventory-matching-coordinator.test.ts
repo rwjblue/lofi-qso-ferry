@@ -159,7 +159,7 @@ test("widening coordinator metadata preserves pending wakeups, cursors and linke
   }
 });
 
-test("bulk enqueue and a two-hundred-reference prefix publication wake the coordinator once each", async () => {
+test("bulk enqueue and a two-hundred-reference prefix publication wake the coordinator once each", async (t) => {
   const f = await coverageFixture(205);
   try {
     await applyMigration(f.db, "0069_inventory_matching_coordinator.sql");
@@ -175,6 +175,9 @@ test("bulk enqueue and a two-hundred-reference prefix publication wake the coord
     assert.ok("records" in expansion);
     assert.equal(expansion.records, 200);
     assert.equal(await version(), before + 1);
+    t.diagnostic(
+      `200-reference prefix publication with coordinator wake: ${expansion.statements} statements, ${expansion.rowsRead} reads, ${expansion.rowsWritten} writes`,
+    );
     const next = await f.work.enqueue(
       "a",
       f.generation,

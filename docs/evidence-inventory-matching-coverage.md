@@ -1,9 +1,11 @@
-# Matching coverage wait-point evidence
+# Matching coverage recovery evidence
 
-Status: local coverage wait points, readiness journaling and guarded prefix
-dispatch, 2026-11-08. The bounded rematching publisher is still missing; this is not yet
-automatic coverage recovery. Runtime activation remains off. No deployment,
-production reset or vendor upload occurred.
+Status: local coverage wait points, readiness journaling, guarded prefix dispatch,
+bounded rematching publication and automatic local coordinator recovery,
+2026-11-08. Hosted comparison Queue/cron wiring remains unfinished. Runtime
+activation remains off. No deployment, production reset or vendor upload occurred.
+The [selected-input audit](#selected-input-invalidation-gap) below exposes a
+separate edit-recovery gap that must be fixed before activation.
 
 ## Current wait points
 
@@ -128,6 +130,95 @@ Logs are `/tmp/lofi-ferry-coverage-dispatch-verified.log`,
 `/tmp/lofi-ferry-coverage-dispatch-history.log` and
 `/tmp/lofi-ferry-coverage-dispatch-worker.log`.
 
+## Bounded prefix expansion
+
+[Migration 0068](../migrations/0068_inventory_matching_coverage_pages.sql) and
+[InventoryMatchingCoverage](../src/inventory-matching-coverage.ts) queue at most ten
+current incomplete cohort/routes and 200 contact references per native batch.
+The frontier is `(destination, source_scope, seen_clock, set_id)`. Each eligible
+route probes at most eleven indexed dependencies before the results are merged;
+a global sort cannot first enumerate a whole current log. Native range and
+remaining-work guards use the corresponding route and clock bounds.
+
+Admission, exact row/configuration census, queued-work versions, fair job turn,
+frontier advancement and immutable receipt share one transaction. Row validation
+point-probes the exact current match/dependency reference. Configuration is checked
+once per distinct route. Prepared-page guards have a partial index and cannot
+walk committed proof history. Missing/forged members, ignored work and late
+account/configuration/roster/signal changes roll back the entire publication.
+Lost acknowledgements recover the original receipt without finishing newer work.
+
+A 205-reference fixture publishes 200 then five references. The first publication
+uses **six statements, 6,231 reads and 1,010 writes** before coordinator commit
+wakeups. The initial row guard repeatedly enumerated cohorts and used 57,187
+reads; exact reference validation and distinct-route checks remove that repeated
+work without weakening the census. Single-reference publication before/after 100
+retained pages uses **367 / 367 reads and twelve / twelve writes**.
+With the 0069 commit wake included, the 200-reference publication uses **6,233
+reads and 1,012 writes**, still six statements. These are publication-only native
+counts, excluding selection, preparation and leases; they are not hosted latency
+or initial-sync measurements. Log:
+`/tmp/lofi-ferry-matching-coordinator-publication-cost.log`.
+
+An old job with one versus 101 current observed cohorts reads **348 / 352 rows**
+and queues only the older reference. New comparisons at or after its signal clock
+are skipped. Disabled routes are excluded before dependency probes. A second
+pending node gets a turn before a large node's continuation. Query-plan checks
+require destination/source reverse-index predicates and exact-set row validation.
+The focused native and Worker tests cover 28 cases. Logs are
+`/tmp/lofi-ferry-coverage-pages-verified.log` and
+`/tmp/lofi-ferry-coverage-pages-history.log`.
+
+## Automatic local coordination
+
+[Migration 0069](../migrations/0069_inventory_matching_coordinator.sql) widens the
+metadata control to ten phases. Pair enrollment, bucket invalidation, coverage
+dispatch, prefix expansion and matching now run alongside index/projection work.
+One bulk enqueue or committed cohort wakes the coordinator once, including a
+200-reference prefix publication. Individual contacts do not each update the
+control row. Capacity holds retain their next retry deadline when the control
+parks; a due deadline restarts its phase cycle. See
+[coordinator evidence](evidence-inventory-coordinator.md#unified-matching-coordination).
+
+An actual Worker initially enrolls and compares 41 inventoried contacts without
+an explicit comparison request. Completing their missing receipt selection wakes
+the parked control, dispatches the prefix, expands the incomplete cohorts and
+produces 41 inventory-absence results with zero pending work/nodes. It preserves
+source checkpoints and credential ciphertext and creates zero attempts/vendor
+requests. This proves local coordinator recovery, not hosted Queue/cron delivery
+or complete real-source inventory. Logs are
+`/tmp/lofi-ferry-matching-coordinator-focused.log` and
+`/tmp/lofi-ferry-matching-coordinator-worker.log`.
+
+## Selected-input invalidation gap
+
+An additional edit-after-comparison audit starts with 21 current inventory-absence
+results, split into cohorts of twenty and one. Editing the first source contact
+and draining the coordinator leaves 21 stored results but only **two current
+results**, zero pending matching work and zero pending bucket jobs. The nineteen
+siblings in the original cohort stay hidden by their stale shared proof. This is
+a recovery/liveness failure; the current-result view does not expose a false
+valid result.
+
+Current bucket dependencies cover forward/reverse query probes. They do not
+separately index every directly selected source input, including selected keys
+that are missing or retired. A source projection wakes its own key, which cannot
+repair all remaining result references to its old shared proof. Coverage prefix
+recovery deliberately visits incomplete results and does not repair this ready
+cohort case.
+
+The next correctness change must retain a current reverse map for selected
+`(scope, record_key)` inputs, signal changes with bounded metadata, and requeue
+all current members of affected cohorts through a guarded publisher. Keep this
+separate from QSO-candidate bucket identities; do not fabricate query probes.
+Missing/retired inputs and cohorts with a member already moved to a newer set
+need regression coverage as well. Do not fan out all contacts inside ingestion.
+
+The isolated diagnostic is `/tmp/lofi-ferry-selected-cohort-edit-audit.log`.
+The expectation that all 21 results recover is reproduced in
+`/tmp/lofi-ferry-selected-cohort-edit-regression.log`; it is not covered by the
+561 passing repository cases. Resolve this before hosted activation.
+
 ## Costs and verification
 
 | Native comparison operation                    |                               Measurement |
@@ -169,16 +260,16 @@ twenty inventory-absence observations and collects the entries. It preserves
 source inventory/credential ciphertext, creates no attempts and makes no vendor
 requests. This test explicitly rematches; it does not prove automatic dispatch.
 
-The inventory regression passes **528 tests**, including calendar range geometry,
+The inventory regression passes **561 tests**, including calendar range geometry,
 cross-midnight ordering, empty reverse-source census, unchanged source/delta
-restoration, projection hold recovery, guarded prefix dispatch, retained-history
+restoration, projection hold recovery, guarded prefix dispatch/expansion, automatic coordinator recovery, retained-history
 cost bounds, native rollback and Worker execution. TypeScript, lint, formatting
 and the Worker dry-run build pass. Logs are
-`/tmp/lofi-ferry-coverage-dispatch-inventory-final.log`,
-`/tmp/lofi-ferry-coverage-dispatch-types-final.log`,
-`/tmp/lofi-ferry-coverage-dispatch-lint-final.log`,
-`/tmp/lofi-ferry-coverage-dispatch-format-final.log` and
-`/tmp/lofi-ferry-coverage-dispatch-build.log`.
+`/tmp/lofi-ferry-matching-coordinator-inventory.log`,
+`/tmp/lofi-ferry-matching-coordinator-types-current.log`,
+`/tmp/lofi-ferry-matching-coordinator-lint.log`,
+`/tmp/lofi-ferry-matching-coordinator-format.log` and
+`/tmp/lofi-ferry-matching-coordinator-build.log`.
 
 ## Encrypted replay
 
@@ -216,21 +307,26 @@ access. The older 0065 capture still reopens without schema changes. Logs are
 `/tmp/lofi-ferry-coverage-dispatch-reopen.log` and
 `/tmp/lofi-ferry-coverage-dispatch-compat.log`.
 
-## Remaining work
+The replay through 0069 is `fd09a2cb-ce7d-4efa-82ec-becc1d014c43`. It preserves the
+400-reference pair sample, twenty completed matching claims and 380 pending items.
+The four sampled coordinator turns leave a ten-phase control at phase four;
+subsequent sampled publications leave wake version 15 versus observed version nine.
+The captured control therefore records the final pending signal rather than an
+older snapshot taken before those publishers committed.
 
-Implement the bounded publisher over eligible current routes/cohorts. Old jobs must skip
-comparisons prepared at or after its captured scope clock; late signals and lost
-acknowledgements must leave newer work pending. Whole-log recovery per completed
-LoTW day remains disallowed.
+Coverage dispatch and expansion remain idle because the partial source baseline
+still needs projection recovery. Their state audits contain zero invalid bindings
+or receipts and recover in a fresh process, alongside 82 derived bodies, twenty
+matching results/claims and 400 pair references. This is not a positive real-data
+coverage recovery or full initial-sync trial. The copy allocates **16,240,640
+bytes**, preserves canonical inventory/checkpoints/credentials and makes zero
+vendor requests/uploads. Its 21 private entries have no group/world access. The
+0067 capture still reopens without changing its schema. Logs are
+`/tmp/lofi-ferry-matching-coordinator-capture.log`,
+`/tmp/lofi-ferry-matching-coordinator-reopen.log` and
+`/tmp/lofi-ferry-matching-coordinator-compat.log`.
 
-Use a `(destination, source_scope, seen_clock, set_id)` frontier, with at most ten
-current cohort/routes and 200 incomplete references per publication. The exact
-census, work versions, lease, frontier and immutable receipt must publish together.
-Prepared-receipt lookups need a partial index so final guards do not traverse
-retained proof history. Replaced current dependencies may disappear; a newly
-prepared comparison already sees the clock and must not be requeued by old work.
-Also qualify existing bucket expansion against large disabled-route maps; its
-current cohort selection does not yet use the same route-first reverse index.
+## Projection recovery holds
 
 Projection recovery is now narrowed by
 [migration 0066](../migrations/0066_inventory_projection_coverage_holds.sql).
@@ -246,7 +342,16 @@ The focused native/Worker/projection suite passes 27 tests. Logs are
 `/tmp/lofi-ferry-projection-coverage-holds-focused.log` and
 `/tmp/lofi-ferry-projection-coverage-holds-types.log`.
 
-Then integrate coverage, pair, bucket, matching and conservative adoption phases
-with the durable coordinator/hosted wakeups. Ownership-aware planning, source
-proofs, delivery ownership/submission, member recovery, GC, restore quarantine,
-storage qualification and the account-preserving cutover remain unfinished.
+
+## Remaining work
+
+Fix selected-input invalidation first. Then connect the coordinator to durable
+hosted wakeups, bounded Queue execution and
+periodic retry/lost-message recovery. Automatic adoption scheduling and
+ownership-aware planning remain separate work. Qualify existing bucket expansion
+against large disabled-route maps; its current cohort selection does not yet use
+the same route-first reverse index.
+
+Fresh source proofs, delivery ownership/submission, LoTW date discovery/member
+recovery, GC, restore quarantine, storage/initial-sync qualification and the
+account-preserving cutover remain unfinished.

@@ -1,11 +1,16 @@
 # Comparison coordinator evidence
 
-Status: local durable build/projection coordination and managed generation
-activation, 2026-11-08. Hosted comparison Queue/cron wiring, matching invalidation/coordination,
-ownership-aware planning and delivery remain unfinished. Runtime activation is off;
-nothing was pushed, deployed, uploaded or reset in production.
+Status: local durable build/projection/matching coordination and managed generation
+activation, 2026-11-08. The ten-phase extension and retry deadlines are described
+in [unified matching coordination](#unified-matching-coordination). Hosted comparison
+Queue/cron wiring, automatic adoption, ownership-aware planning and delivery remain
+unfinished. Runtime activation is off; nothing was pushed, deployed, uploaded or
+reset in production.
+An additional [selected-input edit audit](evidence-inventory-matching-coverage.md#selected-input-invalidation-gap)
+strands sibling cohort results after one source edit. Fix that recovery gap before
+hosted activation; the passing coverage-completion tests do not cover it.
 
-## Durable turns and wakeups
+## Original five-phase turns and wakeups
 
 [InventoryComparisonCoordinator](../src/inventory-comparison-coordinator.ts) creates
 a tenant's first comparison generation when needed and advances one bounded phase
@@ -170,15 +175,77 @@ schema and receipts; neither is a full-log storage density estimate. Logs are
 `/tmp/lofi-ferry-scoped-work-reopen-final.log` and
 `/tmp/lofi-ferry-coordinator-compat-reopen.log`.
 
+## Unified matching coordination
+
+[Migration 0069](../migrations/0069_inventory_matching_coordinator.sql) rebuilds only
+the small metadata control table, preserving progress/wake/observed counters,
+phase and build cursor. It resets the old idle streak and adds phase count and
+next retry deadline. Referencing wake triggers are suspended and recreated around
+the replacement, including the pair-job triggers. Account links, credentials,
+encryption identities and canonical inventory are untouched.
+
+The current phase rotation is:
+
+| Phase | Work                         | Bound per turn                            |
+| ----- | ---------------------------- | ----------------------------------------- |
+| 0     | Index build                  | 200 records                               |
+| 1     | Operation projection fanout  | 200 source references                     |
+| 2     | Projection coverage recovery | 200 source references                     |
+| 3     | Projection publication       | 20 projections                            |
+| 4     | Managed activation           | Current scope metadata/debt               |
+| 5     | Pair enrollment              | 200 current source/result keys            |
+| 6     | Bucket invalidation          | 10 cohorts / 200 references               |
+| 7     | Coverage readiness dispatch  | 44 opaque calendar prefixes               |
+| 8     | Coverage prefix expansion    | 10 current cohort/routes / 200 members    |
+| 9     | Matching work                | 20 selected / 128 total record references |
+
+Existing child input/byte/lease/configuration guards remain authoritative.
+Metadata phases can interleave with active matching while a pending generation
+builds. A full cycle of ten idle turns parks the control. `more=false` still
+means no immediate continuation, not complete upstream inventory or delivery.
+
+Bulk explicit matching enqueue and child cohort publication wake once per batch,
+rather than once per contact. The 200-reference test observes exactly one wake
+increment. Accounts/connections and pair-job signals also wake controls. The
+latest wake version is observed at phase completion; a concurrent producer cannot
+be swallowed by an old idle decision.
+
+The matching phase records the earliest pending deadline through indexed route
+heads. Capacity-held work remains pending while the control parks with that
+retry time. An elapsed deadline restarts a complete phase cycle, and successful
+matching clears the deadline. Native tests exercise parked deferrals and due
+resumption without refreshing upstream observations or creating attempts.
+
+An actual Worker automatically enrolls 41 source contacts, publishes incomplete
+comparisons, parks, then recovers all 41 after a receipt selection completes. It
+runs dispatch, bounded prefix expansion and matching through ordinary coordinator
+requests, with no explicit comparison call, vendor HTTP or delivery attempt.
+Source checkpoints and credential ciphertext remain unchanged. The local phases
+are implemented; hosted comparison message publication/consumption and periodic
+recovery are not yet wired. See [coverage recovery evidence](evidence-inventory-matching-coverage.md).
+
+The full inventory regression passes **561 tests**. Existing managed activation,
+rebuild, contention, wakeup and large-history tests pass with the widened control.
+TypeScript, lint, formatting and the Worker dry-run build pass. Logs are
+`/tmp/lofi-ferry-matching-coordinator-inventory.log`,
+`/tmp/lofi-ferry-matching-coordinator-existing.log`,
+`/tmp/lofi-ferry-matching-coordinator-focused.log` and
+`/tmp/lofi-ferry-matching-coordinator-worker.log`.
+
+The latest encrypted replay stores the final ten-phase control after later
+sampled publishers have woken it. Fresh-process reopen recovers its pending wake
+rather than an earlier control snapshot. Older five-phase capture reports retain
+their original read-only field selection. This controlled partial capture does
+not qualify automatic full real-source recovery or initial-sync throughput.
+
 ## Remaining work
 
-The [matching-work lifecycle](evidence-inventory-matching-work.md) now captures and
-completes bounded work versions independently, and the [bucket invalidation
-path](evidence-inventory-matching-invalidation.md) now expands current dependencies.
-Add scope/coverage/connection invalidation,
-matching turns, ownership-aware result selection and conservative adoption to the
-coordinator. Connect bounded Queue/cron wakeups
-with retry/fairness and lost-message recovery. Qualify full-turn D1/CPU/storage costs
-and many-scope/large-history behavior on the larger workloads. Then integrate fresh source
-proofs, new delivery ownership, QRZ submission and member-aware LoTW recovery.
-Retention/GC, restore quarantine and account-preserving cutover remain unfinished.
+Repair selected-input cohort invalidation, including missing/retired inputs and
+partially replaced cohorts. Then connect bounded Queue/cron wakeups with retry,
+fairness and lost-message recovery.
+Add ownership-aware result selection and conservative automatic adoption.
+Qualify full-turn D1/CPU/storage costs and many-scope/large-history behavior on the
+larger workloads, including disabled-route bucket maps. Then integrate fresh
+source proofs, new delivery ownership, QRZ submission and member-aware LoTW date
+selection/recovery. Retention/GC, restore quarantine and account-preserving cutover
+remain unfinished.

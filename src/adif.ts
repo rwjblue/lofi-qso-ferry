@@ -1,5 +1,16 @@
 /** ADI is ASCII, not ADX: reject unsupported text instead of corrupting lengths. */
 export type AdifRecord = Record<string, string>;
+/** ADIF assigns OPERATOR as the station only when STATION_CALLSIGN is absent.
+ * Explicit invalid/empty station evidence must not be replaced by a fallback.
+ * https://www.adif.org/318/ADIF_318_annotated.htm#QSO_Field_OPERATOR */
+export function adifStationCallsign(
+  record: Readonly<Record<string, unknown>>,
+): string | undefined {
+  const value = Object.hasOwn(record, "STATION_CALLSIGN")
+    ? record.STATION_CALLSIGN
+    : record.OPERATOR;
+  return typeof value === "string" ? value : undefined;
+}
 export interface AdifDocument {
   header: AdifRecord;
   records: AdifRecord[];

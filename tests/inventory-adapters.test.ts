@@ -405,6 +405,39 @@ test("QRZ STATUS mismatch and contradictory result scope block the entire select
   }
 });
 
+test("QRZ reads apply the ADIF operator fallback without replacing explicit station evidence", async () => {
+  for (const [station, operator, accepted] of [
+    [undefined, book.stationCallsign, true],
+    [undefined, "W2AW", false],
+    [undefined, undefined, false],
+    ["W2AW", book.stationCallsign, false],
+    ["", book.stationCallsign, false],
+    [book.stationCallsign, "W2AW", true],
+  ] as const) {
+    const record = { ...adif };
+    delete record.STATION_CALLSIGN;
+    if (station !== undefined) record.STATION_CALLSIGN = station;
+    if (operator !== undefined) record.OPERATOR = operator;
+    let calls = 0;
+    const result = await createQrzInventoryAdapter("key", book).readStep(
+      context(
+        async () =>
+          new Response(++calls === 1 ? statusBody() : fetchBody([record])),
+      ),
+      qrzRequest(),
+    );
+    assert.equal(result.kind, accepted ? "page" : "blocked");
+    if (result.kind === "page")
+      assert.deepEqual(
+        result.observations[0]?.body,
+        record,
+        "raw observations preserve the original fields",
+      );
+    else
+      assert.ok(result.kind === "blocked" && result.code === "scope_mismatch");
+  }
+});
+
 test("QRZ ambiguous empty remains verification work and STATUS consumes request/byte budgets", async () => {
   const status = statusBody();
   const ambiguous = "RESULT=FAIL&COUNT=0";

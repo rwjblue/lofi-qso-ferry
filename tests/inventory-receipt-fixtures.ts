@@ -104,6 +104,8 @@ export async function receiptFixture(provider: "qrz" | "lotw" = "qrz") {
   return {
     ...f,
     generation,
+    inventory,
+    lease,
     workspace: new InventoryProjectionWorkspace(f.store),
   };
 }

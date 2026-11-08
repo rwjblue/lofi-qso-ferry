@@ -1,4 +1,4 @@
-import type { AdifRecord } from "./adif.ts";
+import { type AdifRecord, adifStationCallsign } from "./adif.ts";
 import { contactReconciliationAdif } from "./contact-adif.ts";
 import { historicalCandidates } from "./historical-matching.ts";
 import { InventoryComparisonGenerations } from "./inventory-comparison-generations.ts";
@@ -131,13 +131,18 @@ function object(value: unknown): SourceRecord {
     ? (value as SourceRecord)
     : {};
 }
-function compact(body: unknown): AdifRecord {
-  return Object.fromEntries(
+function compact(body: unknown, provider: "qrz" | "lotw"): AdifRecord {
+  const record = Object.fromEntries(
     Object.entries(object(body)).filter(
       (entry): entry is [string, string] =>
         comparisonFields.has(entry[0]) && typeof entry[1] === "string",
     ),
   );
+  if (provider === "qrz") {
+    const station = adifStationCallsign(object(body));
+    if (station !== undefined) record.STATION_CALLSIGN = station;
+  }
+  return record;
 }
 function identifier(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 512;
@@ -360,7 +365,7 @@ export class InventoryProjectionWorkspace {
       )
         reason = "projection_scope_unavailable";
       else if (current.provider !== "lofi") {
-        const record = compact(raw);
+        const record = compact(raw, current.provider);
         state =
           historicalCandidates(current.provider, record, [record]).state ===
           "unique"

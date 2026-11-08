@@ -1,4 +1,4 @@
-import type { AdifRecord } from "./adif.ts";
+import { type AdifRecord, adifStationCallsign } from "./adif.ts";
 import type { InventoryObservation } from "./inventory-ingestion.ts";
 import {
   InventoryObservationError,
@@ -776,7 +776,7 @@ function withinQrzScope(
     typeof date === "string" &&
     /^\d{8}$/.test(date) &&
     validDate(`${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`) &&
-    body.STATION_CALLSIGN?.toUpperCase() ===
+    adifStationCallsign(body)?.toUpperCase() ===
       book.stationCallsign.toUpperCase() &&
     date >= selection.between[0].replaceAll("-", "") &&
     date <= selection.between[1].replaceAll("-", "")

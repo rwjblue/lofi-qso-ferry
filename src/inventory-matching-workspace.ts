@@ -87,6 +87,12 @@ export interface InventoryMatchingDecision {
   remote: InventoryMatchingReference | null;
   coverage: string[];
 }
+export interface InventoryMatchingRecovery {
+  scope: string;
+  facet: "source" | "receipt";
+  subject: InventoryMatchingReference;
+  nodes: string[];
+}
 interface SelectedRow {
   ordinal: number;
   key: string | null;
@@ -153,8 +159,8 @@ function coveringCoverage(
   body: InventoryProjectionBody,
   scope: InventoryMatchingScope,
   rows: CoverageRow[],
+  window = interval(body),
 ): string[] | null {
-  const window = interval(body);
   if (!window) return null;
   const ranges: { start: string; end: string; key: string }[] = [];
   for (const row of rows) {
@@ -230,11 +236,17 @@ function coveringCoverage(
  * complete dependencies; this class never publishes match/adoption/write state. */
 export class InventoryMatchingWorkspace {
   private readonly trackCoverageClocks: boolean;
+  private readonly trackCoverageRecovery: boolean;
   constructor(
     readonly store: Store,
-    options: { trackCoverageClocks?: boolean } = {},
+    options: {
+      trackCoverageClocks?: boolean;
+      trackCoverageRecovery?: boolean;
+    } = {},
   ) {
     this.trackCoverageClocks = options.trackCoverageClocks !== false;
+    this.trackCoverageRecovery =
+      this.trackCoverageClocks && options.trackCoverageRecovery !== false;
   }
 
   async prepare(
@@ -634,9 +646,102 @@ export class InventoryMatchingWorkspace {
           : [],
       };
     });
+    const recovery: InventoryMatchingRecovery[] = [];
+    if (this.trackCoverageRecovery) {
+      const incomplete = results.find((row) => row.state === "incomplete");
+      if (incomplete) {
+        const missingFullSource = (scope: InventoryMatchingScope) =>
+          !coverageRows.results.some((row) => fullSource(row, scope));
+        const sourceRecoveries = new Set<string>();
+        if (results.some((row) => row.reason === "reverse_incomplete"))
+          for (const scope of sourceScopes)
+            if (
+              scope.scope &&
+              scope.provider === "lofi" &&
+              missingFullSource(scope)
+            )
+              sourceRecoveries.add(scope.scope);
+        for (const { reference, candidate } of records.values()) {
+          const scope = byScope.get(reference.scope);
+          if (
+            reference.facet === "source" &&
+            candidate &&
+            !candidate.currentProjectionVersion &&
+            !bodies.get(referenceKey(reference)) &&
+            scope?.provider === "lofi" &&
+            (missingFullSource(scope) ||
+              coverageRows.results.some(
+                (row) =>
+                  row.scope === scope.scope &&
+                  row.facet === "source" &&
+                  row.state !== "ready",
+              ))
+          )
+            sourceRecoveries.add(reference.scope);
+        }
+        for (const scope of sourceRecoveries)
+          recovery.push({
+            scope,
+            facet: "source",
+            subject: incomplete.source,
+            nodes: [""],
+          });
+        const days: { date: string; subject: InventoryMatchingReference }[] =
+          [];
+        for (const row of results) {
+          const body = bodies.get(referenceKey(row.source));
+          const window = body && interval(body);
+          if (
+            row.state !== "incomplete" ||
+            body?.state !== "ready" ||
+            !window ||
+            coveringCoverage(body, target, coverageRows.results)
+          )
+            continue;
+          let date = window.start;
+          for (let count = 0; ; count++) {
+            if (count >= 2)
+              throw new Error("inventory_matching_recovery_split_required");
+            if (
+              !coveringCoverage(body, target, coverageRows.results, {
+                start: date,
+                end: date,
+              })
+            ) {
+              days.push({ date, subject: row.source });
+              // One unmet day is a sufficient wait point: until it completes,
+              // the full window cannot be covered. Then prepare again and
+              // subscribe to any remaining gap instead of retaining both days.
+              break;
+            }
+            if (date === window.end) break;
+            date = new Date(Date.parse(`${date}T00:00:00Z`) + 86400000)
+              .toISOString()
+              .slice(0, 10);
+          }
+        }
+        const tokens = await session.coverageDays(destination, [
+          ...new Set(days.map((row) => row.date)),
+        ]);
+        const byDate = new Map(tokens.map((row) => [row.date, row.tags]));
+        for (const { date, subject } of days) {
+          const nodes = byDate.get(date);
+          if (!nodes)
+            throw new Error("inventory_matching_recovery_tokens_missing");
+          recovery.push({
+            scope: destination,
+            facet: "receipt",
+            subject,
+            nodes,
+          });
+        }
+      }
+    }
     const snapshot = {
       formatVersion: 1 as const,
       coverageClocks: this.trackCoverageClocks ? (1 as const) : undefined,
+      coverageRecovery: this.trackCoverageRecovery ? (1 as const) : undefined,
+      recovery: this.trackCoverageRecovery ? recovery : undefined,
       tenant,
       destination,
       generation: session.generation,

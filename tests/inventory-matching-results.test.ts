@@ -309,7 +309,7 @@ test("legacy read-only snapshots cannot bypass coverage-set publication fences",
     assert.ok(legacy.scopes.every((row) => row.coverageClock === undefined));
     await assert.rejects(
       f.matches.publish(legacy, f.lease),
-      /coverage set changed/,
+      /coverage (set changed|recovery missing)/,
     );
     await empty(f);
     const forged = structuredClone(f.page);

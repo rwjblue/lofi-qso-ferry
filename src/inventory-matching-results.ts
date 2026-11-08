@@ -130,6 +130,8 @@ export class InventoryMatchingResults {
       page.coverage.length > 256 ||
       page.lookups.length > 148 ||
       page.graph.policyVersion !== 2 ||
+      (page.coverageRecovery === 1 &&
+        (!page.recovery || page.recovery.length > 40)) ||
       new Set(page.results.map((row) => refKey(row.source))).size !==
         page.results.length ||
       page.results.some(
@@ -179,9 +181,10 @@ export class InventoryMatchingResults {
         facet: candidate.facet,
       })),
     );
+    const recovery = page.recovery ?? [];
     const plan = [
       this.store.statement(
-        `INSERT INTO inventory_match_sets(tenant,set_id,destination,generation_id,domain_version,source_set_version,policy_version,result_version,input_digest,lease_token,lease_fence,prepared_at,scope_count,coverage_count,record_count,probe_count,token_count,candidate_count,row_count) VALUES(?,?,?,?,?,?,2,1,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO inventory_match_sets(tenant,set_id,destination,generation_id,domain_version,source_set_version,policy_version,result_version,input_digest,lease_token,lease_fence,prepared_at,scope_count,coverage_count,record_count,probe_count,token_count,candidate_count,row_count${page.coverageRecovery === 1 ? ",recovery_count" : ""}) VALUES(?,?,?,?,?,?,2,1,?,?,?,?,?,?,?,?,?,?,?${page.coverageRecovery === 1 ? ",?" : ""})`,
         page.tenant,
         id,
         page.destination,
@@ -199,6 +202,7 @@ export class InventoryMatchingResults {
         tokens.length,
         candidates.length,
         rows.length,
+        ...(page.coverageRecovery === 1 ? [recovery.length] : []),
       ),
     ];
     const stage = (
@@ -263,6 +267,13 @@ export class InventoryMatchingResults {
       `json_extract(value,'$.source.scope'),json_extract(value,'$.source.key'),json_extract(value,'$.expectedVersion'),json_extract(value,'$.state'),json_extract(value,'$.reason'),json_extract(value,'$.remote.key'),json_extract(value,'$.coverage')`,
       rows,
     );
+    if (page.coverageRecovery === 1)
+      stage(
+        "inventory_match_recovery",
+        "recovery_id,scope_id,facet,subject_scope,subject_key,nodes",
+        `CAST(key AS INTEGER),json_extract(value,'$.scope'),json_extract(value,'$.facet'),json_extract(value,'$.subject.scope'),json_extract(value,'$.subject.key'),json_extract(value,'$.nodes')`,
+        recovery,
+      );
     if (work) {
       plan.push(
         this.store.statement(

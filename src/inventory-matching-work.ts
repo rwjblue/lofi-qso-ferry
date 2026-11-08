@@ -12,6 +12,7 @@ const capacityErrors = new Set([
   "inventory_matching_scope_split_required",
   "inventory_matching_record_split_required",
   "inventory_matching_coverage_split_required",
+  "inventory_matching_recovery_split_required",
   "inventory_matching_candidate_split_required",
   "inventory_matching_probe_split_required",
   "inventory_projection_read_split_required",

@@ -8,6 +8,7 @@ import {
   type InventoryComparisonToken,
   inventoryComparisonLookup,
 } from "./inventory-comparison-keys.ts";
+import { inventoryCoverageDays } from "./inventory-coverage-keys.ts";
 import { canonical } from "./security.ts";
 import type { Store } from "./store.ts";
 
@@ -91,6 +92,8 @@ export class InventoryComparisonLookup {
       domainVersion: writers.domain.version,
       sourceSetVersion: writers.domain.source_set_version,
       active: writers.domain.active_generation === context.generation,
+      coverageDays: (scope: string, dates: readonly string[]) =>
+        inventoryCoverageDays(context, scope, dates),
       probe: (requests: InventoryComparisonRequest[]) =>
         this.collect(tenant, requests, writers.domain, context),
     });

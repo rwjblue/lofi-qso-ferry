@@ -2,6 +2,7 @@
 #MISE description="Continue full service selections and local comparisons in a private read-only trial"
 #USAGE flag "--capture <directory>" help="Create a private trial from existing captured linked credentials"
 #USAGE flag "--resume <directory>" help="Resume the existing trial's active baseline jobs"
+#USAGE flag "--verify-held" help="Explicitly restart held selections as full verification runs; requires --resume"
 #USAGE flag "--reopen <directory>" help="Audit persistent state and decrypt a sample without service requests"
 #USAGE flag "--max-requests <requests>" default="120" help="Maximum real requests in this invocation, 1 to 5000"
 #USAGE flag "--max-minutes <minutes>" default="20" help="Maximum continuation time in this invocation, up to 60 minutes"

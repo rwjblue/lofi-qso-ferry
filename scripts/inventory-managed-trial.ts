@@ -8,7 +8,15 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
 import { InventoryComparisonPages } from "../src/inventory-comparison-pages.ts";
-import { InventoryIngestion } from "../src/inventory-ingestion.ts";
+import {
+  InventoryIngestion,
+  type InventoryStream,
+} from "../src/inventory-ingestion.ts";
+import {
+  type InventoryScanPlan,
+  planInventoryRun,
+} from "../src/inventory-run-plans.ts";
+import type { InventoryRunDefinition } from "../src/inventory-run-publication.ts";
 import {
   InventoryRunner,
   type InventoryRunWakeup,
@@ -39,12 +47,22 @@ interface Manifest {
   captureFingerprint: string;
   createdAt: number;
   initialRuns: string[];
+  currentRuns?: string[];
+  verifications?: { previous: string; replacement: string; at: number }[];
+  pendingVerification?: {
+    previous: string;
+    at: number;
+    stream: InventoryStream;
+    definition: InventoryRunDefinition;
+    expectedJobVersion: number;
+  };
   credentialFingerprint: string;
   invocations: number;
 }
 interface Options {
   capture?: string;
   resume?: string;
+  verifyHeld?: boolean;
   maxRequests?: number;
   maxDurationMs?: number;
 }
@@ -198,12 +216,93 @@ async function manifest(directory: string) {
   );
   return value;
 }
+
+/** Journal the authorization before native publication, then finish it on resume. */
+async function finishVerification(
+  directory: string,
+  m: Manifest,
+  runs: InventoryRuns,
+) {
+  const pending = m.pendingVerification;
+  if (!pending) return;
+  const current = m.currentRuns ?? m.initialRuns;
+  assert.ok(current.includes(pending.previous));
+  assert.equal(pending.stream.tenant, "trial");
+  assert.equal(pending.definition.mode, "full");
+  const store = runs.inventory.store;
+  const lease = await store.claim(
+    "trial",
+    `inventory:${pending.stream.scope}`,
+    Date.now(),
+    90000,
+  );
+  assert.ok(lease, "verification selection is busy");
+  try {
+    const replacement = await runs.begin({
+      stream: pending.stream,
+      definition: pending.definition,
+      expectedJobVersion: pending.expectedJobVersion,
+      replaceHeld: true,
+      lease,
+    });
+    m.currentRuns = current.map((id) =>
+      id === pending.previous ? replacement.id : id,
+    );
+    m.verifications ??= [];
+    m.verifications.push({
+      previous: pending.previous,
+      replacement: replacement.id,
+      at: pending.at,
+    });
+    delete m.pendingVerification;
+    await privateJson(directory, "manifest.json", m);
+  } finally {
+    await store.release(lease);
+  }
+}
+
+async function verifyHeld(directory: string, m: Manifest, runs: InventoryRuns) {
+  const held = await runs.inventory.store
+    .statement(
+      "SELECT r.run_id,r.scope_id,r.stream_id,j.work_version,p.plan FROM json_each(?) x CROSS JOIN inventory_runs r JOIN inventory_stream_jobs j ON j.tenant=r.tenant AND j.scope_id=r.scope_id AND j.stream_id=r.stream_id AND j.active_run_id=r.run_id JOIN inventory_scheduled_selections p ON p.tenant=r.tenant AND p.scope_id=r.scope_id AND p.stream_id=r.stream_id WHERE r.tenant='trial' AND r.run_id=x.value AND r.phase='held' AND j.state='held' ORDER BY r.scope_id,r.stream_id",
+      JSON.stringify(m.currentRuns ?? m.initialRuns),
+    )
+    .all<{
+      run_id: string;
+      scope_id: string;
+      stream_id: string;
+      work_version: number;
+      plan: string;
+    }>();
+  for (const row of held.results) {
+    const stream = await runs.inventory.snapshot(
+      "trial",
+      row.scope_id,
+      row.stream_id,
+    );
+    assert.ok(stream);
+    const at = Date.now();
+    m.pendingVerification = {
+      previous: row.run_id,
+      at,
+      stream,
+      definition: await planInventoryRun(
+        stream,
+        JSON.parse(row.plan) as InventoryScanPlan,
+        { mode: "full", now: at },
+      ),
+      expectedJobVersion: row.work_version,
+    };
+    await privateJson(directory, "manifest.json", m);
+    await finishVerification(directory, m, runs);
+  }
+}
 async function audit(f: Runtime, m: Manifest) {
   const runs = await f.db
     .prepare(
       "SELECT s.provider,r.phase,r.version,j.state AS jobState,j.reason,c.state AS coverageState,c.published_run_id=r.run_id AS publishedSelection FROM json_each(?) x CROSS JOIN inventory_runs r JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.scope_id JOIN inventory_stream_jobs j ON j.tenant=r.tenant AND j.scope_id=r.scope_id AND j.stream_id=r.stream_id JOIN inventory_coverage c ON c.tenant=r.tenant AND c.scope_id=r.scope_id AND c.stream_id=r.stream_id AND c.facet=r.facet AND c.partition_id=r.partition_id WHERE r.tenant='trial' AND r.run_id=x.value ORDER BY s.provider",
     )
-    .bind(JSON.stringify(m.initialRuns))
+    .bind(JSON.stringify(m.currentRuns ?? m.initialRuns))
     .all<{
       provider: string;
       phase: string;
@@ -256,6 +355,10 @@ export async function inventoryManagedTrial(
   dependencies: Dependencies = {},
 ) {
   assert.ok(Boolean(options.capture) !== Boolean(options.resume));
+  assert.ok(
+    !options.verifyHeld || options.resume,
+    "verification needs --resume",
+  );
   const maxRequests = options.maxRequests ?? 120,
     maxDurationMs = options.maxDurationMs ?? 20 * 60000;
   assert.ok(
@@ -314,6 +417,8 @@ export async function inventoryManagedTrial(
       new InventoryComparisonPages(store),
     );
     const runs = new InventoryRuns(ingestion);
+    await finishVerification(directory, m, runs);
+    if (options.verifyHeld) await verifyHeld(directory, m, runs);
     const transport = createInventoryTrialTransport(
       dependencies.fetcher ?? fetch,
       { maxRequests, minLoFiIntervalMs: dependencies.fetcher ? 0 : 20000 },
@@ -411,6 +516,11 @@ export async function inventoryManagedTrial(
       if (Date.now() - lastProgress >= 30000) progress();
     }
     const state = await audit(f, m);
+    if (
+      ["quiescent", "comparison_parked"].includes(stopReason) &&
+      state.runs.some((run) => run.phase === "held")
+    )
+      stopReason = "selection_held";
     const original = await load(m.sourceCapture);
     assert.equal(
       original.captureFingerprint,
@@ -424,6 +534,7 @@ export async function inventoryManagedTrial(
       kind: m.kind,
       directory,
       invocation: m.invocations,
+      verificationRestarts: m.verifications?.length ?? 0,
       stopReason,
       ...state,
       originalAccessUnchanged: true,
@@ -448,6 +559,7 @@ export async function inventoryManagedTrial(
       execution: "node_with_native_d1",
       hostedQueueExcluded: true,
     };
+    await privateJson(directory, `report-${m.invocations}.json`, report);
     await privateJson(directory, "report.json", report);
     progress();
     return report;
@@ -499,6 +611,7 @@ if (
       options: {
         capture: { type: "string" },
         resume: { type: "string" },
+        "verify-held": { type: "boolean", default: false },
         reopen: { type: "string" },
         "max-requests": { type: "string", default: "120" },
         "max-minutes": { type: "string", default: "20" },
@@ -508,12 +621,14 @@ if (
       [values.capture, values.resume, values.reopen].filter(Boolean).length,
       1,
     );
+    assert.ok(!values["verify-held"] || values.resume);
     const report = values.reopen
       ? await inspectManagedInventoryTrial(values.reopen)
       : await inventoryManagedTrial(
           {
             capture: values.capture,
             resume: values.resume,
+            verifyHeld: values["verify-held"],
             maxRequests: Number(values["max-requests"]),
             maxDurationMs: Number(values["max-minutes"]) * 60000,
           },
@@ -525,7 +640,9 @@ if (
     process.stdout.write(`${JSON.stringify(report)}\n`);
     if (
       "stopReason" in report &&
-      ["read_turn_failed", "comparison_turn_failed"].includes(report.stopReason)
+      ["read_turn_failed", "comparison_turn_failed", "selection_held"].includes(
+        report.stopReason,
+      )
     )
       process.exitCode = 1;
   } catch {

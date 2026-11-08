@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
+import {
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,7 +14,17 @@ import {
   inspectManagedInventoryTrial,
   inventoryManagedTrial,
 } from "../scripts/inventory-managed-trial.ts";
-import type { inventoryTrialAccess } from "../scripts/inventory-run-trial.ts";
+import {
+  type inventoryTrialAccess,
+  openInventoryTrial,
+} from "../scripts/inventory-run-trial.ts";
+import { serializeAdifRecord } from "../src/adif.ts";
+import {
+  InventoryIngestion,
+  type InventoryStream,
+} from "../src/inventory-ingestion.ts";
+import { planInventoryRun } from "../src/inventory-run-plans.ts";
+import { InventoryRuns } from "../src/inventory-runs.ts";
 import type { Connection } from "../src/store.ts";
 import { trialCapture } from "./inventory-trial-capture-fixtures.ts";
 
@@ -135,7 +152,12 @@ test("managed trial completes real native selections and reopens without additio
   assert.ok(reopened.sampleDecrypted && reopened.credentialEnvelopesUnchanged);
   assert.deepEqual(reopened.runs, report.runs);
   assert.equal(reopened.requests, 0);
-  for (const name of ["keys.json", "manifest.json", "report.json"])
+  for (const name of [
+    "keys.json",
+    "manifest.json",
+    "report.json",
+    "report-1.json",
+  ])
     assert.equal((await stat(join(report.directory, name))).mode & 0o077, 0);
   assert.equal((await stat(report.directory)).mode & 0o077, 0);
   assert.ok(!JSON.stringify(report).includes("browser:synthetic"));
@@ -236,4 +258,157 @@ test("a spent continuation deadline leaves resumable state without service reads
   const reopened = await inspectManagedInventoryTrial(result.directory);
   assert.equal(reopened.runs.length, 3);
   assert.ok(reopened.runs.every((row) => row.phase === "collecting"));
+});
+
+test("held QRZ selections require explicit verification and leave completed source runs alone", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ferry-managed-held-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const mock = transport();
+  let valid = false;
+  const fetcher: typeof fetch = async (input, init) => {
+    if (
+      new URL(String(input)).hostname === "logbook.qrz.com" &&
+      init?.body instanceof URLSearchParams &&
+      init.body.get("ACTION") === "FETCH"
+    ) {
+      mock.calls.qrz++;
+      const record = {
+        CALL: "W1AW",
+        QSO_DATE: "20261108",
+        TIME_ON: "1300",
+        BAND: "20m",
+        MODE: "CW",
+        MY_GRIDSQUARE: "FN31",
+        APP_QRZLOG_LOGID: "9",
+        OPERATOR: book.stationCallsign,
+        ...(!valid ? { STATION_CALLSIGN: "W2AW" } : {}),
+      };
+      return new Response(
+        new URLSearchParams({
+          RESULT: "OK",
+          COUNT: "1",
+          ADIF: serializeAdifRecord(record),
+        }),
+      );
+    }
+    return mock.fetcher(input, init);
+  };
+  const first = await inventoryManagedTrial(
+    { capture: "synthetic", maxRequests: 20, maxDurationMs: 90000 },
+    { root, access, fetcher },
+  );
+  assert.equal(first.stopReason, "selection_held");
+  assert.ok(
+    first.runs.some((row) => row.provider === "qrz" && row.phase === "held"),
+  );
+  const initial = JSON.parse(
+    await readFile(join(first.directory, "manifest.json"), "utf8"),
+  );
+  const before = { ...mock.calls };
+  valid = true;
+  const held = await inventoryManagedTrial(
+    { resume: first.directory, maxDurationMs: 1000 },
+    { access, fetcher },
+  );
+  assert.equal(held.stopReason, "selection_held");
+  assert.deepEqual(
+    mock.calls,
+    before,
+    "ordinary resume cannot retry a held run",
+  );
+  const f = await openInventoryTrial(first.directory);
+  let pending: {
+    previous: string;
+    stream: InventoryStream;
+    expectedJobVersion: number;
+  };
+  try {
+    const runs = new InventoryRuns(new InventoryIngestion(f.store));
+    const candidates = await Promise.all(
+      initial.initialRuns.map((id: string) => runs.load("trial", id)),
+    );
+    const previous = candidates.find((run) => run?.phase === "held");
+    assert.ok(previous);
+    const stream = await runs.inventory.snapshot(
+      "trial",
+      previous.scope,
+      previous.streamId,
+    );
+    assert.ok(stream);
+    pending = {
+      previous: previous.id,
+      stream,
+      expectedJobVersion: previous.jobVersion,
+    };
+  } finally {
+    await f.mf.dispose();
+  }
+  const verified = await inventoryManagedTrial(
+    {
+      resume: first.directory,
+      verifyHeld: true,
+      maxRequests: 20,
+      maxDurationMs: 90000,
+    },
+    { access, fetcher },
+  );
+  assert.equal(verified.stopReason, "quiescent");
+  assert.equal(verified.verificationRestarts, 1);
+  assert.ok(verified.sourceAndQrzComplete && verified.lotwSelectedDayComplete);
+  assert.equal(mock.calls.lofi, before.lofi);
+  assert.equal(mock.calls.lotw, before.lotw);
+  assert.ok(
+    verified.results.some(
+      (row) => row.provider === "qrz" && row.state === "matched_existing",
+    ),
+    JSON.stringify(verified.results),
+  );
+  const after = JSON.parse(
+    await readFile(join(first.directory, "manifest.json"), "utf8"),
+  );
+  assert.deepEqual(after.initialRuns, initial.initialRuns);
+  assert.equal(after.currentRuns.length, 3);
+  assert.equal(
+    after.currentRuns.filter((id: string) => !initial.initialRuns.includes(id))
+      .length,
+    1,
+  );
+  assert.equal(after.pendingVerification, undefined);
+  assert.equal(after.verifications.length, 1);
+  const reopened = await inspectManagedInventoryTrial(first.directory);
+  assert.deepEqual(reopened.runs, verified.runs);
+
+  // Simulate a crash after native begin committed but before its manifest ACK.
+  const verification = after.verifications[0];
+  const definition = await planInventoryRun(
+    pending.stream,
+    {
+      provider: "qrz",
+      book,
+      between: [book.startDate, book.endDate],
+      pageSize: 250,
+    },
+    { mode: "full", id: verification.replacement, now: verification.at },
+  );
+  await writeFile(
+    join(first.directory, "manifest.json"),
+    JSON.stringify({
+      ...initial,
+      pendingVerification: { ...pending, at: verification.at, definition },
+    }),
+    { mode: 0o600 },
+  );
+  const beforeRecovery = { ...mock.calls };
+  const recovered = await inventoryManagedTrial(
+    { resume: first.directory, maxDurationMs: 1000 },
+    { access, fetcher },
+  );
+  assert.equal(recovered.stopReason, "quiescent");
+  assert.equal(recovered.verificationRestarts, 1);
+  assert.ok(recovered.sourceAndQrzComplete);
+  assert.deepEqual(
+    mock.calls,
+    beforeRecovery,
+    "lost manifest ACK cannot repeat a scan",
+  );
 });

@@ -2,10 +2,13 @@ import { adminRoute } from "./admin.ts";
 import { isAdmin } from "./admin-access.ts";
 import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
 import { connectionRoute } from "./connections.ts";
+import {
+  runHostedInventoryQueue,
+  runHostedScheduled,
+} from "./inventory-hosted.ts";
 import { lofiAccountLabel } from "./lofi-identity.ts";
 import { lotwVerification } from "./lotw-verification.ts";
 import { reviewRoute } from "./review.ts";
-import { runScheduledTick } from "./scheduler-history.ts";
 import { boundedJson, keyring } from "./security.ts";
 import {
   deliveryGates,
@@ -310,11 +313,15 @@ export default {
     context: ExecutionContext,
   ) {
     context.waitUntil(
-      runScheduledTick(env, { scheduledTime: controller.scheduledTime }).then(
+      runHostedScheduled(env, { scheduledTime: controller.scheduledTime }).then(
         (result) => {
           console.log(JSON.stringify({ event: "ferry_tick", ...result }));
         },
       ),
     );
+  },
+  async queue(batch: MessageBatch<unknown>, env: Env) {
+    const report = await runHostedInventoryQueue(env, batch);
+    console.log(JSON.stringify({ event: "ferry_inventory_queue", ...report }));
   },
 } satisfies ExportedHandler<Env>;

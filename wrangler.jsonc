@@ -36,7 +36,8 @@
     "QRZ_FRESH_INSERTS_ENABLED": "false",
     "LOTW_FRESH_INSERTS_ENABLED": "false",
     "ROLLOUT_QSO_IDS_JSON": "[]",
-    "ROLLOUT_DESTINATION_IDS_JSON": "[]"
+    "ROLLOUT_DESTINATION_IDS_JSON": "[]",
+    "INVENTORY_RUNTIME_MODE": "off"
   },
   "d1_databases": [
     {
@@ -62,7 +63,8 @@
         "QRZ_FRESH_INSERTS_ENABLED": "false",
         "LOTW_FRESH_INSERTS_ENABLED": "false",
         "ROLLOUT_QSO_IDS_JSON": "[]",
-        "ROLLOUT_DESTINATION_IDS_JSON": "[]"
+        "ROLLOUT_DESTINATION_IDS_JSON": "[]",
+        "INVENTORY_RUNTIME_MODE": "off"
       },
       "d1_databases": [
         {
@@ -71,7 +73,24 @@
           "database_id": "00000000-0000-0000-0000-000000000002",
           "migrations_dir": "migrations"
         }
-      ]
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "INVENTORY_QUEUE",
+            "queue": "ferry-inventory-staging"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "ferry-inventory-staging",
+            "max_batch_size": 1,
+            "max_batch_timeout": 0,
+            "max_retries": 3,
+            "max_concurrency": 2
+          }
+        ]
+      }
     },
     "production": {
       "name": "lofi-qso-ferry",
@@ -88,7 +107,8 @@
         "QRZ_FRESH_INSERTS_ENABLED": "false",
         "LOTW_FRESH_INSERTS_ENABLED": "false",
         "ROLLOUT_QSO_IDS_JSON": "[]",
-        "ROLLOUT_DESTINATION_IDS_JSON": "[]"
+        "ROLLOUT_DESTINATION_IDS_JSON": "[]",
+        "INVENTORY_RUNTIME_MODE": "off"
       },
       "d1_databases": [
         {
@@ -111,8 +131,42 @@
           "name": "EMAIL",
           "allowed_sender_addresses": ["signup@ferry.n1rwj.com"]
         }
-      ]
+      ],
+      "queues": {
+        "producers": [
+          {
+            "binding": "INVENTORY_QUEUE",
+            "queue": "ferry-inventory"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "ferry-inventory",
+            "max_batch_size": 1,
+            "max_batch_timeout": 0,
+            "max_retries": 3,
+            "max_concurrency": 2
+          }
+        ]
+      }
     }
   },
-  "account_id": "478f5e15ae2afa01364d19f42a3e06f2"
+  "account_id": "478f5e15ae2afa01364d19f42a3e06f2",
+  "queues": {
+    "producers": [
+      {
+        "binding": "INVENTORY_QUEUE",
+        "queue": "ferry-inventory-local"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "ferry-inventory-local",
+        "max_batch_size": 1,
+        "max_batch_timeout": 0,
+        "max_retries": 3,
+        "max_concurrency": 2
+      }
+    ]
+  }
 }

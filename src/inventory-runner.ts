@@ -136,6 +136,7 @@ export class InventoryRunner {
   constructor(
     readonly runs: InventoryRuns,
     readonly fetcher: typeof fetch = fetch,
+    readonly options: { scheduled?: boolean } = {},
   ) {}
 
   async step(
@@ -194,7 +195,13 @@ export class InventoryRunner {
           query.provider === "lofi"
             ? await inventorySourcePacing(store, context.stream)
             : undefined;
-        const next = Date.now() + Math.max(300_000, pacing?.checkPeriodMs ?? 0);
+        const schedule = await this.schedulePolicy(context.run);
+        const next =
+          Date.now() +
+          Math.max(
+            schedule?.poll_period_ms ?? 300_000,
+            pacing?.checkPeriodMs ?? 0,
+          );
         return await this.published(
           context,
           await this.runs.inventory.publish(
@@ -344,9 +351,14 @@ export class InventoryRunner {
                 selection)(query.query),
             };
     const checkpoint = resumeObject(stream.checkpoint);
+    const schedule = await this.schedulePolicy(previous);
     const definition = await planInventoryRun(stream, plan, {
       id: await sha256(canonical(["inventory-next-run-v1", wakeup])),
-      mode: Object.keys(checkpoint).length === 0 ? "full" : "delta",
+      mode:
+        Object.keys(checkpoint).length === 0 ||
+        (schedule && schedule.next_full_at <= Date.now())
+          ? "full"
+          : "delta",
       now: previous.nextDueAt,
     });
     const run = await this.runs.begin({
@@ -362,6 +374,21 @@ export class InventoryRunner {
       workVersion: run.jobVersion,
       nextDueAt: run.nextDueAt,
     };
+  }
+
+  private async schedulePolicy(run: InventoryRun) {
+    if (!this.options.scheduled) return null;
+    const policy = await this.runs.inventory.store
+      .statement(
+        "SELECT p.poll_period_ms,p.next_full_at FROM inventory_scheduled_selections p JOIN inventory_scopes s ON s.tenant=p.tenant AND s.scope_id=p.scope_id WHERE p.tenant=? AND p.scope_id=? AND p.stream_id=? AND p.config_version=? AND s.config_version=p.config_version AND s.state='observing'",
+        run.tenant,
+        run.scope,
+        run.streamId,
+        run.configVersion,
+      )
+      .first<{ poll_period_ms: number; next_full_at: number }>();
+    requireValue(policy, "inventory_schedule_changed");
+    return policy;
   }
 
   private async hold(

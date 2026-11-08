@@ -1,0 +1,589 @@
+import assert from "node:assert/strict";
+import test, { type TestContext } from "node:test";
+import {
+  runHostedInventoryQueue,
+  runHostedScheduled,
+} from "../src/inventory-hosted.ts";
+import { InventoryIngestion } from "../src/inventory-ingestion.ts";
+import { planInventoryRun } from "../src/inventory-run-plans.ts";
+import {
+  InventoryRunner,
+  type InventoryRunWakeup,
+} from "../src/inventory-runner.ts";
+import { InventoryRuns } from "../src/inventory-runs.ts";
+import {
+  activateInventoryRuntime,
+  bindInventoryScopeRuntime,
+  inventoryRuntime,
+} from "../src/inventory-runtime.ts";
+import {
+  lotwInventorySelections,
+  registerInventorySelection,
+  registerKnownInventoryConnections,
+  startInventorySelections,
+} from "../src/inventory-scheduler.ts";
+import { database, seed } from "./helpers.ts";
+import {
+  applyAdditionalMigrations,
+  fixtureEnvironment,
+} from "./runtime-fixtures.ts";
+
+const book = {
+  bookId: "7",
+  stationCallsign: "N1RWJ",
+  startDate: "2025-01-01",
+  endDate: "2027-12-31",
+};
+async function fixture(t: TestContext) {
+  const f = await database();
+  t.after(() => f.mf.dispose());
+  await applyAdditionalMigrations(f.db);
+  await seed(f.store);
+  await f.store
+    .statement(
+      "UPDATE connections SET config=? WHERE id='source'",
+      JSON.stringify({ accountId: "source" }),
+    )
+    .run();
+  await f.store
+    .statement(
+      "UPDATE connections SET config=? WHERE id='destination'",
+      JSON.stringify(book),
+    )
+    .run();
+  for (const [connection, value] of [
+    [
+      "source",
+      {
+        key: "browser:fixture",
+        secret: "fixture-secret",
+        token: "fixture-token",
+      },
+    ],
+    ["destination", { apiKey: "fixture-key" }],
+  ] as const) {
+    await f.store
+      .statement("DELETE FROM private_data WHERE connection=?", connection)
+      .run();
+    await (
+      await f.store.putPrivate("a", connection, "v1", "credential", value)
+    ).run();
+  }
+  const sent: MessageSendRequest<unknown>[] = [];
+  const queue: Queue<unknown> = {
+    async send(body, options) {
+      sent.push({ body, ...options });
+      return {
+        metadata: { metrics: { backlogCount: sent.length, backlogBytes: 0 } },
+      };
+    },
+    async sendBatch(messages) {
+      sent.push(...structuredClone(Array.from(messages)));
+      return {
+        metadata: { metrics: { backlogCount: sent.length, backlogBytes: 0 } },
+      };
+    },
+    async metrics() {
+      return { backlogCount: sent.length, backlogBytes: 0 };
+    },
+  };
+  const env = {
+    ...fixtureEnvironment(f.db),
+    INVENTORY_RUNTIME_MODE: "read_only",
+    INVENTORY_QUEUE: queue,
+  };
+  async function due(runId: string) {
+    const runs = new InventoryRuns(new InventoryIngestion(f.store));
+    const run = await runs.load("a", runId);
+    assert.ok(run);
+    await f.store
+      .statement(
+        "UPDATE inventory_stream_jobs SET work_version=work_version+1,next_due_at=? WHERE tenant='a' AND scope_id=? AND stream_id=?",
+        Date.now() - 1,
+        run.scope,
+        run.streamId,
+      )
+      .run();
+    const current = await runs.load("a", runId);
+    assert.ok(current);
+    await f.store
+      .statement(
+        "INSERT INTO inventory_wakeups(tenant,wakeup_id,scope_id,stream_id,run_id,work_version,not_before) VALUES('a',?,?,?,?,?,?)",
+        crypto.randomUUID(),
+        current.scope,
+        current.streamId,
+        current.id,
+        current.jobVersion,
+        current.nextDueAt,
+      )
+      .run();
+    return {
+      version: 1 as const,
+      tenant: "a",
+      scope: current.scope,
+      stream: current.streamId,
+      run: runId,
+      workVersion: current.jobVersion,
+    };
+  }
+  return { ...f, env, sent, due };
+}
+function batch(body: unknown) {
+  const outcomes: (string | number)[] = [];
+  const message: Message<unknown> = {
+    id: "fixture",
+    timestamp: new Date(),
+    attempts: 1,
+    body,
+    ack() {
+      outcomes.push("ack");
+    },
+    retry(options) {
+      outcomes.push(options?.delaySeconds ?? 0);
+    },
+  };
+  const value: MessageBatch<unknown> = {
+    messages: [message],
+    queue: "fixture",
+    metadata: { metrics: { backlogCount: 1, backlogBytes: 0 } },
+    ackAll() {
+      outcomes.push("ackAll");
+    },
+    retryAll(options) {
+      outcomes.push(options?.delaySeconds ?? 0);
+    },
+  };
+  return { value, outcomes };
+}
+function lofi() {
+  return Response.json({
+    account: { uuid: "source" },
+    operations: [],
+    qsos: [{ uuid: "q1", syncedAtMillis: 100 }],
+    meta: { operations: { records_left: 0 }, qsos: { records_left: 0 } },
+  });
+}
+
+test("off selects the old scheduler only while the database is still legacy", async (t) => {
+  const f = await fixture(t);
+  let calls = 0;
+  const legacy = async () => {
+    calls++;
+    throw new Error("legacy selected");
+  };
+  await assert.rejects(
+    runHostedScheduled({ ...f.env, INVENTORY_RUNTIME_MODE: "off" }, { legacy }),
+    /legacy selected/,
+  );
+  assert.equal(calls, 1);
+  await activateInventoryRuntime(f.store);
+  assert.deepEqual(
+    await runHostedScheduled(
+      { ...f.env, INVENTORY_RUNTIME_MODE: "off" },
+      { legacy },
+    ),
+    { mode: "inventory_paused", queued: 0 },
+  );
+  assert.equal(
+    calls,
+    1,
+    "an environment rollback cannot resume the retired sender",
+  );
+});
+
+test("cron registers source/book selections and publishes initial jobs without vendor reads", async (t) => {
+  const f = await fixture(t);
+  const credentials = (
+    await f.db
+      .prepare(
+        "SELECT * FROM private_data WHERE kind='credential' ORDER BY connection",
+      )
+      .all()
+  ).results;
+  const result = await runHostedScheduled(f.env);
+  assert.equal(result.mode, "inventory_read_only");
+  if (result.mode !== "inventory_read_only") assert.fail();
+  assert.equal(result.registration.registered, 2);
+  assert.equal(result.starts.started, 2);
+  assert.equal(result.queued, 2);
+  assert.equal((await inventoryRuntime(f.store)).mode, "inventory_read_only");
+  assert.equal(
+    (
+      await f.db
+        .prepare("SELECT count(*) n FROM inventory_scheduled_selections")
+        .first<{ n: number }>()
+    )?.n,
+    2,
+  );
+  const repeated = await runHostedScheduled(f.env);
+  assert.equal("queued" in repeated && repeated.queued, 0);
+  assert.deepEqual(
+    (
+      await f.db
+        .prepare(
+          "SELECT * FROM private_data WHERE kind='credential' ORDER BY connection",
+        )
+        .all()
+    ).results,
+    credentials,
+  );
+});
+
+test("the hosted queue executes an owned source page, and off pauses future delivery", async (t) => {
+  const f = await fixture(t);
+  await runHostedScheduled(f.env);
+  const scope = await f.db
+    .prepare(
+      "SELECT scope_id FROM inventory_scopes WHERE connection_id='source'",
+    )
+    .first<{ scope_id: string }>();
+  assert.ok(scope);
+  const request = f.sent.find(
+    (row) => (row.body as InventoryRunWakeup).scope === scope.scope_id,
+  );
+  assert.ok(request);
+  const delivery = batch(request.body);
+  let reads = 0;
+  const report = await runHostedInventoryQueue(
+    f.env,
+    delivery.value,
+    async () => {
+      reads++;
+      return lofi();
+    },
+  );
+  assert.equal("failed" in report && report.failed, 0);
+  assert.deepEqual(delivery.outcomes, ["ack"]);
+  assert.equal(reads, 1);
+  const continuation = f.sent.at(-1);
+  assert.ok(continuation?.delaySeconds && continuation.delaySeconds >= 19);
+  const paused = batch(continuation.body);
+  await runHostedInventoryQueue(
+    { ...f.env, INVENTORY_RUNTIME_MODE: "off" },
+    paused.value,
+    async () => {
+      reads++;
+      return lofi();
+    },
+  );
+  assert.deepEqual(paused.outcomes, [300]);
+  assert.equal(reads, 1);
+  assert.equal(
+    (await f.db.prepare("SELECT count(*) n FROM ledger").first<{ n: number }>())
+      ?.n,
+    0,
+  );
+});
+
+test("a malformed first account cannot starve the bounded registration roster", async (t) => {
+  const f = await fixture(t);
+  await f.store
+    .statement("UPDATE connections SET config='{}' WHERE id='destination'")
+    .run();
+  const runtime = await activateInventoryRuntime(f.store);
+  assert.deepEqual(
+    await registerKnownInventoryConnections(f.store, runtime, 1),
+    { registered: 0, failed: 1 },
+  );
+  assert.deepEqual(
+    await registerKnownInventoryConnections(f.store, runtime, 1),
+    { registered: 1, failed: 0 },
+  );
+});
+
+test("date selection partitioning is gap-free, bounded and retains station filters", () => {
+  const plans = lotwInventorySelections({
+    startDate: "2024-02-01",
+    endDate: "2024-04-02",
+    stationCallsign: "N1RWJ",
+  });
+  assert.equal(plans.length, 2);
+  assert.deepEqual(plans, [
+    {
+      provider: "lotw",
+      selection: {
+        startDate: "2024-02-01",
+        endDate: "2024-03-03",
+        stationCallsign: "N1RWJ",
+      },
+    },
+    {
+      provider: "lotw",
+      selection: {
+        startDate: "2024-03-04",
+        endDate: "2024-04-02",
+        stationCallsign: "N1RWJ",
+      },
+    },
+  ]);
+  assert.throws(
+    () =>
+      lotwInventorySelections({
+        startDate: "2025-02-29",
+        endDate: "2025-03-01",
+      }),
+    /date_range/,
+  );
+});
+
+test("scheduled recurrence respects poll policy and switches to full verification when due", async (t) => {
+  const f = await fixture(t);
+  await f.store
+    .statement(
+      "UPDATE connections SET kind='lotw',config='{\"readAccess\":true}' WHERE id='destination'",
+    )
+    .run();
+  await f.store
+    .statement("DELETE FROM private_data WHERE connection='destination'")
+    .run();
+  await (
+    await f.store.putPrivate("a", "destination", "v1", "credential", {
+      query: { username: "fixture", password: "fixture" },
+    })
+  ).run();
+  const connection = await f.store.connection("a", "destination");
+  assert.ok(connection);
+  const runtime = await activateInventoryRuntime(f.store);
+  const selection = await registerInventorySelection(
+    f.store,
+    runtime,
+    connection,
+    {
+      provider: "lotw",
+      selection: { startDate: "2025-01-01", endDate: "2025-01-01" },
+    },
+    { pollPeriodMs: 600000, verificationPeriodMs: 86400000 },
+  );
+  assert.equal((await startInventorySelections(f.store)).started, 1);
+  const first = await f.db
+    .prepare("SELECT run_id FROM inventory_runs")
+    .first<{ run_id: string }>();
+  assert.ok(first);
+  const runs = new InventoryRuns(new InventoryIngestion(f.store));
+  const runner = new InventoryRunner(
+    runs,
+    async () =>
+      new Response("<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>0<EOH><APP_LOTW_EOF>"),
+    { scheduled: true },
+  );
+  for (let i = 0; i < 4; i++) {
+    const result = await runner.step(await f.due(first.run_id));
+    if (result.kind === "complete") break;
+  }
+  const complete = await runs.load("a", first.run_id);
+  assert.equal(complete?.phase, "complete");
+  assert.ok(complete && complete.nextDueAt > Date.now() + 590000);
+  const policy = await f.db
+    .prepare("SELECT next_full_at FROM inventory_scheduled_selections")
+    .first<{ next_full_at: number }>();
+  assert.ok(policy && policy.next_full_at > Date.now() + 86000000);
+  // An empty LoTW selection has no receive stamp, so it repeats a bounded full
+  // read; a synthetic valid scoped stamp exercises the independent delta branch.
+  await f.store
+    .statement(
+      "UPDATE inventory_streams SET checkpoint_version=checkpoint_version+1,committed_checkpoint=? WHERE scope_id=? AND stream_id=?",
+      JSON.stringify({
+        selection: { startDate: "2025-01-01", endDate: "2025-01-01" },
+        receivedThrough: "2026-11-07 12:00:00",
+      }),
+      selection.scope,
+      selection.stream,
+    )
+    .run();
+  const next = await runner.step(await f.due(first.run_id));
+  assert.equal(next.kind, "started");
+  if (next.kind !== "started") assert.fail();
+  assert.equal((await runs.load("a", next.run))?.mode, "delta");
+  for (let i = 0; i < 3; i++) {
+    const result = await runner.step(await f.due(next.run));
+    if (result.kind === "complete") break;
+  }
+  await f.store
+    .statement(
+      "UPDATE inventory_scheduled_selections SET next_full_at=0,version=version+1",
+    )
+    .run();
+  const verification = await runner.step(await f.due(next.run));
+  assert.equal(verification.kind, "started");
+  if (verification.kind !== "started") assert.fail();
+  assert.equal((await runs.load("a", verification.run))?.mode, "full");
+});
+
+test("a scheduled run cannot substitute a different receipt selection", async (t) => {
+  const f = await fixture(t);
+  await f.store
+    .statement(
+      "UPDATE connections SET kind='lotw',config='{\"readAccess\":true}' WHERE id='destination'",
+    )
+    .run();
+  const connection = await f.store.connection("a", "destination");
+  assert.ok(connection);
+  const runtime = await activateInventoryRuntime(f.store);
+  const selected = await registerInventorySelection(
+    f.store,
+    runtime,
+    connection,
+    {
+      provider: "lotw",
+      selection: { startDate: "2025-01-01", endDate: "2025-01-01" },
+    },
+  );
+  const runs = new InventoryRuns(new InventoryIngestion(f.store));
+  const stream = await runs.inventory.snapshot(
+    "a",
+    selected.scope,
+    selected.stream,
+  );
+  assert.ok(stream);
+  const lease = await f.store.claim("a", `inventory:${selected.scope}`);
+  assert.ok(lease);
+  const definition = await planInventoryRun(stream, {
+    provider: "lotw",
+    selection: { startDate: "2025-01-02", endDate: "2025-01-02" },
+  });
+  await assert.rejects(
+    runs.begin({ stream, lease, definition }),
+    /scheduled selection changed/,
+  );
+  assert.equal(
+    (
+      await f.db
+        .prepare("SELECT count(*) n FROM inventory_runs")
+        .first<{ n: number }>()
+    )?.n,
+    0,
+  );
+});
+
+test("source client changes restart a full run instead of reviving the old cursor", async (t) => {
+  const f = await fixture(t);
+  await runHostedScheduled(f.env);
+  const old = await f.db
+    .prepare(
+      "SELECT r.run_id,r.scope_id FROM inventory_runs r JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.scope_id WHERE s.connection_id='source'",
+    )
+    .first<{ run_id: string; scope_id: string }>();
+  assert.ok(old);
+  await (
+    await f.store.putPrivate("a", "source", "v2", "credential", {
+      key: "browser:new",
+      secret: "new-secret",
+      token: "new-token",
+    })
+  ).run();
+  await f.store
+    .statement(
+      "UPDATE connections SET credential_version='v2' WHERE id='source'",
+    )
+    .run();
+  const runs = new InventoryRuns(new InventoryIngestion(f.store));
+  assert.equal((await runs.load("a", old.run_id))?.phase, "held");
+  await f.store
+    .statement(
+      "UPDATE inventory_registration_progress SET last_tenant='',last_connection=''",
+    )
+    .run();
+  const result = await runHostedScheduled(f.env);
+  if (result.mode !== "inventory_read_only") assert.fail();
+  assert.equal(result.starts.started, 1);
+  const current = await f.db
+    .prepare("SELECT active_run_id FROM inventory_stream_jobs WHERE scope_id=?")
+    .bind(old.scope_id)
+    .first<{ active_run_id: string }>();
+  assert.ok(current);
+  assert.notEqual(current.active_run_id, old.run_id);
+  assert.equal((await runs.load("a", current.active_run_id))?.mode, "full");
+});
+
+test("managed scopes bind the runtime generation before inventory reads", async (t) => {
+  const f = await fixture(t);
+  await f.store
+    .statement(
+      "UPDATE connections SET config='{\"accountId\":\"source\"}' WHERE id='source'",
+    )
+    .run();
+  await f.store
+    .statement("DELETE FROM private_data WHERE connection='source'")
+    .run();
+  await (
+    await f.store.putPrivate("a", "source", "v1", "credential", {
+      key: "browser:fixture",
+      secret: "fixture-secret",
+      token: "fixture-token",
+    })
+  ).run();
+  const inventory = new InventoryIngestion(f.store);
+  const runs = new InventoryRuns(inventory);
+  await inventory.initialize(
+    {
+      tenant: "a",
+      scope: "source-scope",
+      connection: "source",
+      provider: "lofi",
+      logicalIdentity: "source",
+      adapterBinding: "runtime-v1",
+      ordering: "numeric",
+    },
+    "sync",
+    "all-v1",
+  );
+  const runtime = await activateInventoryRuntime(f.store);
+  const lease = await f.store.claim("a", "inventory:source-scope");
+  assert.ok(lease);
+  const unmanaged = await inventory.snapshot("a", "source-scope", "sync");
+  assert.ok(unmanaged);
+  await assert.rejects(
+    runs.begin({
+      stream: unmanaged,
+      lease,
+      definition: await planInventoryRun(unmanaged, { provider: "lofi" }),
+    }),
+    /inventory runtime reader unavailable/,
+  );
+  await bindInventoryScopeRuntime(
+    f.store,
+    "a",
+    "source-scope",
+    runtime.version,
+  );
+  await f.store
+    .statement(
+      "INSERT INTO inventory_scheduled_selections(tenant,scope_id,stream_id,runtime_version,config_version,plan,created_at,poll_period_ms,verification_period_ms) SELECT tenant,scope_id,'sync',runtime_version,config_version,'{\"pageSize\":1000,\"provider\":\"lofi\"}',1,300000,86400000 FROM inventory_scopes WHERE scope_id='source-scope'",
+    )
+    .run();
+  const stream = await inventory.snapshot("a", "source-scope", "sync");
+  assert.ok(stream);
+  const run = await runs.begin({
+    stream,
+    lease,
+    definition: await planInventoryRun(stream, { provider: "lofi" }),
+  });
+  await f.store.release(lease);
+  let requests = 0;
+  const result = await new InventoryRunner(runs, async () => {
+    requests++;
+    return Response.json({
+      account: { uuid: "source" },
+      operations: [],
+      qsos: [],
+      meta: { operations: { records_left: 0 }, qsos: { records_left: 0 } },
+    });
+  }).step({
+    version: 1,
+    tenant: "a",
+    scope: "source-scope",
+    stream: "sync",
+    run: run.id,
+    workVersion: run.jobVersion,
+  });
+  assert.equal(result.kind, "advanced");
+  assert.equal(requests, 1);
+  await assert.rejects(
+    f.store
+      .statement(
+        "UPDATE inventory_scopes SET runtime_version=0,config_version=config_version+1 WHERE scope_id='source-scope'",
+      )
+      .run(),
+    /runtime changed/,
+  );
+});

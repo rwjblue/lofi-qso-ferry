@@ -21,6 +21,7 @@ import {
   type InventoryMatchingWorkClaim,
 } from "../src/inventory-matching-results.ts";
 import { InventoryMatchingWork } from "../src/inventory-matching-work.ts";
+import { InventoryMatchingInvalidations } from "../src/inventory-matching-invalidations.ts";
 import {
   InventoryMatchingWorkspace,
   type PreparedInventoryMatchingSnapshot,
@@ -47,6 +48,20 @@ import {
 } from "../src/security.ts";
 import { Store } from "../src/store.ts";
 import { applyMigration } from "../tests/helpers.ts";
+
+interface MatchingDependencyState {
+  sets: number;
+  refs: number;
+  buckets: number;
+  pending: number;
+}
+async function matchingDependencyState(db: D1Database) {
+  return db
+    .prepare(
+      "SELECT (SELECT count(*) FROM inventory_match_live_sets WHERE tenant='trial') AS sets,(SELECT coalesce(sum(ref_count),0) FROM inventory_match_live_sets WHERE tenant='trial') AS refs,(SELECT count(*) FROM inventory_matching_bucket_dependents WHERE tenant='trial') AS buckets,(SELECT count(*) FROM inventory_matching_bucket_jobs WHERE tenant='trial' AND completed_version<work_version) AS pending",
+    )
+    .first<MatchingDependencyState>();
+}
 
 /** Offline replay of the encrypted three-provider run capture. The original is
  * never opened for mutation; the working copy stays outside the repository. */
@@ -137,6 +152,8 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0056_inventory_current_work_selection.sql",
       "0057_inventory_scoped_activation_debt.sql",
       "0058_inventory_matching_work.sql",
+      "0059_inventory_live_bucket_dependencies.sql",
+      "0060_inventory_matching_bucket_pages.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -454,6 +471,17 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
         matchingWorkSnapshots.reduce((sum, row) => sum + row.work.length, 0)
     )
       throw new Error("comparison_trial_matching_work_completion_failed");
+    const invalidation = await new InventoryMatchingInvalidations(store).step(
+      "trial",
+    );
+    if (invalidation.kind !== "idle")
+      throw new Error("comparison_trial_unexpected_bucket_invalidation");
+    const dependencyState = await matchingDependencyState(db);
+    if (
+      !dependencyState ||
+      dependencyState.refs !== matchingWorkCounts.completed
+    )
+      throw new Error("comparison_trial_matching_dependencies_missing");
     const indexCounts = (
       await db
         .prepare(
@@ -482,6 +510,11 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
         sampled: true,
         ...matchingWorkCounts,
         manifestDigest: await sha256(canonical(matchingWorkSnapshots)),
+      },
+      matchingInvalidation: {
+        sampled: true,
+        kind: invalidation.kind,
+        state: dependencyState,
       },
       matchingSnapshots: {
         published: true,
@@ -564,6 +597,11 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       completed: number;
       pending: number;
       manifestDigest: string;
+    };
+    matchingInvalidation?: {
+      sampled: boolean;
+      kind: string;
+      state: MatchingDependencyState;
     };
     historicalAdoption?: { evaluated: boolean; associationsCreated: number };
     projectionJobs?: {
@@ -987,6 +1025,22 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       )
         throw new Error("comparison_trial_matching_work_counts_changed");
     }
+    let matchingInvalidationStateRecovered: boolean | undefined;
+    if (report.matchingInvalidation?.sampled) {
+      if (
+        canonical(await matchingDependencyState(db)) !==
+        canonical(report.matchingInvalidation.state)
+      )
+        throw new Error("comparison_trial_matching_dependency_state_changed");
+      const bad = await db
+        .prepare(
+          "SELECT count(*) AS n FROM inventory_match_live_sets l WHERE l.tenant='trial' AND (l.ref_count!=(SELECT count(*) FROM match_results r INDEXED BY match_result_set WHERE r.tenant=l.tenant AND r.set_id=l.set_id) OR NOT EXISTS(SELECT 1 FROM inventory_match_sets h WHERE h.tenant=l.tenant AND h.set_id=l.set_id AND h.generation_id=l.generation_id AND h.state='committed') OR EXISTS(SELECT 1 FROM inventory_match_tokens t JOIN inventory_match_probes p ON p.tenant=t.tenant AND p.set_id=t.set_id AND p.probe_id=t.probe_id WHERE t.tenant=l.tenant AND t.set_id=l.set_id AND NOT EXISTS(SELECT 1 FROM inventory_matching_bucket_dependents d WHERE d.tenant=t.tenant AND d.set_id=t.set_id AND d.scope_id=p.search_scope AND d.key_class=t.key_class AND d.bucket_hash=t.bucket_hash)))",
+        )
+        .first<{ n: number }>();
+      if (bad?.n !== 0)
+        throw new Error("comparison_trial_matching_dependencies_not_recovered");
+      matchingInvalidationStateRecovered = true;
+    }
     return {
       directory,
       vendorHttpRequests: 0,
@@ -1002,6 +1056,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       jobProjectionsValidated,
       coordinatorProjectionsValidated,
       matchingWorkValidated,
+      matchingInvalidationStateRecovered,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

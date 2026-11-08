@@ -72,8 +72,9 @@ The published replay occupied **14,503,936 database bytes**. Like the earlier sm
 [InventoryProjectionJobs](../src/inventory-projection-jobs.ts) bridge operation
 barriers to bounded child work. An operation/event topology change queues one job
 per active/pending index generation in the ingestion transaction. It does not
-update every contact. Generation creation and source configuration changes enroll
-the corresponding jobs; existing domains receive a one-time enrollment.
+update every contact. The original 0052 generation/configuration enrollment is superseded by the bounded
+setup below; operation/event mutations retain their narrow enqueue triggers.
+Existing domains received a one-time enrollment in that earlier migration.
 
 Each job retains its captured configuration/topology, monotonic work/completed
 versions and child keyset cursor. At most 200 child references enter one expansion
@@ -218,3 +219,58 @@ The complete hosted coordinator still needs generation/build selection, durable
 matching work, ownership-aware planning, Queue/cron wiring and bounded retry/fairness
 policies. Source proofs, delivery and restore/cutover remain separate unfinished
 work; no new export path is activated here.
+
+## Bounded generation setup
+
+Automatic coordinator work exposed another unbounded path: the original 0052
+generation-creation and source-reconfiguration triggers enumerated all retained
+operations. That duplicates the ordinary projection work already created by each
+new/configuration-changed row in the bounded comparison-index publisher.
+[Migration 0054](../migrations/0054_inventory_bounded_generation_setup.sql) removes
+those two triggers. It retains the operation/event mutation triggers, so changes
+arriving during backfill still install immediate barriers and narrow continuation
+work for both active and pending generations. No source payload or observation is
+changed by this setup policy.
+
+With a preexisting tenant key, one source scope and full source coverage, the
+native generation batch uses **two explicit statements, sixteen rows read and nine
+rows written** for both two and 250 retained operations. Key loading/decryption and
+the final domain read are outside that batch measurement. Generation setup still
+enrolls the source/destination scope censuses and applicable scope-level coverage
+recovery controls; it does not enqueue an operation row for every retained parent.
+
+The native tests backfill a 205-contact generation in multiple pages, change an
+operation between pages and verify all 205 ready projections, including the changed
+station context. Only the edited operation receives a new-generation continuation.
+Configuration changes leave existing operation job rows untouched, reset the index
+census and queue every affected contact through that rebuild. Projections remain
+held until full coverage for the new configuration is observed.
+
+The focused generation/build/projection regression passed **45 tests**, including
+the three new setup-policy tests; the older operation enrollment fixture still
+checks the original 0052 schema. TypeScript, lint and formatting passed. Logs are
+`/tmp/lofi-ferry-bounded-generation-setup.log`,
+`/tmp/lofi-ferry-bounded-setup-regression.log`,
+`/tmp/lofi-ferry-bounded-setup-types.log`,
+`/tmp/lofi-ferry-bounded-setup-lint.log` and
+`/tmp/lofi-ferry-bounded-setup-format.log`. These overlap earlier selections and do
+not represent a new full inventory regression.
+
+The next encrypted replay applies 0054. Its operation job sample is idle because
+generation setup no longer manufactures per-operation work. Ordinary projection
+work still publishes twenty additional held source bodies, and coverage recovery
+correctly remains idle against the partial source baseline. A fresh process
+authenticates those twenty plus the original 42 bodies and recovers the twenty
+incomplete matching results and zero historical associations. All canonical state
+and credentials remain unchanged; vendor requests and uploads are zero.
+
+That private directory ends in `82423def-21c5-460f-b08f-930114a216d5`; database
+allocation is 15,618,048 bytes. Index-build write counts remain unchanged from the
+preceding capture because this fix removes setup work outside those phase counts.
+This small allocation difference is not a full-log storage forecast. Logs are
+`/tmp/lofi-ferry-bounded-setup-capture.log` and
+`/tmp/lofi-ferry-bounded-setup-reopen.log`.
+
+The automatic generation/build/projection coordinator, managed activation fences,
+durable matching work and hosted wakeups remain unfinished. Bounded initialization
+is a prerequisite for that coordinator, not a claim of completed hosted progress.

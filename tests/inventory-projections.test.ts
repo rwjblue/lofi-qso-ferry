@@ -7,7 +7,10 @@ import {
   inventoryProjectionDigest,
   type PreparedInventoryProjections,
 } from "../src/inventory-projection-workspace.ts";
-import { InventoryProjections } from "../src/inventory-projections.ts";
+import {
+  type InventoryProjectionRead,
+  InventoryProjections,
+} from "../src/inventory-projections.ts";
 import { Store } from "../src/store.ts";
 import { fixture, observation } from "./inventory-context-fixtures.ts";
 import { receiptFixture } from "./inventory-receipt-fixtures.ts";
@@ -40,6 +43,15 @@ async function sourceFixture(count = 1, testOperation = false) {
 }
 async function prepare(f: Awaited<ReturnType<typeof sourceFixture>>) {
   return f.workspace.prepare("a", f.generation, "source", f.keys);
+}
+function readReferences(page: PreparedInventoryProjections) {
+  return page.rows.map((row) => ({
+    scope: page.scope,
+    key: row.key,
+    facet: row.facet,
+    version: 1,
+    payload: row.payload,
+  }));
 }
 async function scratchEmpty(f: Awaited<ReturnType<typeof sourceFixture>>) {
   for (const table of [
@@ -190,6 +202,131 @@ test("unchanged full verification keeps a ready projection current without repro
         )
         .first(),
       before,
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("bulk body loading shares repeated forward/reverse inputs and stays bounded as unrelated projections grow", async (t) => {
+  const f = await sourceFixture(20);
+  try {
+    const page = await prepare(f);
+    await f.projections.publish(page, f.projectionLease);
+    const references = readReferences(page);
+    const before = await f.projections.bodies("a", f.generation, [
+      ...references,
+      ...references,
+      ...references,
+    ]);
+    assert.equal(before.items.length, 20);
+    assert.equal(before.missing.length, 0);
+    assert.equal(before.stats.queries, 2);
+    assert.equal(before.stats.decryptedBodies, 20);
+    assert.ok(before.items.every((row) => row.body.record.CALL === "W1AW"));
+    const unrelated = JSON.stringify(
+      Array.from({ length: 5000 }, (_, i) => `unrelated${i}`),
+    );
+    await f.db.batch([
+      f.db
+        .prepare(`INSERT INTO comparison_index(tenant,generation_id,scope_id,record_key,facet,key_class,bucket_hash,semantic_version,config_version,state,parent_key,topology_version,projection_version,last_page_id)
+          SELECT i.tenant,i.generation_id,i.scope_id,j.value,i.facet,i.key_class,i.bucket_hash,i.semantic_version,i.config_version,i.state,i.parent_key,i.topology_version,i.projection_version,i.last_page_id
+          FROM json_each(?) j CROSS JOIN comparison_index i WHERE i.record_key='q0'`)
+        .bind(unrelated),
+      f.db
+        .prepare(`INSERT INTO comparison_projections(tenant,generation_id,scope_id,record_key,facet,version,semantic_version,config_version,parent_key,topology_version,membership_version,state,reason,payload_id,coverage_stream,coverage_partition,coverage_version,derived_at,last_page_id)
+          SELECT p.tenant,p.generation_id,p.scope_id,j.value,p.facet,p.version,p.semantic_version,p.config_version,p.parent_key,p.topology_version,p.membership_version,p.state,p.reason,p.payload_id,p.coverage_stream,p.coverage_partition,p.coverage_version,p.derived_at,p.last_page_id
+          FROM json_each(?) j CROSS JOIN comparison_projections p WHERE p.record_key='q0'`)
+        .bind(unrelated),
+    ]);
+    const after = await f.projections.bodies("a", f.generation, references);
+    assert.deepEqual(after, before);
+    t.diagnostic(
+      `20 bodies: ${before.stats.queries} reads, ${before.stats.rowsRead} rows read, ${before.stats.decryptedBodies} decryptions; unchanged with 5,000 unrelated projection rows`,
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("bulk body loading reports stale and cross-tenant inputs instead of treating missing bodies as an empty candidate set", async () => {
+  const f = await sourceFixture(2);
+  try {
+    const page = await prepare(f);
+    await f.projections.publish(page, f.projectionLease);
+    const references = readReferences(page);
+    const wrongVersion = await f.projections.bodies("a", f.generation, [
+      references[0],
+      { ...references[1], version: 2 },
+    ]);
+    assert.equal(wrongVersion.items.length, 1);
+    assert.equal(wrongVersion.missing.length, 1);
+    const foreign = await f.projections.bodies("b", f.generation, references);
+    assert.equal(foreign.items.length, 0);
+    assert.deepEqual(foreign.missing, references);
+    await f.begin();
+    const collecting = await f.projections.bodies(
+      "a",
+      f.generation,
+      references,
+    );
+    assert.equal(collecting.items.length, 0);
+    assert.deepEqual(collecting.missing, references);
+    assert.equal(collecting.stats.decryptedBodies, 0);
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("bulk body admission rejects a dense union before ciphertext loading or decryption", async () => {
+  const f = await sourceFixture(10);
+  try {
+    const page = await prepare(f);
+    const oversized = JSON.stringify({ padding: "x".repeat(450_000) });
+    // These deliberately undecodable envelopes prove the metadata admission
+    // happens before any body is loaded or opened. All native sizes agree.
+    for (const payload of page.payloads) payload.envelope = oversized;
+    await resign(page);
+    await f.projections.publish(page, f.projectionLease);
+    await assert.rejects(
+      f.projections.bodies("a", f.generation, readReferences(page)),
+      /inventory_projection_read_byte_bound/,
+    );
+    await assert.rejects(
+      f.projections.bodies("a", f.generation, [readReferences(page)[0]]),
+      /unsupported envelope\/key version/,
+    );
+    await assert.rejects(
+      f.projections.bodies(
+        "a",
+        f.generation,
+        Array.from({ length: 129 }, (_, i) => ({
+          ...readReferences(page)[0],
+          key: `different${i}`,
+        })),
+      ),
+      /inventory_projection_read_split_required/,
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("bulk body input identity is captured before yielding and incompatible references cannot be merged", async () => {
+  const f = await sourceFixture();
+  try {
+    const page = await prepare(f);
+    await f.projections.publish(page, f.projectionLease);
+    const references: InventoryProjectionRead[] = readReferences(page);
+    const loading = f.projections.bodies("a", f.generation, references);
+    references[0].scope = "other";
+    assert.equal((await loading).items.length, 1);
+    await assert.rejects(
+      f.projections.bodies("a", f.generation, [
+        ...readReferences(page),
+        { ...readReferences(page)[0], version: 2 },
+      ]),
+      /inventory_projection_read_conflict/,
     );
   } finally {
     await f.mf.dispose();

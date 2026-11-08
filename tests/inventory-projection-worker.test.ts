@@ -34,7 +34,9 @@ export default { async fetch(request,env) {
   const publication=await publisher.publish(page,lease,'native-projections');
   const replay=await publisher.publish(page,lease,'native-projections');
   const stored=await publisher.body('a',generation,'source','q0','source');
-  return Response.json({decoded,allMatch,stats:page.stats,digestMatches:digest===await inventoryProjectionDigest(input),plaintextLeaked:JSON.stringify(page).includes('Private native source narrative'),publication,recovered:replay.recovered,storedMatches:stored?.version===1&&stored.body.record.STATION_CALLSIGN==='K1ABC'});
+  const references=page.rows.map(row=>({scope:page.scope,key:row.key,facet:row.facet,version:1,payload:row.payload}));
+  const bulk=await publisher.bodies('a',generation,[...references,...references]);
+  return Response.json({decoded,allMatch,stats:page.stats,digestMatches:digest===await inventoryProjectionDigest(input),plaintextLeaked:JSON.stringify(page).includes('Private native source narrative'),publication,recovered:replay.recovered,storedMatches:stored?.version===1&&stored.body.record.STATION_CALLSIGN==='K1ABC',bulk:{stats:bulk.stats,missing:bulk.missing.length,match:bulk.items.length===20&&bulk.items.every(row=>row.body.record.STATION_CALLSIGN==='K1ABC')}});
  } finally { await store.release(lease); }
 } };`,
       loader: "ts",
@@ -102,6 +104,11 @@ export default { async fetch(request,env) {
     publication: { records: number; ready: number; statements: number };
     recovered: boolean;
     storedMatches: boolean;
+    bulk: {
+      stats: { queries: number; decryptedBodies: number };
+      missing: number;
+      match: boolean;
+    };
   };
   assert.equal(result.decoded, 20);
   assert.equal(result.allMatch, true);
@@ -114,6 +121,10 @@ export default { async fetch(request,env) {
   assert.ok(result.publication.statements < 20);
   assert.equal(result.recovered, true);
   assert.equal(result.storedMatches, true);
+  assert.equal(result.bulk.match, true);
+  assert.equal(result.bulk.missing, 0);
+  assert.equal(result.bulk.stats.queries, 2);
+  assert.equal(result.bulk.stats.decryptedBodies, 20);
   assert.equal(outbound, 0);
   assert.deepEqual(await f.inventory.snapshot("a", "source", "sync"), before);
   assert.deepEqual(

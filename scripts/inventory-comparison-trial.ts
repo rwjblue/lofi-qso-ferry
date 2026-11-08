@@ -21,7 +21,10 @@ import {
   inventoryProjectionIdentity,
   type PreparedInventoryProjections,
 } from "../src/inventory-projection-workspace.ts";
-import { InventoryProjections } from "../src/inventory-projections.ts";
+import {
+  type InventoryProjectionRead,
+  InventoryProjections,
+} from "../src/inventory-projections.ts";
 import {
   canonical,
   type Envelope,
@@ -385,6 +388,10 @@ export async function reopenInventoryComparisonTrial(directory: string) {
     });
     let preparedProjectionsValidated = 0;
     let publishedProjectionsValidated = 0;
+    const published = new Map<
+      string,
+      { reference: InventoryProjectionRead; body: InventoryProjectionBody }
+    >();
     if (preparationText) {
       const preparations = JSON.parse(
         preparationText,
@@ -412,24 +419,39 @@ export async function reopenInventoryComparisonTrial(directory: string) {
             throw new Error("comparison_trial_projection_body_mismatch");
           preparedProjectionsValidated++;
           if (report.projections?.published) {
-            const stored = await new InventoryProjections(store).body(
-              preparation.tenant,
-              preparation.generation,
-              preparation.scope,
-              row.key,
-              row.facet,
-            );
             if (
-              !stored ||
-              stored.payload !== payload.id ||
-              stored.version !== 1 ||
-              canonical(stored.body) !== canonical(body)
+              preparation.tenant !== "trial" ||
+              preparation.generation !== context.generation
             )
-              throw new Error("comparison_trial_published_projection_mismatch");
-            publishedProjectionsValidated++;
+              throw new Error("comparison_trial_projection_scope_mismatch");
+            published.set(canonical([preparation.scope, row.key, row.facet]), {
+              reference: {
+                scope: preparation.scope,
+                key: row.key,
+                facet: row.facet,
+                version: 1,
+                payload: payload.id,
+              },
+              body,
+            });
           }
         }
       }
+    }
+    const loaded = await new InventoryProjections(store).bodies(
+      "trial",
+      context.generation,
+      [...published.values()].map((row) => row.reference),
+    );
+    if (loaded.missing.length || loaded.items.length !== published.size)
+      throw new Error("comparison_trial_published_projection_missing");
+    for (const stored of loaded.items) {
+      const expected = published.get(
+        canonical([stored.scope, stored.key, stored.facet]),
+      );
+      if (!expected || canonical(stored.body) !== canonical(expected.body))
+        throw new Error("comparison_trial_published_projection_mismatch");
+      publishedProjectionsValidated++;
     }
     return {
       directory,
@@ -439,6 +461,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       persistedHashesValidated: validated,
       preparedProjectionsValidated,
       publishedProjectionsValidated,
+      publishedProjectionReadStats: loaded.stats,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

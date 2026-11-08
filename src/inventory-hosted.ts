@@ -1,5 +1,10 @@
 import { InventoryComparisonPages } from "./inventory-comparison-pages.ts";
 import {
+  consumeComparisonWakeups,
+  isComparisonMessage,
+  publishComparisonWakeups,
+} from "./inventory-comparison-continuations.ts";
+import {
   consumeInventoryWakeups,
   publishInventoryWakeups,
 } from "./inventory-continuations.ts";
@@ -47,8 +52,22 @@ export async function runHostedScheduled(
   const runs = new InventoryRuns(
     new InventoryIngestion(store, new InventoryComparisonPages(store)),
   );
-  const queued = await publishInventoryWakeups(runs, env.INVENTORY_QUEUE);
-  return { mode: "inventory_read_only" as const, registration, starts, queued };
+  const inventoryQueued = await publishInventoryWakeups(
+    runs,
+    env.INVENTORY_QUEUE,
+  );
+  const comparisonQueued = await publishComparisonWakeups(
+    store,
+    env.INVENTORY_QUEUE,
+  );
+  return {
+    mode: "inventory_read_only" as const,
+    registration,
+    starts,
+    queued: inventoryQueued + comparisonQueued,
+    inventoryQueued,
+    comparisonQueued,
+  };
 }
 
 /** Queue handlers never invoke legacy intake, proofs or delivery preparation. */
@@ -71,10 +90,55 @@ export async function runHostedInventoryQueue(
     fetcher,
     { scheduled: true },
   );
+  const comparisonMessages = batch.messages.filter((message) =>
+    isComparisonMessage(message.body),
+  );
+  const inventoryMessages = batch.messages.filter(
+    (message) => !isComparisonMessage(message.body),
+  );
+  let comparisonAfterInventory = 0,
+    inventoryAfterComparison = 0;
+  const inventory = await consumeInventoryWakeups(
+    runner,
+    { messages: inventoryMessages },
+    env.INVENTORY_QUEUE,
+    {
+      maxTurns: 1,
+      async afterPublish() {
+        comparisonAfterInventory += await publishComparisonWakeups(
+          store,
+          env.INVENTORY_QUEUE,
+        );
+      },
+    },
+  );
+  const comparison = await consumeComparisonWakeups(
+    store,
+    { messages: comparisonMessages },
+    env.INVENTORY_QUEUE,
+    {
+      maxTurns: 1,
+      async afterPublish() {
+        inventoryAfterComparison += await publishInventoryWakeups(
+          runner.runs,
+          env.INVENTORY_QUEUE,
+        );
+      },
+    },
+  );
+  const inventoryQueued = inventory.queued + inventoryAfterComparison;
+  const comparisonQueued = comparison.queued + comparisonAfterInventory;
   return {
     mode: "inventory_read_only" as const,
-    ...(await consumeInventoryWakeups(runner, batch, env.INVENTORY_QUEUE, {
-      maxTurns: 1,
-    })),
+    processed: inventory.processed + comparison.processed,
+    inventoryProcessed: inventory.processed,
+    comparisonProcessed: comparison.processed,
+    acknowledged: inventory.acknowledged + comparison.acknowledged,
+    retried: inventory.retried + comparison.retried,
+    invalid: inventory.invalid + comparison.invalid,
+    failed: inventory.failed + comparison.failed,
+    queued: inventoryQueued + comparisonQueued,
+    inventoryQueued,
+    comparisonQueued,
   };
 }

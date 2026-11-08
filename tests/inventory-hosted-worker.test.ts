@@ -190,4 +190,40 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
     readTimes[1] - readTimes[0] >= 19000,
     "the next provider request respects the durable initial pacing reservation",
   );
+  let compared: {
+    idle_turns: number;
+    phase_count: number;
+    not_before: number | null;
+    state: string;
+  } | null = null;
+  for (let i = 0; i < 200; i++) {
+    compared = await db
+      .prepare(
+        "SELECT c.idle_turns,c.phase_count,w.not_before,g.state FROM inventory_comparison_coordinators c JOIN inventory_comparison_wakeups w ON w.tenant=c.tenant JOIN comparison_domains d ON d.tenant=c.tenant JOIN index_generations g ON g.tenant=d.tenant AND g.generation_id=d.active_generation WHERE c.tenant='a'",
+      )
+      .first();
+    if (
+      compared?.idle_turns === compared?.phase_count &&
+      compared?.not_before === null
+    )
+      break;
+    await delay(50);
+  }
+  assert.ok(compared);
+  assert.equal(compared.state, "active");
+  assert.equal(compared.idle_turns, 11);
+  assert.equal(compared.not_before, null);
+  assert.deepEqual(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM comparison_projections WHERE reason='source_coverage_incomplete'",
+      )
+      .first(),
+    { n: 0 },
+  );
+  assert.equal(
+    reads,
+    2,
+    "derived comparison Queue turns make no provider calls",
+  );
 });

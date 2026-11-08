@@ -4,6 +4,7 @@ import {
   runHostedInventoryQueue,
   runHostedScheduled,
 } from "../src/inventory-hosted.ts";
+import { isComparisonMessage } from "../src/inventory-comparison-continuations.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { planInventoryRun } from "../src/inventory-run-plans.ts";
 import {
@@ -205,7 +206,9 @@ test("cron registers source/book selections and publishes initial jobs without v
   if (result.mode !== "inventory_read_only") assert.fail();
   assert.equal(result.registration.registered, 2);
   assert.equal(result.starts.started, 2);
-  assert.equal(result.queued, 2);
+  assert.equal(result.queued, 3);
+  assert.equal(result.inventoryQueued, 2);
+  assert.equal(result.comparisonQueued, 1);
   assert.equal((await inventoryRuntime(f.store)).mode, "inventory_read_only");
   assert.equal(
     (
@@ -255,7 +258,7 @@ test("the hosted queue executes an owned source page, and off pauses future deli
   assert.equal("failed" in report && report.failed, 0);
   assert.deepEqual(delivery.outcomes, ["ack"]);
   assert.equal(reads, 1);
-  const continuation = f.sent.at(-1);
+  const continuation = f.sent.findLast((row) => !isComparisonMessage(row.body));
   assert.ok(continuation?.delaySeconds && continuation.delaySeconds >= 19);
   const paused = batch(continuation.body);
   await runHostedInventoryQueue(
@@ -272,6 +275,102 @@ test("the hosted queue executes an owned source page, and off pauses future deli
     (await f.db.prepare("SELECT count(*) n FROM ledger").first<{ n: number }>())
       ?.n,
     0,
+  );
+});
+
+test("a mixed hosted batch advances one read and one comparison turn", async (t) => {
+  const f = await fixture(t);
+  await runHostedScheduled(f.env);
+  const scope = await f.db
+    .prepare(
+      "SELECT scope_id FROM inventory_scopes WHERE connection_id='source'",
+    )
+    .first<{ scope_id: string }>();
+  assert.ok(scope);
+  const sourceRequest = f.sent.find(
+    (row) => (row.body as InventoryRunWakeup).scope === scope.scope_id,
+  );
+  const comparisonRequest = f.sent.find((row) => isComparisonMessage(row.body));
+  assert.ok(sourceRequest && comparisonRequest);
+  const source = batch(sourceRequest.body),
+    comparison = batch(comparisonRequest.body);
+  let reads = 0;
+  const report = await runHostedInventoryQueue(
+    f.env,
+    {
+      ...source.value,
+      messages: [...source.value.messages, ...comparison.value.messages],
+    },
+    async () => {
+      reads++;
+      return lofi();
+    },
+  );
+  assert.equal(report.mode, "inventory_read_only");
+  assert.ok("inventoryProcessed" in report);
+  assert.equal(report.inventoryProcessed, 1);
+  assert.equal(report.comparisonProcessed, 1);
+  assert.equal(report.processed, 2);
+  assert.equal(report.failed, 0);
+  assert.equal(reads, 1);
+  assert.deepEqual(source.outcomes, ["ack"]);
+  assert.deepEqual(comparison.outcomes, ["ack"]);
+});
+
+test("a failed comparison continuation keeps the committed read message retryable", async (t) => {
+  const f = await fixture(t);
+  await runHostedScheduled(f.env);
+  const scope = await f.db
+    .prepare(
+      "SELECT scope_id FROM inventory_scopes WHERE connection_id='source'",
+    )
+    .first<{ scope_id: string }>();
+  assert.ok(scope);
+  const request = f.sent.find(
+    (row) => (row.body as InventoryRunWakeup).scope === scope.scope_id,
+  );
+  assert.ok(request);
+  const first = batch(request.body);
+  const queue = {
+    ...f.env.INVENTORY_QUEUE,
+    async sendBatch(messages: Iterable<MessageSendRequest<unknown>>) {
+      const rows = Array.from(messages);
+      if (rows.some((row) => isComparisonMessage(row.body)))
+        throw new Error("synthetic comparison Queue outage");
+      return f.env.INVENTORY_QUEUE.sendBatch(rows);
+    },
+  };
+  let reads = 0;
+  const failed = await runHostedInventoryQueue(
+    { ...f.env, INVENTORY_QUEUE: queue },
+    first.value,
+    async () => {
+      reads++;
+      return lofi();
+    },
+  );
+  assert.equal("failed" in failed && failed.failed, 1);
+  assert.deepEqual(first.outcomes, [60]);
+  assert.equal(reads, 1);
+  assert.deepEqual(
+    await f.db.prepare("SELECT count(*) AS n FROM inventory_records").first(),
+    { n: 1 },
+  );
+  const replay = batch(request.body);
+  const recovered = await runHostedInventoryQueue(
+    f.env,
+    replay.value,
+    async () => {
+      reads++;
+      return lofi();
+    },
+  );
+  assert.equal("failed" in recovered && recovered.failed, 0);
+  assert.deepEqual(replay.outcomes, ["ack"]);
+  assert.equal(
+    reads,
+    1,
+    "the old committed page is recovered without another vendor read",
   );
 });
 

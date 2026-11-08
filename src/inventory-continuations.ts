@@ -54,7 +54,7 @@ export async function consumeInventoryWakeups(
   runner: InventoryRunner,
   batch: Pick<MessageBatch<unknown>, "messages">,
   queue: InventoryQueue,
-  options: { maxTurns?: number } = {},
+  options: { maxTurns?: number; afterPublish?: () => Promise<void> } = {},
 ) {
   const maxTurns = options.maxTurns ?? 2;
   if (!Number.isSafeInteger(maxTurns) || maxTurns < 1 || maxTurns > 4)
@@ -102,6 +102,7 @@ export async function consumeInventoryWakeups(
   if (completed.length) {
     try {
       report.queued = await publishInventoryWakeups(runner.runs, queue);
+      await options.afterPublish?.();
       for (const message of completed) {
         message.ack();
         report.acknowledged++;

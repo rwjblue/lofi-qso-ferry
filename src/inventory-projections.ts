@@ -261,11 +261,16 @@ export class InventoryProjections {
     tenant: string,
     generation: string,
     requested: readonly InventoryProjectionRead[],
+    options: { maxBytes?: number } = {},
   ) {
     requested = structuredClone(requested);
+    const maxBytes = options.maxBytes ?? MAX_READ_BYTES;
     if (
       !identifier(tenant) ||
       !identifier(generation) ||
+      !Number.isSafeInteger(maxBytes) ||
+      maxBytes < 0 ||
+      maxBytes > MAX_READ_BYTES ||
       requested.length > 1024 ||
       requested.some(
         (row) =>
@@ -321,7 +326,7 @@ export class InventoryProjections {
       (sum, row) => sum + row.encrypted_bytes,
       0,
     );
-    if (stats.encryptedInputBytes > MAX_READ_BYTES)
+    if (stats.encryptedInputBytes > maxBytes)
       throw new Error("inventory_projection_read_byte_bound");
     const admitted = metadata.results.map((row) => ({
       ...references[row.ordinal],
@@ -353,7 +358,7 @@ export class InventoryProjections {
           this.store.keys,
         );
         stats.plaintextBytes += encoder.encode(canonical(body)).byteLength;
-        if (stats.plaintextBytes > MAX_READ_BYTES)
+        if (stats.plaintextBytes > maxBytes)
           throw new Error("inventory_projection_read_byte_bound");
         if (body.version !== 1 || body.state !== row.state)
           throw new Error("inventory_projection_body_changed");

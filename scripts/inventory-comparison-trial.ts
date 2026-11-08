@@ -16,7 +16,11 @@ import {
 } from "../src/inventory-comparison-lookup.ts";
 import { inventoryComparisonHint } from "../src/inventory-comparison-pages.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
-import { InventoryMatchingResults } from "../src/inventory-matching-results.ts";
+import {
+  InventoryMatchingResults,
+  type InventoryMatchingWorkClaim,
+} from "../src/inventory-matching-results.ts";
+import { InventoryMatchingWork } from "../src/inventory-matching-work.ts";
 import {
   InventoryMatchingWorkspace,
   type PreparedInventoryMatchingSnapshot,
@@ -132,6 +136,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0055_inventory_comparison_coordinator.sql",
       "0056_inventory_current_work_selection.sql",
       "0057_inventory_scoped_activation_debt.sql",
+      "0058_inventory_matching_work.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -319,6 +324,11 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       )
       .first();
     const matchingSnapshots: PreparedInventoryMatchingSnapshot[] = [];
+    const matchingWorkSnapshots: {
+      setId: string;
+      matchingDigest: string;
+      work: InventoryMatchingWorkClaim[];
+    }[] = [];
     const historicalAdoptions: {
       provider: string;
       selected: number;
@@ -350,8 +360,34 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       if (!lease) throw new Error("comparison_trial_matching_lease_busy");
       const matches = new InventoryMatchingResults(store);
       try {
-        const result = await matches.publish(prepared, lease);
-        const replay = await matches.publish(prepared, lease, result.setId);
+        await new InventoryMatchingWork(store).enqueue(
+          "trial",
+          generation,
+          scope.scope_id,
+          prepared.selected,
+        );
+        const work = (
+          await db
+            .prepare(
+              "SELECT w.source_scope AS scope,w.record_key AS key,w.work_version AS workVersion,w.completed_version AS completedVersion,w.source_config_version AS sourceConfigVersion,w.destination_config_version AS destinationConfigVersion,w.due_at AS dueAt FROM json_each(?1) j CROSS JOIN matching_work w WHERE w.tenant='trial' AND w.generation_id=?2 AND w.destination=?3 AND w.source_scope=json_extract(j.value,'$.scope') AND w.record_key=json_extract(j.value,'$.key') ORDER BY CAST(j.key AS INTEGER)",
+            )
+            .bind(canonical(prepared.selected), generation, scope.scope_id)
+            .all<InventoryMatchingWorkClaim>()
+        ).results;
+        if (work.length !== prepared.selected.length)
+          throw new Error("comparison_trial_matching_work_missing");
+        const result = await matches.publish(
+          prepared,
+          lease,
+          crypto.randomUUID(),
+          work,
+        );
+        const replay = await matches.publish(
+          prepared,
+          lease,
+          result.setId,
+          work,
+        );
         const current = await matches.current(
           "trial",
           scope.scope_id,
@@ -367,6 +403,11 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
           receiptReplayRecovered: true,
           currentResults: current.results.length,
           currentRowsRead: current.rowsRead,
+        });
+        matchingWorkSnapshots.push({
+          setId: result.setId,
+          matchingDigest: prepared.digest,
+          work,
         });
       } finally {
         await store.release(lease);
@@ -397,6 +438,22 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       JSON.stringify(matchingSnapshots),
       { mode: 0o600, flag: "wx" },
     );
+    await writeFile(
+      join(directory, "matching-work.json"),
+      JSON.stringify(matchingWorkSnapshots),
+      { mode: 0o600, flag: "wx" },
+    );
+    const matchingWorkCounts = await db
+      .prepare(
+        "SELECT count(*) AS total,coalesce(sum(completed_version=work_version),0) AS completed,coalesce(sum(completed_version<work_version),0) AS pending FROM matching_work WHERE tenant='trial'",
+      )
+      .first<{ total: number; completed: number; pending: number }>();
+    if (
+      !matchingWorkCounts ||
+      matchingWorkCounts.completed !==
+        matchingWorkSnapshots.reduce((sum, row) => sum + row.work.length, 0)
+    )
+      throw new Error("comparison_trial_matching_work_completion_failed");
     const indexCounts = (
       await db
         .prepare(
@@ -421,6 +478,11 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       projections: { published: true, phases: projectionPhases },
       projectionJobs: projectionJobSample,
       coordinator: { turns: coordinatorTurns, control: coordinatorControl },
+      matchingWork: {
+        sampled: true,
+        ...matchingWorkCounts,
+        manifestDigest: await sha256(canonical(matchingWorkSnapshots)),
+      },
       matchingSnapshots: {
         published: true,
         resultsPublished: matchingPublications.reduce(
@@ -496,6 +558,13 @@ export async function reopenInventoryComparisonTrial(directory: string) {
   ) as {
     projections?: { published: boolean };
     matchingSnapshots?: { published: boolean };
+    matchingWork?: {
+      sampled: boolean;
+      total: number;
+      completed: number;
+      pending: number;
+      manifestDigest: string;
+    };
     historicalAdoption?: { evaluated: boolean; associationsCreated: number };
     projectionJobs?: {
       sampled: boolean;
@@ -837,6 +906,87 @@ export async function reopenInventoryComparisonTrial(directory: string) {
             turn.records,
           );
     }
+    let matchingWorkValidated: number | undefined;
+    if (report.matchingWork?.sampled) {
+      const workSnapshots = JSON.parse(
+        await readFile(join(directory, "matching-work.json"), "utf8"),
+      ) as {
+        setId: string;
+        matchingDigest: string;
+        work: InventoryMatchingWorkClaim[];
+      }[];
+      if (
+        (await sha256(canonical(workSnapshots))) !==
+        report.matchingWork.manifestDigest
+      )
+        throw new Error("comparison_trial_matching_work_manifest_changed");
+      matchingWorkValidated = 0;
+      for (const snapshot of workSnapshots) {
+        if (
+          !matchingText ||
+          !(
+            JSON.parse(matchingText) as PreparedInventoryMatchingSnapshot[]
+          ).some((page) => page.digest === snapshot.matchingDigest)
+        )
+          throw new Error("comparison_trial_matching_work_snapshot_missing");
+        const receipt = await db
+          .prepare(
+            "SELECT h.state,h.input_digest,c.row_count,(SELECT count(*) FROM inventory_match_work_rows q JOIN matching_work w ON w.tenant=q.tenant AND w.generation_id=q.generation_id AND w.destination=q.destination AND w.source_scope=q.source_scope AND w.record_key=q.record_key WHERE q.tenant=h.tenant AND q.set_id=h.set_id AND w.work_version=q.work_version AND w.completed_version=q.work_version AND w.last_completed_set=h.set_id) AS completed FROM inventory_match_sets h JOIN inventory_match_work_claims c ON c.tenant=h.tenant AND c.set_id=h.set_id WHERE h.tenant='trial' AND h.set_id=?",
+          )
+          .bind(snapshot.setId)
+          .first<{
+            state: string;
+            input_digest: string;
+            row_count: number;
+            completed: number;
+          }>();
+        const rows = (
+          await db
+            .prepare(
+              "SELECT source_scope AS scope,record_key AS key,work_version AS workVersion,completed_version AS completedVersion,source_config_version AS sourceConfigVersion,destination_config_version AS destinationConfigVersion,due_at AS dueAt FROM inventory_match_work_rows WHERE tenant='trial' AND set_id=? ORDER BY source_scope,record_key",
+            )
+            .bind(snapshot.setId)
+            .all<InventoryMatchingWorkClaim>()
+        ).results;
+        const byKey = new Map(
+          rows.map((row) => [canonical([row.scope, row.key]), row]),
+        );
+        const captured = snapshot.work.map((row) =>
+          byKey.get(canonical([row.scope, row.key])),
+        );
+        const expectedDigest = await sha256(
+          canonical({
+            matchingDigest: snapshot.matchingDigest,
+            work: snapshot.work,
+          }),
+        );
+        if (
+          receipt?.state !== "committed" ||
+          receipt.input_digest !== expectedDigest ||
+          receipt.row_count !== snapshot.work.length ||
+          receipt.completed !== snapshot.work.length ||
+          rows.length !== snapshot.work.length ||
+          canonical(captured) !== canonical(snapshot.work)
+        )
+          throw new Error("comparison_trial_matching_work_not_recovered");
+        matchingWorkValidated += receipt.completed;
+      }
+      const counts = await db
+        .prepare(
+          "SELECT count(*) AS total,coalesce(sum(completed_version=work_version),0) AS completed,coalesce(sum(completed_version<work_version),0) AS pending FROM matching_work WHERE tenant='trial'",
+        )
+        .first();
+      if (
+        canonical(counts) !==
+          canonical({
+            total: report.matchingWork.total,
+            completed: report.matchingWork.completed,
+            pending: report.matchingWork.pending,
+          }) ||
+        matchingWorkValidated !== report.matchingWork.completed
+      )
+        throw new Error("comparison_trial_matching_work_counts_changed");
+    }
     return {
       directory,
       vendorHttpRequests: 0,
@@ -851,6 +1001,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       historicalAssociationsValidated,
       jobProjectionsValidated,
       coordinatorProjectionsValidated,
+      matchingWorkValidated,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

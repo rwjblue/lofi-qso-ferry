@@ -1,7 +1,7 @@
 # Matching coverage wait-point evidence
 
-Status: local coverage wait points and readiness journaling, 2026-11-08. The
-dispatcher and bounded rematching publisher are still missing; this is not yet
+Status: local coverage wait points, readiness journaling and guarded prefix
+dispatch, 2026-11-08. The bounded rematching publisher is still missing; this is not yet
 automatic coverage recovery. Runtime activation remains off. No deployment,
 production reset or vendor upload occurred.
 
@@ -84,19 +84,59 @@ receive filter. Source events require a complete operations/QSO full census;
 receipt events require a complete provider selection with the relevant catch-up
 contract.
 
-The future dispatcher must read the post-transaction scope clock and validate it
-at publication. The journal deliberately does not infer that clock from the
-order of independent AFTER triggers. Event completion is currently rejected by
-a native guard until the fenced dispatcher is installed.
+The dispatcher reads the post-transaction scope clock and validates it at
+publication. The journal deliberately does not infer that clock from the order
+of independent AFTER triggers. Event completion requires a fenced native
+dispatch receipt.
+
+## Guarded prefix dispatch
+
+[Migration 0067](../migrations/0067_inventory_matching_coverage_dispatch.sql) and
+[InventoryMatchingCoverageEvents](../src/inventory-matching-coverage-events.ts)
+turn a ready selection into at most 44 coalesced prefix jobs. Source recovery uses
+one wildcard. Receipt recovery hashes the original full run's date range; delta
+receive filters never replace that range. A date prefix may select contacts with
+other station/worked-call restrictions. These are scheduling hints: fresh
+comparison still enforces the exact selection and never inherits write authority.
+
+Dispatch enumerates eligible active-generation source/destination routes before
+probing current dependencies with their destination/source prefix. A node needs
+work only if a current interest predates the captured scope clock. Overlapping
+events at the same clock share the existing job. A later clock advances its work
+version and resets its frontier while preserving prior completion.
+
+One explicit INSERT admits the event, queues the exact needed prefixes, completes
+only its captured event version and commits an immutable receipt. Admission and
+final guards bind the account/connections, configuration, ready scope builds,
+active generation/key, domain/source roster, full selection, coverage version,
+scope clock and lease. Missing jobs and late authority changes roll back the
+entire transaction. Lost acknowledgements recover the original job count without
+completing newer events. Native event/job progress cannot bypass these guards.
+
+Twenty distinct blocked days dispatch six prefixes with **one statement, 831
+reads and 29 writes**, with zero contact work changes. A warm single-day dispatch
+uses **198 reads and eight writes** both before and after 100 retained receipts;
+there remains one current coalesced job. Query-plan checks require the reverse
+map lookup to include destination/source equality before its clock range.
+
+The focused suite passes 26 tests across QRZ catch-up, LoTW full/delta selections,
+unchanged source restoration, overlapping events, disabled routes, native races,
+suppressed jobs, SQL rollback, lost acknowledgements and an actual Worker. The
+Worker dispatches prefix jobs before an explicit second matching request; it
+does not prove automatic rematching. No vendor requests or attempts occur.
+Logs are `/tmp/lofi-ferry-coverage-dispatch-verified.log`,
+`/tmp/lofi-ferry-coverage-dispatch-history.log` and
+`/tmp/lofi-ferry-coverage-dispatch-worker.log`.
 
 ## Costs and verification
 
-| Native comparison operation                             |                               Measurement |
-| ------------------------------------------------------- | ----------------------------------------: |
-| One blocked receipt day                                 |      11 statements, 546 reads, 133 writes |
-| Twenty blocked days                                     |    11 statements, 7,088 reads, 859 writes |
-| Shared paths in that twenty-day cohort                  | 460 declared prefixes, 62 current entries |
-| Warm single-day replacement before/after 100 old proofs |         654 / 654 reads, 155 / 155 writes |
+| Native comparison operation                    |                               Measurement |
+| ---------------------------------------------- | ----------------------------------------: |
+| One blocked receipt day                        |      11 statements, 546 reads, 133 writes |
+| Twenty blocked days                            |    11 statements, 7,088 reads, 859 writes |
+| Shared paths in that twenty-day cohort         | 460 declared prefixes, 62 current entries |
+| Blocked-day replacement across 500 old proofs  |            621–654 reads, 155 writes each |
+| Ready-result replacement across 500 old proofs |             484–515 reads, 64 writes each |
 
 These are publication costs without matching-work claims or bucket dependency
 maps, not complete-turn or hosted latency measurements. A separate 500-proof
@@ -110,23 +150,35 @@ twenty-day publication from 24,968 to 7,088 reads. This changes no coverage rule
 The index adds real storage/write cost during partial coverage. These small
 fixtures do not qualify peak incomplete-log storage for 200,000 contacts.
 
+The result-cost regressions originally compared two individual samples and
+failed at 484 versus 515 ready-result reads and 621 versus 654 blocked-day reads.
+Statement-level audits across six independent
+fixtures reproduced that fixed variation without continuing history growth.
+The replacement tests check every publication through 500 superseded proofs
+against fixed ceilings: 550 reads/64 writes for one ready result and 700 reads/155
+writes for one blocked day. This checks bounded cost without requiring two
+samples to take the same successful native path. Leases are renewed between
+completed operations so slower machines retain the same test.
+Logs are `/tmp/lofi-ferry-result-cost-audit.log` and
+`/tmp/lofi-ferry-result-cost-budget-verified.log`, plus
+`/tmp/lofi-ferry-coverage-cost-budget-verified.log`.
+
 An actual Worker creates the 62 current entries for twenty incomplete contacts.
 After a complete date selection, a second explicit matching request produces
 twenty inventory-absence observations and collects the entries. It preserves
 source inventory/credential ciphertext, creates no attempts and makes no vendor
 requests. This test explicitly rematches; it does not prove automatic dispatch.
 
-The inventory regression passes **503 tests**, including calendar range geometry,
+The inventory regression passes **528 tests**, including calendar range geometry,
 cross-midnight ordering, empty reverse-source census, unchanged source/delta
-restoration, permanent-shape holds, native rollback and Worker execution.
-TypeScript, lint, formatting and the Worker dry-run build pass. Logs are
-`/tmp/lofi-ferry-coverage-recovery-inventory.log`,
-`/tmp/lofi-ferry-coverage-recovery-focused-verified.log`,
-`/tmp/lofi-ferry-coverage-recovery-midnight-orders.log`,
-`/tmp/lofi-ferry-coverage-recovery-types-checked.log`,
-`/tmp/lofi-ferry-coverage-recovery-lint-checked.log`,
-`/tmp/lofi-ferry-coverage-recovery-format-checked.log` and
-`/tmp/lofi-ferry-coverage-recovery-build.log`.
+restoration, projection hold recovery, guarded prefix dispatch, retained-history
+cost bounds, native rollback and Worker execution. TypeScript, lint, formatting
+and the Worker dry-run build pass. Logs are
+`/tmp/lofi-ferry-coverage-dispatch-inventory-final.log`,
+`/tmp/lofi-ferry-coverage-dispatch-types-final.log`,
+`/tmp/lofi-ferry-coverage-dispatch-lint-final.log`,
+`/tmp/lofi-ferry-coverage-dispatch-format-final.log` and
+`/tmp/lofi-ferry-coverage-dispatch-build.log`.
 
 ## Encrypted replay
 
@@ -148,13 +200,37 @@ Logs are `/tmp/lofi-ferry-coverage-recovery-capture.log`,
 `/tmp/lofi-ferry-coverage-recovery-compat.log`. Full real-source coverage,
 initial-sync timing and ready-log storage density remain unproved.
 
+The later replay through 0067 is
+`2afe419b-dcc9-426a-a871-413505408748`. Its dispatcher remains idle, with zero
+receipts/jobs and zero invalid dispatch bindings; the partial source baseline
+still requires projection coverage recovery. This is an integration check rather
+than a positive real-data dispatch or full initial-sync trial.
+
+A fresh process validates 42 manually prepared/published bodies, twenty projection
+job bodies, twenty coordinator bodies, twenty matching results/claims and all 400
+pair references. Both coverage state audits recover exactly. The copy allocates
+**16,146,432 bytes**, preserves canonical inventory/checkpoints/credentials and
+makes zero vendor requests/uploads. Its 21 private entries have no group/world
+access. The older 0065 capture still reopens without schema changes. Logs are
+`/tmp/lofi-ferry-coverage-dispatch-capture.log`,
+`/tmp/lofi-ferry-coverage-dispatch-reopen.log` and
+`/tmp/lofi-ferry-coverage-dispatch-compat.log`.
+
 ## Remaining work
 
-Implement a fenced event dispatcher and coalesced prefix jobs, then a bounded
-publisher over eligible current routes/cohorts. An old event must skip
+Implement the bounded publisher over eligible current routes/cohorts. Old jobs must skip
 comparisons prepared at or after its captured scope clock; late signals and lost
 acknowledgements must leave newer work pending. Whole-log recovery per completed
 LoTW day remains disallowed.
+
+Use a `(destination, source_scope, seen_clock, set_id)` frontier, with at most ten
+current cohort/routes and 200 incomplete references per publication. The exact
+census, work versions, lease, frontier and immutable receipt must publish together.
+Prepared-receipt lookups need a partial index so final guards do not traverse
+retained proof history. Replaced current dependencies may disappear; a newly
+prepared comparison already sees the clock and must not be requeued by old work.
+Also qualify existing bucket expansion against large disabled-route maps; its
+current cohort selection does not yet use the same route-first reverse index.
 
 Projection recovery is now narrowed by
 [migration 0066](../migrations/0066_inventory_projection_coverage_holds.sql).
@@ -164,6 +240,8 @@ enters the partial recovery index. An actual Worker recovers 22 baseline-held
 contacts into 21 ready projections and one missing-operation hold. An unchanged
 full scan then queues zero contacts and preserves all projection work versions;
 later operation arrival still repairs context through the operation job.
+Old ambiguous derived holds are rebuilt with fresh state; migration 0066 does
+not guess whether the old reason represented missing coverage or context.
 The focused native/Worker/projection suite passes 27 tests. Logs are
 `/tmp/lofi-ferry-projection-coverage-holds-focused.log` and
 `/tmp/lofi-ferry-projection-coverage-holds-types.log`.

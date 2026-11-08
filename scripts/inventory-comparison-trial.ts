@@ -15,12 +15,13 @@ import {
 import { inventoryComparisonHint } from "../src/inventory-comparison-pages.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import {
+  type InventoryProjectionBody,
   InventoryProjectionWorkspace,
   inventoryProjectionDigest,
   inventoryProjectionIdentity,
   type PreparedInventoryProjections,
-  type InventoryProjectionBody,
 } from "../src/inventory-projection-workspace.ts";
+import { InventoryProjections } from "../src/inventory-projections.ts";
 import {
   canonical,
   type Envelope,
@@ -109,6 +110,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0045_inventory_comparison_ingestion.sql",
       "0046_inventory_comparison_builds.sql",
       "0047_inventory_context_membership.sql",
+      "0048_inventory_projection_publication.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -203,6 +205,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
     );
     const preparations: PreparedInventoryProjections[] = [];
     const projectionPhases = [];
+    const projections = new InventoryProjections(store);
     for (const scope of scopes) {
       const selected = (
         await db
@@ -220,6 +223,26 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
         selected.map((row) => row.record_key),
       );
       preparations.push(prepared);
+      const lease = await store.claim(
+        "trial",
+        `projection:${generation}:${scope.scope_id}`,
+        Date.now(),
+        60_000,
+      );
+      if (!lease) throw new Error("comparison_trial_projection_lease_busy");
+      let publication: Awaited<ReturnType<InventoryProjections["publish"]>>;
+      try {
+        publication = await projections.publish(prepared, lease);
+        const replay = await projections.publish(
+          prepared,
+          lease,
+          publication.pageId,
+        );
+        if (!replay.recovered || replay.statements !== 0)
+          throw new Error("comparison_trial_projection_receipt_failed");
+      } finally {
+        await store.release(lease);
+      }
       projectionPhases.push({
         provider: scope.provider,
         prepared: prepared.rows.length,
@@ -228,6 +251,8 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
         excluded: prepared.rows.filter((row) => row.state === "excluded")
           .length,
         stats: prepared.stats,
+        publication,
+        receiptReplayRecovered: true,
       });
     }
     await writeFile(
@@ -256,7 +281,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       generationPublished: true,
       phases,
       indexCounts,
-      projections: { published: false, phases: projectionPhases },
+      projections: { published: true, phases: projectionPhases },
       lookup: {
         contacts,
         probes: requests.length,
@@ -290,6 +315,9 @@ export async function reopenInventoryComparisonTrial(directory: string) {
   const keys = JSON.parse(
     await readFile(join(directory, "keys.json"), "utf8"),
   ) as Keyring;
+  const report = JSON.parse(
+    await readFile(join(directory, "comparison-report.json"), "utf8"),
+  ) as { projections?: { published: boolean } };
   const mf = new Miniflare(
     convertV4MiniflareOptions({
       modules: true,
@@ -356,6 +384,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       throw error;
     });
     let preparedProjectionsValidated = 0;
+    let publishedProjectionsValidated = 0;
     if (preparationText) {
       const preparations = JSON.parse(
         preparationText,
@@ -382,6 +411,23 @@ export async function reopenInventoryComparisonTrial(directory: string) {
           if (body.version !== 1 || body.state !== row.state)
             throw new Error("comparison_trial_projection_body_mismatch");
           preparedProjectionsValidated++;
+          if (report.projections?.published) {
+            const stored = await new InventoryProjections(store).body(
+              preparation.tenant,
+              preparation.generation,
+              preparation.scope,
+              row.key,
+              row.facet,
+            );
+            if (
+              !stored ||
+              stored.payload !== payload.id ||
+              stored.version !== 1 ||
+              canonical(stored.body) !== canonical(body)
+            )
+              throw new Error("comparison_trial_published_projection_mismatch");
+            publishedProjectionsValidated++;
+          }
         }
       }
     }
@@ -392,6 +438,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       activeGenerationRecovered: true,
       persistedHashesValidated: validated,
       preparedProjectionsValidated,
+      publishedProjectionsValidated,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

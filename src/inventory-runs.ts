@@ -173,6 +173,7 @@ export class InventoryRuns {
     definition: InventoryRunDefinition;
     now?: number;
     replaceHeld?: boolean;
+    expectedJobVersion?: number;
   }): Promise<InventoryRun> {
     options = structuredClone(options);
     const { stream, lease, definition: d } = options;
@@ -211,7 +212,12 @@ export class InventoryRuns {
       "held_run_requires_full_restart",
     );
     const digest = await sha256(
-      canonical([stream, d, options.replaceHeld === true]),
+      canonical([
+        stream,
+        d,
+        options.replaceHeld === true,
+        options.expectedJobVersion ?? null,
+      ]),
     );
     const existing = await this.load(stream.tenant, d.id);
     if (existing) {
@@ -227,6 +233,12 @@ export class InventoryRuns {
       )
       .first<{ work_version: number }>();
     const now = options.now ?? Date.now();
+    requireValue(
+      options.expectedJobVersion === undefined ||
+        (Number.isSafeInteger(options.expectedJobVersion) &&
+          options.expectedJobVersion >= 0),
+      "invalid_inventory_job_version",
+    );
     const input: InventoryPageInput = {
       pageId: `run:${d.id}:begin`,
       stream,
@@ -241,7 +253,7 @@ export class InventoryRuns {
         phase: "collecting",
         id: d.id,
         version: 0,
-        jobVersion: job?.work_version ?? 0,
+        jobVersion: options.expectedJobVersion ?? job?.work_version ?? 0,
         nextDueAt: now,
         definition: d,
         inputDigest: digest,
@@ -489,16 +501,26 @@ export class InventoryRuns {
     return result.meta.changes > 0;
   }
 
-  async pendingWakeups(before = Date.now() + 43_200_000, limit = 100) {
+  async pendingWakeups(
+    before = Date.now() + 43_200_000,
+    limit = 100,
+    recoverBefore?: number,
+  ) {
     requireValue(
-      time(before) && Number.isSafeInteger(limit) && limit > 0 && limit <= 100,
+      time(before) &&
+        Number.isSafeInteger(limit) &&
+        limit > 0 &&
+        limit <= 100 &&
+        (recoverBefore === undefined || time(recoverBefore)),
       "invalid_inventory_wakeup_limit",
     );
     return (
       await this.inventory.store
         .statement(
-          `SELECT w.* FROM inventory_stream_jobs j CROSS JOIN inventory_wakeups w WHERE j.state IN ('idle','ready') AND j.next_due_at<=? AND w.tenant=j.tenant AND w.scope_id=j.scope_id AND w.stream_id=j.stream_id AND w.work_version=j.work_version AND w.published_at IS NULL ORDER BY j.next_due_at,j.tenant,j.scope_id,j.stream_id LIMIT ?`,
+          `SELECT w.* FROM inventory_stream_jobs j CROSS JOIN inventory_wakeups w WHERE j.state IN ('idle','ready') AND j.next_due_at<=? AND w.tenant=j.tenant AND w.scope_id=j.scope_id AND w.stream_id=j.stream_id AND w.work_version=j.work_version AND (w.published_at IS NULL OR (w.published_at<=? AND j.next_due_at<=?)) ORDER BY j.next_due_at,j.tenant,j.scope_id,j.stream_id LIMIT ?`,
           before,
+          recoverBefore ?? -1,
+          Date.now(),
           limit,
         )
         .all<{
@@ -511,6 +533,42 @@ export class InventoryRuns {
           not_before: number;
         }>()
     ).results;
+  }
+
+  /** One bulk acknowledgement after Queue durably accepts an outbox cohort. */
+  async markWakeupsPublished(
+    wakeups: { tenant: string; wakeup_id: string; work_version: number }[],
+    now = Date.now(),
+  ) {
+    requireValue(
+      time(now) &&
+        wakeups.length <= 100 &&
+        wakeups.every(
+          (w) =>
+            id(w.tenant) &&
+            id(w.wakeup_id) &&
+            Number.isSafeInteger(w.work_version) &&
+            w.work_version > 0,
+        ),
+      "invalid_inventory_wakeup_ack",
+    );
+    if (wakeups.length === 0) return 0;
+    return (
+      await this.inventory.store
+        .statement(
+          "UPDATE inventory_wakeups SET published_at=? WHERE (tenant,wakeup_id,work_version) IN (SELECT json_extract(value,'$.tenant'),json_extract(value,'$.wakeup_id'),json_extract(value,'$.work_version') FROM json_each(?)) AND (published_at IS NULL OR published_at<?)",
+          now,
+          canonical(
+            wakeups.map((w) => ({
+              tenant: w.tenant,
+              wakeup_id: w.wakeup_id,
+              work_version: w.work_version,
+            })),
+          ),
+          now,
+        )
+        .run()
+    ).meta.changes;
   }
 
   async markWakeupPublished(

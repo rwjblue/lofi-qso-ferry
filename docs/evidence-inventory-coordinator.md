@@ -1,14 +1,14 @@
 # Comparison coordinator evidence
 
 Status: local durable build/projection/matching coordination and managed generation
-activation, 2026-11-08. The ten-phase extension and retry deadlines are described
+activation, 2026-11-08. The matching extension and retry deadlines are described
 in [unified matching coordination](#unified-matching-coordination). Hosted comparison
 Queue/cron wiring, automatic adoption, ownership-aware planning and delivery remain
 unfinished. Runtime activation is off; nothing was pushed, deployed, uploaded or
 reset in production.
-An additional [selected-input edit audit](evidence-inventory-matching-coverage.md#selected-input-invalidation-gap)
-strands sibling cohort results after one source edit. Fix that recovery gap before
-hosted activation; the passing coverage-completion tests do not cover it.
+The [selected-input correction](evidence-inventory-matching-selected.md) appends
+an eleventh phase and repairs sibling cohort results after an edit, retirement
+or restoration. Its metadata upgrade preserves pending work and retry deadlines.
 
 ## Original five-phase turns and wakeups
 

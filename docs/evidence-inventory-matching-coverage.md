@@ -192,6 +192,12 @@ or complete real-source inventory. Logs are
 
 ## Selected-input invalidation gap
 
+**Resolved locally by migrations 0070–0072.** See
+[selected-input invalidation evidence](evidence-inventory-matching-selected.md)
+for automatic edit, retirement and restoration recovery, bounded publication,
+current dependency retention, native guards and encrypted replay. The original
+failure below explains why this additional scheduling family is required.
+
 An additional edit-after-comparison audit starts with 21 current inventory-absence
 results, split into cohorts of twenty and one. Editing the first source contact
 and draining the coordinator leaves 21 stored results but only **two current
@@ -207,17 +213,19 @@ repair all remaining result references to its old shared proof. Coverage prefix
 recovery deliberately visits incomplete results and does not repair this ready
 cohort case.
 
-The next correctness change must retain a current reverse map for selected
-`(scope, record_key)` inputs, signal changes with bounded metadata, and requeue
-all current members of affected cohorts through a guarded publisher. Keep this
-separate from QSO-candidate bucket identities; do not fabricate query probes.
+The correction retains a current reverse map for selected
+`(scope, record_key)` inputs, signals changes with bounded metadata, and requeues
+all current members of affected cohorts through a guarded publisher. These
+identities remain separate from QSO-candidate buckets; no query probe is fabricated.
 Missing/retired inputs and cohorts with a member already moved to a newer set
-need regression coverage as well. Do not fan out all contacts inside ingestion.
+have regression coverage as well. Ingestion signals bounded metadata rather than
+fanning out contacts.
 
 The isolated diagnostic is `/tmp/lofi-ferry-selected-cohort-edit-audit.log`.
 The expectation that all 21 results recover is reproduced in
 `/tmp/lofi-ferry-selected-cohort-edit-regression.log`; it is not covered by the
-561 passing repository cases. Resolve this before hosted activation.
+561 passing repository cases from before the correction. It is now covered by
+the selected-input and coordinator regressions.
 
 ## Costs and verification
 
@@ -345,7 +353,7 @@ The focused native/Worker/projection suite passes 27 tests. Logs are
 
 ## Remaining work
 
-Fix selected-input invalidation first. Then connect the coordinator to durable
+Selected-input invalidation is implemented locally. Connect the coordinator to durable
 hosted wakeups, bounded Queue execution and
 periodic retry/lost-message recovery. Automatic adoption scheduling and
 ownership-aware planning remain separate work. Qualify existing bucket expansion

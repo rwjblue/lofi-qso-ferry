@@ -14,7 +14,20 @@ import {
 } from "../src/inventory-comparison-lookup.ts";
 import { inventoryComparisonHint } from "../src/inventory-comparison-pages.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
-import { canonical, type Keyring, sha256 } from "../src/security.ts";
+import {
+  InventoryProjectionWorkspace,
+  inventoryProjectionDigest,
+  inventoryProjectionIdentity,
+  type PreparedInventoryProjections,
+  type InventoryProjectionBody,
+} from "../src/inventory-projection-workspace.ts";
+import {
+  canonical,
+  type Envelope,
+  type Keyring,
+  open,
+  sha256,
+} from "../src/security.ts";
 import { Store } from "../src/store.ts";
 import { applyMigration } from "../tests/helpers.ts";
 
@@ -188,6 +201,40 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "trial",
       requests,
     );
+    const preparations: PreparedInventoryProjections[] = [];
+    const projectionPhases = [];
+    for (const scope of scopes) {
+      const selected = (
+        await db
+          .prepare(
+            "SELECT record_key FROM comparison_index WHERE tenant='trial' AND generation_id=? AND scope_id=? AND state!='retired' ORDER BY record_key LIMIT 20",
+          )
+          .bind(generation, scope.scope_id)
+          .all<{ record_key: string }>()
+      ).results;
+      if (!selected.length) continue;
+      const prepared = await new InventoryProjectionWorkspace(store).prepare(
+        "trial",
+        generation,
+        scope.scope_id,
+        selected.map((row) => row.record_key),
+      );
+      preparations.push(prepared);
+      projectionPhases.push({
+        provider: scope.provider,
+        prepared: prepared.rows.length,
+        ready: prepared.rows.filter((row) => row.state === "ready").length,
+        held: prepared.rows.filter((row) => row.state === "held").length,
+        excluded: prepared.rows.filter((row) => row.state === "excluded")
+          .length,
+        stats: prepared.stats,
+      });
+    }
+    await writeFile(
+      join(directory, "projection-preparations.json"),
+      JSON.stringify(preparations),
+      { mode: 0o600, flag: "wx" },
+    );
     const indexCounts = (
       await db
         .prepare(
@@ -209,6 +256,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       generationPublished: true,
       phases,
       indexCounts,
+      projections: { published: false, phases: projectionPhases },
       lookup: {
         contacts,
         probes: requests.length,
@@ -300,12 +348,50 @@ export async function reopenInventoryComparisonTrial(directory: string) {
         throw new Error("comparison_trial_restart_hash_mismatch");
       validated.push(scope.provider);
     }
+    const preparationText = await readFile(
+      join(directory, "projection-preparations.json"),
+      "utf8",
+    ).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    let preparedProjectionsValidated = 0;
+    if (preparationText) {
+      const preparations = JSON.parse(
+        preparationText,
+      ) as PreparedInventoryProjections[];
+      for (const preparation of preparations) {
+        const { digest, ...input } = preparation;
+        if (digest !== (await inventoryProjectionDigest(input)))
+          throw new Error("comparison_trial_projection_manifest_changed");
+        for (const row of preparation.rows) {
+          const payload = preparation.payloads.find(
+            (payload) => payload.id === row.payload,
+          );
+          if (!payload)
+            throw new Error("comparison_trial_projection_payload_missing");
+          const body = await open<InventoryProjectionBody>(
+            JSON.parse(payload.envelope) as Envelope,
+            inventoryProjectionIdentity(
+              preparation.tenant,
+              preparation.connection,
+              payload.id,
+            ),
+            keys,
+          );
+          if (body.version !== 1 || body.state !== row.state)
+            throw new Error("comparison_trial_projection_body_mismatch");
+          preparedProjectionsValidated++;
+        }
+      }
+    }
     return {
       directory,
       vendorHttpRequests: 0,
       uploads: 0,
       activeGenerationRecovered: true,
       persistedHashesValidated: validated,
+      preparedProjectionsValidated,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

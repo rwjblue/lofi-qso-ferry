@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,6 +8,7 @@ import { historicalCandidateKeys } from "../src/historical-matching.ts";
 import { InventoryAssociations } from "../src/inventory-associations.ts";
 import { InventoryComparisonBuilds } from "../src/inventory-comparison-builds.ts";
 import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
+import { InventoryComparisonWakeups } from "../src/inventory-comparison-wakeups.ts";
 import { InventoryComparisonGenerations } from "../src/inventory-comparison-generations.ts";
 import { inventoryComparisonToken } from "../src/inventory-comparison-keys.ts";
 import {
@@ -51,6 +52,10 @@ import {
   sha256,
 } from "../src/security.ts";
 import { Store } from "../src/store.ts";
+import {
+  activateInventoryRuntime,
+  inventoryRuntime,
+} from "../src/inventory-runtime.ts";
 import { applyMigration } from "../tests/helpers.ts";
 
 interface MatchingDependencyState {
@@ -156,6 +161,24 @@ async function selectedInputState(db: D1Database) {
     .first<SelectedInputState>();
 }
 
+interface ComparisonWakeupState {
+  rows: number;
+  scheduled: number;
+  unpublished: number;
+  invalidBindings: number;
+  missingRows: number;
+}
+async function comparisonWakeupState(db: D1Database) {
+  return db
+    .prepare(`SELECT
+ (SELECT count(*) FROM inventory_comparison_wakeups WHERE tenant='trial') AS rows,
+ (SELECT count(*) FROM inventory_comparison_wakeups WHERE tenant='trial' AND not_before IS NOT NULL) AS scheduled,
+ (SELECT count(*) FROM inventory_comparison_wakeups WHERE tenant='trial' AND not_before IS NOT NULL AND published_at=0) AS unpublished,
+ (SELECT count(*) FROM inventory_comparison_wakeups w LEFT JOIN inventory_comparison_wakeup_basis b ON b.tenant=w.tenant WHERE w.tenant='trial' AND (b.tenant IS NULL OR w.control_version!=b.control_version OR w.work_version!=b.work_version OR (b.due_at IS NULL AND w.not_before IS NOT NULL) OR (b.due_at=0 AND w.not_before IS NULL) OR (b.due_at>0 AND w.not_before IS NOT b.due_at))) AS invalidBindings,
+ (SELECT count(*) FROM inventory_comparison_coordinators c WHERE c.tenant='trial' AND NOT EXISTS(SELECT 1 FROM inventory_comparison_wakeups w WHERE w.tenant=c.tenant)) AS missingRows`)
+    .first<ComparisonWakeupState>();
+}
+
 /** Offline replay of the encrypted three-provider run capture. The original is
  * never opened for mutation; the working copy stays outside the repository. */
 export async function inventoryComparisonTrial(captureDirectory: string) {
@@ -229,6 +252,23 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       observations: await observations(),
       streams: await streams(),
     };
+    // The bounded capture predates the runtime schema. Complete its native
+    // prerequisites on this private copy before exercising the handoff.
+    for (const name of (
+      await readdir(new URL("../migrations/", import.meta.url))
+    )
+      .filter(
+        (name) =>
+          /^\d{4}_.*\.sql$/.test(name) &&
+          name > "0001_" &&
+          !name.startsWith("0001_") &&
+          !name.startsWith("0009_") &&
+          name < "0039_",
+      )
+      .sort())
+      await applyMigration(db, name);
+    await applyMigration(db, "0042_inventory_runtime.sql");
+    await applyMigration(db, "0043_inventory_scheduling.sql");
     for (const name of [
       "0044_inventory_comparison_generations.sql",
       "0045_inventory_comparison_ingestion.sql",
@@ -259,8 +299,11 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0070_inventory_matching_selected_inputs.sql",
       "0071_inventory_matching_selected_pages.sql",
       "0072_inventory_selected_matching_coordinator.sql",
+      "0073_inventory_comparison_wakeups.sql",
+      "0074_inventory_comparison_runtime_leases.sql",
     ])
       await applyMigration(db, name);
+    await activateInventoryRuntime(store);
     const generations = new InventoryComparisonGenerations(store);
     const domain = await generations.begin("trial");
     if (!domain.pending_generation)
@@ -664,8 +707,28 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
         "SELECT version,work_version,observed_version,phase_count,phase,idle_turns,next_due_at,build_generation,build_scope FROM inventory_comparison_coordinators WHERE tenant='trial'",
       )
       .first();
+    const wakeupState = await comparisonWakeupState(db);
+    const runtime = await inventoryRuntime(store);
+    const queueCandidates = await new InventoryComparisonWakeups(
+      store,
+    ).pending();
+    if (
+      wakeupState?.rows !== 1 ||
+      wakeupState.scheduled !== 1 ||
+      wakeupState.unpublished !== 1 ||
+      wakeupState.invalidBindings !== 0 ||
+      wakeupState.missingRows !== 0 ||
+      queueCandidates.length !== (runtime.mode === "legacy" ? 0 : 1)
+    )
+      throw new Error("comparison_trial_outbox_incomplete");
     const report = {
       directory,
+      comparisonWakeups: {
+        sampled: true,
+        runtimeMode: runtime.mode,
+        queueCandidates: queueCandidates.length,
+        state: wakeupState,
+      },
       vendorHttpRequests: 0,
       uploads: 0,
       generationPublished: true,
@@ -818,6 +881,12 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       sampled: boolean;
       kind: string;
       state: SelectedInputState;
+    };
+    comparisonWakeups?: {
+      sampled: boolean;
+      runtimeMode: string;
+      queueCandidates: number;
+      state: ComparisonWakeupState;
     };
     historicalAdoption?: { evaluated: boolean; associationsCreated: number };
     projectionJobs?: {
@@ -1289,6 +1358,17 @@ export async function reopenInventoryComparisonTrial(directory: string) {
     let coverageDispatchStateRecovered: boolean | undefined;
     let coverageExpansionStateRecovered: boolean | undefined;
     let selectedInputStateRecovered: boolean | undefined;
+    let comparisonWakeupStateRecovered: boolean | undefined;
+    if (report.comparisonWakeups?.sampled) {
+      const state = await comparisonWakeupState(db);
+      if (
+        state?.invalidBindings !== 0 ||
+        state.missingRows !== 0 ||
+        canonical(state) !== canonical(report.comparisonWakeups.state)
+      )
+        throw new Error("comparison_trial_outbox_not_recovered");
+      comparisonWakeupStateRecovered = true;
+    }
     if (report.selectedInputs?.sampled) {
       const state = await selectedInputState(db);
       if (
@@ -1354,6 +1434,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       coverageDispatchStateRecovered,
       coverageExpansionStateRecovered,
       selectedInputStateRecovered,
+      comparisonWakeupStateRecovered,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

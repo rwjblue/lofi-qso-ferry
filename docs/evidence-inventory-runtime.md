@@ -2,6 +2,11 @@
 
 Status: local implementation and runtime verification, 2026-11-08. Local `main` contains the runtime handoff, hosted scheduler/Queue wiring and the first shared comparison-key module. The configured runtime flag remains `off` in local, staging and production configuration. Nothing was pushed, deployed or reset.
 
+The later [hosted comparison continuation milestone](evidence-inventory-hosted-comparison.md)
+adds the comparison outbox, Queue/cron recovery and derived lease admission after
+handoff. Its cross-provider Worker test automatically classifies a contact after
+managed LoFi and QRZ baselines while preserving the native legacy write guards.
+
 ## Native reader handoff
 
 [Migration 0042](../migrations/0042_inventory_runtime.sql) records a one-way database handoff from the old reader/sender to the inventory read-only runtime. [Activation](../src/inventory-runtime.ts) requires a current fenced lease, no live legacy work leases and no unresolved old upload attempts, including attempts whose state is missing. Imported submitted/dispatching/uncertain work must be reconciled before activation. Activation changes no account, authentication, connection or credential rows.

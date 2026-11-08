@@ -2,7 +2,8 @@
 
 Status: local coverage wait points, readiness journaling, guarded prefix dispatch,
 bounded rematching publication and automatic local coordinator recovery,
-2026-11-08. Hosted comparison Queue/cron wiring remains unfinished. Runtime
+2026-11-08. Hosted comparison Queue/cron continuation is implemented; see
+[hosted evidence](evidence-inventory-hosted-comparison.md). Runtime
 activation remains off. No deployment, production reset or vendor upload occurred.
 The [selected-input audit](#selected-input-invalidation-gap) below exposes a
 separate edit-recovery gap that must be fixed before activation.
@@ -353,9 +354,8 @@ The focused native/Worker/projection suite passes 27 tests. Logs are
 
 ## Remaining work
 
-Selected-input invalidation is implemented locally. Connect the coordinator to durable
-hosted wakeups, bounded Queue execution and
-periodic retry/lost-message recovery. Automatic adoption scheduling and
+Selected-input invalidation and durable hosted wakeups, bounded Queue execution
+and periodic retry/lost-message recovery are implemented locally. Automatic adoption scheduling and
 ownership-aware planning remain separate work. Qualify existing bucket expansion
 against large disabled-route maps; its current cohort selection does not yet use
 the same route-first reverse index.

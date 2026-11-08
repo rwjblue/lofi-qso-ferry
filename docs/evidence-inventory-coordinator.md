@@ -2,9 +2,11 @@
 
 Status: local durable build/projection/matching coordination and managed generation
 activation, 2026-11-08. The matching extension and retry deadlines are described
-in [unified matching coordination](#unified-matching-coordination). Hosted comparison
-Queue/cron wiring, automatic adoption, ownership-aware planning and delivery remain
-unfinished. Runtime activation is off; nothing was pushed, deployed, uploaded or
+in [unified matching coordination](#unified-matching-coordination). Durable hosted
+Queue/cron continuation and runtime lease admission are implemented; see
+[hosted comparison evidence](evidence-inventory-hosted-comparison.md).
+Automatic adoption, ownership-aware planning and delivery remain unfinished.
+Runtime activation is off; nothing was pushed, deployed, uploaded or
 reset in production.
 The [selected-input correction](evidence-inventory-matching-selected.md) appends
 an eleventh phase and repairs sibling cohort results after an edit, retirement
@@ -32,8 +34,8 @@ the coordinator in the durable pending index, even near the end of an idle cycle
 After five idle phase turns it can park until another wakeup. `more=false` describes
 immediate continuation demand, not complete vendor coverage or completed contact
 sync. A pending generation without currently processable work reports waiting.
-Caller/Queue error recovery and periodic lost-message recovery still need hosted
-wiring; these APIs alone do not implement a deployed autonomous service.
+These original APIs alone did not implement Queue delivery or lost-message
+recovery. The later hosted continuation layer adds both; it remains configured off.
 
 Child publication and control advancement have separate transactions. If a child
 commits but the coordinator loses its lease/acknowledgement before advancing the
@@ -221,8 +223,9 @@ comparisons, parks, then recovers all 41 after a receipt selection completes. It
 runs dispatch, bounded prefix expansion and matching through ordinary coordinator
 requests, with no explicit comparison call, vendor HTTP or delivery attempt.
 Source checkpoints and credential ciphertext remain unchanged. The local phases
-are implemented; hosted comparison message publication/consumption and periodic
-recovery are not yet wired. See [coverage recovery evidence](evidence-inventory-matching-coverage.md).
+are implemented. The later [hosted continuation layer](evidence-inventory-hosted-comparison.md)
+adds Queue publication/consumption and periodic recovery. See also
+[coverage recovery evidence](evidence-inventory-matching-coverage.md).
 
 The full inventory regression passes **561 tests**. Existing managed activation,
 rebuild, contention, wakeup and large-history tests pass with the widened control.
@@ -240,9 +243,7 @@ not qualify automatic full real-source recovery or initial-sync throughput.
 
 ## Remaining work
 
-Repair selected-input cohort invalidation, including missing/retired inputs and
-partially replaced cohorts. Then connect bounded Queue/cron wakeups with retry,
-fairness and lost-message recovery.
+Selected-input invalidation and durable hosted continuation are implemented.
 Add ownership-aware result selection and conservative automatic adoption.
 Qualify full-turn D1/CPU/storage costs and many-scope/large-history behavior on the
 larger workloads, including disabled-route bucket maps. Then integrate fresh

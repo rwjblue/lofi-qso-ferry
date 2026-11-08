@@ -108,8 +108,9 @@ schema changes. Logs are `/tmp/lofi-ferry-selected-inputs-capture.log`,
 
 ## Remaining work
 
-Connect comparison coordination to durable hosted wakeups, bounded Queue turns
-and periodic retry/lost-message recovery. Automatic adoption scheduling,
+Durable hosted wakeups, bounded Queue turns and periodic retry/lost-message
+recovery are implemented; see [hosted comparison evidence](evidence-inventory-hosted-comparison.md).
+Automatic adoption scheduling,
 ownership-aware planning, fresh source proofs and delivery integration remain
 unfinished. Full real-source coverage, initial-sync timing, large-log storage,
 garbage collection, restore quarantine and deployment cutover need their own

@@ -134,9 +134,64 @@ density. Logs are `/tmp/lofi-ferry-matching-invalidation-capture.log`,
 `/tmp/lofi-ferry-matching-invalidation-reopen.log` and
 `/tmp/lofi-ferry-matching-invalidation-compat.log`.
 
+## Coverage-set publication fences
+
+Migration 0061 adds a retained source/receipt coverage clock per logical scope.
+Prepared comparisons capture it in their existing scope-header read. Native
+admission and final commit both compare that clock, independently of the
+per-partition dependencies. This closes a gap where a new partition added after
+preparation was absent from the old dependency list. Coverage identities cannot
+move between scopes, streams, facets or partitions.
+
+Insertion, readiness/kind changes and publication/configuration changes advance
+the clock. Ordinary page bookkeeping and confirmation coverage do not. Clocks
+fence new publication; they are not added to current-result invalidation. An
+unchanged full verification therefore restores the same stored result version
+after its temporary collecting barrier, without forcing every contact to be
+compared again.
+
+Native tests demonstrate a missing LoTW date partition becoming complete after
+preparation: the old incomplete cohort is rejected and a new preparation records
+inventory absence. A partition inserted after admission but before final commit
+rejects and rolls back the entire cohort, including that partition and its clock.
+They also cover confirmation isolation, retained clocks, immutable coverage keys
+and re-signed manifests with missing or forged clock values. Legacy capture
+inspection can omit the new clock table; those untracked snapshots cannot publish
+against the new schema.
+
+The twenty-pair comparison-only fixture still uses eleven preparation reads and
+eleven publication statements. It measures 2,529 preparation data reads and 8,241
+publication reads, with 1,053 publication writes; no extra statement is required
+to capture the clocks. These numbers exclude matching-work claims and the current
+bucket dependency map, whose additional costs are recorded above.
+
+The isolated encrypted replay through 0061 ends in
+`34f62deb-35dd-4531-81ac-69407deb6103`. Reopening validates 82 projection bodies,
+twenty incomplete results and their twenty work completions; all 100 other work
+items remain pending. It retains two current cohorts with no bucket probes, has
+the same 15,556,608-byte database allocation and makes zero vendor requests or
+uploads. The older 0060 capture also reopens without changing its schema.
+Logs are `/tmp/lofi-ferry-coverage-clocks-capture.log`,
+`/tmp/lofi-ferry-coverage-clocks-reopen.log` and
+`/tmp/lofi-ferry-coverage-clocks-compat.log`. This remains partial-source evidence,
+not proof of a complete real-source classification or initial-sync duration.
+
+Coverage recovery scheduling is still separate work. A scope clock prevents stale
+publication but does not enqueue comparisons after a completed range. Recovery
+must target the contacts blocked by that source/date coverage; a whole-log sweep
+for every completed LoTW day would multiply baseline work by the partition count.
+
 ## Verification
 
-The final inventory regression passes **451 tests**, including the actual Worker,
+The coverage-clock follow-up passes **455 inventory tests**, with no failures,
+skips or cancellations. TypeScript, lint, formatting and the Worker dry-run build
+pass. Its regression log is `/tmp/lofi-ferry-coverage-clocks-inventory.log`;
+the corresponding check logs are `/tmp/lofi-ferry-coverage-clocks-types.log`,
+`/tmp/lofi-ferry-coverage-clocks-lint.log`,
+`/tmp/lofi-ferry-coverage-clocks-format.log` and
+`/tmp/lofi-ferry-coverage-clocks-build.log`.
+
+The preceding bucket-invalidation regression passed **451 tests**, including the actual Worker,
 with no failures, skips or cancellations. TypeScript, lint, formatting and the
 Worker dry-run build pass. Logs are
 `/tmp/lofi-ferry-matching-invalidation-inventory.log`,

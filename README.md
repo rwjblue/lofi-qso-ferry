@@ -21,16 +21,17 @@ LoTW has no supported narrative destination for QRZ-style comments or POTA text.
 
 ## Documentation
 
-| Document                                             | Purpose                                                                              |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| [Roadmap](ROADMAP.md)                                | Ordered implementation tasks, dependencies, and acceptance criteria for local agents |
-| [System design](docs/design.md)                      | Source intake, scheduling, minimal state, destination adapters, and direct signing   |
-| [Inventory reconciliation draft](docs/inventory-reconciliation-design.md) | Proposed durable inventories, incremental sync, bulk matching and upload migration |
-| [Existing-history reconciliation](docs/bootstrap.md) | Read-only adoption, missing records, cutover, and incomplete evidence                |
-| [Templates](docs/templates.md)                       | HaLo compatibility, immutable versions, and preservation of adopted QRZ text         |
-| [Authentication](docs/authentication.md)             | Email confirmation, passkeys, sessions, and recovery boundaries                      |
-| [Admin console](docs/admin.md)                       | Operational metrics, invitations, access boundaries, and prioritized follow-ups      |
-| [Credential security](docs/security.md)              | Encryption, key rotation, tenant isolation, and retention                            |
+| Document                                                                  | Purpose                                                                              |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| [Roadmap](ROADMAP.md)                                                     | Ordered implementation tasks, dependencies, and acceptance criteria for local agents |
+| [System design](docs/design.md)                                           | Source intake, scheduling, minimal state, destination adapters, and direct signing   |
+| [Inventory reconciliation draft](docs/inventory-reconciliation-design.md) | Proposed durable inventories, incremental sync, bulk matching and upload migration   |
+| [Inventory ingestion evidence](docs/evidence-inventory-ingestion.md)      | Local bulk writer measurements, guarded publication and bounded service reads        |
+| [Existing-history reconciliation](docs/bootstrap.md)                      | Read-only adoption, missing records, cutover, and incomplete evidence                |
+| [Templates](docs/templates.md)                                            | HaLo compatibility, immutable versions, and preservation of adopted QRZ text         |
+| [Authentication](docs/authentication.md)                                  | Email confirmation, passkeys, sessions, and recovery boundaries                      |
+| [Admin console](docs/admin.md)                                            | Operational metrics, invitations, access boundaries, and prioritized follow-ups      |
+| [Credential security](docs/security.md)                                   | Encryption, key rotation, tenant isolation, and retention                            |
 
 ## Use the hosted deployment
 

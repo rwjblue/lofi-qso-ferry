@@ -1,6 +1,6 @@
 # Inventory driven reconciliation design
 
-Status: **Draft for review, 2026-11-07.** This is a proposed architecture and implementation sequence. No runtime implementation, migration, deployment or export-policy change is part of this document.
+Status: **Draft architecture with an isolated ingestion implementation, 2026-11-07.** The bulk page writer and read-only trial tooling are implemented locally; see [ingestion evidence](evidence-inventory-ingestion.md). Full coverage, matching, delivery integration and deployment remain future phases. No production reset or export-policy change has been performed.
 
 Ferry should inventory each service independently, retain the latest encrypted LoFi source data, and reconcile bounded groups through a shared local comparison index. Persisted results would drive delivery planning. External discovery would follow service pages and changes, while matching and queue creation would operate on sets of records locally.
 
@@ -44,14 +44,14 @@ flowchart LR
 
 These values serve different purposes and must not be substituted for one another:
 
-| Value | Purpose |
-| --- | --- |
-| Stable record reference | LoFi UUID, QRZ LOGID, or a provider-specific observation identity |
-| Candidate bucket HMAC | Find potentially matching records without indexing plaintext contact fields |
-| Content fingerprint | Detect meaningful changes within a defined source, remote or transmitted projection |
-| Composite source generation | Bind a contact to its QSO, effective operation and relevant segment events |
-| Inventory coverage | Describe the successful query scope, scan progress and catch-up observations |
-| Source proof and final destination check | Establish the evidence required for a particular write |
+| Value                                    | Purpose                                                                             |
+| ---------------------------------------- | ----------------------------------------------------------------------------------- |
+| Stable record reference                  | LoFi UUID, QRZ LOGID, or a provider-specific observation identity                   |
+| Candidate bucket HMAC                    | Find potentially matching records without indexing plaintext contact fields         |
+| Content fingerprint                      | Detect meaningful changes within a defined source, remote or transmitted projection |
+| Composite source generation              | Bind a contact to its QSO, effective operation and relevant segment events          |
+| Inventory coverage                       | Describe the successful query scope, scan progress and catch-up observations        |
+| Source proof and final destination check | Establish the evidence required for a particular write                              |
 
 An available payload is not proof of current upstream membership. Retaining it must not refresh an observation timestamp, renew a proof or imply a deletion-delivery guarantee. A complete observed scan is not an immutable vendor snapshot.
 
@@ -75,16 +75,16 @@ These are logical table definitions, not executable migrations. All primary keys
 
 ### Inventory tables
 
-| Table | Key | Principal columns |
-| --- | --- | --- |
-| `inventory_scopes` | `(tenant, scope_id)` | `provider`, `logical_identity`, `connection_id`, `config_version`, `adapter_version`, `accepted_sequence`, `state`; client/source pacing state shared by all sync streams |
-| `inventory_streams` | `(tenant, scope_id, stream_id)` | query/checkpoint-format binding, `checkpoint_version`, committed checkpoint, active run, next due time |
-| `inventory_records` | `(tenant, scope_id, entity_family, record_key)` | subtype, `parent_key`, provider ID, canonical identity group, `row_version`, `last_accepted_sequence`, `status`, `last_observed_at` |
-| `inventory_record_facets` | record key plus `facet` | opaque remote revision, supplied-field mask, raw/projection payload references, semantic version, `last_accepted_sequence`, original/current observation metadata |
-| `inventory_runs` | `(tenant, run_id)` | scope/configuration and expected stream versions, requested stream vector, partition, epoch, phase, resume state, start/catch-up sequences, quarantine cursor, fixed query bound, proposed checkpoint, counts/digest/times |
-| `inventory_membership` | `(tenant, run_id, stream_id, facet, entity_family, record_key)` | bound scope/partition/epoch, observed facet revision/version, observation time |
-| `inventory_coverage` | `(tenant, scope_id, stream_id, facet, partition_id)` | `published_epoch`, `coverage_kind`, `coverage_version`, checkpoint/observation metadata, planning freshness policy |
-| `inventory_wakeups` | `(tenant, wakeup_id)` | scope/run/work version, `not_before`, publication state; unique continuation identity for the transactional outbox |
+| Table                     | Key                                                             | Principal columns                                                                                                                                                                                                          |
+| ------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `inventory_scopes`        | `(tenant, scope_id)`                                            | `provider`, `logical_identity`, `connection_id`, `config_version`, `adapter_version`, `accepted_sequence`, `state`; client/source pacing state shared by all sync streams                                                  |
+| `inventory_streams`       | `(tenant, scope_id, stream_id)`                                 | query/checkpoint-format binding, `checkpoint_version`, committed checkpoint, active run, next due time                                                                                                                     |
+| `inventory_records`       | `(tenant, scope_id, entity_family, record_key)`                 | subtype, `parent_key`, provider ID, canonical identity group, `row_version`, `last_accepted_sequence`, `status`, `last_observed_at`                                                                                        |
+| `inventory_record_facets` | record key plus `facet`                                         | opaque remote revision, supplied-field mask, raw/projection payload references, semantic version, `last_accepted_sequence`, original/current observation metadata                                                          |
+| `inventory_runs`          | `(tenant, run_id)`                                              | scope/configuration and expected stream versions, requested stream vector, partition, epoch, phase, resume state, start/catch-up sequences, quarantine cursor, fixed query bound, proposed checkpoint, counts/digest/times |
+| `inventory_membership`    | `(tenant, run_id, stream_id, facet, entity_family, record_key)` | bound scope/partition/epoch, observed facet revision/version, observation time                                                                                                                                             |
+| `inventory_coverage`      | `(tenant, scope_id, stream_id, facet, partition_id)`            | `published_epoch`, `coverage_kind`, `coverage_version`, checkpoint/observation metadata, planning freshness policy                                                                                                         |
+| `inventory_wakeups`       | `(tenant, wakeup_id)`                                           | scope/run/work version, `not_before`, publication state; unique continuation identity for the transactional outbox                                                                                                         |
 
 `inventory_scopes` identifies a logical account/book and query contract independently of credential version. Reconnecting the same logical destination preserves its identity. Query-shape, reader-policy or account/book changes advance scope configuration. Routine credential renewal does not erase inventory.
 
@@ -104,9 +104,9 @@ A record not observed in a completed scan becomes unresolved membership until th
 
 ### Ingestion page tables
 
-| Table | Key | Principal columns |
-| --- | --- | --- |
-| `ingestion_pages` | `(tenant, page_id)` | scope/run/query binding, original request start, input/manifest digests, raw/distinct counts, expected stream/configuration/index versions, state and committed checkpoint receipt |
+| Table                 | Key                                                   | Principal columns                                                                                                                                                                   |
+| --------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ingestion_pages`     | `(tenant, page_id)`                                   | scope/run/query binding, original request start, input/manifest digests, raw/distinct counts, expected stream/configuration/index versions, state and committed checkpoint receipt  |
 | `ingestion_page_rows` | `(tenant, page_id, entity_family, record_key, facet)` | typed incoming revision/stamp, expected previous version or absence, merge decision, old/new parent/effect metadata, planned immutable body/projection references and index entries |
 
 `ingestion_pages` records an accepted page and resolves an uncertain commit acknowledgement. It is not a second stream checkpoint authority. `ingestion_page_rows` is a private preparation relation, not readable source data or match evidence. It can hold metadata without copying every encrypted body into another table. Only canonical inventory references make a body usable. Both tables require bounded retention; keep receipts through the retry/recovery horizon and input pins, then collect them without changing authoritative stream progress.
@@ -117,16 +117,16 @@ The default path stages metadata, publishes canonical records and deletes scratc
 
 ### Comparison and work tables
 
-| Table | Key | Principal columns |
-| --- | --- | --- |
-| `index_generations` | `(tenant, generation_id)` | fixed key ID, bucket/normalization versions, state, captured source positions and catch-up progress |
-| `comparison_domains` | `(tenant, domain_id)` | `source_set_version`, active/pending index generation, unknown/unpublished barrier version |
-| `projection_domains` | `(tenant, source, operation_key)` | `topology_version`, `ready_version`, pending work and bounded continuation |
-| `comparison_index` | `(tenant, generation_id, scope_id, record_key)` | key class, `bucket_hash`, raw/projection versions, operation topology version, readiness |
-| `bucket_versions` | `(tenant, generation_id, scope_id, key_class, bucket_hash)` | monotonic `version` |
-| `matching_work` | `(tenant, destination, work_key)` | work `version`, `priority`, `due_at`, bounded continuation cursor, fixed failure code |
-| `match_results` | `(tenant, source, qso, destination)` | `source_generation`, result, remote reference, `policy_version`, fixed reason, `next_eligible_at` |
-| `match_dependencies` | result key plus dependency kind, scope and dependency key | key/index version, expected bucket/coverage/projection/ownership version |
+| Table                | Key                                                         | Principal columns                                                                                   |
+| -------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `index_generations`  | `(tenant, generation_id)`                                   | fixed key ID, bucket/normalization versions, state, captured source positions and catch-up progress |
+| `comparison_domains` | `(tenant, domain_id)`                                       | `source_set_version`, active/pending index generation, unknown/unpublished barrier version          |
+| `projection_domains` | `(tenant, source, operation_key)`                           | `topology_version`, `ready_version`, pending work and bounded continuation                          |
+| `comparison_index`   | `(tenant, generation_id, scope_id, record_key)`             | key class, `bucket_hash`, raw/projection versions, operation topology version, readiness            |
+| `bucket_versions`    | `(tenant, generation_id, scope_id, key_class, bucket_hash)` | monotonic `version`                                                                                 |
+| `matching_work`      | `(tenant, destination, work_key)`                           | work `version`, `priority`, `due_at`, bounded continuation cursor, fixed failure code               |
+| `match_results`      | `(tenant, source, qso, destination)`                        | `source_generation`, result, remote reference, `policy_version`, fixed reason, `next_eligible_at`   |
+| `match_dependencies` | result key plus dependency kind, scope and dependency key   | key/index version, expected bucket/coverage/projection/ownership version                            |
 
 The comparison index is derived and rebuildable. Only ordinary contacts enter it as QSO candidates; operation and event data remain projection dependencies. Initial complete records store one time bucket. Key classes are `call_and_time`, `call_only`, `time_only` and `unknown`; each class has a distinct HMAC domain. Pending/unavailable records immediately enter the narrowest known fallback domain. They cannot simply disappear behind a `readiness='ready'` filter.
 
@@ -158,13 +158,13 @@ Retain fenced lease semantics. A worker finishes only the claimed work version; 
 
 ### Upload batch tables
 
-| Table | Key | Principal columns |
-| --- | --- | --- |
-| `upload_batches` | `(tenant, batch_id)` | destination, immutable artifact reference/hash, credential and station configuration versions, signing/authorization policy versions, member count, creation time |
-| `upload_batch_members` | `(tenant, batch_id, ordinal)` | transport version, immutable attempt reference, source generation, per-member payload/source/identity hashes and signed-contact binding; unique attempt membership |
-| `upload_batch_artifacts` | `(tenant, batch_id)` | one immutable original wire-artifact envelope with its encryption binding, digest, original metadata and retention references |
-| `upload_batch_state` | `(tenant, batch_id)` | state, fenced lease, due/dispatched/updated times, fixed outcome code |
-| `upload_batch_events` | `(tenant, batch_id, event_id)` | immutable state transition, time and fixed reason; consistent with member attempt events |
+| Table                    | Key                            | Principal columns                                                                                                                                                  |
+| ------------------------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `upload_batches`         | `(tenant, batch_id)`           | destination, immutable artifact reference/hash, credential and station configuration versions, signing/authorization policy versions, member count, creation time  |
+| `upload_batch_members`   | `(tenant, batch_id, ordinal)`  | transport version, immutable attempt reference, source generation, per-member payload/source/identity hashes and signed-contact binding; unique attempt membership |
+| `upload_batch_artifacts` | `(tenant, batch_id)`           | one immutable original wire-artifact envelope with its encryption binding, digest, original metadata and retention references                                      |
+| `upload_batch_state`     | `(tenant, batch_id)`           | state, fenced lease, due/dispatched/updated times, fixed outcome code                                                                                              |
+| `upload_batch_events`    | `(tenant, batch_id, event_id)` | immutable state transition, time and fixed reason; consistent with member attempt events                                                                           |
 
 Each member remains an ordinary per-QSO attempt with its own ledger and outcome. Keep its immutable per-QSO prepared representation separate from the batch's exact wire file. Preserve per-member hashes and the batch digest as distinct values. Bind every ordinal to exactly one signed contact; reject duplicate, missing, reordered or extra unclaimed contacts. Existing singleton payload/ownership hashes must not be reinterpreted as batch hashes.
 
@@ -178,15 +178,15 @@ Native guards cover dispatch, cancellation, retry, lease-expiry recovery and rec
 
 Separate inventory transport, comparison policy and submission. The scheduler owns work persistence, fencing, tenant boundaries and vendor budgets. Adapters must use the injected admitted transport for every request, including authentication, status and fallback reads.
 
-| Contract area | Required behavior |
-| --- | --- |
-| Scope | Verify logical account/book, query shape and credential access without replacing durable identity |
-| Capabilities | Declare baseline shape, delta precision, stable IDs, deletion coverage, reread options, batch submission and readback coverage |
-| Page read | Return explicit records, continuation, completion classification, captured query bounds and proposed checkpoint |
-| Normalization | Preserve original precision, remote identity, unsupported/unknown fields relevant to matching, and conflicting variants |
-| Comparison | Apply provider-specific tolerance, mode, satellite, station and operating-location policy |
-| Submission | Build an immutable artifact and report submitted, rejected or uncertain independently of later observation |
-| Receipt observation | Verify a particular attempt's identity and supported projection; return field coverage and member outcomes |
+| Contract area       | Required behavior                                                                                                              |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Scope               | Verify logical account/book, query shape and credential access without replacing durable identity                              |
+| Capabilities        | Declare baseline shape, delta precision, stable IDs, deletion coverage, reread options, batch submission and readback coverage |
+| Page read           | Return explicit records, continuation, completion classification, captured query bounds and proposed checkpoint                |
+| Normalization       | Preserve original precision, remote identity, unsupported/unknown fields relevant to matching, and conflicting variants        |
+| Comparison          | Apply provider-specific tolerance, mode, satellite, station and operating-location policy                                      |
+| Submission          | Build an immutable artifact and report submitted, rejected or uncertain independently of later observation                     |
+| Receipt observation | Verify a particular attempt's identity and supported projection; return field coverage and member outcomes                     |
 
 A generic `complete: true` must not imply identical guarantees across services. Results need a tagged distinction between successful covered observations, continuation, ambiguous empty selection, unsupported coverage and failure. An empty array alone is never a completeness signal.
 
@@ -269,8 +269,14 @@ type MergeDecision =
 
 interface InventoryAdapter {
   capabilities(scope: VerifiedScope): readonly StreamCapability[];
-  readStep(context: ReadContext, request: BoundReadRequest): Promise<ReadResult>;
-  compareObservations(current: Observation, incoming: Observation): MergeDecision;
+  readStep(
+    context: ReadContext,
+    request: BoundReadRequest,
+  ): Promise<ReadResult>;
+  compareObservations(
+    current: Observation,
+    incoming: Observation,
+  ): MergeDecision;
 }
 ```
 
@@ -288,17 +294,17 @@ LoFi's inbound sync is read-only at the QSO/operation level in Ferry, even thoug
 
 The current writer builds a per-record recipe in [sourceStatements](../src/intake.ts) and combines the recipes into one `Store.checkpoint` batch. The [100-operation/100-event baseline fixture](../tests/source-baseline-pages.test.ts) asserts 1,708 explicit statements; the [100-operation/100-ordinary-contact forward fixture](../tests/intake.test.ts) has the same total through a different final work category.
 
-| Work in the 200-record fixtures | Explicit statements |
-| --- | ---: |
-| Insert/delete per-record compare-and-set guard rows | 400 |
-| Insert new payload and delete previous payload separately | 400 |
-| Upsert current source rows | 200 |
-| Update positive-presence metadata separately | 200 |
-| Insert first-seen/birth facts for QSO-stream records | 100 |
-| Invalidate source/ledger context for the 100 operations | 200 |
-| Invalidate context for 100 events, or publish indexes for 100 ordinary contacts | 200 |
-| Page-level source/policy/context/cursor guards and updates | 8 |
-| Total | 1,708 |
+| Work in the 200-record fixtures                                                 | Explicit statements |
+| ------------------------------------------------------------------------------- | ------------------: |
+| Insert/delete per-record compare-and-set guard rows                             |                 400 |
+| Insert new payload and delete previous payload separately                       |                 400 |
+| Upsert current source rows                                                      |                 200 |
+| Update positive-presence metadata separately                                    |                 200 |
+| Insert first-seen/birth facts for QSO-stream records                            |                 100 |
+| Invalidate source/ledger context for the 100 operations                         |                 200 |
+| Invalidate context for 100 events, or publish indexes for 100 ordinary contacts |                 200 |
+| Page-level source/policy/context/cursor guards and updates                      |                   8 |
+| Total                                                                           |               1,708 |
 
 This is one native checkpoint call, not 1,708 network round trips. Trigger bodies add SQL and row work beyond that explicit statement-array count. Ordinary-contact publication also attempts tenant index-key activation once per contact. Operation/event handling can revisit the same dependent contacts repeatedly within a page. The 1,800-statement application cap protects this implementation; it is not the target shape for larger pages.
 
@@ -313,7 +319,6 @@ Classify rows as new, changed, observation-only, superseded, recovery-needed or 
 ### Publication transaction
 
 Use a small set of relational operations over the page, with byte-bounded JSON inputs instead of constructing SQL for each record. The default sequence is:
-
 1. Establish the page identity and common account/source/credential/query/configuration, lease/fence, stream and active-index-generation guards.
 2. Bulk-load prepared metadata into `ingestion_page_rows`. Assert all expected current row versions and expected absences through indexed joins. Derive affected old index/parent domains from the current database state before replacing pointers, so concurrent index maintenance cannot make prepared old-effect metadata authoritative by accident.
 3. Bulk-insert immutable first-seen facts from the pre-page classification, preserving existing birth facts and historical/forward provenance. Do this before current-row upserts, as the existing rule requires.
@@ -390,16 +395,16 @@ Current [HaLo source](https://github.com/ham2k/halo/blob/507c7741cd9b8882a64591b
 
 The proposed bootstrap policy is:
 
-| Control | Planning choice |
-| --- | --- |
-| Vendor-wide total | Retain the existing 24 requests/five minutes initially; measure before considering a higher total |
-| Combined nonforeground allowance during bootstrap | Up to 20 requests/five minutes across bootstrap and other background source work, leaving four slots reserved for foreground demand |
-| Ordinary background sublimit | Keep its four-request allowance inside the combined nonforeground ceiling; do not add it on top of 20 |
-| Foreground priority | Due established-source/proof/authentication work runs first and may consume more than its reserve, reducing bootstrap capacity |
-| Source concurrency | One fenced request chain per LoFi client/source across operation and QSO streams |
-| Page size | Validate 200 as an intermediate step; target adaptive 500–1,000-record QSO pulls with separately budgeted operation records |
-| Backlog pacing | Honor validated server loop-delay guidance; proposed 20-second fallback when absent; local five-second floor when guidance is shorter/zero |
-| Idle pacing | Return to normal product polling once caught up, respecting a longer server check period; do not reuse the backlog rate indefinitely |
+| Control                                           | Planning choice                                                                                                                            |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Vendor-wide total                                 | Retain the existing 24 requests/five minutes initially; measure before considering a higher total                                          |
+| Combined nonforeground allowance during bootstrap | Up to 20 requests/five minutes across bootstrap and other background source work, leaving four slots reserved for foreground demand        |
+| Ordinary background sublimit                      | Keep its four-request allowance inside the combined nonforeground ceiling; do not add it on top of 20                                      |
+| Foreground priority                               | Due established-source/proof/authentication work runs first and may consume more than its reserve, reducing bootstrap capacity             |
+| Source concurrency                                | One fenced request chain per LoFi client/source across operation and QSO streams                                                           |
+| Page size                                         | Validate 200 as an intermediate step; target adaptive 500–1,000-record QSO pulls with separately budgeted operation records                |
+| Backlog pacing                                    | Honor validated server loop-delay guidance; proposed 20-second fallback when absent; local five-second floor when guidance is shorter/zero |
+| Idle pacing                                       | Return to normal product polling once caught up, respecting a longer server check period; do not reuse the backlog rate indefinitely       |
 
 This is a source-inventory allocation, not relabeling every historical delivery as foreground traffic. All requests, including renewal and retries, still use persistent vendor admission. A future multi-account bootstrap shares the same global allowance; it is not 20 requests per account. Add a persisted global pacing/burst bound alongside per-source timing so multiple sources and fixed-window rollover cannot generate a synchronized request burst.
 
@@ -410,11 +415,11 @@ Persist `next_read_at`, validated loop/idle hints, their observation time and pa
 For a single healthy 200,000-contact QSO stream, a 20-request/five-minute bootstrap allocation gives these arithmetic data-page floors:
 
 | Requested records/page | Data pages | Quota-only equivalent | With illustrative 20-second pacing | With illustrative 35-second pacing |
-| --- | ---: | ---: | ---: | ---: |
-| 100 | 2,000 | 8 hours 20 minutes | 11 hours 7 minutes | 19 hours 27 minutes |
-| 200 | 1,000 | 4 hours 10 minutes | 5 hours 33 minutes | 9 hours 43 minutes |
-| 500 | 400 | 1 hour 40 minutes | 2 hours 13 minutes | 3 hours 53 minutes |
-| 1,000 | 200 | 50 minutes | 1 hour 7 minutes | 1 hour 57 minutes |
+| ---------------------- | ---------: | --------------------: | ---------------------------------: | ---------------------------------: |
+| 100                    |      2,000 |    8 hours 20 minutes |                 11 hours 7 minutes |                19 hours 27 minutes |
+| 200                    |      1,000 |    4 hours 10 minutes |                 5 hours 33 minutes |                 9 hours 43 minutes |
+| 500                    |        400 |     1 hour 40 minutes |                 2 hours 13 minutes |                 3 hours 53 minutes |
+| 1,000                  |        200 |            50 minutes |                   1 hour 7 minutes |                  1 hour 57 minutes |
 
 Paced columns use the slower of the quota-equivalent rate and the illustrative delay. They exclude HTTP latency, database/crypto work, operation/events, empty pages, retries, other accounts and final catch-up. Twenty/35 seconds are scenario inputs, not observed settings for Ferry's account. The larger-page range creates room for the 2–4-hour target; the 200-row intermediate alone does not reliably do so.
 
@@ -549,18 +554,18 @@ The recommended next action is this implementation milestone, followed by eviden
 
 ## Fresh database rollout phases
 
-The earlier additive-migration sequence is superseded by the decision that existing database contents need not be preserved. Use a fresh schema/environment; do not run old binaries against it or implement dual writers solely for historical database compatibility.
+The earlier additive-migration sequence is superseded by the decision that existing contact/reconciliation contents need not be preserved. Preserve account/authentication/connection records and credential encryption identities. Use a fresh contact schema/environment; do not run old binaries against it or implement dual writers solely for historical database compatibility.
 
-| Phase | Change | Exit criteria and deployment boundary |
-| --- | --- | --- |
-| A | Define the minimal fresh schema and native integrity/publication guards | Empty-database initialization is reproducible; no old-schema writer compatibility required |
-| B | Implement prepared pages, set-based publication, domain barriers and commit receipts with synthetic LoFi inputs | Race/recovery invariants and native larger-page benchmarks pass; no live services needed |
-| C | Add real read adapters, paced LoFi bootstrap, larger qualified reads and durable continuations; inventory destinations independently | New enrollment/connections, correct coverage and observed pacing; uploads disabled |
-| D | Implement local bulk matching and compare behavior using identical captured or synthetic inputs and reusable pure matching logic | Explain semantic differences and measure full cohort/tick cost; new ownership/association rules hold |
-| E | Rebuild historical associations from vendor observations under native inventory/source/adoption guards | Existing remote records stay historical; no fabricated old Ferry provenance or duplicate insertion |
-| F1 | Add cohort preparation and individual QRZ dispatch plus normalized batch artifact/recovery machinery | New-format source proofs, ownership, capture/GC and all-member claims pass before any upload activation |
-| F2 | Add LoTW member-aware authorization, signing, submission and receipt resolution | Proof fit, exact member binding, partial outcomes and restart recovery accepted |
-| G | Perform a separate deployment cutover and scoped activation on the fresh database | Previous writer paused, outstanding remote work reconciled/held, read inventories ready, re-enrollment complete and new-format recovery verified |
+| Phase | Change                                                                                                                               | Exit criteria and deployment boundary                                                                                                               |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A     | Define the minimal fresh schema and native integrity/publication guards                                                              | Empty-database initialization is reproducible; no old-schema writer compatibility required                                                          |
+| B     | Implement prepared pages, set-based publication, domain barriers and commit receipts with synthetic LoFi inputs                      | Race/recovery invariants and native larger-page benchmarks pass; no live services needed                                                            |
+| C     | Add real read adapters, paced LoFi bootstrap, larger qualified reads and durable continuations; inventory destinations independently | Preserved/new connections, correct coverage and observed pacing; uploads disabled                                                                   |
+| D     | Implement local bulk matching and compare behavior using identical captured or synthetic inputs and reusable pure matching logic     | Explain semantic differences and measure full cohort/tick cost; new ownership/association rules hold                                                |
+| E     | Rebuild historical associations from vendor observations under native inventory/source/adoption guards                               | Existing remote records stay historical; no fabricated old Ferry provenance or duplicate insertion                                                  |
+| F1    | Add cohort preparation and individual QRZ dispatch plus normalized batch artifact/recovery machinery                                 | New-format source proofs, ownership, capture/GC and all-member claims pass before any upload activation                                             |
+| F2    | Add LoTW member-aware authorization, signing, submission and receipt resolution                                                      | Proof fit, exact member binding, partial outcomes and restart recovery accepted                                                                     |
+| G     | Perform a separate deployment cutover and scoped activation on the fresh database                                                    | Previous writer paused, outstanding remote work reconciled/held, read inventories ready, preserved access verified and new-format recovery verified |
 
 Use `off`, `shadow` and `active` planner modes independently of export gates and batch-submission capability. Shadow comparison is an evaluation technique and does not require maintaining the old database schema. A planner activation does not authorize exports.
 
@@ -586,15 +591,15 @@ Under the current 100-row/four-background-request policy, 200,000 LoFi contacts 
 
 For the legacy inventory comparison, assume N relevant contacts at each destination, healthy already-covered matching inputs, no retries, 100 source QSOs/page, and 250 QRZ records/page. Matching totals below extrapolate the existing warm fixture and proposed target; they are not new benchmark results. Rate-equivalent time expresses consumed quota, not elapsed scheduling or vendor latency. Proposed LoFi bootstrap figures are in the separate pacing table above.
 
-| Work | 4,000 contacts | 200,000 contacts | Boundary |
-| --- | ---: | ---: | --- |
-| LoFi QSO baseline data pages | 40 | 2,000 | Excludes operation/events, completion/drain and authentication |
-| LoFi background rate equivalent | 50 minutes | 41 hours 40 minutes | Four global requests/five minutes |
-| QRZ baseline data pages | 16 | 800 | Excludes completion, catch-up and verification |
-| QRZ background rate equivalent | 3 minutes 20 seconds | 2 hours 47 minutes | 24 global requests/five minutes |
-| Current warm matching RPCs | 23,600 | 1,180,000 | `118 * ceil(N / 20)` for both destinations |
-| Proposed matching target RPCs | 2,400 | 120,000 | `2 * 6 * ceil(N / 20)` for both destinations |
-| Added durable storage sensitivity | 16–66 MB | 0.82–3.28 GB | Assumed 4–16 KiB/contact for new payload/index/dependency state |
+| Work                              |       4,000 contacts |    200,000 contacts | Boundary                                                        |
+| --------------------------------- | -------------------: | ------------------: | --------------------------------------------------------------- |
+| LoFi QSO baseline data pages      |                   40 |               2,000 | Excludes operation/events, completion/drain and authentication  |
+| LoFi background rate equivalent   |           50 minutes | 41 hours 40 minutes | Four global requests/five minutes                               |
+| QRZ baseline data pages           |                   16 |                 800 | Excludes completion, catch-up and verification                  |
+| QRZ background rate equivalent    | 3 minutes 20 seconds |  2 hours 47 minutes | 24 global requests/five minutes                                 |
+| Current warm matching RPCs        |               23,600 |           1,180,000 | `118 * ceil(N / 20)` for both destinations                      |
+| Proposed matching target RPCs     |                2,400 |             120,000 | `2 * 6 * ceil(N / 20)` for both destinations                    |
+| Added durable storage sensitivity |             16–66 MB |        0.82–3.28 GB | Assumed 4–16 KiB/contact for new payload/index/dependency state |
 
 The target implies about 90% fewer matching-phase binding calls if full guarded adoption and ownership work fit the proposed boundary. It does not imply the same complete-scheduler reduction. In the isolated queue workload, substituting six planning calls for the current 120 would give `(66 + 6) / 20 = 3.6` RPCs/contact, still excluding source-proof setup, ingestion and maintenance. That is a design bound for that one-destination workload.
 
@@ -602,12 +607,12 @@ The target implies about 90% fewer matching-phase binding calls if full guarded 
 
 The current QRZ total policy is 120 requests/five minutes, or 34,560/day. Cached inventory negatives cannot supply the immediate fresh `QrzEmptyObservation` token consumed by current preparation. Retaining the preparation read, final read and INSERT therefore gives an expected direct-empty path of three requests/contact. Phase E and early phase F retain this singleton authorization behavior.
 
-| QRZ delivery scenario | Requests/day at 10,000 deliveries | Share of current daily allowance |
-| --- | ---: | ---: |
-| Retained direct-empty preparation/final/INSERT path | 30,000 | 86.8% |
-| Existing one-page fallback path | 70,000 | 202.5% |
-| Conditional final-read plus INSERT lower bound | 20,000 | 57.9% |
-| Twice the target at that two-request lower bound | 40,000 | 115.7% |
+| QRZ delivery scenario                               | Requests/day at 10,000 deliveries | Share of current daily allowance |
+| --------------------------------------------------- | --------------------------------: | -------------------------------: |
+| Retained direct-empty preparation/final/INSERT path |                            30,000 |                            86.8% |
+| Existing one-page fallback path                     |                            70,000 |                           202.5% |
+| Conditional final-read plus INSERT lower bound      |                            20,000 |                            57.9% |
+| Twice the target at that two-request lower bound    |                            40,000 |                           115.7% |
 
 The two-request case requires a separately established change that removes/merges the preparation read; the local matcher alone does not accomplish it. The current policy cannot provide 2x headroom through batching alone. These are application limits, not published upstream quotas. See [preparation](../src/delivery.ts), [request policy](../src/vendor-requests.ts) and the [request-demand measurements](capacity-plan.md).
 
@@ -653,14 +658,13 @@ Ingestion cases additionally cover repeated identities within one page, same-sta
 
 Delivery cases include cancellation before send; changes after artifact creation; revocation; missing proof; crash before/after dispatch or between outcome commits; lost acknowledgements; partial LoTW observation; stale historical identities; membership immutability; and recovery of new-format single-member and multi-member attempts. Member 19 failing a guard leaves zero members dispatching. The first observed member cannot collect bytes still needed by an uncertain member. Reject an artifact with an extra/reordered contact or wrong member digest. Proof expiry after dispatch must not prevent otherwise sufficient exact receipt resolution.
 
-Fresh-start acceptance initializes an empty database and rebuilds source/destination observations without importing old application rows. Existing remote contacts must be recognized as historical rather than inserted again or assigned invented Ferry-created provenance. Restore a populated new-format backup with both single-member and multi-member artifacts, preserving their hashes, encryption and unresolved outcomes.
+Fresh-start acceptance preserves account access and linked credential decryption while rebuilding source/destination observations without importing old contact/reconciliation rows. Existing remote contacts must be recognized as historical rather than inserted again or assigned invented Ferry-created provenance. Restore a populated new-format backup with both single-member and multi-member artifacts, preserving their hashes, encryption and unresolved outcomes.
 
 Complete a confirmation scan while receipt inventory is partial and verify that receipt coverage/freshness stays incomplete. A confirmation patch arriving during receipt quarantine must not masquerade as a newer receipt observation or membership witness.
 
 Also test new-event insertion after projection capture, newly activated source scopes, unknown-to-complete index moves, an empty bucket that receives then loses a record, forward observations during baseline quarantine, rebuilds during ingestion, duplicate QRZ observations across ranges, and candidate/dependency 129/257 being relevant. New-format single-member and multi-member staging/recovery must agree with batch membership and ownership rules. Run populated restore quarantine twice and test cutover with an old possibly accepted upload.
 
 Proposed performance targets:
-
 - Warm matching makes zero vendor requests.
 - Compare the 1,708-statement 200-record fixtures with the new set-based writer. Target about 20–30 explicit publication statements for a representative 1,000-record page, plus attributable byte chunks; meter trigger work, rows/writes, preparation/crypto and full page time separately.
 - Target a 2–4-hour 200,000-contact LoFi baseline plus catch-up/context with representative larger pages and paced continuations; record the actual upstream delay and distinguish full cross-vendor classification/uploads.
@@ -674,46 +678,46 @@ These targets require native D1/workerd workloads and sustained observations. An
 
 ## Open questions
 
-| ID | Question | Proposed default or required decision |
-| --- | --- | --- |
-| Q1 | What durable source retention and deletion policy replaces temporary buffering? | Current encrypted source/context retained while active; specify unlink/account deletion, backups and superseded-body collection before phase B activates |
-| Q2 | Which provider changes and deletions are actually covered by incremental reads? | Capabilities express limited coverage; periodic verification and current write checks remain necessary |
-| Q3 | How do baseline, concurrent deltas and membership quarantine publish consistent coverage? | Rolling current observations plus incomplete coverage during scan; monotonic versions, bounded quarantine and guarded publication; prove handoff races before phase C |
-| Q4 | What is LoTW's stable local observation key when exact identity or details change? | Preserve canonical identity and distinguish variants; never discard conflicting records through deduplication |
-| Q5 | Are half-hour buckets economical for dense calls and unknown records? | Benchmark against minute buckets using complete candidate/dependency and decryption costs; keep bucket format versioned |
-| Q6 | How do source additions, partial-key records and reverse uniqueness invalidate older results? | Explicit source visibility/fallback barriers and all forward/reverse bucket dependencies; no silent candidate truncation |
-| Q7 | What planner freshness and verification cadence fit each service's budget? | LoFi separates server-guided backlog pacing from idle polling; benchmark the proposed bootstrap allocation; scale polling and verification cadence remain open |
-| Q8 | Can LoFi use larger pages or reliable selective UUID reads? | Target adaptive 500–1,000-row reads with 200 as an intermediate; upstream client requests 5,201, while Ferry's native byte/checkpoint profile still needs validation; UUID lookup remains optional |
-| Q9 | What is the final adapter API and its coverage/result algebra? | Refine the interface sketch into finite core types; page resume versus committed checkpoints, vector progress, bounded outcomes, facet merge and provider-specific ordering are phase C prerequisites |
-| Q10 | Can ownership and adoption commits meet the proposed six-RPC cohort budget? | Measure full existing native guards and invalidation fan-out; a faster candidate lookup alone is insufficient |
-| Q11 | What evidence permits LoTW member retry after partial/uncertain processing? | No automatic whole-file replay; define bounded observation and proven-rejection behavior before phase F |
-| Q12 | How are shared batch artifacts and events represented in the fresh schema? | Native batch ownership/state guards and normalized file/member references; no legacy trigger compatibility required |
-| Q13 | Does QRZ offer a suitable supported multi-record upload contract? | Individual INSERTs until a separate contract evaluation establishes otherwise |
-| Q14 | What storage and monthly cost does durable source retention add? | Personal-first workload confirmed; measure encrypted row/index size, write amplification, CPU and backups; keep scale estimates separate from the personal budget |
-| Q15 | Can the existing global vendor admission policies meet the target workload? | LoFi bootstrap may use up to 20 of the existing 24 requests/five minutes, with foreground reserve; QRZ/LoTW stay unchanged; broader total/scale-policy changes remain open |
-| Q16 | When should durable queue continuations replace cron-only resumption? | Promote delayed bootstrap continuations to phase C for the hours target; transactional wakeup outbox and cron recovery are prerequisites; other queue use remains optional |
-| Q17 | How can a batch fit current source-proof limits and singleton fresh-insert authorization? | Batch size follows jointly valid proofs; introduce and verify a distinct multi-member authorization contract before activation |
-| Q18 | Which restore protections must precede retention and batch activation? | Fresh source collection and dispatch guards plus both new-format quarantine paths; no legacy purge isolation or data import required |
-| Q19 | How does indefinite source retention fit the database size horizon? | D1 first with a later R2 payload path is confirmed; actual density, migration trigger and metadata growth remain open |
-| Q20 | Can the QRZ preparation read be removed or merged without weakening its current contract? | Retain and budget it initially; treat two requests/contact as a conditional lower bound |
-| Q21 | Must existing database contents or old binaries be supported? | Settled: preserve accounts, authentication and linked credentials; rebuild contact/reconciliation state; no old-writer compatibility or dual materialization; future rollback uses new-format-compatible releases |
-| Q22 | How do source proofs and native adoption guards consume durable inventory? | Implement directly against the fresh inventory/domain model, preserving original observation semantics; no legacy source_work bridge |
-| Q23 | How long must partially resolved batch artifacts remain, and how is partial status shown? | Preserve shared bytes until every unresolved/recovery reference releases them; define operator-visible partial state and terminal retention before F2 |
-| Q24 | What LoFi pacing and page-size values does Ferry's account actually support? | Read validated server hints and profile native 200/500/1,000-row ingestion in a separately authorized validation phase; do not treat upstream client constants as a verified quota |
-| Q25 | Can page-wide relational guards preserve all current merge/provenance/checkpoint semantics? | Native assertions must reject any raced/omitted row; preserve same-page duplicate/timestamp conflicts, first-seen facts, exact observation times and lost-ack recovery |
-| Q26 | Which page sizes fit after removing statement and trigger amplification? | Profile 200/500/1,000 first, then 2,000–5,000 if byte/CPU/memory and atomic publication fit; remote page size and database chunk size are separate |
-| Q27 | Is private relational staging cheaper than repeated bounded JSON parsing? | Default to typed page staging reused by bulk phases; meter its extra writes/space against direct JSON relations before fixing the implementation shape |
-| Q28 | What permits deployment cutover without replaying an old possibly accepted upload? | Pause the previous sender and resolve or quarantine outstanding remote work before enabling replacement inserts; existing remote history is conservatively adopted |
+| ID  | Question                                                                                      | Proposed default or required decision                                                                                                                                                                             |
+| --- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q1  | What durable source retention and deletion policy replaces temporary buffering?               | Current encrypted source/context retained while active; specify unlink/account deletion, backups and superseded-body collection before phase B activates                                                          |
+| Q2  | Which provider changes and deletions are actually covered by incremental reads?               | Capabilities express limited coverage; periodic verification and current write checks remain necessary                                                                                                            |
+| Q3  | How do baseline, concurrent deltas and membership quarantine publish consistent coverage?     | Rolling current observations plus incomplete coverage during scan; monotonic versions, bounded quarantine and guarded publication; prove handoff races before phase C                                             |
+| Q4  | What is LoTW's stable local observation key when exact identity or details change?            | Preserve canonical identity and distinguish variants; never discard conflicting records through deduplication                                                                                                     |
+| Q5  | Are half-hour buckets economical for dense calls and unknown records?                         | Benchmark against minute buckets using complete candidate/dependency and decryption costs; keep bucket format versioned                                                                                           |
+| Q6  | How do source additions, partial-key records and reverse uniqueness invalidate older results? | Explicit source visibility/fallback barriers and all forward/reverse bucket dependencies; no silent candidate truncation                                                                                          |
+| Q7  | What planner freshness and verification cadence fit each service's budget?                    | LoFi separates server-guided backlog pacing from idle polling; benchmark the proposed bootstrap allocation; scale polling and verification cadence remain open                                                    |
+| Q8  | Can LoFi use larger pages or reliable selective UUID reads?                                   | Target adaptive 500–1,000-row reads with 200 as an intermediate; upstream client requests 5,201, while Ferry's native byte/checkpoint profile still needs validation; UUID lookup remains optional                |
+| Q9  | What is the final adapter API and its coverage/result algebra?                                | Refine the interface sketch into finite core types; page resume versus committed checkpoints, vector progress, bounded outcomes, facet merge and provider-specific ordering are phase C prerequisites             |
+| Q10 | Can ownership and adoption commits meet the proposed six-RPC cohort budget?                   | Measure full existing native guards and invalidation fan-out; a faster candidate lookup alone is insufficient                                                                                                     |
+| Q11 | What evidence permits LoTW member retry after partial/uncertain processing?                   | No automatic whole-file replay; define bounded observation and proven-rejection behavior before phase F                                                                                                           |
+| Q12 | How are shared batch artifacts and events represented in the fresh schema?                    | Native batch ownership/state guards and normalized file/member references; no legacy trigger compatibility required                                                                                               |
+| Q13 | Does QRZ offer a suitable supported multi-record upload contract?                             | Individual INSERTs until a separate contract evaluation establishes otherwise                                                                                                                                     |
+| Q14 | What storage and monthly cost does durable source retention add?                              | Personal-first workload confirmed; measure encrypted row/index size, write amplification, CPU and backups; keep scale estimates separate from the personal budget                                                 |
+| Q15 | Can the existing global vendor admission policies meet the target workload?                   | LoFi bootstrap may use up to 20 of the existing 24 requests/five minutes, with foreground reserve; QRZ/LoTW stay unchanged; broader total/scale-policy changes remain open                                        |
+| Q16 | When should durable queue continuations replace cron-only resumption?                         | Promote delayed bootstrap continuations to phase C for the hours target; transactional wakeup outbox and cron recovery are prerequisites; other queue use remains optional                                        |
+| Q17 | How can a batch fit current source-proof limits and singleton fresh-insert authorization?     | Batch size follows jointly valid proofs; introduce and verify a distinct multi-member authorization contract before activation                                                                                    |
+| Q18 | Which restore protections must precede retention and batch activation?                        | Fresh source collection and dispatch guards plus both new-format quarantine paths; no legacy purge isolation or data import required                                                                              |
+| Q19 | How does indefinite source retention fit the database size horizon?                           | D1 first with a later R2 payload path is confirmed; actual density, migration trigger and metadata growth remain open                                                                                             |
+| Q20 | Can the QRZ preparation read be removed or merged without weakening its current contract?     | Retain and budget it initially; treat two requests/contact as a conditional lower bound                                                                                                                           |
+| Q21 | Must existing database contents or old binaries be supported?                                 | Settled: preserve accounts, authentication and linked credentials; rebuild contact/reconciliation state; no old-writer compatibility or dual materialization; future rollback uses new-format-compatible releases |
+| Q22 | How do source proofs and native adoption guards consume durable inventory?                    | Implement directly against the fresh inventory/domain model, preserving original observation semantics; no legacy source_work bridge                                                                              |
+| Q23 | How long must partially resolved batch artifacts remain, and how is partial status shown?     | Preserve shared bytes until every unresolved/recovery reference releases them; define operator-visible partial state and terminal retention before F2                                                             |
+| Q24 | What LoFi pacing and page-size values does Ferry's account actually support?                  | Read validated server hints and profile native 200/500/1,000-row ingestion in a separately authorized validation phase; do not treat upstream client constants as a verified quota                                |
+| Q25 | Can page-wide relational guards preserve all current merge/provenance/checkpoint semantics?   | Native assertions must reject any raced/omitted row; preserve same-page duplicate/timestamp conflicts, first-seen facts, exact observation times and lost-ack recovery                                            |
+| Q26 | Which page sizes fit after removing statement and trigger amplification?                      | Profile 200/500/1,000 first, then 2,000–5,000 if byte/CPU/memory and atomic publication fit; remote page size and database chunk size are separate                                                                |
+| Q27 | Is private relational staging cheaper than repeated bounded JSON parsing?                     | Default to typed page staging reused by bulk phases; meter its extra writes/space against direct JSON relations before fixing the implementation shape                                                            |
+| Q28 | What permits deployment cutover without replaying an old possibly accepted upload?            | Pause the previous sender and resolve or quarantine outstanding remote work before enabling replacement inserts; existing remote history is conservatively adopted                                                |
 
 ## Review follow ups
 
 Four independent reviews covered cost/throughput, the adapter contract, matching/schema correctness, and migration/batch recovery. Their main amendments are incorporated above:
 
-| Review | Incorporated amendments | Remaining decision |
-| --- | --- | --- |
-| Cost and throughput | Comparable phase model, expected three-request QRZ path, proof/batch occupancy, billed-write sensitivity and database horizon | Measured storage density, freshness cadence, vendor admission and preparation-read contract |
-| Adapter interface | Resume versus committed checkpoint, LoFi vector progress, provider ordering, receipt/confirmation facets, bounded tagged results | Finite core types, facet correlation and evidence-backed capability declarations |
-| Matching and schema | Source-set epoch, immediate projection barriers, partial-key domains, expected-zero versions, index generations, union admission and input pins | Detailed SQL/transaction proof and dense-group benchmark |
-| Migration and batch recovery | Member/wire hash separation, shared artifact GC, all-member claims and source proof semantics retained; old-writer/data-preservation requirements superseded by fresh-start decision | New-format rollback/recovery, deployment cutover and partial-artifact retention |
+| Review                       | Incorporated amendments                                                                                                                                                              | Remaining decision                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| Cost and throughput          | Comparable phase model, expected three-request QRZ path, proof/batch occupancy, billed-write sensitivity and database horizon                                                        | Measured storage density, freshness cadence, vendor admission and preparation-read contract |
+| Adapter interface            | Resume versus committed checkpoint, LoFi vector progress, provider ordering, receipt/confirmation facets, bounded tagged results                                                     | Finite core types, facet correlation and evidence-backed capability declarations            |
+| Matching and schema          | Source-set epoch, immediate projection barriers, partial-key domains, expected-zero versions, index generations, union admission and input pins                                      | Detailed SQL/transaction proof and dense-group benchmark                                    |
+| Migration and batch recovery | Member/wire hash separation, shared artifact GC, all-member claims and source proof semantics retained; old-writer/data-preservation requirements superseded by fresh-start decision | New-format rollback/recovery, deployment cutover and partial-artifact retention             |
 
 The remaining questions are design work. These reviews do not authorize runtime implementation.

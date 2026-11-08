@@ -8,6 +8,17 @@ export const keys = {
     "2": Buffer.alloc(32, 8).toString("base64url"),
   },
 };
+export const unusedInventoryQueue: Queue = {
+  async send() {
+    throw new Error("unused inventory queue");
+  },
+  async sendBatch() {
+    throw new Error("unused inventory queue");
+  },
+  async metrics() {
+    throw new Error("unused inventory queue");
+  },
+};
 export async function applyMigration(db: D1Database, name: string) {
   const sql = await readFile(
     new URL(`../migrations/${name}`, import.meta.url),

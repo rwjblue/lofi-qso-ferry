@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { authRoute, normalizeEmail, purgeAuth, session } from "../src/auth.ts";
 import { syntheticAuthenticator as authenticator } from "./auth-fixtures.ts";
-import { database, keys } from "./helpers.ts";
+import { database, keys, unusedInventoryQueue } from "./helpers.ts";
 
 async function setup() {
   const { db, mf } = await database();
@@ -29,6 +29,8 @@ async function setup() {
   }
   const env = {
     DB: db,
+    INVENTORY_QUEUE: unusedInventoryQueue,
+    INVENTORY_RUNTIME_MODE: "off",
     ASSETS: {
       fetch: async () => new Response(),
       connect: () => {

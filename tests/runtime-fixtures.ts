@@ -9,37 +9,27 @@ import {
 import type { SourceRecord } from "../src/lofi.ts";
 import { importPkcs12 } from "../src/signing.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
-import { applyMigration, database, keys, seed } from "./helpers.ts";
+import {
+  applyMigration,
+  database,
+  keys,
+  seed,
+  unusedInventoryQueue,
+} from "./helpers.ts";
 export const FIXTURE_NOW = Date.parse("2027-01-01T00:00:00Z");
 export const FIXTURE_QSO_AT = Date.parse("2026-10-22T12:00:01Z");
 export async function applyAdditionalMigrations(db: D1Database) {
   for (const name of (await readdir(new URL("../migrations/", import.meta.url)))
     .filter((name) => name.endsWith(".sql") && name !== "0001_foundation.sql")
     .sort()) {
-    const sql = await readFile(
-      new URL(`../migrations/${name}`, import.meta.url),
-      "utf8",
-    );
-    let current = "";
-    for (const line of sql.split("\n")) {
-      current += `${line}\n`;
-      const trimmed = current.replace(/^\s*(?:--[^\n]*\n\s*)*/, "");
-      const trigger = trimmed.startsWith("CREATE TRIGGER");
-      if (
-        line.trimEnd().endsWith(";") &&
-        (!trigger ||
-          line.trim() === "END;" ||
-          /^CREATE TRIGGER[^\n]*\bEND;$/.test(trimmed.trim()))
-      ) {
-        await db.prepare(current).run();
-        current = "";
-      }
-    }
+    await applyMigration(db, name);
   }
 }
 export function fixtureEnvironment(db: D1Database): Env {
   return {
     DB: db,
+    INVENTORY_QUEUE: unusedInventoryQueue,
+    INVENTORY_RUNTIME_MODE: "off",
     ASSETS: {
       fetch: async () => new Response("fixture"),
       connect() {

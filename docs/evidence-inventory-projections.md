@@ -1,6 +1,6 @@
 # Encrypted comparison projections
 
-Status: local preparation, native publication, bounded bulk loading and encrypted capture replay, 2026-11-08. The later [matching snapshot evidence](evidence-inventory-matching.md) adds bounded forward/reverse collection. Persisted results and delivery integration are unfinished. Nothing was pushed, deployed, uploaded or reset in production.
+Status: local preparation, native publication, bounded bulk loading and encrypted capture replay, 2026-11-08. The later [matching evidence](evidence-inventory-matching.md) adds bounded forward/reverse collection and native comparison-result publication. Ownership/adoption and delivery integration are unfinished. Nothing was pushed, deployed, uploaded or reset in production.
 
 The [workspace](../src/inventory-projection-workspace.ts) prepares up to twenty source or receipt projections. It captures the comparison generation/configuration, index/projection/work versions, semantic inputs, current operation topology, source membership versions and applicable source coverage. The index census must already be complete for that scope. It admits the union of at most 256 references against four-MiB ciphertext and plaintext budgets, loads immutable payload IDs in bulk and decrypts shared dependencies once.
 

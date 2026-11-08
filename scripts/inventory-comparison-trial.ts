@@ -85,6 +85,24 @@ async function matchingPairState(db: D1Database) {
   return { jobs: jobs.results, pages: pages.results, rows: rows.results };
 }
 
+interface CoverageRecoveryState {
+  trackedSets: number;
+  declarations: number;
+  currentNodes: number;
+  pendingEvents: number;
+  invalidReferences: number;
+}
+async function coverageRecoveryState(db: D1Database) {
+  return db
+    .prepare(`SELECT
+ (SELECT count(*) FROM inventory_match_sets WHERE tenant='trial' AND state='committed' AND recovery_count IS NOT NULL) AS trackedSets,
+ (SELECT count(*) FROM inventory_match_recovery WHERE tenant='trial') AS declarations,
+ (SELECT count(*) FROM inventory_matching_coverage_dependents WHERE tenant='trial') AS currentNodes,
+ (SELECT count(*) FROM inventory_matching_coverage_events WHERE tenant='trial' AND completed_version<work_version) AS pendingEvents,
+ (SELECT count(*) FROM inventory_matching_coverage_dependents d WHERE d.tenant='trial' AND (NOT EXISTS(SELECT 1 FROM inventory_match_recovery q JOIN inventory_match_sets h ON h.tenant=q.tenant AND h.set_id=q.set_id AND h.state='committed' AND h.generation_id=d.generation_id AND h.destination=d.destination JOIN inventory_match_scopes s ON s.tenant=q.tenant AND s.set_id=q.set_id AND s.scope_id=q.scope_id AND s.coverage_clock=d.seen_clock WHERE q.tenant=d.tenant AND q.set_id=d.set_id AND q.recovery_id=d.recovery_id AND q.scope_id=d.scope_id AND q.facet=d.facet AND (q.facet='source' OR q.subject_scope=d.source_scope) AND json_extract(q.nodes,'$['||d.node_index||']')=d.node_hash) OR NOT EXISTS(SELECT 1 FROM match_results r WHERE r.tenant=d.tenant AND r.set_id=d.set_id AND r.source_scope=d.source_scope AND r.state='incomplete'))) AS invalidReferences`)
+    .first<CoverageRecoveryState>();
+}
+
 /** Offline replay of the encrypted three-provider run capture. The original is
  * never opened for mutation; the working copy stays outside the repository. */
 export async function inventoryComparisonTrial(captureDirectory: string) {
@@ -179,6 +197,8 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0061_inventory_matching_coverage_clocks.sql",
       "0062_inventory_matching_pair_jobs.sql",
       "0063_inventory_matching_pair_pages.sql",
+      "0064_inventory_matching_result_update.sql",
+      "0065_inventory_matching_coverage_recovery.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -526,6 +546,13 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
         .all()
     ).results;
     const pairState = await matchingPairState(db);
+    const coverageState = await coverageRecoveryState(db);
+    if (
+      !coverageState ||
+      coverageState.trackedSets !== matchingSnapshots.length ||
+      coverageState.invalidReferences !== 0
+    )
+      throw new Error("comparison_trial_coverage_recovery_incomplete");
     if (
       pairState.jobs.length !== pairTurns.length ||
       pairState.pages.length !== pairTurns.length ||
@@ -568,6 +595,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
         rows: pairState.rows.length,
         manifestDigest: await sha256(canonical(pairState)),
       },
+      coverageRecovery: { sampled: true, state: coverageState },
       matchingInvalidation: {
         sampled: true,
         kind: invalidation.kind,
@@ -668,6 +696,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       rows: number;
       manifestDigest: string;
     };
+    coverageRecovery?: { sampled: boolean; state: CoverageRecoveryState };
     historicalAdoption?: { evaluated: boolean; associationsCreated: number };
     projectionJobs?: {
       sampled: boolean;
@@ -841,6 +870,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
           throw new Error("comparison_trial_matching_snapshot_changed");
         const fresh = await new InventoryMatchingWorkspace(store, {
           trackCoverageClocks: snapshot.coverageClocks === 1,
+          trackCoverageRecovery: snapshot.coverageRecovery === 1,
         }).prepare("trial", snapshot.destination, snapshot.selected);
         const {
           digest: _oldDigest,
@@ -1121,6 +1151,16 @@ export async function reopenInventoryComparisonTrial(directory: string) {
         throw new Error("comparison_trial_pair_work_not_recovered");
       matchingPairRowsValidated = validated.n;
     }
+    let coverageRecoveryStateRecovered: boolean | undefined;
+    if (report.coverageRecovery?.sampled) {
+      const state = await coverageRecoveryState(db);
+      if (
+        state?.invalidReferences !== 0 ||
+        canonical(state) !== canonical(report.coverageRecovery.state)
+      )
+        throw new Error("comparison_trial_coverage_recovery_not_recovered");
+      coverageRecoveryStateRecovered = true;
+    }
     let matchingInvalidationStateRecovered: boolean | undefined;
     if (report.matchingInvalidation?.sampled) {
       if (
@@ -1154,6 +1194,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       matchingWorkValidated,
       matchingInvalidationStateRecovered,
       matchingPairRowsValidated,
+      coverageRecoveryStateRecovered,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

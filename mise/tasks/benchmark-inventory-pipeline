@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+#MISE description="Benchmark normalized inventory through Queue-driven matching in isolated native D1"
+#USAGE flag "--contacts <contacts>" default="200" help="Synthetic contacts from 1 to 200000"
+#USAGE flag "--remote <remote>" default="empty" help="Destination profile" {
+#USAGE   choices "empty" "matched"
+#USAGE }
+#USAGE flag "--page-size <page_size>" default="1000" help="Source contacts per normalized page from 1 to 1000"
+set -euo pipefail
+npx tsx scripts/benchmark-inventory-pipeline.ts "$@"

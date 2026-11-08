@@ -112,7 +112,8 @@ contacts as twenty plus one and returns to idle with zero external requests.
 
 These APIs do not yet constitute the complete hosted comparison coordinator.
 Coverage recovery now wakes context-held projections completed while the baseline
-was partial. Automatic generation/build selection, matching work and
+was partial. Generation/build selection is now implemented through the local
+[coordinator](evidence-inventory-coordinator.md); durable matching work and
 ownership-aware planning, Queue/cron integration and end-to-end fairness/retry
 policies remain unfinished. They must be connected before runtime activation;
 operation fan-out alone cannot establish full-log progress or the hours target.
@@ -215,8 +216,8 @@ in `38a043c5-9c17-459c-a0e7-337adc645f41`; allocation is 15,663,104 database byt
 It includes new indexes, control tables, jobs and twenty more bodies, and does not
 establish full-log storage density or capacity runway.
 
-The complete hosted coordinator still needs generation/build selection, durable
-matching work, ownership-aware planning, Queue/cron wiring and bounded retry/fairness
+The local coordinator now implements generation/build selection; the hosted path
+still needs durable matching work, ownership-aware planning, Queue/cron wiring and bounded retry/fairness
 policies. Source proofs, delivery and restore/cutover remain separate unfinished
 work; no new export path is activated here.
 
@@ -271,6 +272,7 @@ This small allocation difference is not a full-log storage forecast. Logs are
 `/tmp/lofi-ferry-bounded-setup-capture.log` and
 `/tmp/lofi-ferry-bounded-setup-reopen.log`.
 
-The automatic generation/build/projection coordinator, managed activation fences,
-durable matching work and hosted wakeups remain unfinished. Bounded initialization
-is a prerequisite for that coordinator, not a claim of completed hosted progress.
+The local generation/build/projection coordinator and managed activation are now
+implemented; see [coordinator evidence](evidence-inventory-coordinator.md). Durable
+matching work and hosted wakeups remain unfinished. Bounded initialization does not
+by itself establish completed hosted progress.

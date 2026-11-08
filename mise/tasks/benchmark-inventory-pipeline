@@ -5,8 +5,8 @@
 #USAGE   choices "empty" "matched"
 #USAGE }
 #USAGE flag "--page-size <page_size>" default="1000" help="Source contacts per normalized page from 1 to 1000"
-#USAGE flag "--schema <schema>" default="current" help="Current migrations or pre-optimization schema through 0074" {
-#USAGE   choices "current" "74"
+#USAGE flag "--schema <schema>" default="current" help="Current migrations or pre-optimization schema through 0074/0075" {
+#USAGE   choices "current" "74" "75"
 #USAGE }
 #USAGE flag "--incremental-rounds <rounds>" default="0" help="Exercise 0 to 20 rounds of empty/stable polls, edits and retirement/restoration"
 set -euo pipefail

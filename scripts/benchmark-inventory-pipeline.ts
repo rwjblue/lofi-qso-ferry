@@ -49,7 +49,11 @@ assert.ok(
 );
 assert.ok(Number.isSafeInteger(pageSize) && pageSize >= 1 && pageSize <= 1000);
 assert.ok(values.remote === "empty" || values.remote === "matched");
-assert.ok(values.schema === "current" || values.schema === "74");
+assert.ok(
+  values.schema === "current" ||
+    values.schema === "74" ||
+    values.schema === "75",
+);
 assert.ok(
   Number.isSafeInteger(incrementalRounds) &&
     incrementalRounds >= 0 &&
@@ -67,7 +71,7 @@ try {
         (name) =>
           name.endsWith(".sql") &&
           name !== "0001_foundation.sql" &&
-          name < "0075_",
+          name < `${String(Number(values.schema) + 1).padStart(4, "0")}_`,
       )
       .sort())
       await applyMigration(base.db, name);

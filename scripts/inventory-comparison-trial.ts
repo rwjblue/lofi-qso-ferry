@@ -302,6 +302,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0073_inventory_comparison_wakeups.sql",
       "0074_inventory_comparison_runtime_leases.sql",
       "0075_inventory_matching_selected_observed.sql",
+      "0076_inventory_matching_bucket_observed.sql",
     ])
       await applyMigration(db, name);
     await activateInventoryRuntime(store);

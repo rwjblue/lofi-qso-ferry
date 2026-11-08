@@ -1,6 +1,6 @@
 # Inventory driven reconciliation design
 
-Status: **Draft architecture with an isolated ingestion implementation, 2026-11-07.** The bulk page writer and read-only trial tooling are implemented locally; see [ingestion evidence](evidence-inventory-ingestion.md). Full coverage, matching, delivery integration and deployment remain future phases. No production reset or export-policy change has been performed.
+Status: **Architecture with isolated ingestion and durable read-run libraries, 2026-11-08.** The bulk writer, bounded adapters, run/membership/coverage lifecycle and continuation libraries are implemented locally; see [ingestion evidence](evidence-inventory-ingestion.md) and [run evidence](evidence-inventory-runs.md). Hosted scheduler handoff, bulk matching, delivery integration and deployment remain future work. No production reset or export-policy change has been performed.
 
 Ferry should inventory each service independently, retain the latest encrypted LoFi source data, and reconcile bounded groups through a shared local comparison index. Persisted results would drive delivery planning. External discovery would follow service pages and changes, while matching and queue creation would operate on sets of records locally.
 

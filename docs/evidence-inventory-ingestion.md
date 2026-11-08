@@ -87,6 +87,6 @@ No trial publishes account-wide coverage or absence conclusions. QRZ is a bounde
 
 ## Remaining work
 
-Next implement durable run/membership/coverage completion and adapter continuations, with persisted pacing and an explicit scheduler reader-ownership switch. Then build the shared HMAC comparison generation, bounded bulk matcher and invalidation dependencies. Preparation, member-aware LoTW upload artifacts, native dispatch/recovery guards, garbage collection, restore quarantine and deployment cutover remain separate milestones.
+The subsequent [durable run milestone](evidence-inventory-runs.md) implements run/membership/coverage completion, bounded adapter execution, persisted pacing and continuation libraries. Hosted scheduler wiring and the explicit reader-ownership switch remain unfinished. Then build the shared HMAC comparison generation, bounded bulk matcher and invalidation dependencies. Preparation, member-aware LoTW upload artifacts, native dispatch/recovery guards, garbage collection, restore quarantine and deployment cutover remain separate milestones.
 
 Full-log completion time, production Worker CPU/memory, final metadata density, operation-child projection cost and vendor-specific upload throughput are still unmeasured. Do not extrapolate the synthetic ingestion rate into a complete synchronization or upload rate.

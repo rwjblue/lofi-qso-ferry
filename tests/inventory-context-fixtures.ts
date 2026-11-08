@@ -53,6 +53,7 @@ export async function fixture(existing?: Awaited<ReturnType<typeof database>>) {
     "0045_inventory_comparison_ingestion.sql",
     "0046_inventory_comparison_builds.sql",
     "0047_inventory_context_membership.sql",
+    "0048_inventory_projection_publication.sql",
   ])
     await applyMigration(f.db, name);
   const hook = new InventoryComparisonPages(f.store);

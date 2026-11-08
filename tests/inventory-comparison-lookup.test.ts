@@ -38,6 +38,7 @@ async function fixture() {
     "0044_inventory_comparison_generations.sql",
     "0045_inventory_comparison_ingestion.sql",
     "0047_inventory_context_membership.sql",
+    "0048_inventory_projection_publication.sql",
   ])
     await applyMigration(f.db, name);
   const inventory = new InventoryIngestion(
@@ -215,7 +216,8 @@ test("operation edits expose stale projection dependencies without hiding their 
     );
     const candidate = result.observations[0].candidates[0];
     assert.equal(candidate.key, "q");
-    assert.equal(candidate.state, "ready");
+    assert.equal(candidate.state, "pending");
+    assert.equal(candidate.currentProjectionVersion, null);
     assert.equal(candidate.topologyVersion, 0);
     assert.equal(candidate.currentTopologyVersion, 1);
   } finally {

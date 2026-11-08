@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { InventoryComparisonBuilds } from "../src/inventory-comparison-builds.ts";
+import { InventoryComparisonLookup } from "../src/inventory-comparison-lookup.ts";
 import {
   InventoryProjectionWorkspace,
   inventoryProjectionDigest,
@@ -8,13 +9,11 @@ import {
 } from "../src/inventory-projection-workspace.ts";
 import { InventoryProjections } from "../src/inventory-projections.ts";
 import { Store } from "../src/store.ts";
-import { applyMigration } from "./helpers.ts";
 import { fixture, observation } from "./inventory-context-fixtures.ts";
 import { receiptFixture } from "./inventory-receipt-fixtures.ts";
 
 async function sourceFixture(count = 1, testOperation = false) {
   const f = await fixture();
-  await applyMigration(f.db, "0048_inventory_projection_publication.sql");
   const op = observation("op", "operation");
   if (testOperation) op.body = { uuid: "op", stationCall: "T/N1RWJ" };
   const qsos = Array.from({ length: count }, (_, i) => observation(`q${i}`));
@@ -223,6 +222,21 @@ test("test exclusions retain their hash and stale context cannot keep a formerly
         ?.body.state,
       "excluded",
     );
+    const lookup = new InventoryComparisonLookup(f.store);
+    const request = [
+      {
+        id: "selected",
+        scope: "source",
+        record: { CALL: "W1AW", QSO_DATE: "20261108", TIME_ON: "123000" },
+      },
+    ];
+    const excluded = await lookup.probe("a", request, {
+      generation: f.generation,
+    });
+    assert.equal(
+      excluded.observations[0].candidates[0].projectionState,
+      "excluded",
+    );
     await f.full([
       {
         ...observation("op", "operation", 2),
@@ -234,6 +248,12 @@ test("test exclusions retain their hash and stale context cannot keep a formerly
       await f.projections.body("a", f.generation, "source", "q0", "source"),
       null,
     );
+    const pending = await lookup.probe("a", request, {
+      generation: f.generation,
+    });
+    assert.equal(pending.observations[0].candidates.length, 1);
+    assert.equal(pending.observations[0].candidates[0].state, "pending");
+    assert.equal(pending.observations[0].candidates[0].projectionState, null);
     await f.projections.publish(await prepare(f), f.projectionLease);
     const body = await f.projections.body(
       "a",
@@ -244,6 +264,51 @@ test("test exclusions retain their hash and stale context cannot keep a formerly
     );
     assert.equal(body?.body.state, "ready");
     assert.equal(body?.version, 2);
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("bulk lookup keeps a published projection available across unchanged verification without hiding collecting context", async () => {
+  const f = await sourceFixture();
+  try {
+    await f.projections.publish(await prepare(f), f.projectionLease);
+    await new InventoryComparisonBuilds(f.store).activate("a", f.generation);
+    const lookup = new InventoryComparisonLookup(f.store),
+      request = [
+        {
+          id: "selected",
+          scope: "source",
+          record: { CALL: "W1AW", QSO_DATE: "20261108", TIME_ON: "123000" },
+        },
+      ];
+    const before = await lookup.probe("a", request);
+    assert.equal(before.observations[0].state, "observed");
+    assert.equal(
+      before.observations[0].candidates[0].currentProjectionVersion,
+      1,
+    );
+    const run = await f.begin();
+    const collecting = await lookup.probe("a", request);
+    assert.equal(collecting.observations[0].state, "pending");
+    assert.equal(collecting.observations[0].candidates.length, 1);
+    assert.equal(collecting.observations[0].candidates[0].payload, null);
+    await f.observed(run.id, [
+      observation("op", "operation"),
+      observation("q0"),
+    ]);
+    await f.observed(run.id, []);
+    await f.finish(run.id);
+    const after = await lookup.probe("a", request);
+    assert.equal(after.observations[0].state, "observed");
+    assert.equal(
+      after.observations[0].candidates[0].currentProjectionVersion,
+      1,
+    );
+    assert.equal(
+      after.observations[0].candidates[0].payload,
+      before.observations[0].candidates[0].payload,
+    );
   } finally {
     await f.mf.dispose();
   }

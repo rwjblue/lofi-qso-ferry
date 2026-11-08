@@ -8,8 +8,8 @@ import {
   InventoryIngestion,
   type InventoryObservation,
 } from "../src/inventory-ingestion.ts";
-import { Store } from "../src/store.ts";
 import { canonical, sha256 } from "../src/security.ts";
+import { Store } from "../src/store.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
 
 const at = Date.parse("2026-11-08T12:30:00Z");
@@ -39,6 +39,7 @@ async function fixture(count = 0) {
     "0045_inventory_comparison_ingestion.sql",
     "0046_inventory_comparison_builds.sql",
     "0047_inventory_context_membership.sql",
+    "0048_inventory_projection_publication.sql",
   ])
     await applyMigration(f.db, name);
   const inventory = new InventoryIngestion(
@@ -287,7 +288,7 @@ test("native backfill rejects a raced inventory page and direct completion or sk
   }
 });
 
-test("current hints retain ready projections and work versions during a generation's initial census", async () => {
+test("current hints retain index metadata and work while a missing projection body stays pending", async () => {
   const f = await fixture();
   try {
     await f.publish([qso("q")]);
@@ -316,7 +317,11 @@ test("current hints retain ready projections and work versions during a generati
       },
     ]);
     assert.equal(probe.observations[0].indexReady, true);
-    assert.equal(probe.observations[0].state, "observed");
+    assert.equal(probe.observations[0].state, "pending");
+    assert.equal(
+      probe.observations[0].candidates[0].currentProjectionVersion,
+      null,
+    );
   } finally {
     await f.mf.dispose();
   }

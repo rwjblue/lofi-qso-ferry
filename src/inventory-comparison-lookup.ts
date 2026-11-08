@@ -26,6 +26,10 @@ export interface InventoryComparisonCandidate {
   currentTopologyVersion: number;
   projectionVersion: number;
   membershipVersion: number;
+  currentProjectionVersion: number | null;
+  projectionState: "ready" | "held" | "excluded" | null;
+  projectionReason: string | null;
+  payload: string | null;
 }
 export interface InventoryComparisonProbe {
   id: string;
@@ -49,6 +53,13 @@ interface ProbeRow {
   buckets: string;
 }
 const encoder = new TextEncoder();
+// Keep this an indexed metadata join. LEFT JOINing the full multi-table current
+// body view can materialize unrelated projections before applying the probe cap.
+const currentProjection = `CASE WHEN p.version=i.projection_version AND p.semantic_version=i.semantic_version AND p.semantic_version=f.semantic_version
+ AND p.config_version=i.config_version AND p.config_version=s.config_version AND p.parent_key IS i.parent_key AND e.parent_key IS p.parent_key AND e.status='active' AND e.subtype='qso'
+ AND i.topology_version=p.topology_version AND p.topology_version=coalesce(pd.topology_version,0) AND p.membership_version=coalesce(mv.version,0) AND i.state=CASE p.state WHEN 'held' THEN 'held' ELSE 'ready' END
+ AND s.state='observing' AND c.status='active' AND a.status='active' AND c.kind=s.provider AND c.remote_identity=s.logical_identity AND b.complete=1 AND b.config_version=s.config_version
+ AND (i.facet!='source' OR i.parent_key IS NULL OR p.state='held' OR EXISTS(SELECT 1 FROM inventory_coverage cv JOIN inventory_runs r ON r.tenant=cv.tenant AND r.run_id=cv.published_run_id WHERE cv.tenant=i.tenant AND cv.scope_id=i.scope_id AND cv.stream_id=p.coverage_stream AND cv.partition_id=p.coverage_partition AND cv.facet='source' AND cv.state='ready' AND cv.kind='observed_selection' AND cv.published_config_version=i.config_version AND r.mode='full' AND r.requires_catchup=1 AND r.phase='complete' AND r.config_version=i.config_version)) THEN p.version ELSE NULL END`;
 function identifier(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 512;
 }
@@ -99,12 +110,16 @@ export class InventoryComparisonLookup {
       .statement(
         `SELECT CAST(j.key AS INTEGER) AS ordinal,s.config_version,s.state AS scope_state,c.status AS connection_state,a.status AS account_state,
        b.config_version AS build_config_version,b.complete,g.state AS generation_state,
-       (SELECT json_group_array(json_object('key',q.record_key,'facet',q.facet,'keyClass',q.key_class,'hash',q.bucket_hash,'state',q.state,
+       (SELECT json_group_array(json_object('key',q.record_key,'facet',q.facet,'keyClass',q.key_class,'hash',q.bucket_hash,'state',CASE WHEN q.current_projection_version IS NULL THEN 'pending' ELSE q.state END,
         'semanticVersion',q.semantic_version,'currentSemanticVersion',q.current_semantic_version,'configVersion',q.config_version,
-        'parent',q.parent_key,'topologyVersion',q.topology_version,'currentTopologyVersion',q.current_topology_version,'projectionVersion',q.projection_version,'membershipVersion',q.membership_version)) FROM (
-         SELECT i.*,f.semantic_version AS current_semantic_version,coalesce(pd.topology_version,0) AS current_topology_version,coalesce(mv.version,0) AS membership_version
+        'parent',q.parent_key,'topologyVersion',q.topology_version,'currentTopologyVersion',q.current_topology_version,'projectionVersion',q.projection_version,'membershipVersion',q.membership_version,
+        'currentProjectionVersion',q.current_projection_version,'projectionState',CASE WHEN q.current_projection_version IS NULL THEN NULL ELSE q.projection_state END,'projectionReason',CASE WHEN q.current_projection_version IS NULL THEN NULL ELSE q.projection_reason END,'payload',CASE WHEN q.current_projection_version IS NULL THEN NULL ELSE q.projection_payload END)) FROM (
+         SELECT i.*,f.semantic_version AS current_semantic_version,coalesce(pd.topology_version,0) AS current_topology_version,coalesce(mv.version,0) AS membership_version,
+          p.state AS projection_state,p.reason AS projection_reason,p.payload_id AS projection_payload,${currentProjection} AS current_projection_version
          FROM json_each(json_extract(j.value,'$.tokens')) t CROSS JOIN comparison_index i INDEXED BY comparison_bucket
          LEFT JOIN inventory_record_facets f ON f.tenant=i.tenant AND f.scope_id=i.scope_id AND f.entity_family='qso' AND f.record_key=i.record_key AND f.facet=i.facet
+         LEFT JOIN inventory_records e ON e.tenant=i.tenant AND e.scope_id=i.scope_id AND e.entity_family='qso' AND e.record_key=i.record_key
+         LEFT JOIN comparison_projections p ON p.tenant=i.tenant AND p.generation_id=i.generation_id AND p.scope_id=i.scope_id AND p.record_key=i.record_key AND p.facet=i.facet
          LEFT JOIN projection_domains pd ON pd.tenant=i.tenant AND pd.scope_id=i.scope_id AND pd.operation_key=i.parent_key
          LEFT JOIN inventory_membership_versions mv ON mv.tenant=i.tenant AND mv.scope_id=i.scope_id AND mv.entity_family='qso' AND mv.record_key=i.record_key AND mv.facet=i.facet
          WHERE i.tenant=?2 AND i.generation_id=?4 AND i.scope_id=json_extract(j.value,'$.scope')
@@ -148,6 +163,8 @@ export class InventoryComparisonLookup {
         const pending = candidates.some(
           (candidate) =>
             candidate.state !== "ready" ||
+            candidate.currentProjectionVersion !==
+              candidate.projectionVersion ||
             candidate.semanticVersion !== candidate.currentSemanticVersion ||
             candidate.configVersion !== row.config_version ||
             candidate.topologyVersion !== candidate.currentTopologyVersion,

@@ -67,7 +67,6 @@ export default { async fetch(request,env) {
   const db = (await runtime.getD1Database("DB")) as D1Database;
   await applyMigration(db, "0001_foundation.sql");
   const f = await fixture({ mf: runtime, db, store: new Store(db, keys) });
-  await applyMigration(db, "0048_inventory_projection_publication.sql");
   const qsos = Array.from({ length: 20 }, (_, i) => {
     const row = observation(`q${i}`);
     row.body = {

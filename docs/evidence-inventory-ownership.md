@@ -1,7 +1,7 @@
 # Historical inventory ownership evidence
 
 Status: local permanent ownership and guarded historical association publication,
-2026-11-08. Automatic comparison scheduling, delivery ownership integration and
+2026-11-08. Automatic adoption scheduling, delivery ownership integration and
 deployment remain unfinished. No production data was reset and no upload was
 performed.
 
@@ -140,6 +140,16 @@ must be included in the larger storage benchmark. Proof compaction/collection mu
 preserve ownership and original baselines; no collector is implemented yet.
 
 ## Remaining integration
+
+The later [managed real-service trial](evidence-inventory-managed-trial.md)
+completed the personal LoFi/QRZ selections and positively adopted two
+twenty-contact historical cohorts without service writes. Retrying the
+measured cohort preserved its twenty mappings. Its native publication
+cost was 197,429 reads and 325 writes in six statements; complete
+preparation/publication/lease work was 15 calls and 367,276 reads. These
+real-log counts exceed the small fixture above. Investigation and the
+complete-cohort RPC target remain open; the trial does not establish
+automatic full-log adoption throughput.
 
 Base `match_results` continue to describe comparison facts. The automatic planner
 still needs an ownership-aware selection layer and durable claimed-work completion.

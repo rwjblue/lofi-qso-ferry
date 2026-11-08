@@ -108,6 +108,37 @@ schema changes. Logs are `/tmp/lofi-ferry-selected-inputs-capture.log`,
 
 ## Remaining work
 
+### Completion when the final older dependent is collected
+
+The managed real-service source run retained 678 empty selected-input
+expansion pages. Migration 0075 completed signals observed by a replacement
+cohort's own selected identities. It did not cover a different replacement
+removing the last old sibling of an identity that had already moved.
+
+[Migration 0077](../migrations/0077_inventory_matching_selected_collected.sql)
+adds completion after deletion of that identity's final older current
+dependent. The existing clock-leading index and native progress guard prove
+the absence across all current owner routes. Work/signal clocks and cursor
+frontiers stay unchanged. A later signal still requeues the identity; an
+older prepared page cannot overwrite completion. The result replacement,
+dependency collection and completion roll back together on late failure.
+
+The focused regression replaces one member of a three-member cohort and
+then replaces its two old siblings without selecting the first identity.
+Its job completes without an empty page. Replacement consumed 788 rows
+read before unrelated history and 784 after adding 4,000 completed jobs;
+both must stay under a fixed 2,500-read ceiling. These are native
+publication counts, not a complete-pipeline speedup measurement.
+
+Four new native cases, the six earlier observed-completion regressions
+under the new schema, and the actual read-only Worker pipeline passed as
+one **11-test** selection. TypeScript, lint and formatting passed. The log
+is `/tmp/lofi-ferry-selected-collected-qualified.log`. The running real
+trial was opened through 0076 and was not migrated during execution;
+elimination of its empty pages still needs a comparable replay.
+
+### Integration still required
+
 Durable hosted wakeups, bounded Queue turns and periodic retry/lost-message
 recovery are implemented; see [hosted comparison evidence](evidence-inventory-hosted-comparison.md).
 Automatic adoption scheduling,

@@ -633,6 +633,21 @@ Success means a measured bulk writer with safe 500–1,000-record pages, underst
 
 This first milestone is implemented and measured locally. The inventory runtime, comparison-key/index foundations, native encrypted projections, guarded comparison results/work completion and historical adoption have also advanced; see the evidence links at the top. Selected-input cohort invalidation and automatic edit/retirement/restoration recovery are implemented. Hosted comparison wakeups and bounded Queue/cron recovery are implemented. Initial [complete-pipeline measurements](evidence-inventory-pipeline.md) and [incremental qualification](evidence-inventory-incremental.md) found and removed empty selected-input and bucket Queue amplification; larger and complete real-source qualification remains open. Retention and remaining empty-poll overhead require qualification alongside automatic adoption scheduling and ownership-aware planning, followed by new delivery ownership, source-proof and member-aware delivery integration. Adapter edge cases and batch submission remain focused work rather than reasons to extend broad planning indefinitely.
 
+The [managed real-service trial](evidence-inventory-managed-trial.md) now
+completes LoFi's 4,251 active contacts and the configured QRZ book range
+with 4,252 active receipts, while LoTW remains a selected receipt day.
+Verified QRZ results include 2,957 historical matches and 366 absences at
+inventory; no upload was authorized. It exposed an ADIF operator-only
+receipt, empty invalidation jobs after final dependency collection, and
+an audit that repeated shared-proof validation per row. Those local
+issues are fixed and qualified. The trial retains 275.3 MB before
+collection and before historical association publication; this makes
+retention and relational/index growth explicit work before cutover.
+The 200,000-contact target and complete LoTW account inventory remain
+unqualified. Complete SQL cost for the QRZ continuation was lost when its
+original final audit failed, so this is coverage/classification evidence
+with partial cost measurements rather than a whole-run cost forecast.
+
 ## Fresh database rollout phases
 
 The earlier additive-migration sequence is superseded by the decision that existing contact/reconciliation contents need not be preserved. Preserve account/authentication/connection records and credential encryption identities. Use a fresh contact schema/environment; do not run old binaries against it or implement dual writers solely for historical database compatibility.

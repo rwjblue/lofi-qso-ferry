@@ -1,0 +1,789 @@
+{
+  "version": 1,
+  "date": "2026-11-08",
+  "kind": "managed-real-service-inventory-qualification",
+  "schemaThrough": 76,
+  "execution": "node_with_native_d1",
+  "hostedQueueExcluded": true,
+  "productionCpuExcluded": true,
+  "completedInvocations": [
+    {
+      "invocation": 1,
+      "stopReason": "request_limit",
+      "runs": [
+        {
+          "provider": "lofi",
+          "phase": "collecting",
+          "version": 2,
+          "jobState": "ready",
+          "reason": null,
+          "coverageState": "collecting",
+          "publishedSelection": null
+        },
+        {
+          "provider": "lotw",
+          "phase": "complete",
+          "version": 5,
+          "jobState": "idle",
+          "reason": null,
+          "coverageState": "ready",
+          "publishedSelection": 1
+        },
+        {
+          "provider": "qrz",
+          "phase": "held",
+          "version": 4,
+          "jobState": "held",
+          "reason": "verification_required",
+          "coverageState": "held",
+          "publishedSelection": null
+        }
+      ],
+      "records": [
+        {
+          "provider": "lofi",
+          "family": "operation",
+          "subtype": "operation",
+          "status": "active",
+          "records": 181
+        },
+        {
+          "provider": "lofi",
+          "family": "operation",
+          "subtype": "operation",
+          "status": "deleted",
+          "records": 43
+        },
+        {
+          "provider": "lofi",
+          "family": "qso",
+          "subtype": "event",
+          "status": "active",
+          "records": 14
+        },
+        {
+          "provider": "lofi",
+          "family": "qso",
+          "subtype": "event",
+          "status": "deleted",
+          "records": 2
+        },
+        {
+          "provider": "lofi",
+          "family": "qso",
+          "subtype": "qso",
+          "status": "active",
+          "records": 974
+        },
+        {
+          "provider": "lofi",
+          "family": "qso",
+          "subtype": "qso",
+          "status": "deleted",
+          "records": 10
+        },
+        {
+          "provider": "lotw",
+          "family": "qso",
+          "subtype": "qso",
+          "status": "active",
+          "records": 2
+        },
+        {
+          "provider": "qrz",
+          "family": "qso",
+          "subtype": "qso",
+          "status": "active",
+          "records": 500
+        }
+      ],
+      "projections": [
+        {
+          "state": "held",
+          "reason": "source_coverage_incomplete",
+          "records": 960
+        },
+        {
+          "state": "ready",
+          "reason": null,
+          "records": 516
+        }
+      ],
+      "results": [
+        {
+          "provider": "lotw",
+          "state": "incomplete",
+          "reason": "forward_incomplete",
+          "records": 14
+        },
+        {
+          "provider": "lotw",
+          "state": "incomplete",
+          "reason": "source_unavailable",
+          "records": 960
+        },
+        {
+          "provider": "qrz",
+          "state": "incomplete",
+          "reason": "forward_incomplete",
+          "records": 14
+        },
+        {
+          "provider": "qrz",
+          "state": "incomplete",
+          "reason": "source_unavailable",
+          "records": 960
+        }
+      ],
+      "control": {
+        "phase": 10,
+        "phase_count": 11,
+        "idle_turns": 11,
+        "work_version": 204,
+        "observed_version": 204,
+        "not_before": null
+      },
+      "credentialEnvelopesUnchanged": true,
+      "databaseBytes": 24440832,
+      "originalAccessUnchanged": true,
+      "requestsInInvocation": {
+        "requests": 8,
+        "byProvider": {
+          "lofi": 1,
+          "qrz": 6,
+          "lotw": 1
+        },
+        "responseBytes": 2838458
+      },
+      "readTurns": 8,
+      "comparisonTurns": 1958,
+      "database": {
+        "calls": 22181,
+        "statements": 24419,
+        "metadataStatements": 24419,
+        "rowsRead": 2422988,
+        "rowsWritten": 149029,
+        "sqlMs": 2628
+      },
+      "elapsedMs": 107818,
+      "sourceAndQrzComplete": false,
+      "lotwSelectedDayComplete": true,
+      "accountWideCoverage": false,
+      "uploads": 0,
+      "execution": "node_with_native_d1",
+      "hostedQueueExcluded": true
+    },
+    {
+      "invocation": 2,
+      "stopReason": "quiescent",
+      "runs": [
+        {
+          "provider": "lofi",
+          "phase": "complete",
+          "version": 35,
+          "jobState": "idle",
+          "reason": null,
+          "coverageState": "ready",
+          "publishedSelection": 1
+        },
+        {
+          "provider": "lotw",
+          "phase": "complete",
+          "version": 5,
+          "jobState": "idle",
+          "reason": null,
+          "coverageState": "ready",
+          "publishedSelection": 1
+        },
+        {
+          "provider": "qrz",
+          "phase": "held",
+          "version": 4,
+          "jobState": "held",
+          "reason": "verification_required",
+          "coverageState": "held",
+          "publishedSelection": null
+        }
+      ],
+      "records": [
+        {
+          "provider": "lofi",
+          "family": "operation",
+          "subtype": "operation",
+          "status": "active",
+          "records": 181
+        },
+        {
+          "provider": "lofi",
+          "family": "operation",
+          "subtype": "operation",
+          "status": "deleted",
+          "records": 43
+        },
+        {
+          "provider": "lofi",
+          "family": "qso",
+          "subtype": "event",
+          "status": "active",
+          "records": 123
+        },
+        {
+          "provider": "lofi",
+          "family": "qso",
+          "subtype": "event",
+          "status": "deleted",
+          "records": 7
+        },
+        {
+          "provider": "lofi",
+          "family": "qso",
+          "subtype": "qso",
+          "status": "active",
+          "records": 4251
+        },
+        {
+          "provider": "lofi",
+          "family": "qso",
+          "subtype": "qso",
+          "status": "deleted",
+          "records": 17
+        },
+        {
+          "provider": "lotw",
+          "family": "qso",
+          "subtype": "qso",
+          "status": "active",
+          "records": 2
+        },
+        {
+          "provider": "qrz",
+          "family": "qso",
+          "subtype": "qso",
+          "status": "active",
+          "records": 500
+        }
+      ],
+      "projections": [
+        {
+          "state": "excluded",
+          "reason": "test_operation_not_exported",
+          "records": 5
+        },
+        {
+          "state": "held",
+          "reason": "frequency_band_mismatch",
+          "records": 1
+        },
+        {
+          "state": "held",
+          "reason": "operation_context_incomplete",
+          "records": 2
+        },
+        {
+          "state": "ready",
+          "reason": null,
+          "records": 4745
+        }
+      ],
+      "results": [
+        {
+          "provider": "lotw",
+          "state": "excluded",
+          "reason": null,
+          "records": 5
+        },
+        {
+          "provider": "lotw",
+          "state": "incomplete",
+          "reason": "forward_incomplete",
+          "records": 4243
+        },
+        {
+          "provider": "lotw",
+          "state": "incomplete",
+          "reason": "source_unavailable",
+          "records": 3
+        },
+        {
+          "provider": "qrz",
+          "state": "excluded",
+          "reason": null,
+          "records": 5
+        },
+        {
+          "provider": "qrz",
+          "state": "incomplete",
+          "reason": "forward_incomplete",
+          "records": 4243
+        },
+        {
+          "provider": "qrz",
+          "state": "incomplete",
+          "reason": "source_unavailable",
+          "records": 3
+        }
+      ],
+      "control": {
+        "phase": 0,
+        "phase_count": 11,
+        "idle_turns": 11,
+        "work_version": 1934,
+        "observed_version": 1934,
+        "not_before": null
+      },
+      "credentialEnvelopesUnchanged": true,
+      "databaseBytes": 188882944,
+      "originalAccessUnchanged": true,
+      "requestsInInvocation": {
+        "requests": 6,
+        "byProvider": {
+          "lofi": 6,
+          "qrz": 0,
+          "lotw": 0
+        },
+        "responseBytes": 3129609
+      },
+      "readTurns": 33,
+      "comparisonTurns": 10429,
+      "database": {
+        "calls": 119620,
+        "statements": 134366,
+        "metadataStatements": 134366,
+        "rowsRead": 9137270,
+        "rowsWritten": 1065085,
+        "sqlMs": 65628
+      },
+      "elapsedMs": 643868,
+      "sourceAndQrzComplete": false,
+      "lotwSelectedDayComplete": true,
+      "accountWideCoverage": false,
+      "uploads": 0,
+      "execution": "node_with_native_d1",
+      "hostedQueueExcluded": true
+    },
+    {
+      "invocation": 3,
+      "stopReason": "quiescent",
+      "runs": [
+        {
+          "provider": "lofi",
+          "phase": "complete",
+          "version": 35,
+          "jobState": "idle",
+          "reason": null,
+          "coverageState": "ready",
+          "publishedSelection": 1
+        },
+        {
+          "provider": "lotw",
+          "phase": "complete",
+          "version": 5,
+          "jobState": "idle",
+          "reason": null,
+          "coverageState": "ready",
+          "publishedSelection": 1
+        },
+        {
+          "provider": "qrz",
+          "phase": "complete",
+          "version": 45,
+          "jobState": "idle",
+          "reason": null,
+          "coverageState": "ready",
+          "publishedSelection": 1
+        }
+      ],
+      "records": [
+        {
+          "provider": "lofi",
+          "family": "operation",
+          "subtype": "operation",
+          "status": "active",
+          "records": 181
+        },
+        {
+          "provider": "lofi",
+          "family": "operation",
+          "subtype": "operation",
+          "status": "deleted",
+          "records": 43
+        },
+        {
+          "provider": "lofi",
+          "family": "qso",
+          "subtype": "event",
+          "status": "active",
+          "records": 123
+        },
+        {
+          "provider": "lofi",
+          "family": "qso",
+          "subtype": "event",
+          "status": "deleted",
+          "records": 7
+        },
+        {
+          "provider": "lofi",
+          "family": "qso",
+          "subtype": "qso",
+          "status": "active",
+          "records": 4251
+        },
+        {
+          "provider": "lofi",
+          "family": "qso",
+          "subtype": "qso",
+          "status": "deleted",
+          "records": 17
+        },
+        {
+          "provider": "lotw",
+          "family": "qso",
+          "subtype": "qso",
+          "status": "active",
+          "records": 2
+        },
+        {
+          "provider": "qrz",
+          "family": "qso",
+          "subtype": "qso",
+          "status": "active",
+          "records": 4252
+        }
+      ],
+      "projections": [
+        {
+          "state": "excluded",
+          "reason": "test_operation_not_exported",
+          "records": 5
+        },
+        {
+          "state": "held",
+          "reason": "frequency_band_mismatch",
+          "records": 1
+        },
+        {
+          "state": "held",
+          "reason": "invalid_receipt_projection",
+          "records": 6
+        },
+        {
+          "state": "held",
+          "reason": "operation_context_incomplete",
+          "records": 2
+        },
+        {
+          "state": "ready",
+          "reason": null,
+          "records": 8491
+        }
+      ],
+      "results": [
+        {
+          "provider": "lotw",
+          "state": "excluded",
+          "reason": null,
+          "records": 5
+        },
+        {
+          "provider": "lotw",
+          "state": "incomplete",
+          "reason": "forward_incomplete",
+          "records": 4243
+        },
+        {
+          "provider": "lotw",
+          "state": "incomplete",
+          "reason": "source_unavailable",
+          "records": 3
+        },
+        {
+          "provider": "qrz",
+          "state": "absent_at_inventory",
+          "reason": null,
+          "records": 366
+        },
+        {
+          "provider": "qrz",
+          "state": "ambiguous",
+          "reason": "multiple_remote_candidates",
+          "records": 20
+        },
+        {
+          "provider": "qrz",
+          "state": "excluded",
+          "reason": null,
+          "records": 5
+        },
+        {
+          "provider": "qrz",
+          "state": "incomplete",
+          "reason": "candidate_unavailable",
+          "records": 63
+        },
+        {
+          "provider": "qrz",
+          "state": "incomplete",
+          "reason": "forward_incomplete",
+          "records": 297
+        },
+        {
+          "provider": "qrz",
+          "state": "incomplete",
+          "reason": "operating_details_unavailable",
+          "records": 3
+        },
+        {
+          "provider": "qrz",
+          "state": "incomplete",
+          "reason": "source_unavailable",
+          "records": 3
+        },
+        {
+          "provider": "qrz",
+          "state": "matched_existing",
+          "reason": null,
+          "records": 2957
+        },
+        {
+          "provider": "qrz",
+          "state": "projection_mismatch",
+          "reason": "operating_details_differ",
+          "records": 537
+        }
+      ],
+      "control": {
+        "phase": 10,
+        "phase_count": 11,
+        "idle_turns": 11,
+        "work_version": 2998,
+        "observed_version": 2998,
+        "not_before": null
+      },
+      "credentialEnvelopesUnchanged": true,
+      "databaseBytes": 275324928,
+      "originalAccessUnchanged": true,
+      "requestsInInvocation": {
+        "requests": 0,
+        "byProvider": {
+          "lofi": 0,
+          "qrz": 0,
+          "lotw": 0
+        },
+        "responseBytes": 0
+      },
+      "readTurns": 0,
+      "comparisonTurns": 0,
+      "database": {
+        "calls": 2,
+        "statements": 2,
+        "metadataStatements": 2,
+        "rowsRead": 5,
+        "rowsWritten": 0,
+        "sqlMs": 1
+      },
+      "elapsedMs": 5020,
+      "sourceAndQrzComplete": true,
+      "lotwSelectedDayComplete": true,
+      "accountWideCoverage": false,
+      "uploads": 0,
+      "execution": "node_with_native_d1",
+      "hostedQueueExcluded": true,
+      "verificationRestarts": 1
+    }
+  ],
+  "failedContinuation": {
+    "version": 1,
+    "kind": "failed-managed-continuation",
+    "outcome": "audit_failed_after_quiescent_native_work",
+    "lastProgress": {
+      "event": "inventory_managed_progress",
+      "elapsedMs": 301892,
+      "readTurns": 44,
+      "comparisonTurns": 4065,
+      "requests": {
+        "requests": 38,
+        "byProvider": {
+          "lofi": 0,
+          "qrz": 38,
+          "lotw": 0
+        },
+        "responseBytes": 6042621
+      },
+      "remainingMs": 898823
+    },
+    "completeDatabaseCounters": false,
+    "note": "The original final audit repeated shared proof checks and failed through the native D1 transport. Native state completed. The corrected audit and a zero-request resume succeeded; no accepted service reads were repeated."
+  },
+  "diagnosticRequests": {
+    "requests": 2,
+    "byProvider": {
+      "lofi": 0,
+      "qrz": 2,
+      "lotw": 0
+    },
+    "responseBytes": 356370
+  },
+  "totalObservedHttp": {
+    "requests": 54,
+    "byProvider": {
+      "lofi": 7,
+      "qrz": 46,
+      "lotw": 1
+    },
+    "responseBytes": 12367058
+  },
+  "completeEndToEndDatabaseCounters": false,
+  "nativeSharedAudit20Members": {
+    "rowsRead": 1846,
+    "rowWiseViewRowsRead": 35340
+  },
+  "notes": [
+    "LoFi full account and configured QRZ book date range completed. LoTW is only a selected receipt day.",
+    "The failed QRZ continuation finished native work, but its original whole-log audit failed through the local D1 transport; its last progress is a lower bound and lacks full database counters.",
+    "The corrected proof-per-cohort audit and zero-request resume succeeded.",
+    "Schema 0077 was qualified separately; this real trial was not migrated while running.",
+    "No production reset, deployment, vendor mutation or push occurred."
+  ],
+  "historicalAdoption": {
+    "version": 1,
+    "preexistingAssociations": 20,
+    "selected": 20,
+    "first": {
+      "records": 20,
+      "deferred": false,
+      "publicationStatements": 6,
+      "publicationRowsRead": 197429,
+      "publicationRowsWritten": 325,
+      "skipped": 0,
+      "database": {
+        "calls": 15,
+        "statements": 21,
+        "metadataStatements": 21,
+        "rowsRead": 367276,
+        "rowsWritten": 327,
+        "sqlMs": 404
+      }
+    },
+    "retry": {
+      "records": 0,
+      "deferred": false,
+      "preserved": 20
+    },
+    "state": {
+      "associations": 40,
+      "evidence": 40,
+      "attempts": 0
+    },
+    "sampleDecrypted": true,
+    "canonicalAndCredentialsUnchanged": true,
+    "originalAccessUnchanged": true,
+    "requests": 0,
+    "uploads": 0,
+    "databaseBytes": 275439616
+  },
+  "historicalAdoptionReopen": {
+    "state": "reopened",
+    "associations": 40,
+    "evidence": 40,
+    "attempts": 0,
+    "sampleDecrypted": true,
+    "originalAccessUnchanged": true,
+    "requests": 0,
+    "uploads": 0
+  },
+  "privateDirectoryAudit": {
+    "entries": 35,
+    "groupOrWorldAccessible": 0
+  },
+  "afterAdoptionComparisonReopen": {
+    "state": "reopened",
+    "results": [
+      {
+        "provider": "lotw",
+        "state": "excluded",
+        "reason": null,
+        "records": 5
+      },
+      {
+        "provider": "lotw",
+        "state": "incomplete",
+        "reason": "forward_incomplete",
+        "records": 4243
+      },
+      {
+        "provider": "lotw",
+        "state": "incomplete",
+        "reason": "source_unavailable",
+        "records": 3
+      },
+      {
+        "provider": "qrz",
+        "state": "absent_at_inventory",
+        "reason": null,
+        "records": 366
+      },
+      {
+        "provider": "qrz",
+        "state": "ambiguous",
+        "reason": "multiple_remote_candidates",
+        "records": 20
+      },
+      {
+        "provider": "qrz",
+        "state": "excluded",
+        "reason": null,
+        "records": 5
+      },
+      {
+        "provider": "qrz",
+        "state": "incomplete",
+        "reason": "candidate_unavailable",
+        "records": 63
+      },
+      {
+        "provider": "qrz",
+        "state": "incomplete",
+        "reason": "forward_incomplete",
+        "records": 297
+      },
+      {
+        "provider": "qrz",
+        "state": "incomplete",
+        "reason": "operating_details_unavailable",
+        "records": 3
+      },
+      {
+        "provider": "qrz",
+        "state": "incomplete",
+        "reason": "source_unavailable",
+        "records": 3
+      },
+      {
+        "provider": "qrz",
+        "state": "matched_existing",
+        "reason": null,
+        "records": 2957
+      },
+      {
+        "provider": "qrz",
+        "state": "projection_mismatch",
+        "reason": "operating_details_differ",
+        "records": 537
+      }
+    ],
+    "control": {
+      "phase": 10,
+      "phase_count": 11,
+      "idle_turns": 11,
+      "work_version": 2998,
+      "observed_version": 2998,
+      "not_before": null
+    },
+    "credentialEnvelopesUnchanged": true,
+    "databaseBytes": 275439616,
+    "sampleDecrypted": true,
+    "requests": 0,
+    "uploads": 0
+  }
+}

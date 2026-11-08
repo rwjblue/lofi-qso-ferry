@@ -1,6 +1,6 @@
 # Inventory driven reconciliation design
 
-Status: **Architecture with local inventory runtime implementation, 2026-11-08.** Bulk ingestion, bounded reads, run/membership/coverage, durable reader handoff, hosted scheduler/Queue wiring and shared comparison keys are implemented locally; see [ingestion evidence](evidence-inventory-ingestion.md), [run evidence](evidence-inventory-runs.md) and [runtime evidence](evidence-inventory-runtime.md). Automatic LoTW date-universe discovery/splitting, the durable comparison index, bulk matching, delivery integration and deployment remain future work. Runtime activation is configured off; no production reset or export-policy change has been performed.
+Status: **Architecture with local inventory and comparison-index implementation, 2026-11-08.** Bulk ingestion, bounded reads, run/membership/coverage, reader handoff, hosted scheduler/Queue wiring, encrypted comparison keys, atomic hash invalidation, resumable index generations and bounded bulk candidate lookup are implemented locally. See [ingestion evidence](evidence-inventory-ingestion.md), [run evidence](evidence-inventory-runs.md), [runtime evidence](evidence-inventory-runtime.md) and [comparison evidence](evidence-inventory-comparison.md). Projection materialization, automatic comparison-job scheduling, persisted matching/reverse uniqueness, automatic LoTW date discovery/splitting, delivery integration and deployment remain future work. Runtime activation is configured off; no production reset or export-policy change has been performed.
 
 Ferry should inventory each service independently, retain the latest encrypted LoFi source data, and reconcile bounded groups through a shared local comparison index. Persisted results would drive delivery planning. External discovery would follow service pages and changes, while matching and queue creation would operate on sets of records locally.
 
@@ -117,18 +117,23 @@ The default path stages metadata, publishes canonical records and deletes scratc
 
 ### Comparison and work tables
 
-| Table                | Key                                                         | Principal columns                                                                                   |
-| -------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `index_generations`  | `(tenant, generation_id)`                                   | fixed key ID, bucket/normalization versions, state, captured source positions and catch-up progress |
-| `comparison_domains` | `(tenant, domain_id)`                                       | `source_set_version`, active/pending index generation, unknown/unpublished barrier version          |
-| `projection_domains` | `(tenant, source, operation_key)`                           | `topology_version`, `ready_version`, pending work and bounded continuation                          |
-| `comparison_index`   | `(tenant, generation_id, scope_id, record_key)`             | key class, `bucket_hash`, raw/projection versions, operation topology version, readiness            |
-| `bucket_versions`    | `(tenant, generation_id, scope_id, key_class, bucket_hash)` | monotonic `version`                                                                                 |
-| `matching_work`      | `(tenant, destination, work_key)`                           | work `version`, `priority`, `due_at`, bounded continuation cursor, fixed failure code               |
-| `match_results`      | `(tenant, source, qso, destination)`                        | `source_generation`, result, remote reference, `policy_version`, fixed reason, `next_eligible_at`   |
-| `match_dependencies` | result key plus dependency kind, scope and dependency key   | key/index version, expected bucket/coverage/projection/ownership version                            |
+| Table                       | Key                                                         | Principal columns                                                                                                        |
+| --------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `index_generations`         | `(tenant, generation_id)`                                   | fixed key ID, bucket/normalization versions, state, captured source positions and catch-up progress                      |
+| `comparison_domains`        | `(tenant)`                                                  | one contact-comparison domain per tenant initially; monotonic `version`, `source_set_version`, active/pending generation |
+| `inventory_comparison_keys` | `(tenant)`                                                  | stable key ID and envelope-encrypted tenant HMAC secret, independent of credential and KEK versions                      |
+| `comparison_builds`         | `(tenant, generation_id, scope_id)`                         | configuration/version, bounded keyset cursor and index-census completion                                                 |
+| `projection_domains`        | `(tenant, source, operation_key)`                           | `topology_version`, `ready_version`, pending work and bounded continuation                                               |
+| `comparison_index`          | `(tenant, generation_id, scope_id, record_key, facet)`      | key class, `bucket_hash`, semantic/configuration/projection versions, parent/topology version, readiness                 |
+| `bucket_versions`           | `(tenant, generation_id, scope_id, key_class, bucket_hash)` | monotonic `version`                                                                                                      |
+| `comparison_work`           | `(tenant, generation_id, scope_id, record_key, facet)`      | coalesced projection work, monotonic work/completed versions and due time                                                |
+| `matching_work`             | `(tenant, destination, work_key)`                           | work `version`, `priority`, `due_at`, bounded continuation cursor, fixed failure code                                    |
+| `match_results`             | `(tenant, source, qso, destination)`                        | `source_generation`, result, remote reference, `policy_version`, fixed reason, `next_eligible_at`                        |
+| `match_dependencies`        | result key plus dependency kind, scope and dependency key   | key/index version, expected bucket/coverage/projection/ownership version                                                 |
 
 The comparison index is derived and rebuildable. Only ordinary contacts enter it as QSO candidates; operation and event data remain projection dependencies. Initial complete records store one time bucket. Key classes are `call_and_time`, `call_only`, `time_only` and `unknown`; each class has a distinct HMAC domain. Pending/unavailable records immediately enter the narrowest known fallback domain. They cannot simply disappear behind a `readiness='ready'` filter.
+
+The local implementation retains hashless `retired` bookkeeping entries when an indexed QSO becomes an event/deleted record. These entries are not candidates. Each semantic page change stages hints for both active and pending generations and advances every distinct old/new bucket once in the original ingestion transaction. Stable polls and metadata-only changes preserve index/work versions. Generation creation, side-by-side catch-up and activation are available through the comparison APIs; automatic hosted comparison-job scheduling is still outstanding.
 
 `comparison_domains.source_set_version` advances when a relevant source is linked, removed, reactivated or reconfigured. Every reverse-source result captures it; dependencies on previously known scopes alone cannot detect a new source. A newly visible source starts behind a baseline/context readiness barrier.
 
@@ -359,7 +364,7 @@ An operation with 100 changed events therefore gets one immediate topology barri
 
 ### Bounds and larger page staging
 
-Statement growth should follow a fixed set of table operations plus byte chunks, not a fixed recipe multiplied by records. The initial design target is about 20–30 explicit publication statements for a representative 1,000-record page with a single active index generation, with additional statements attributable to bounded chunks/stream/generation counts. This is an unmeasured target; row writes and crypto still scale with accepted records and indexes. Staging itself adds row writes and parsing/storage overhead, so compare it with direct bounded JSON relations in the native benchmark.
+Statement growth should follow a fixed set of table operations plus byte chunks, not a fixed recipe multiplied by records. The initial design target was about 20–30 explicit publication statements for a representative 1,000-record page with one writer generation. The [local comparison benchmark](evidence-inventory-comparison.md) now measures **22 statements for 1,000 source records**, including hints, narrow invalidation and coalesced projection work. Additional statements follow bounded chunks/streams/generations. Row writes, encryption and HMAC work still scale with accepted records and indexes; this fixture does not establish full-log elapsed time or hosted billing.
 
 Use an initial 512 KiB ceiling per bound metadata/ciphertext input chunk, retaining an independent whole-page wire/plaintext/encrypted/heap budget. Respect D1's parameter, string/row and SQL-size limits, and its whole-batch 30-second duration limit. Keep publication comfortably below that limit in native and remote measurements. Larger allowed row counts do not justify a larger byte or transaction budget by themselves. See [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
 
@@ -550,7 +555,7 @@ Exercise insert, update, unchanged replay, tombstone and event-heavy pages at 20
 
 Success means a measured bulk writer with safe 500–1,000-record pages, understandable size/time limits, a substantial reduction from the old per-record recipe, and an end-to-end native ingestion cost model. Synthetic timing does not establish actual LoFi cooldowns or the hours target; a later bounded live-read validation supplies that evidence. No uploads, database resets or credentialed service requests are needed for this first milestone.
 
-The recommended next action is this implementation milestone, followed by evidence-led adjustment of page sizes and staging shape. Adapter edge cases and batch submission remain subsequent focused milestones rather than reasons to extend broad planning indefinitely.
+This first milestone is implemented and measured locally. The inventory runtime and comparison-key/index foundations have also advanced; see the evidence links at the top. The next implementation milestone is bounded encrypted projection materialization and persisted bulk matching with native dependencies, followed by member-aware delivery integration. Adapter edge cases and batch submission remain focused work rather than reasons to extend broad planning indefinitely.
 
 ## Fresh database rollout phases
 

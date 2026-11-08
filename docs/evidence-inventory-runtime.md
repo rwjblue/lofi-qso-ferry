@@ -60,4 +60,4 @@ Keys use a nonexportable 256-bit HMAC-SHA-256 key and distinct tenant, generatio
 
 The key and existing matcher selection passed **22 tests**, including **1,152 generated record pairs** around half-hour, minute, midnight, leap-day, pre-epoch and year boundaries. Every candidate accepted by the actual precision-aware predicate remained discoverable, as did relevant malformed-time holds. Tenant/generation isolation, fallback classes, coarse false positives and mutation during asynchronous signing are covered.
 
-This is the key primitive. Durable comparison generations, encrypted key storage, bulk projection/index publication, bucket versions, matching dependencies, reverse-source uniqueness and actual bulk matching remain to be implemented.
+This section records the key primitive checkpoint. The later [comparison evidence](evidence-inventory-comparison.md) covers durable encrypted keys, generation builds, atomic hint/bucket publication and bounded bulk candidate lookup. Projection materialization, matching dependencies, reverse-source uniqueness and actual bulk matching remain unfinished.

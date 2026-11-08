@@ -2,6 +2,65 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { inventoryRunFixture } from "./inventory-run-fixtures.ts";
 
+test("only an accepted read page advances connection success health, inside its atomic publication", async () => {
+  const f = await inventoryRunFixture();
+  try {
+    const run = await f.begin();
+    assert.equal((await f.store.connection("a", "source"))?.config, "{}");
+    const page = await f.page(run.id, [f.qso("q")]);
+    await f.inventory.publish(page);
+    const health = await f.db
+      .prepare("SELECT last_poll_at,config FROM connections WHERE id='source'")
+      .first<{ last_poll_at: number; config: string }>();
+    assert.equal(health?.last_poll_at, page.input.requestStartedAt);
+    assert.ok(health);
+    assert.equal(
+      JSON.parse(health.config).lastSuccessfulPollAt,
+      page.input.requestStartedAt,
+    );
+    await f.inventory.publish(page);
+    const context = await f.runs.context("a", run.id);
+    await f.inventory.publish(
+      await f.runs.prepareDefer(context, f.lease, Date.now() + 60000),
+    );
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT last_poll_at,config FROM connections WHERE id='source'",
+        )
+        .first(),
+      health,
+    );
+    const next = await f.page(run.id, [f.qso("new")]);
+    await f.db
+      .prepare(
+        "CREATE TRIGGER fail_health_page BEFORE UPDATE ON ingestion_pages WHEN NEW.state='committed' BEGIN SELECT RAISE(ABORT,'late health page failure'); END",
+      )
+      .run();
+    await assert.rejects(f.inventory.publish(next), /late health page failure/);
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT last_poll_at,config FROM connections WHERE id='source'",
+        )
+        .first(),
+      health,
+    );
+    assert.equal(
+      (
+        await f.db
+          .prepare(
+            "SELECT count(*) n FROM inventory_records WHERE record_key='new'",
+          )
+          .first<{ n: number }>()
+      )?.n,
+      0,
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
 test("full source run checkpoints only after vector catch-up and bounded quarantine", async () => {
   const f = await inventoryRunFixture();
   try {

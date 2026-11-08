@@ -184,6 +184,11 @@ export function inventoryRunEffects(
       bound(
         store,
         input,
+        `UPDATE connections SET last_poll_at=max(coalesce(last_poll_at,0),(SELECT request_started_at FROM ingestion_pages WHERE tenant=?1 AND page_id=?2)),config=json_set(json_remove(config,'$.lastError'),'$.lastSuccessfulPollAt',max(CASE WHEN json_type(config,'$.lastSuccessfulPollAt')='integer' THEN json_extract(config,'$.lastSuccessfulPollAt') ELSE 0 END,(SELECT request_started_at FROM ingestion_pages WHERE tenant=?1 AND page_id=?2))) WHERE tenant=?1 AND id=(SELECT s.connection_id FROM ingestion_pages p JOIN inventory_scopes s ON s.tenant=p.tenant AND s.scope_id=p.scope_id WHERE p.tenant=?1 AND p.page_id=?2)`,
+      ),
+      bound(
+        store,
+        input,
         `INSERT INTO inventory_run_membership(tenant,run_id,scope_id,entity_family,record_key,facet,facet_version,revision,body_hash,accepted_sequence,observed_at,last_page_id) SELECT p.tenant,r.run_id,p.scope_id,s.entity_family,s.record_key,s.facet,f.row_version,f.revision,f.body_hash,f.last_accepted_sequence,p.request_started_at,p.page_id ${observed} ON CONFLICT(tenant,run_id,entity_family,record_key,facet) DO UPDATE SET facet_version=excluded.facet_version,revision=excluded.revision,body_hash=excluded.body_hash,accepted_sequence=excluded.accepted_sequence,observed_at=excluded.observed_at,last_page_id=excluded.last_page_id`,
       ),
       bound(

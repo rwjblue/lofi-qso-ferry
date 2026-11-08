@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Exercise durable inventory runs with bounded reads and an isolated encrypted database"
+#USAGE flag "--capture <directory>" help="Existing encrypted read-only trial containing the three connections"
+#USAGE flag "--reopen <directory>" help="Verify persisted run state and payload decryption without vendor reads"
+set -euo pipefail
+npx tsx scripts/inventory-run-trial.ts "$@"

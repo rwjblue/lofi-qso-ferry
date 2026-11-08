@@ -333,3 +333,55 @@ test("ambiguous QRZ absence holds the run without publishing coverage", async (t
   assert.equal(coverage?.state, "held");
   assert.equal(coverage?.epoch, 0);
 });
+
+test("QRZ terminal-page recovery fits the runner request budget and persists the smaller page", async (t) => {
+  const f = await fixture(t, "qrz");
+  assert.ok(f.plan.provider === "qrz");
+  f.plan.pageSize = 250;
+  const run = await f.begin();
+  const records = Array.from({ length: 250 }, (_, i) => ({
+    ...contact,
+    APP_QRZLOG_LOGID: String(i + 1),
+  }));
+  const requests: { action: string; option: string }[] = [];
+  const runner = new InventoryRunner(f.runs, async (input, init) => {
+    const form = new URLSearchParams(await new Request(input, init).text());
+    const action = form.get("ACTION") ?? "",
+      option = form.get("OPTION") ?? "";
+    requests.push({ action, option });
+    if (action === "STATUS") return status();
+    assert.equal(action, "FETCH");
+    if (option.includes("MODSINCE:")) return qrz([]);
+    const after = Number(/AFTERLOGID:(\d+)/.exec(option)?.[1] ?? 0);
+    const limit = Number(/MAX:(\d+)/.exec(option)?.[1]);
+    const page = records
+      .filter((record) => Number(record.APP_QRZLOG_LOGID) >= after)
+      .slice(0, limit);
+    return page.length ? qrz(page) : new Response("RESULT=FAIL&COUNT=0");
+  });
+  assert.equal((await runner.step(await f.wakeup(run.id))).kind, "advanced");
+  assert.equal(requests.length, 2);
+  const boundary = requests.length;
+  assert.equal((await runner.step(await f.wakeup(run.id))).kind, "advanced");
+  assert.equal(
+    requests.length - boundary,
+    3,
+    "STATUS, rejected empty read and smaller replay share one bounded turn",
+  );
+  const stream = await f.inventory.snapshot("a", f.scope, "scan");
+  assert.ok(stream);
+  assert.equal((stream.resume as { pageSize: number }).pageSize, 249);
+  assert.equal((stream.resume as { afterLogId: number }).afterLogId, 250);
+  const tail = requests.length;
+  assert.equal((await runner.step(await f.wakeup(run.id))).kind, "advanced");
+  assert.equal(requests.length - tail, 2);
+  assert.match(requests.at(-1)!.option, /MAX:249/);
+  assert.match(requests.at(-1)!.option, /AFTERLOGID:250/);
+  assert.equal((await f.runs.load("a", run.id))?.phase, "catchup");
+  await f.finish(runner, run.id);
+  assert.equal((await f.runs.load("a", run.id))?.phase, "complete");
+  assert.deepEqual(
+    await f.db.prepare("SELECT count(*) AS n FROM inventory_records").first(),
+    { n: 250 },
+  );
+});

@@ -7,7 +7,7 @@ import { Store } from "../src/store.ts";
 import { keys, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
-test("actual Worker cron hands off to a real local Queue and publishes a paced continuation", async (t) => {
+test("actual Worker cron drives paced source inventory and automatic destination comparisons", async (t) => {
   const bundle = await build({
     entryPoints: ["src/index.ts"],
     bundle: true,
@@ -20,6 +20,8 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
   const output = bundle.outputFiles[0];
   assert.ok(output);
   let reads = 0;
+  let qrzReads = 0;
+  let qrzStatuses = 0;
   const readTimes: number[] = [];
   const runtime = new Miniflare(
     convertV4MiniflareOptions({
@@ -50,6 +52,25 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
       },
       serviceBindings: { ASSETS: async () => new Response("fixture") },
       outboundService: async (request) => {
+        if (new URL(request.url).hostname === "logbook.qrz.com") {
+          assert.equal(request.method, "POST");
+          const form = new URLSearchParams(await request.text());
+          if (form.get("ACTION") === "STATUS") {
+            qrzStatuses++;
+            return new Response(
+              new URLSearchParams({
+                RESULT: "OK",
+                BOOKID: "7",
+                CALLSIGN: "N1RWJ",
+                STARTDATE: "2025-01-01",
+                ENDDATE: "2027-12-31",
+              }),
+            );
+          }
+          assert.equal(form.get("ACTION"), "FETCH");
+          qrzReads++;
+          return new Response("RESULT=OK&COUNT=0&ADIF=");
+        }
         assert.equal(request.url, "https://lofi.ham2k.net/v1/sync");
         assert.equal(request.method, "POST");
         const body = (await request.json()) as {
@@ -61,8 +82,21 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
         readTimes.push(Date.now());
         return Response.json({
           account: { uuid: "source" },
-          operations: [],
-          qsos: [{ uuid: "q1", syncedAtMillis: 100 }],
+          operations: [
+            { uuid: "op", stationCall: "N1RWJ", syncedAtMillis: 99 },
+          ],
+          qsos: [
+            {
+              uuid: "q1",
+              operation: "op",
+              syncedAtMillis: 100,
+              startAtMillis: Date.parse("2026-11-08T13:00:00Z"),
+              their: { call: "W1AW" },
+              our: { grid: "FN31" },
+              band: "20m",
+              mode: "CW",
+            },
+          ],
           meta: {
             operations: { records_left: 0 },
             qsos: { records_left: 0 },
@@ -86,7 +120,9 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
     )
     .run();
   await store
-    .statement("UPDATE connections SET status='revoked' WHERE id='destination'")
+    .statement(
+      'UPDATE connections SET config=\'{"bookId":"7","stationCallsign":"N1RWJ","startDate":"2025-01-01","endDate":"2027-12-31"}\' WHERE id=\'destination\'',
+    )
     .run();
   await store
     .statement("DELETE FROM private_data WHERE connection='source'")
@@ -98,9 +134,19 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
       token: "fixture-token",
     })
   ).run();
+  await store
+    .statement("DELETE FROM private_data WHERE connection='destination'")
+    .run();
+  await (
+    await store.putPrivate("a", "destination", "v1", "credential", {
+      apiKey: "fixture-qrz",
+    })
+  ).run();
   const credentials = (
     await db
-      .prepare("SELECT envelope FROM private_data WHERE connection='source'")
+      .prepare(
+        "SELECT envelope FROM private_data WHERE kind='credential' ORDER BY connection",
+      )
       .all()
   ).results;
   const worker = await runtime.getWorker();
@@ -116,7 +162,7 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
   for (let i = 0; i < 100; i++) {
     state = await db
       .prepare(
-        "SELECT r.phase,w.published_at,j.next_due_at FROM inventory_runs r JOIN inventory_stream_jobs j ON j.tenant=r.tenant AND j.active_run_id=r.run_id JOIN inventory_wakeups w ON w.tenant=j.tenant AND w.scope_id=j.scope_id AND w.stream_id=j.stream_id AND w.work_version=j.work_version WHERE r.phase='catchup'",
+        "SELECT r.phase,w.published_at,j.next_due_at FROM inventory_runs r JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.scope_id AND s.provider='lofi' JOIN inventory_stream_jobs j ON j.tenant=r.tenant AND j.active_run_id=r.run_id JOIN inventory_wakeups w ON w.tenant=j.tenant AND w.scope_id=j.scope_id AND w.stream_id=j.stream_id AND w.work_version=j.work_version WHERE r.phase='catchup'",
       )
       .first();
     if (state?.published_at) break;
@@ -124,7 +170,7 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
   }
   assert.equal(state?.phase, "catchup");
   assert.ok(state.published_at);
-  assert.ok(state.next_due_at > Date.now() + 15000);
+  assert.ok(state.next_due_at >= readTimes[0] + 19000);
   assert.equal(reads, 1);
   assert.equal(
     (
@@ -140,7 +186,7 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
         .prepare("SELECT count(*) n FROM inventory_records")
         .first<{ n: number }>()
     )?.n,
-    1,
+    2,
   );
   assert.equal(
     (
@@ -148,7 +194,7 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
         .prepare("SELECT count(*) n FROM inventory_run_membership")
         .first<{ n: number }>()
     )?.n,
-    1,
+    2,
   );
   for (const table of [
     "source_work",
@@ -167,7 +213,9 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
   assert.deepEqual(
     (
       await db
-        .prepare("SELECT envelope FROM private_data WHERE connection='source'")
+        .prepare(
+          "SELECT envelope FROM private_data WHERE kind='credential' ORDER BY connection",
+        )
         .all()
     ).results,
     credentials,
@@ -175,7 +223,9 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
   let phase: string | null = null;
   for (let i = 0; i < 400; i++) {
     phase = await db
-      .prepare("SELECT phase FROM inventory_runs LIMIT 1")
+      .prepare(
+        "SELECT r.phase FROM inventory_runs r JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.scope_id WHERE s.provider='lofi' LIMIT 1",
+      )
       .first<string>("phase");
     if (phase === "complete") break;
     await delay(100);
@@ -225,5 +275,23 @@ test("actual Worker cron hands off to a real local Queue and publishes a paced c
     reads,
     2,
     "derived comparison Queue turns make no provider calls",
+  );
+  assert.equal(
+    qrzReads,
+    2,
+    "independent QRZ full scan and catch-up need no per-contact discovery",
+  );
+  assert.equal(qrzStatuses, 2);
+  assert.deepEqual(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM match_results_current WHERE state='absent_at_inventory'",
+      )
+      .first(),
+    { n: 1 },
+  );
+  assert.deepEqual(
+    await db.prepare("SELECT count(*) AS n FROM attempts").first(),
+    { n: 0 },
   );
 });

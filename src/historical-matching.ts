@@ -161,6 +161,19 @@ function time(record: AdifRecord): HistoricalTimeInterval | undefined {
     precision: clock.length === 4 ? "minute" : "second",
   };
 }
+
+/** Shared strict normalization for candidate indexes; incomplete keys stay unknown. */
+export function historicalCandidateKeys(record: AdifRecord): {
+  workedCall?: string;
+  time?: HistoricalTimeInterval;
+} {
+  const workedCall = call(record.CALL);
+  const interval = time(record);
+  return {
+    ...(workedCall ? { workedCall } : {}),
+    ...(interval ? { time: interval } : {}),
+  };
+}
 interface Mode {
   primary: string;
   individual: string;

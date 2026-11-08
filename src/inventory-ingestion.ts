@@ -1,3 +1,7 @@
+import type {
+  InventoryComparisonPages,
+  PreparedComparisonPage,
+} from "./inventory-comparison-pages.ts";
 import {
   type InventoryRunPublication,
   inventoryRunCleanup,
@@ -102,6 +106,7 @@ export interface PreparedInventoryPage {
   readonly preparedAt: number;
   readonly rows: readonly PreparedRow[];
   readonly payloads: readonly { id: string; envelope: string }[];
+  readonly comparison?: PreparedComparisonPage | null;
   readonly preparationMs: number;
   readonly plaintextBytes: number;
   readonly encryptedBytes: number;
@@ -175,7 +180,10 @@ export function inventoryJsonChunks(
 }
 
 export class InventoryIngestion {
-  constructor(readonly store: Store) {}
+  constructor(
+    readonly store: Store,
+    readonly comparisons?: InventoryComparisonPages,
+  ) {}
 
   async initialize(
     scope: InventoryScope,
@@ -487,7 +495,18 @@ export class InventoryIngestion {
     // Validate chunk bounds now, before publication can perform any writes.
     inventoryJsonChunks(rows);
     inventoryJsonChunks(payloads);
-    const manifest = await sha256(canonical([VERSION, digest, rows, payloads]));
+    const comparison = this.comparisons
+      ? await this.comparisons.prepare(
+          input,
+          rows.map((row) => ({
+            ...row,
+            body: grouped.get(canonical([row.family, row.key]))?.value.body,
+          })),
+        )
+      : null;
+    const manifest = await sha256(
+      canonical([VERSION, digest, rows, payloads, comparison]),
+    );
     return {
       input,
       digest,
@@ -495,6 +514,7 @@ export class InventoryIngestion {
       preparedAt: Date.now(),
       rows,
       payloads,
+      comparison,
       preparationMs: performance.now() - started,
       plaintextBytes,
       encryptedBytes,
@@ -543,12 +563,22 @@ export class InventoryIngestion {
     requireValue(
       (await inputDigest(page.input)) === page.digest &&
         (await sha256(
-          canonical([VERSION, page.digest, page.rows, page.payloads]),
+          canonical([
+            VERSION,
+            page.digest,
+            page.rows,
+            page.payloads,
+            page.comparison ?? null,
+          ]),
         )) === page.manifest,
       "inventory_prepared_page_changed",
     );
     const existing = await this.recover(page);
     if (existing) return existing;
+    requireValue(
+      !page.comparison || this.comparisons,
+      "inventory_comparison_publisher_missing",
+    );
     const { input, rows, payloads } = page;
     const { stream: s, lease } = input;
     const count = (key: "accepted" | "changed") =>
@@ -604,6 +634,9 @@ export class InventoryIngestion {
       );
     }
     plan.push(
+      ...(this.comparisons?.prelude(input, page.comparison ?? null) ?? []),
+    );
+    plan.push(
       bound("INSERT INTO ingestion_page_guards(tenant,page_id) VALUES(?,?)"),
     );
     for (const chunk of inventoryJsonChunks(payloads)) {
@@ -651,6 +684,7 @@ export class InventoryIngestion {
       bound(
         `INSERT INTO inventory_work(tenant,scope_id,work_key,work_version,due_at) SELECT p.tenant,p.scope_id,json_array(r.entity_family,r.record_key,r.facet),1,p.request_started_at ${accepted} AND r.semantic_changed=1 ON CONFLICT(tenant,scope_id,work_key) DO UPDATE SET work_version=inventory_work.work_version+1,due_at=min(inventory_work.due_at,excluded.due_at)`,
       ),
+      ...(this.comparisons?.effects(input, page.comparison ?? null) ?? []),
       ...inventoryRunEffects(this.store, input),
       bound(
         `UPDATE inventory_scopes SET accepted_sequence=accepted_sequence+1 WHERE tenant=? AND scope_id=(SELECT scope_id FROM ingestion_pages WHERE tenant=inventory_scopes.tenant AND page_id=?)`,
@@ -661,6 +695,7 @@ export class InventoryIngestion {
       bound(
         "UPDATE ingestion_pages SET state='committed' WHERE tenant=? AND page_id=?",
       ),
+      ...(this.comparisons?.cleanup(input, page.comparison ?? null) ?? []),
       bound("DELETE FROM ingestion_page_rows WHERE tenant=? AND page_id=?"),
       ...inventoryRunCleanup(this.store, input),
       bound("DELETE FROM ingestion_page_guards WHERE tenant=? AND page_id=?"),

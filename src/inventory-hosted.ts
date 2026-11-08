@@ -1,3 +1,4 @@
+import { InventoryComparisonPages } from "./inventory-comparison-pages.ts";
 import {
   consumeInventoryWakeups,
   publishInventoryWakeups,
@@ -43,7 +44,9 @@ export async function runHostedScheduled(
   const runtime = await activateInventoryRuntime(store);
   const registration = await registerKnownInventoryConnections(store, runtime);
   const starts = await startInventorySelections(store);
-  const runs = new InventoryRuns(new InventoryIngestion(store));
+  const runs = new InventoryRuns(
+    new InventoryIngestion(store, new InventoryComparisonPages(store)),
+  );
   const queued = await publishInventoryWakeups(runs, env.INVENTORY_QUEUE);
   return { mode: "inventory_read_only" as const, registration, starts, queued };
 }
@@ -62,7 +65,9 @@ export async function runHostedInventoryQueue(
     return { mode: "inventory_paused" as const, processed: 0 };
   }
   const runner = new InventoryRunner(
-    new InventoryRuns(new InventoryIngestion(store)),
+    new InventoryRuns(
+      new InventoryIngestion(store, new InventoryComparisonPages(store)),
+    ),
     fetcher,
     { scheduled: true },
   );

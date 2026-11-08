@@ -95,6 +95,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0044_inventory_comparison_generations.sql",
       "0045_inventory_comparison_ingestion.sql",
       "0046_inventory_comparison_builds.sql",
+      "0047_inventory_context_membership.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);

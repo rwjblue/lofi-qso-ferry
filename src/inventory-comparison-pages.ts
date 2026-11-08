@@ -9,6 +9,10 @@ import {
   inventoryJsonChunks,
 } from "./inventory-ingestion.ts";
 import type { Store } from "./store.ts";
+import {
+  InventoryContextEffects,
+  type InventoryContextRow,
+} from "./inventory-context-effects.ts";
 
 interface ComparisonInput {
   family: string;
@@ -73,6 +77,11 @@ export function inventoryComparisonHint(
 /** Bulk page hook: only semantic changes compute hints or invalidate buckets. */
 export class InventoryComparisonPages {
   constructor(readonly store: Store) {}
+
+  context(input: InventoryPageInput, rows: readonly InventoryContextRow[]) {
+    const effects = new InventoryContextEffects(this.store, input, rows);
+    return effects.needed ? effects : null;
+  }
 
   async prepare(
     input: InventoryPageInput,

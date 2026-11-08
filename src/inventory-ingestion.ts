@@ -580,6 +580,7 @@ export class InventoryIngestion {
       "inventory_comparison_publisher_missing",
     );
     const { input, rows, payloads } = page;
+    const context = this.comparisons?.context(input, rows);
     const { stream: s, lease } = input;
     const count = (key: "accepted" | "changed") =>
       rows.reduce((n, row) => n + row[key], 0);
@@ -635,6 +636,7 @@ export class InventoryIngestion {
     }
     plan.push(
       ...(this.comparisons?.prelude(input, page.comparison ?? null) ?? []),
+      ...(context?.prelude() ?? []),
     );
     plan.push(
       bound("INSERT INTO ingestion_page_guards(tenant,page_id) VALUES(?,?)"),
@@ -658,20 +660,21 @@ export class InventoryIngestion {
       ),
       // Distinct domains coalesce operation/event fan-out. Ordinary contact
       // edits enqueue per-record work but do not dirty every operation child.
-      ...inventoryJsonChunks([
-        ...new Set(
-          rows
-            .filter((row) => row.semanticChanged)
-            .flatMap((row) => row.domains),
-        ),
-      ]).map((chunk) =>
-        statement(
-          `INSERT INTO projection_domains(tenant,scope_id,operation_key,topology_version,ready_version) SELECT ?,?,value,1,0 FROM json_each(?) WHERE 1 GROUP BY value ON CONFLICT(tenant,scope_id,operation_key) DO UPDATE SET topology_version=projection_domains.topology_version+1`,
-          s.tenant,
-          s.scope,
-          chunk,
-        ),
-      ),
+      ...(context?.domainEffects() ??
+        inventoryJsonChunks([
+          ...new Set(
+            rows
+              .filter((row) => row.semanticChanged)
+              .flatMap((row) => row.domains),
+          ),
+        ]).map((chunk) =>
+          statement(
+            `INSERT INTO projection_domains(tenant,scope_id,operation_key,topology_version,ready_version) SELECT ?,?,value,1,0 FROM json_each(?) WHERE 1 GROUP BY value ON CONFLICT(tenant,scope_id,operation_key) DO UPDATE SET topology_version=projection_domains.topology_version+1`,
+            s.tenant,
+            s.scope,
+            chunk,
+          ),
+        )),
       bound(`INSERT INTO inventory_records(tenant,scope_id,entity_family,record_key,subtype,parent_key,row_version,status,last_accepted_sequence,last_observed_at,last_page_id)
         SELECT p.tenant,p.scope_id,r.entity_family,r.record_key,r.subtype,r.parent_key,1,r.status,p.expected_sequence+1,p.request_started_at,p.page_id ${accepted}
         ON CONFLICT(tenant,scope_id,entity_family,record_key) DO UPDATE SET subtype=excluded.subtype,parent_key=excluded.parent_key,row_version=inventory_records.row_version+1,status=excluded.status,last_accepted_sequence=excluded.last_accepted_sequence,last_observed_at=excluded.last_observed_at,last_page_id=excluded.last_page_id`),
@@ -686,6 +689,7 @@ export class InventoryIngestion {
       ),
       ...(this.comparisons?.effects(input, page.comparison ?? null) ?? []),
       ...inventoryRunEffects(this.store, input),
+      ...(context?.membershipEffects() ?? []),
       bound(
         `UPDATE inventory_scopes SET accepted_sequence=accepted_sequence+1 WHERE tenant=? AND scope_id=(SELECT scope_id FROM ingestion_pages WHERE tenant=inventory_scopes.tenant AND page_id=?)`,
       ),
@@ -696,6 +700,7 @@ export class InventoryIngestion {
         "UPDATE ingestion_pages SET state='committed' WHERE tenant=? AND page_id=?",
       ),
       ...(this.comparisons?.cleanup(input, page.comparison ?? null) ?? []),
+      ...(context?.cleanup() ?? []),
       bound("DELETE FROM ingestion_page_rows WHERE tenant=? AND page_id=?"),
       ...inventoryRunCleanup(this.store, input),
       bound("DELETE FROM ingestion_page_guards WHERE tenant=? AND page_id=?"),

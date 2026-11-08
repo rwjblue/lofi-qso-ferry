@@ -25,6 +25,7 @@ export interface InventoryComparisonCandidate {
   topologyVersion: number;
   currentTopologyVersion: number;
   projectionVersion: number;
+  membershipVersion: number;
 }
 export interface InventoryComparisonProbe {
   id: string;
@@ -100,11 +101,12 @@ export class InventoryComparisonLookup {
        b.config_version AS build_config_version,b.complete,g.state AS generation_state,
        (SELECT json_group_array(json_object('key',q.record_key,'facet',q.facet,'keyClass',q.key_class,'hash',q.bucket_hash,'state',q.state,
         'semanticVersion',q.semantic_version,'currentSemanticVersion',q.current_semantic_version,'configVersion',q.config_version,
-        'parent',q.parent_key,'topologyVersion',q.topology_version,'currentTopologyVersion',q.current_topology_version,'projectionVersion',q.projection_version)) FROM (
-         SELECT i.*,f.semantic_version AS current_semantic_version,coalesce(pd.topology_version,0) AS current_topology_version
+        'parent',q.parent_key,'topologyVersion',q.topology_version,'currentTopologyVersion',q.current_topology_version,'projectionVersion',q.projection_version,'membershipVersion',q.membership_version)) FROM (
+         SELECT i.*,f.semantic_version AS current_semantic_version,coalesce(pd.topology_version,0) AS current_topology_version,coalesce(mv.version,0) AS membership_version
          FROM json_each(json_extract(j.value,'$.tokens')) t CROSS JOIN comparison_index i INDEXED BY comparison_bucket
          LEFT JOIN inventory_record_facets f ON f.tenant=i.tenant AND f.scope_id=i.scope_id AND f.entity_family='qso' AND f.record_key=i.record_key AND f.facet=i.facet
          LEFT JOIN projection_domains pd ON pd.tenant=i.tenant AND pd.scope_id=i.scope_id AND pd.operation_key=i.parent_key
+         LEFT JOIN inventory_membership_versions mv ON mv.tenant=i.tenant AND mv.scope_id=i.scope_id AND mv.entity_family='qso' AND mv.record_key=i.record_key AND mv.facet=i.facet
          WHERE i.tenant=?2 AND i.generation_id=?4 AND i.scope_id=json_extract(j.value,'$.scope')
           AND i.key_class=json_extract(t.value,'$.keyClass') AND i.bucket_hash=json_extract(t.value,'$.hash') LIMIT ?5
        ) q) AS candidates,

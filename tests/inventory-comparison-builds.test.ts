@@ -34,9 +34,11 @@ async function fixture(count = 0) {
   await seed(f.store);
   for (const name of [
     "0039_inventory_ingestion.sql",
+    "0040_inventory_runs.sql",
     "0044_inventory_comparison_generations.sql",
     "0045_inventory_comparison_ingestion.sql",
     "0046_inventory_comparison_builds.sql",
+    "0047_inventory_context_membership.sql",
   ])
     await applyMigration(f.db, name);
   const inventory = new InventoryIngestion(

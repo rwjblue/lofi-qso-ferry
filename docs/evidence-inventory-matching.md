@@ -1,6 +1,6 @@
 # Bulk matching snapshot evidence
 
-Status: local snapshot collection, native comparison-result publication and private encrypted-capture replay, 2026-11-08. Ownership/adoption, automatic comparison scheduling and delivery integration remain unfinished. Nothing was pushed, deployed, uploaded or reset in production.
+Status: local snapshot collection, native comparison-result publication and private encrypted-capture replay, 2026-11-08. Permanent historical ownership/adoption is now implemented separately; automatic comparison scheduling and delivery integration remain unfinished. See [ownership evidence](evidence-inventory-ownership.md). Nothing was pushed, deployed, uploaded or reset in production.
 
 ## Implemented boundary
 
@@ -101,4 +101,4 @@ The new private directory ends in `9bd9cd92-d50d-49d3-a404-76505bbb62e7`; databa
 
 ## Remaining implementation
 
-Integrate permanent ownership, historical association-only restrictions and existing/in-flight attempt evidence before delivery planning. Add automatic index/projection/matching work selection with captured work versions and bounded invalidation continuations. Then connect source proofs, singleton QRZ submission and member-aware LoTW artifacts/recovery. Payload/dependency collection, large date-partition cost qualification, restore quarantine and account-preserving deployment cutover remain unfinished. No new export path is activated by these local results.
+Permanent ownership, historical read-only associations and provider-wide existing/in-flight delivery barriers are now implemented; see [ownership evidence](evidence-inventory-ownership.md). Add ownership-aware planning and automatic index/projection/matching work selection with captured work versions and bounded invalidation continuations. Then connect source proofs, singleton QRZ submission and member-aware LoTW artifacts/recovery. Payload/dependency collection, large date-partition cost qualification, restore quarantine and account-preserving deployment cutover remain unfinished. No new export path is activated by these local results.

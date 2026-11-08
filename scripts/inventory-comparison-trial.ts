@@ -15,6 +15,10 @@ import {
 import { inventoryComparisonHint } from "../src/inventory-comparison-pages.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import {
+  InventoryMatchingWorkspace,
+  type PreparedInventoryMatchingSnapshot,
+} from "../src/inventory-matching-workspace.ts";
+import {
   type InventoryProjectionBody,
   InventoryProjectionWorkspace,
   inventoryProjectionDigest,
@@ -114,6 +118,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0046_inventory_comparison_builds.sql",
       "0047_inventory_context_membership.sql",
       "0048_inventory_projection_publication.sql",
+      "0049_inventory_matching_read_indexes.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -263,6 +268,27 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       JSON.stringify(preparations),
       { mode: 0o600, flag: "wx" },
     );
+    const sourcePreparation = preparations.find(
+      (row) => row.provider === "lofi",
+    );
+    if (!sourcePreparation)
+      throw new Error("comparison_trial_source_projections_missing");
+    const matchingSnapshots: PreparedInventoryMatchingSnapshot[] = [];
+    for (const scope of scopes.filter((row) => row.provider !== "lofi"))
+      matchingSnapshots.push(
+        await new InventoryMatchingWorkspace(store).prepare(
+          "trial",
+          scope.scope_id,
+          sourcePreparation.rows
+            .slice(0, 10)
+            .map((row) => ({ scope: source.scope_id, key: row.key })),
+        ),
+      );
+    await writeFile(
+      join(directory, "matching-snapshots.json"),
+      JSON.stringify(matchingSnapshots),
+      { mode: 0o600, flag: "wx" },
+    );
     const indexCounts = (
       await db
         .prepare(
@@ -285,6 +311,26 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       phases,
       indexCounts,
       projections: { published: true, phases: projectionPhases },
+      matchingSnapshots: {
+        published: false,
+        phases: matchingSnapshots.map((row) => ({
+          provider: scopes.find((scope) => scope.scope_id === row.destination)
+            ?.provider,
+          selected: row.selected.length,
+          states: Object.fromEntries(
+            ["none", "unique", "ambiguous", "incomplete", "excluded"].map(
+              (state) => [
+                state,
+                row.graph.results.filter((result) => result.state === state)
+                  .length,
+              ],
+            ),
+          ),
+          records: row.records.length,
+          lookupProbes: row.lookups.length,
+          stats: row.stats,
+        })),
+      },
       lookup: {
         contacts,
         probes: requests.length,
@@ -453,6 +499,48 @@ export async function reopenInventoryComparisonTrial(directory: string) {
         throw new Error("comparison_trial_published_projection_mismatch");
       publishedProjectionsValidated++;
     }
+    const matchingText = await readFile(
+      join(directory, "matching-snapshots.json"),
+      "utf8",
+    ).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    });
+    let matchingSnapshotsValidated = 0;
+    if (matchingText) {
+      const snapshots = JSON.parse(
+        matchingText,
+      ) as PreparedInventoryMatchingSnapshot[];
+      for (const snapshot of snapshots) {
+        const { digest, ...manifest } = snapshot;
+        if (
+          digest !== (await sha256(canonical(manifest))) ||
+          snapshot.tenant !== "trial" ||
+          snapshot.generation !== context.generation
+        )
+          throw new Error("comparison_trial_matching_snapshot_changed");
+        const fresh = await new InventoryMatchingWorkspace(store).prepare(
+          "trial",
+          snapshot.destination,
+          snapshot.selected,
+        );
+        const {
+          digest: _oldDigest,
+          preparedAt: _oldTime,
+          stats: _oldStats,
+          ...oldState
+        } = snapshot;
+        const {
+          digest: _newDigest,
+          preparedAt: _newTime,
+          stats: _newStats,
+          ...newState
+        } = fresh;
+        if (canonical(oldState) !== canonical(newState))
+          throw new Error("comparison_trial_matching_snapshot_not_reproduced");
+        matchingSnapshotsValidated++;
+      }
+    }
     return {
       directory,
       vendorHttpRequests: 0,
@@ -462,6 +550,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       preparedProjectionsValidated,
       publishedProjectionsValidated,
       publishedProjectionReadStats: loaded.stats,
+      matchingSnapshotsValidated,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

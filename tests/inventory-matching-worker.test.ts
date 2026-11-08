@@ -10,18 +10,21 @@ import {
   sourceContact,
 } from "./inventory-matching-fixtures.ts";
 
-test("native workerd collects a shared forward/reverse matching snapshot without canonical writes or HTTP", async (t) => {
+test("native workerd collects and publishes matching results without changing inventory or sending HTTP", async (t) => {
   const bundle = await build({
     stdin: {
       contents: `
-import {InventoryMatchingWorkspace} from './src/inventory-matching-workspace.ts';
+import {InventoryMatchingResults} from './src/inventory-matching-results.ts';
 import {Store} from './src/store.ts';
-import {keyring,canonical,sha256} from './src/security.ts';
+import {keyring,canonical} from './src/security.ts';
 export default {async fetch(request,env){
  const store=new Store(env.DB,keyring(env));
- const page=await new InventoryMatchingWorkspace(store).prepare('a','destination',Array.from({length:20},(_,i)=>({scope:'source',key:'q'+i})));
- const {digest,...manifest}=page;
- return Response.json({unique:page.graph.results.filter(row=>row.state==='unique').length,records:page.records.length,stats:page.stats,pairs:page.graph.stats,digestMatches:digest===await sha256(canonical(manifest)),plaintextLeaked:canonical(page).includes('Private matching')});
+ const selected=Array.from({length:20},(_,i)=>({scope:'source',key:'q'+i}));
+ const matches=new InventoryMatchingResults(store);
+ const publication=await matches.match('a','destination',selected);
+ const current=await matches.current('a','destination',selected);
+ const activeLease=await store.statement("SELECT count(*) AS n FROM leases WHERE tenant='a' AND scope='matching:destination' AND expires_at>unixepoch('subsec')*1000").first();
+ return Response.json({publication,current:current.results.filter(row=>row.state==='matched_existing'&&row.version===1).length,activeLease:activeLease.n,plaintextLeaked:canonical(current).includes('Private matching')});
 }};`,
       resolveDir: process.cwd(),
       loader: "ts",
@@ -68,24 +71,24 @@ export default {async fetch(request,env){
   const response = await mf.dispatchFetch("http://localhost/matching");
   assert.equal(response.status, 200, await response.clone().text());
   const result = (await response.json()) as {
-    unique: number;
-    records: number;
-    stats: {
-      decryptedBodies: number;
-      bodyQueries: number;
-      lookupQueries: number;
+    publication: {
+      records: number;
+      preparation: {
+        decryptedBodies: number;
+        bodyQueries: number;
+        lookupQueries: number;
+      };
     };
-    pairs: { predicateCalls: number };
-    digestMatches: boolean;
+    current: number;
+    activeLease: number;
     plaintextLeaked: boolean;
   };
-  assert.equal(result.unique, 20);
-  assert.equal(result.records, 40);
-  assert.equal(result.stats.decryptedBodies, 40);
-  assert.equal(result.stats.bodyQueries, 4);
-  assert.equal(result.stats.lookupQueries, 2);
-  assert.equal(result.pairs.predicateCalls, 20);
-  assert.equal(result.digestMatches, true);
+  assert.equal(result.publication.records, 20);
+  assert.equal(result.current, 20);
+  assert.equal(result.activeLease, 0);
+  assert.equal(result.publication.preparation.decryptedBodies, 40);
+  assert.equal(result.publication.preparation.bodyQueries, 4);
+  assert.equal(result.publication.preparation.lookupQueries, 2);
   assert.equal(result.plaintextLeaked, false);
   assert.equal(outbound, 0);
   assert.deepEqual(await f.inventory.snapshot("a", "source", "sync"), before);

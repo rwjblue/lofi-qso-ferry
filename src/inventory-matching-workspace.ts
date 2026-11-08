@@ -2,6 +2,7 @@ import {
   HISTORICAL_TIME_WINDOW_MS,
   historicalCandidateKeys,
 } from "./historical-matching.ts";
+import { historicalOperatingDetails } from "./historical-operating-details.ts";
 import {
   type InventoryComparisonCandidate,
   InventoryComparisonLookup,
@@ -70,6 +71,19 @@ export interface InventoryMatchingLookupSnapshot {
   subject: InventoryMatchingReference;
   probe: InventoryComparisonProbe;
 }
+export interface InventoryMatchingDecision {
+  source: InventoryMatchingReference;
+  state:
+    | "matched_existing"
+    | "absent_at_inventory"
+    | "ambiguous"
+    | "projection_mismatch"
+    | "incomplete"
+    | "excluded";
+  reason: string | null;
+  remote: InventoryMatchingReference | null;
+  coverage: string[];
+}
 interface SelectedRow {
   ordinal: number;
   key: string | null;
@@ -132,14 +146,14 @@ function interval(body: InventoryProjectionBody) {
       .slice(0, 10),
   };
 }
-function covers(
+function coveringCoverage(
   body: InventoryProjectionBody,
   scope: InventoryMatchingScope,
   rows: CoverageRow[],
-): boolean {
+): string[] | null {
   const window = interval(body);
-  if (!window) return false;
-  const ranges: { start: string; end: string }[] = [];
+  if (!window) return null;
+  const ranges: { start: string; end: string; key: string }[] = [];
   for (const row of rows) {
     if (
       row.scope !== scope.scope ||
@@ -173,6 +187,7 @@ function covers(
       ranges.push({
         start: query.selection.between[0],
         end: query.selection.between[1],
+        key: canonical([row.scope, row.stream, row.facet, row.partition]),
       });
     } else if (query.provider === "lotw") {
       if (
@@ -185,19 +200,25 @@ function covers(
             body.record.CALL?.toUpperCase())
       )
         continue;
-      ranges.push({ start: query.query.startDate, end: query.query.endDate });
+      ranges.push({
+        start: query.query.startDate,
+        end: query.query.endDate,
+        key: canonical([row.scope, row.stream, row.facet, row.partition]),
+      });
     }
   }
   let next = window.start;
+  const used: string[] = [];
   for (const range of ranges.sort((a, b) => a.start.localeCompare(b.start))) {
-    if (range.start > next) return false;
+    if (range.start > next) return null;
     if (range.end < next) continue;
-    if (range.end >= window.end) return true;
+    used.push(range.key);
+    if (range.end >= window.end) return used;
     next = new Date(Date.parse(`${range.end}T00:00:00Z`) + 86400000)
       .toISOString()
       .slice(0, 10);
   }
-  return false;
+  return null;
 }
 
 /** Collects immutable, bounded matching inputs. The encrypted projection bodies
@@ -516,7 +537,7 @@ export class InventoryMatchingWorkspace {
             !!body &&
             sourceReady(byScope.get(subject.scope)) &&
             ready(target) &&
-            covers(body, target, coverageRows.results) &&
+            !!coveringCoverage(body, target, coverageRows.results) &&
             !!lookup?.probe.indexReady,
         };
       },
@@ -552,7 +573,57 @@ export class InventoryMatchingWorkspace {
       forward,
       reverse,
     });
+    const classified = graph.results.map(
+      (row): Omit<InventoryMatchingDecision, "coverage"> => {
+        if (row.state === "none")
+          return { ...row, state: "absent_at_inventory" };
+        if (row.state !== "unique") return { ...row, state: row.state };
+        const source = bodies.get(referenceKey(row.source));
+        const remote = row.remote && bodies.get(referenceKey(row.remote));
+        if (
+          !source ||
+          !remote ||
+          (target.provider === "qrz" &&
+            !/^[0-9]{1,64}$/.test(row.remote?.key ?? ""))
+        )
+          return {
+            ...row,
+            state: "incomplete",
+            reason: "remote_identity_unavailable",
+          };
+        const details = historicalOperatingDetails(
+          target.provider as "qrz" | "lotw",
+          source.record,
+          remote.record,
+        );
+        return {
+          ...row,
+          state:
+            details.state === "adopted_existing"
+              ? "matched_existing"
+              : details.state === "history_mismatch"
+                ? "projection_mismatch"
+                : "incomplete",
+          reason:
+            details.state === "adopted_existing"
+              ? null
+              : details.state === "history_mismatch"
+                ? "operating_details_differ"
+                : "operating_details_unavailable",
+        };
+      },
+    );
+    const results = classified.map((row) => {
+      const body = bodies.get(referenceKey(row.source));
+      return {
+        ...row,
+        coverage: body
+          ? (coveringCoverage(body, target, coverageRows.results) ?? [])
+          : [],
+      };
+    });
     const snapshot = {
+      formatVersion: 1 as const,
       tenant,
       destination,
       generation: session.generation,
@@ -563,7 +634,10 @@ export class InventoryMatchingWorkspace {
       coverage,
       records: [...records.values()],
       lookups,
+      forward,
+      reverse,
       graph,
+      results,
       preparedAt: Date.now(),
       stats,
     };

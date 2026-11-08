@@ -17,6 +17,7 @@ export function sourceContact(key: string, time = "13:00:00", call = "W1AW") {
     ...(row.body as object),
     startAtMillis: Date.parse(`2026-11-08T${time}Z`),
     their: { call },
+    our: { grid: "FN31" },
     notes: "Private matching source narrative",
   };
   return row;
@@ -40,6 +41,7 @@ export function receipt(
       TIME_ON: time,
       BAND: "20m",
       MODE: "CW",
+      MY_GRIDSQUARE: "FN31",
       NAME: "Private matching remote name",
     } satisfies AdifRecord,
   };
@@ -55,6 +57,7 @@ export async function matchingFixture(
 ) {
   const f = await fixture(existing);
   await applyMigration(f.db, "0049_inventory_matching_read_indexes.sql");
+  await applyMigration(f.db, "0050_inventory_match_results.sql");
   const provider = options.provider ?? "qrz";
   if (provider === "lotw")
     await f.db

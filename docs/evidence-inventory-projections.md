@@ -1,6 +1,6 @@
 # Encrypted comparison projections
 
-Status: local preparation, native publication, bounded bulk loading, encrypted capture replay and durable operation projection jobs, 2026-11-08. The later [matching evidence](evidence-inventory-matching.md) adds bounded forward/reverse collection and native comparison-result publication; [ownership evidence](evidence-inventory-ownership.md) covers historical adoption. Hosted comparison scheduling and delivery integration remain unfinished. Nothing was pushed, deployed, uploaded or reset in production.
+Status: local preparation, native publication, bounded bulk loading, encrypted capture replay, durable operation projection jobs and coverage recovery, 2026-11-08. The later [matching evidence](evidence-inventory-matching.md) adds bounded forward/reverse collection and native comparison-result publication; [ownership evidence](evidence-inventory-ownership.md) covers historical adoption. Hosted comparison scheduling and delivery integration remain unfinished. Nothing was pushed, deployed, uploaded or reset in production.
 
 The [workspace](../src/inventory-projection-workspace.ts) prepares up to twenty source or receipt projections. It captures the comparison generation/configuration, index/projection/work versions, semantic inputs, current operation topology, source membership versions and applicable source coverage. The index census must already be complete for that scope. It admits the union of at most 256 references against four-MiB ciphertext and plaintext budgets, loads immutable payload IDs in bulk and decrypts shared dependencies once.
 
@@ -48,7 +48,7 @@ Current reads reject changed semantic/topology/membership/configuration inputs a
 
 The bulk body reader accepts at most 128 distinct immutable references across the complete forward/reverse union. Repeated references load and decrypt once. A metadata query admits total encrypted bytes against four MiB before loading ciphertext; decoding also enforces the plaintext bound. Missing or stale references remain explicit. Twenty shared bodies use **two reads, 360 rows read and twenty decryptions**; adding 5,000 unrelated projection/index rows leaves those metrics unchanged. The actual Worker WebCrypto test also bulk-loads the published cohort without external requests.
 
-Soft multi-contact capacity failures must be split before publication; they cannot permanently complete otherwise projectable work. The native publisher rejects such mixed capacity holds. Bounded operation-child reprojection and pending-work selection are now implemented below. Hosted scheduling, coverage-completion wakeups for held context and payload/receipt collection remain unfinished.
+Soft multi-contact capacity failures must be split before publication; they cannot permanently complete otherwise projectable work. The native publisher rejects such mixed capacity holds. Bounded operation-child reprojection and pending-work selection are now implemented below. Coverage-completion wakeups are now implemented below; hosted scheduling and payload/receipt collection remain unfinished.
 
 ## Published real-data replay
 
@@ -110,8 +110,8 @@ coalescing of work that is already pending. The actual Worker drains 21 changed
 contacts as twenty plus one and returns to idle with zero external requests.
 
 These APIs do not yet constitute the complete hosted comparison coordinator.
-Coverage completion must wake context-held projections that were completed while
-the baseline was partial. Automatic generation/build selection, matching work and
+Coverage recovery now wakes context-held projections completed while the baseline
+was partial. Automatic generation/build selection, matching work and
 ownership-aware planning, Queue/cron integration and end-to-end fairness/retry
 policies remain unfinished. They must be connected before runtime activation;
 operation fan-out alone cannot establish full-log progress or the hours target.
@@ -135,3 +135,86 @@ Worker dry-run build passed. Logs are
 `/tmp/lofi-ferry-projection-jobs-lint.log`,
 `/tmp/lofi-ferry-projection-jobs-format.log` and
 `/tmp/lofi-ferry-projection-jobs-build.log`.
+
+## Recovery after full source coverage
+
+[Migration 0053](../migrations/0053_inventory_projection_coverage_jobs.sql) and
+[InventoryProjectionCoverageJobs](../src/inventory-projection-coverage-jobs.ts)
+recover contacts projected while source coverage was incomplete. Each complete
+full-source baseline queues one scope job per active/pending generation. Completion
+does not scan held contacts or update their work rows in the ingestion transaction.
+New comparison generations and existing complete coverage are enrolled as well.
+
+The job binds the full run, source configuration and coverage selection. Its native
+authority requires both source streams, catch-up and complete observed coverage.
+An intervening collection/hold, new full run, changed source binding, retired index,
+account lock or expired/replaced lease prevents stale progress. A new full baseline
+advances the job version and resets its cursor while preserving completed history.
+
+Recovery visits at most 200 `operation_context_incomplete` source projections per
+page through a dedicated partial index. Native SQL derives the frontier/count and
+queues those contacts for the existing guarded projection publisher. Already dirty
+work is coalesced. Ready projections never enter the recovery index. Missing
+operation data remains held after one revisit; another unchanged job turn cannot
+spin on it. Later operation data uses the separate topology job to repair context.
+
+One explicit INSERT drives the fixed native publication sequence: authority and
+range admission, bulk work upsert, continuation advancement and receipt completion.
+These trigger statements remain SQL work; this is not one total SQL operation or
+one complete-cohort RPC. Native final checks reject late coverage/account changes
+and silently ignored work. Lost acknowledgements recover the original receipt
+without moving a newer job cursor. Receipts have a seven-day minimum retention;
+collection remains unfinished.
+
+The 205-contact fixture first publishes held projections during collecting
+coverage, then completes the actual full/catch-up/quarantine phases. That completion
+leaves contact work unchanged. Recovery expands 200 plus five contacts, and bounded
+projection turns make all 205 ready. A 200-contact expansion uses **one explicit
+statement, 2,450 rows read and 605 rows written**, excluding selection, lease and
+receipt calls. An empty recovery after unchanged verification reads **54 rows**
+with 205 ready projections and preserves their encrypted payloads/work versions.
+No derivation refreshes source observations, checkpoints or credential ciphertext.
+
+An actual Worker repeats the held-to-ready path for 21 contacts in twenty-plus-one
+cohorts, releases its lease and makes zero external requests. The inventory
+regression passed **384 tests** with no failures, skips or cancellations, including
+coverage/version/lease races, native final guard failures, lost acknowledgements,
+missing-operation recovery and real new-generation enrollment. TypeScript,
+lint/formatting and the Worker dry-run build passed. Logs are
+`/tmp/lofi-ferry-inventory-coverage-regression.log`,
+`/tmp/lofi-ferry-coverage-types-final.log`, `/tmp/lofi-ferry-coverage-lint.log`,
+`/tmp/lofi-ferry-coverage-format.log` and `/tmp/lofi-ferry-coverage-build.log`.
+This regression overlaps the earlier selections and should not be added to them.
+
+## Captured projection job sample
+
+The isolated encrypted replay now applies migrations through 0053 and samples one
+operation expansion, coverage recovery and ordinary pending projection turn before
+capturing matching results. The selected operation has no child candidates: its
+empty continuation commits correctly. The pending projection turn publishes twenty
+additional held source projections. Coverage recovery stays idle because the
+captured source baseline is incomplete. This is bounded refusal/progress evidence,
+not positive recovery or full-log completion on personal data.
+
+A fresh process verifies the operation/projection receipts, authenticates the
+additional twenty bodies plus the original 42, and recovers the twenty incomplete
+matching results and zero historical associations. Credentials, canonical
+observations and checkpoints remain unchanged. Vendor HTTP requests and uploads
+are zero. The earlier adoption-only capture still reopens without the new job
+tables. Logs are `/tmp/lofi-ferry-projection-jobs-capture.log`,
+`/tmp/lofi-ferry-projection-jobs-reopen.log` and
+`/tmp/lofi-ferry-coverage-compat-reopen.log`.
+
+Source index construction on the same captured workload writes **35,696 rows**,
+compared with 31,798 before the pending/parent indexes; its 120 explicit publication
+statements are unchanged. The new indexes add writes while avoiding completed-work
+and unrelated-child scans. This backfill measurement excludes generation/control
+setup and is not a steady-state billing estimate. The new private directory ends
+in `38a043c5-9c17-459c-a0e7-337adc645f41`; allocation is 15,663,104 database bytes.
+It includes new indexes, control tables, jobs and twenty more bodies, and does not
+establish full-log storage density or capacity runway.
+
+The complete hosted coordinator still needs generation/build selection, durable
+matching work, ownership-aware planning, Queue/cron wiring and bounded retry/fairness
+policies. Source proofs, delivery and restore/cutover remain separate unfinished
+work; no new export path is activated here.

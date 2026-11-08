@@ -16,6 +16,7 @@ import {
 } from "../src/inventory-comparison-lookup.ts";
 import { inventoryComparisonHint } from "../src/inventory-comparison-pages.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
+import { InventoryMatchingCoverage } from "../src/inventory-matching-coverage.ts";
 import { InventoryMatchingCoverageEvents } from "../src/inventory-matching-coverage-events.ts";
 import { InventoryMatchingInvalidations } from "../src/inventory-matching-invalidations.ts";
 import { InventoryMatchingPairs } from "../src/inventory-matching-pairs.ts";
@@ -120,6 +121,22 @@ async function coverageDispatchState(db: D1Database) {
     .first<CoverageDispatchState>();
 }
 
+interface CoverageExpansionState {
+  pages: number;
+  references: number;
+  pendingJobs: number;
+  invalidReceipts: number;
+}
+async function coverageExpansionState(db: D1Database) {
+  return db
+    .prepare(`SELECT
+ (SELECT count(*) FROM inventory_matching_coverage_pages WHERE tenant='trial' AND state='committed') AS pages,
+ (SELECT count(*) FROM inventory_matching_coverage_rows WHERE tenant='trial') AS "references",
+ (SELECT count(*) FROM inventory_matching_coverage_jobs WHERE tenant='trial' AND completed_version<work_version) AS pendingJobs,
+ (SELECT count(*) FROM inventory_matching_coverage_pages h WHERE h.tenant='trial' AND (h.state!='committed' OR NOT EXISTS(SELECT 1 FROM inventory_matching_coverage_guards g WHERE g.tenant=h.tenant AND g.page_id=h.page_id) OR h.row_count!=(SELECT count(*) FROM inventory_matching_coverage_rows q WHERE q.tenant=h.tenant AND q.page_id=h.page_id))) AS invalidReceipts`)
+    .first<CoverageExpansionState>();
+}
+
 /** Offline replay of the encrypted three-provider run capture. The original is
  * never opened for mutation; the working copy stays outside the repository. */
 export async function inventoryComparisonTrial(captureDirectory: string) {
@@ -218,6 +235,8 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0065_inventory_matching_coverage_recovery.sql",
       "0066_inventory_projection_coverage_holds.sql",
       "0067_inventory_matching_coverage_dispatch.sql",
+      "0068_inventory_matching_coverage_pages.sql",
+      "0069_inventory_matching_coordinator.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -399,11 +418,6 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       coordinatorTurns.push(result);
       if (!result.more) break;
     }
-    const coordinatorControl = await db
-      .prepare(
-        "SELECT version,work_version,observed_version,phase,idle_turns,build_generation,build_scope FROM inventory_comparison_coordinators WHERE tenant='trial'",
-      )
-      .first();
     const matchingSnapshots: PreparedInventoryMatchingSnapshot[] = [];
     const pairTurns = [];
     for (const _scope of scopes.filter((row) => row.provider !== "lofi")) {
@@ -570,6 +584,16 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       store,
     ).step("trial");
     const dispatchState = await coverageDispatchState(db);
+    const coverageExpansion = await new InventoryMatchingCoverage(store).step(
+      "trial",
+    );
+    const expansionState = await coverageExpansionState(db);
+    if (
+      coverageExpansion.kind !== "idle" ||
+      !expansionState ||
+      expansionState.invalidReceipts !== 0
+    )
+      throw new Error("comparison_trial_unexpected_coverage_expansion");
     if (
       coverageDispatch.kind !== "idle" ||
       !dispatchState ||
@@ -601,6 +625,11 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
     };
     if (changed.credentials || changed.observations || changed.streams)
       throw new Error("comparison_trial_changed_canonical_state");
+    const coordinatorControl = await db
+      .prepare(
+        "SELECT version,work_version,observed_version,phase_count,phase,idle_turns,next_due_at,build_generation,build_scope FROM inventory_comparison_coordinators WHERE tenant='trial'",
+      )
+      .first();
     const report = {
       directory,
       vendorHttpRequests: 0,
@@ -629,6 +658,11 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
         sampled: true,
         kind: coverageDispatch.kind,
         state: dispatchState,
+      },
+      coverageExpansion: {
+        sampled: true,
+        kind: coverageExpansion.kind,
+        state: expansionState,
       },
       matchingInvalidation: {
         sampled: true,
@@ -735,6 +769,11 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       sampled: boolean;
       kind: string;
       state: CoverageDispatchState;
+    };
+    coverageExpansion?: {
+      sampled: boolean;
+      kind: string;
+      state: CoverageExpansionState;
     };
     historicalAdoption?: { evaluated: boolean; associationsCreated: number };
     projectionJobs?: {
@@ -1063,7 +1102,9 @@ export async function reopenInventoryComparisonTrial(directory: string) {
     if (report.coordinator) {
       const control = await db
         .prepare(
-          "SELECT version,work_version,observed_version,phase,idle_turns,build_generation,build_scope FROM inventory_comparison_coordinators WHERE tenant='trial'",
+          "phase_count" in report.coordinator.control
+            ? "SELECT version,work_version,observed_version,phase_count,phase,idle_turns,next_due_at,build_generation,build_scope FROM inventory_comparison_coordinators WHERE tenant='trial'"
+            : "SELECT version,work_version,observed_version,phase,idle_turns,build_generation,build_scope FROM inventory_comparison_coordinators WHERE tenant='trial'",
         )
         .first();
       if (canonical(control) !== canonical(report.coordinator.control))
@@ -1202,6 +1243,16 @@ export async function reopenInventoryComparisonTrial(directory: string) {
     }
     let matchingInvalidationStateRecovered: boolean | undefined;
     let coverageDispatchStateRecovered: boolean | undefined;
+    let coverageExpansionStateRecovered: boolean | undefined;
+    if (report.coverageExpansion?.sampled) {
+      const state = await coverageExpansionState(db);
+      if (
+        state?.invalidReceipts !== 0 ||
+        canonical(state) !== canonical(report.coverageExpansion.state)
+      )
+        throw new Error("comparison_trial_coverage_expansion_not_recovered");
+      coverageExpansionStateRecovered = true;
+    }
     if (report.coverageDispatch?.sampled) {
       const state = await coverageDispatchState(db);
       if (
@@ -1245,6 +1296,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       matchingPairRowsValidated,
       coverageRecoveryStateRecovered,
       coverageDispatchStateRecovered,
+      coverageExpansionStateRecovered,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

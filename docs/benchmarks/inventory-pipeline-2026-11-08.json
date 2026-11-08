@@ -1,0 +1,1052 @@
+{
+  "measuredOn": "2026-11-08",
+  "profiles": [
+    {
+      "profile": "empty-200-before",
+      "schemaThrough": 74,
+      "result": {
+        "event": "result",
+        "contacts": 200,
+        "remote": "empty",
+        "pageSize": 1000,
+        "schema": "74",
+        "stages": [
+          {
+            "stage": "enrollment",
+            "wallMs": 526.058,
+            "database": {
+              "calls": 40,
+              "statements": 80,
+              "metadataStatements": 80,
+              "rowsRead": 425,
+              "rowsWritten": 119,
+              "sqlMs": 210
+            },
+            "queueTurns": 0,
+            "queueMessages": 0
+          },
+          {
+            "stage": "destination-baseline",
+            "wallMs": 2555.345042,
+            "database": {
+              "calls": 385,
+              "statements": 480,
+              "metadataStatements": 480,
+              "rowsRead": 3368,
+              "rowsWritten": 406,
+              "sqlMs": 319
+            },
+            "queueTurns": 29,
+            "queueMessages": 29
+          },
+          {
+            "stage": "source-backfill",
+            "wallMs": 10224.096916000002,
+            "database": {
+              "calls": 1889,
+              "statements": 2173,
+              "metadataStatements": 2173,
+              "rowsRead": 121950,
+              "rowsWritten": 16859,
+              "sqlMs": 307
+            },
+            "queueTurns": 147,
+            "queueMessages": 147
+          },
+          {
+            "stage": "source-completion-and-classification",
+            "wallMs": 180003.144667,
+            "database": {
+              "calls": 25639,
+              "statements": 26977,
+              "metadataStatements": 26977,
+              "rowsRead": 403707,
+              "rowsWritten": 35547,
+              "sqlMs": 13867
+            },
+            "queueTurns": 2212,
+            "queueMessages": 2212
+          }
+        ],
+        "database": {
+          "calls": 27953,
+          "statements": 29710,
+          "metadataStatements": 29710,
+          "rowsRead": 529450,
+          "rowsWritten": 52931,
+          "sqlMs": 14703
+        },
+        "queueSends": 2388,
+        "queueMessages": 2388,
+        "queueTurns": 2388,
+        "phaseTurns": {
+          "0": 218,
+          "1": 217,
+          "2": 217,
+          "3": 217,
+          "4": 217,
+          "5": 217,
+          "6": 217,
+          "7": 217,
+          "8": 217,
+          "9": 217,
+          "10": 217
+        },
+        "phaseDatabase": {
+          "0": {
+            "calls": 2420,
+            "statements": 2441,
+            "metadataStatements": 2441,
+            "rowsRead": 17170,
+            "rowsWritten": 1789,
+            "sqlMs": 157
+          },
+          "1": {
+            "calls": 2398,
+            "statements": 2404,
+            "metadataStatements": 2404,
+            "rowsRead": 18350,
+            "rowsWritten": 1754,
+            "sqlMs": 144
+          },
+          "2": {
+            "calls": 2392,
+            "statements": 2392,
+            "metadataStatements": 2392,
+            "rowsRead": 20514,
+            "rowsWritten": 2147,
+            "sqlMs": 177
+          },
+          "3": {
+            "calls": 2617,
+            "statements": 2837,
+            "metadataStatements": 2837,
+            "rowsRead": 65613,
+            "rowsWritten": 9407,
+            "sqlMs": 190
+          },
+          "4": {
+            "calls": 2177,
+            "statements": 2179,
+            "metadataStatements": 2179,
+            "rowsRead": 15481,
+            "rowsWritten": 1747,
+            "sqlMs": 139
+          },
+          "5": {
+            "calls": 2391,
+            "statements": 2396,
+            "metadataStatements": 2396,
+            "rowsRead": 21636,
+            "rowsWritten": 1747,
+            "sqlMs": 258
+          },
+          "6": {
+            "calls": 2387,
+            "statements": 2387,
+            "metadataStatements": 2387,
+            "rowsRead": 18653,
+            "rowsWritten": 1736,
+            "sqlMs": 127
+          },
+          "7": {
+            "calls": 2387,
+            "statements": 2387,
+            "metadataStatements": 2387,
+            "rowsRead": 19085,
+            "rowsWritten": 1736,
+            "sqlMs": 143
+          },
+          "8": {
+            "calls": 2387,
+            "statements": 2387,
+            "metadataStatements": 2387,
+            "rowsRead": 18653,
+            "rowsWritten": 1736,
+            "sqlMs": 150
+          },
+          "9": {
+            "calls": 2873,
+            "statements": 3093,
+            "metadataStatements": 3093,
+            "rowsRead": 214844,
+            "rowsWritten": 14702,
+            "sqlMs": 384
+          },
+          "10": {
+            "calls": 3386,
+            "statements": 4386,
+            "metadataStatements": 4386,
+            "rowsRead": 65236,
+            "rowsWritten": 4732,
+            "sqlMs": 12472
+          }
+        },
+        "storage": {
+          "inventory_records": 202,
+          "inventory_payloads": 202,
+          "comparison_projection_payloads": 400,
+          "comparison_projections": 200,
+          "inventory_match_sets": 20,
+          "inventory_match_records": 400,
+          "inventory_match_tokens": 1600,
+          "inventory_match_recovery": 0,
+          "inventory_matching_selected_jobs": 200,
+          "inventory_matching_selected_pages": 200,
+          "inventory_matching_selected_dependents": 200,
+          "matching_work": 200,
+          "initialSqliteBytes": 2654208,
+          "sqliteBytes": 6115328,
+          "growthBytes": 3461120,
+          "encryptedPayloadBytes": {
+            "inventory": 246816,
+            "projections": 236600
+          }
+        },
+        "wallMs": 193460.919292,
+        "normalizedInput": true,
+        "adaptersVendorPacingAndProofsExcluded": true,
+        "execution": "node_with_native_d1",
+        "vendorRequests": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "profile": "empty-200-after",
+      "schemaThrough": 75,
+      "result": {
+        "event": "result",
+        "contacts": 200,
+        "remote": "empty",
+        "pageSize": 1000,
+        "stages": [
+          {
+            "stage": "enrollment",
+            "wallMs": 535.1031249999996,
+            "database": {
+              "calls": 40,
+              "statements": 80,
+              "metadataStatements": 80,
+              "rowsRead": 425,
+              "rowsWritten": 119,
+              "sqlMs": 217
+            },
+            "queueTurns": 0,
+            "queueMessages": 0
+          },
+          {
+            "stage": "destination-baseline",
+            "wallMs": 2520.767333,
+            "database": {
+              "calls": 385,
+              "statements": 480,
+              "metadataStatements": 480,
+              "rowsRead": 3368,
+              "rowsWritten": 406,
+              "sqlMs": 327
+            },
+            "queueTurns": 29,
+            "queueMessages": 29
+          },
+          {
+            "stage": "source-backfill",
+            "wallMs": 9375.086125000002,
+            "database": {
+              "calls": 1889,
+              "statements": 2173,
+              "metadataStatements": 2173,
+              "rowsRead": 122038,
+              "rowsWritten": 17059,
+              "sqlMs": 310
+            },
+            "queueTurns": 147,
+            "queueMessages": 147
+          },
+          {
+            "stage": "source-completion-and-classification",
+            "wallMs": 7213.976665999999,
+            "database": {
+              "calls": 1638,
+              "statements": 1976,
+              "metadataStatements": 1976,
+              "rowsRead": 175133,
+              "rowsWritten": 16219,
+              "sqlMs": 215
+            },
+            "queueTurns": 121,
+            "queueMessages": 121
+          }
+        ],
+        "database": {
+          "calls": 3952,
+          "statements": 4709,
+          "metadataStatements": 4709,
+          "rowsRead": 300964,
+          "rowsWritten": 33803,
+          "sqlMs": 1069
+        },
+        "queueSends": 297,
+        "queueMessages": 297,
+        "queueTurns": 297,
+        "phaseTurns": {
+          "0": 28,
+          "1": 27,
+          "2": 27,
+          "3": 27,
+          "4": 27,
+          "5": 27,
+          "6": 27,
+          "7": 27,
+          "8": 27,
+          "9": 27,
+          "10": 26
+        },
+        "phaseDatabase": {
+          "0": {
+            "calls": 330,
+            "statements": 351,
+            "metadataStatements": 351,
+            "rowsRead": 2350,
+            "rowsWritten": 269,
+            "sqlMs": 42
+          },
+          "1": {
+            "calls": 308,
+            "statements": 314,
+            "metadataStatements": 314,
+            "rowsRead": 2389,
+            "rowsWritten": 234,
+            "sqlMs": 11
+          },
+          "2": {
+            "calls": 302,
+            "statements": 302,
+            "metadataStatements": 302,
+            "rowsRead": 4554,
+            "rowsWritten": 627,
+            "sqlMs": 51
+          },
+          "3": {
+            "calls": 527,
+            "statements": 747,
+            "metadataStatements": 747,
+            "rowsRead": 48703,
+            "rowsWritten": 7887,
+            "sqlMs": 80
+          },
+          "4": {
+            "calls": 277,
+            "statements": 279,
+            "metadataStatements": 279,
+            "rowsRead": 1991,
+            "rowsWritten": 227,
+            "sqlMs": 36
+          },
+          "5": {
+            "calls": 301,
+            "statements": 306,
+            "metadataStatements": 306,
+            "rowsRead": 2826,
+            "rowsWritten": 227,
+            "sqlMs": 135
+          },
+          "6": {
+            "calls": 297,
+            "statements": 297,
+            "metadataStatements": 297,
+            "rowsRead": 2313,
+            "rowsWritten": 216,
+            "sqlMs": 15
+          },
+          "7": {
+            "calls": 297,
+            "statements": 297,
+            "metadataStatements": 297,
+            "rowsRead": 2365,
+            "rowsWritten": 216,
+            "sqlMs": 21
+          },
+          "8": {
+            "calls": 297,
+            "statements": 297,
+            "metadataStatements": 297,
+            "rowsRead": 2313,
+            "rowsWritten": 216,
+            "sqlMs": 14
+          },
+          "9": {
+            "calls": 592,
+            "statements": 812,
+            "metadataStatements": 812,
+            "rowsRead": 194718,
+            "rowsWritten": 13778,
+            "sqlMs": 276
+          },
+          "10": {
+            "calls": 286,
+            "statements": 286,
+            "metadataStatements": 286,
+            "rowsRead": 2227,
+            "rowsWritten": 208,
+            "sqlMs": 15
+          }
+        },
+        "storage": {
+          "inventory_records": 202,
+          "inventory_payloads": 202,
+          "comparison_projection_payloads": 400,
+          "comparison_projections": 200,
+          "inventory_match_sets": 20,
+          "inventory_match_records": 400,
+          "inventory_match_tokens": 1600,
+          "inventory_match_recovery": 0,
+          "inventory_matching_selected_jobs": 200,
+          "inventory_matching_selected_pages": 0,
+          "inventory_matching_selected_dependents": 200,
+          "matching_work": 200,
+          "initialSqliteBytes": 2658304,
+          "sqliteBytes": 5967872,
+          "growthBytes": 3309568,
+          "encryptedPayloadBytes": {
+            "inventory": 246816,
+            "projections": 236600
+          }
+        },
+        "wallMs": 19730.719292,
+        "normalizedInput": true,
+        "adaptersVendorPacingAndProofsExcluded": true,
+        "execution": "node_with_native_d1",
+        "vendorRequests": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "profile": "matched-200",
+      "schemaThrough": 75,
+      "result": {
+        "event": "result",
+        "contacts": 200,
+        "remote": "matched",
+        "pageSize": 1000,
+        "stages": [
+          {
+            "stage": "enrollment",
+            "wallMs": 699.5263750000004,
+            "database": {
+              "calls": 40,
+              "statements": 80,
+              "metadataStatements": 80,
+              "rowsRead": 425,
+              "rowsWritten": 119,
+              "sqlMs": 239
+            },
+            "queueTurns": 0,
+            "queueMessages": 0
+          },
+          {
+            "stage": "destination-baseline",
+            "wallMs": 11183.701416,
+            "database": {
+              "calls": 1621,
+              "statements": 1848,
+              "metadataStatements": 1848,
+              "rowsRead": 83815,
+              "rowsWritten": 11550,
+              "sqlMs": 476
+            },
+            "queueTurns": 129,
+            "queueMessages": 129
+          },
+          {
+            "stage": "source-backfill",
+            "wallMs": 13975.042624999998,
+            "database": {
+              "calls": 1878,
+              "statements": 2162,
+              "metadataStatements": 2162,
+              "rowsRead": 122294,
+              "rowsWritten": 17051,
+              "sqlMs": 374
+            },
+            "queueTurns": 146,
+            "queueMessages": 146
+          },
+          {
+            "stage": "source-completion-and-classification",
+            "wallMs": 9578.161374999996,
+            "database": {
+              "calls": 1668,
+              "statements": 2016,
+              "metadataStatements": 2016,
+              "rowsRead": 277643,
+              "rowsWritten": 23748,
+              "sqlMs": 306
+            },
+            "queueTurns": 121,
+            "queueMessages": 121
+          }
+        ],
+        "database": {
+          "calls": 5207,
+          "statements": 6106,
+          "metadataStatements": 6106,
+          "rowsRead": 484177,
+          "rowsWritten": 52468,
+          "sqlMs": 1395
+        },
+        "queueSends": 396,
+        "queueMessages": 396,
+        "queueTurns": 396,
+        "phaseTurns": {
+          "0": 37,
+          "1": 36,
+          "2": 36,
+          "3": 36,
+          "4": 36,
+          "5": 36,
+          "6": 36,
+          "7": 36,
+          "8": 36,
+          "9": 36,
+          "10": 35
+        },
+        "phaseDatabase": {
+          "0": {
+            "calls": 430,
+            "statements": 452,
+            "metadataStatements": 452,
+            "rowsRead": 50253,
+            "rowsWritten": 3741,
+            "sqlMs": 59
+          },
+          "1": {
+            "calls": 407,
+            "statements": 413,
+            "metadataStatements": 413,
+            "rowsRead": 3146,
+            "rowsWritten": 306,
+            "sqlMs": 26
+          },
+          "2": {
+            "calls": 401,
+            "statements": 401,
+            "metadataStatements": 401,
+            "rowsRead": 5202,
+            "rowsWritten": 699,
+            "sqlMs": 55
+          },
+          "3": {
+            "calls": 726,
+            "statements": 1056,
+            "metadataStatements": 1056,
+            "rowsRead": 62279,
+            "rowsWritten": 10680,
+            "sqlMs": 122
+          },
+          "4": {
+            "calls": 391,
+            "statements": 393,
+            "metadataStatements": 393,
+            "rowsRead": 2763,
+            "rowsWritten": 299,
+            "sqlMs": 61
+          },
+          "5": {
+            "calls": 400,
+            "statements": 405,
+            "metadataStatements": 405,
+            "rowsRead": 3581,
+            "rowsWritten": 299,
+            "sqlMs": 148
+          },
+          "6": {
+            "calls": 395,
+            "statements": 395,
+            "metadataStatements": 395,
+            "rowsRead": 2998,
+            "rowsWritten": 284,
+            "sqlMs": 32
+          },
+          "7": {
+            "calls": 396,
+            "statements": 396,
+            "metadataStatements": 396,
+            "rowsRead": 3069,
+            "rowsWritten": 288,
+            "sqlMs": 28
+          },
+          "8": {
+            "calls": 396,
+            "statements": 396,
+            "metadataStatements": 396,
+            "rowsRead": 3015,
+            "rowsWritten": 288,
+            "sqlMs": 22
+          },
+          "9": {
+            "calls": 730,
+            "statements": 960,
+            "metadataStatements": 960,
+            "rowsRead": 297930,
+            "rowsWritten": 21379,
+            "sqlMs": 379
+          },
+          "10": {
+            "calls": 385,
+            "statements": 385,
+            "metadataStatements": 385,
+            "rowsRead": 2929,
+            "rowsWritten": 280,
+            "sqlMs": 30
+          }
+        },
+        "storage": {
+          "inventory_records": 402,
+          "inventory_payloads": 402,
+          "comparison_projection_payloads": 600,
+          "comparison_projections": 400,
+          "inventory_match_sets": 20,
+          "inventory_match_records": 600,
+          "inventory_match_tokens": 3200,
+          "inventory_match_recovery": 0,
+          "inventory_matching_selected_jobs": 200,
+          "inventory_matching_selected_pages": 0,
+          "inventory_matching_selected_dependents": 200,
+          "matching_work": 200,
+          "initialSqliteBytes": 2658304,
+          "sqliteBytes": 7987200,
+          "growthBytes": 5328896,
+          "encryptedPayloadBytes": {
+            "inventory": 332009,
+            "projections": 325600
+          }
+        },
+        "wallMs": 35541.928417,
+        "normalizedInput": true,
+        "adaptersVendorPacingAndProofsExcluded": true,
+        "execution": "node_with_native_d1",
+        "vendorRequests": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "profile": "empty-1000",
+      "schemaThrough": 75,
+      "result": {
+        "event": "result",
+        "contacts": 1000,
+        "remote": "empty",
+        "pageSize": 1000,
+        "stages": [
+          {
+            "stage": "enrollment",
+            "wallMs": 700.7857089999998,
+            "database": {
+              "calls": 40,
+              "statements": 80,
+              "metadataStatements": 80,
+              "rowsRead": 425,
+              "rowsWritten": 119,
+              "sqlMs": 237
+            },
+            "queueTurns": 0,
+            "queueMessages": 0
+          },
+          {
+            "stage": "destination-baseline",
+            "wallMs": 3132.7514999999994,
+            "database": {
+              "calls": 385,
+              "statements": 480,
+              "metadataStatements": 480,
+              "rowsRead": 3368,
+              "rowsWritten": 406,
+              "sqlMs": 354
+            },
+            "queueTurns": 29,
+            "queueMessages": 29
+          },
+          {
+            "stage": "source-backfill",
+            "wallMs": 47655.045249999996,
+            "database": {
+              "calls": 8705,
+              "statements": 9855,
+              "metadataStatements": 9855,
+              "rowsRead": 604049,
+              "rowsWritten": 84579,
+              "sqlMs": 1281
+            },
+            "queueTurns": 675,
+            "queueMessages": 675
+          },
+          {
+            "stage": "source-completion-and-classification",
+            "wallMs": 33042.972333,
+            "database": {
+              "calls": 7570,
+              "statements": 8944,
+              "metadataStatements": 8944,
+              "rowsRead": 871908,
+              "rowsWritten": 80317,
+              "sqlMs": 1200
+            },
+            "queueTurns": 561,
+            "queueMessages": 561
+          }
+        ],
+        "database": {
+          "calls": 16700,
+          "statements": 19359,
+          "metadataStatements": 19359,
+          "rowsRead": 1479750,
+          "rowsWritten": 165421,
+          "sqlMs": 3072
+        },
+        "queueSends": 1265,
+        "queueMessages": 1265,
+        "queueTurns": 1265,
+        "phaseTurns": {
+          "0": 116,
+          "1": 115,
+          "2": 115,
+          "3": 115,
+          "4": 115,
+          "5": 115,
+          "6": 115,
+          "7": 115,
+          "8": 115,
+          "9": 115,
+          "10": 114
+        },
+        "phaseDatabase": {
+          "0": {
+            "calls": 1298,
+            "statements": 1319,
+            "metadataStatements": 1319,
+            "rowsRead": 9214,
+            "rowsWritten": 973,
+            "sqlMs": 104
+          },
+          "1": {
+            "calls": 1324,
+            "statements": 1354,
+            "metadataStatements": 1354,
+            "rowsRead": 10368,
+            "rowsWritten": 1026,
+            "sqlMs": 68
+          },
+          "2": {
+            "calls": 1290,
+            "statements": 1290,
+            "metadataStatements": 1290,
+            "rowsRead": 21324,
+            "rowsWritten": 2971,
+            "sqlMs": 206
+          },
+          "3": {
+            "calls": 2415,
+            "statements": 3515,
+            "metadataStatements": 3515,
+            "rowsRead": 241775,
+            "rowsWritten": 39271,
+            "sqlMs": 590
+          },
+          "4": {
+            "calls": 1157,
+            "statements": 1159,
+            "metadataStatements": 1159,
+            "rowsRead": 8239,
+            "rowsWritten": 931,
+            "sqlMs": 90
+          },
+          "5": {
+            "calls": 1269,
+            "statements": 1274,
+            "metadataStatements": 1274,
+            "rowsRead": 11538,
+            "rowsWritten": 931,
+            "sqlMs": 189
+          },
+          "6": {
+            "calls": 1265,
+            "statements": 1265,
+            "metadataStatements": 1265,
+            "rowsRead": 9881,
+            "rowsWritten": 920,
+            "sqlMs": 49
+          },
+          "7": {
+            "calls": 1265,
+            "statements": 1265,
+            "metadataStatements": 1265,
+            "rowsRead": 10109,
+            "rowsWritten": 920,
+            "sqlMs": 65
+          },
+          "8": {
+            "calls": 1265,
+            "statements": 1265,
+            "metadataStatements": 1265,
+            "rowsRead": 9881,
+            "rowsWritten": 920,
+            "sqlMs": 59
+          },
+          "9": {
+            "calls": 2728,
+            "statements": 3828,
+            "metadataStatements": 3828,
+            "rowsRead": 972571,
+            "rowsWritten": 68764,
+            "sqlMs": 1087
+          },
+          "10": {
+            "calls": 1254,
+            "statements": 1254,
+            "metadataStatements": 1254,
+            "rowsRead": 9795,
+            "rowsWritten": 912,
+            "sqlMs": 54
+          }
+        },
+        "storage": {
+          "inventory_records": 1010,
+          "inventory_payloads": 1010,
+          "comparison_projection_payloads": 2000,
+          "comparison_projections": 1000,
+          "inventory_match_sets": 100,
+          "inventory_match_records": 2000,
+          "inventory_match_tokens": 8000,
+          "inventory_match_recovery": 0,
+          "inventory_matching_selected_jobs": 1000,
+          "inventory_matching_selected_pages": 0,
+          "inventory_matching_selected_dependents": 1000,
+          "matching_work": 1000,
+          "initialSqliteBytes": 2658304,
+          "sqliteBytes": 18968576,
+          "growthBytes": 16310272,
+          "encryptedPayloadBytes": {
+            "inventory": 1234720,
+            "projections": 1184280
+          }
+        },
+        "wallMs": 84645.644625,
+        "normalizedInput": true,
+        "adaptersVendorPacingAndProofsExcluded": true,
+        "execution": "node_with_native_d1",
+        "vendorRequests": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "profile": "empty-4000",
+      "schemaThrough": 75,
+      "result": {
+        "event": "result",
+        "contacts": 4000,
+        "remote": "empty",
+        "pageSize": 1000,
+        "schema": "current",
+        "stages": [
+          {
+            "stage": "enrollment",
+            "wallMs": 498.28383399999984,
+            "database": {
+              "calls": 40,
+              "statements": 80,
+              "metadataStatements": 80,
+              "rowsRead": 425,
+              "rowsWritten": 119,
+              "sqlMs": 212
+            },
+            "queueTurns": 0,
+            "queueMessages": 0
+          },
+          {
+            "stage": "destination-baseline",
+            "wallMs": 2439.9899589999995,
+            "database": {
+              "calls": 385,
+              "statements": 480,
+              "metadataStatements": 480,
+              "rowsRead": 3369,
+              "rowsWritten": 406,
+              "sqlMs": 314
+            },
+            "queueTurns": 29,
+            "queueMessages": 29
+          },
+          {
+            "stage": "source-backfill",
+            "wallMs": 217210.32287499998,
+            "database": {
+              "calls": 34658,
+              "statements": 39168,
+              "metadataStatements": 39168,
+              "rowsRead": 2428218,
+              "rowsWritten": 338133,
+              "sqlMs": 4737
+            },
+            "queueTurns": 2688,
+            "queueMessages": 2688
+          },
+          {
+            "stage": "source-completion-and-classification",
+            "wallMs": 130192.20275000003,
+            "database": {
+              "calls": 29815,
+              "statements": 35074,
+              "metadataStatements": 35074,
+              "rowsRead": 3513840,
+              "rowsWritten": 320677,
+              "sqlMs": 4764
+            },
+            "queueTurns": 2211,
+            "queueMessages": 2211
+          }
+        ],
+        "database": {
+          "calls": 64898,
+          "statements": 74802,
+          "metadataStatements": 74802,
+          "rowsRead": 5945852,
+          "rowsWritten": 659335,
+          "sqlMs": 10027
+        },
+        "queueSends": 4928,
+        "queueMessages": 4928,
+        "queueTurns": 4928,
+        "phaseTurns": {
+          "0": 449,
+          "1": 448,
+          "2": 448,
+          "3": 448,
+          "4": 448,
+          "5": 448,
+          "6": 448,
+          "7": 448,
+          "8": 448,
+          "9": 448,
+          "10": 447
+        },
+        "phaseDatabase": {
+          "0": {
+            "calls": 4961,
+            "statements": 4982,
+            "metadataStatements": 4982,
+            "rowsRead": 35189,
+            "rowsWritten": 3637,
+            "sqlMs": 279
+          },
+          "1": {
+            "calls": 5167,
+            "statements": 5287,
+            "metadataStatements": 5287,
+            "rowsRead": 40751,
+            "rowsWritten": 4020,
+            "sqlMs": 249
+          },
+          "2": {
+            "calls": 5028,
+            "statements": 5028,
+            "metadataStatements": 5028,
+            "rowsRead": 84520,
+            "rowsWritten": 11785,
+            "sqlMs": 673
+          },
+          "3": {
+            "calls": 9528,
+            "statements": 13928,
+            "metadataStatements": 13928,
+            "rowsRead": 966062,
+            "rowsWritten": 156985,
+            "sqlMs": 2237
+          },
+          "4": {
+            "calls": 4487,
+            "statements": 4489,
+            "metadataStatements": 4489,
+            "rowsRead": 31882,
+            "rowsWritten": 3595,
+            "sqlMs": 245
+          },
+          "5": {
+            "calls": 4932,
+            "statements": 4937,
+            "metadataStatements": 4937,
+            "rowsRead": 44505,
+            "rowsWritten": 3595,
+            "sqlMs": 352
+          },
+          "6": {
+            "calls": 4928,
+            "statements": 4928,
+            "metadataStatements": 4928,
+            "rowsRead": 38519,
+            "rowsWritten": 3584,
+            "sqlMs": 247
+          },
+          "7": {
+            "calls": 4928,
+            "statements": 4928,
+            "metadataStatements": 4928,
+            "rowsRead": 39413,
+            "rowsWritten": 3584,
+            "sqlMs": 255
+          },
+          "8": {
+            "calls": 4928,
+            "statements": 4928,
+            "metadataStatements": 4928,
+            "rowsRead": 38519,
+            "rowsWritten": 3584,
+            "sqlMs": 234
+          },
+          "9": {
+            "calls": 10771,
+            "statements": 15171,
+            "metadataStatements": 15171,
+            "rowsRead": 3890660,
+            "rowsWritten": 274966,
+            "sqlMs": 4042
+          },
+          "10": {
+            "calls": 4917,
+            "statements": 4917,
+            "metadataStatements": 4917,
+            "rowsRead": 38433,
+            "rowsWritten": 3576,
+            "sqlMs": 242
+          }
+        },
+        "storage": {
+          "inventory_records": 4040,
+          "inventory_payloads": 4040,
+          "comparison_projection_payloads": 8000,
+          "comparison_projections": 4000,
+          "inventory_match_sets": 400,
+          "inventory_match_records": 8000,
+          "inventory_match_tokens": 32000,
+          "inventory_match_recovery": 0,
+          "inventory_matching_selected_jobs": 4000,
+          "inventory_matching_selected_pages": 0,
+          "inventory_matching_selected_dependents": 4000,
+          "matching_work": 4000,
+          "initialSqliteBytes": 2658304,
+          "sqliteBytes": 69992448,
+          "growthBytes": 67334144,
+          "encryptedPayloadBytes": {
+            "inventory": 4942990,
+            "projections": 4739280
+          }
+        },
+        "wallMs": 350683.338917,
+        "normalizedInput": true,
+        "adaptersVendorPacingAndProofsExcluded": true,
+        "execution": "node_with_native_d1",
+        "vendorRequests": 0,
+        "uploads": 0
+      }
+    }
+  ]
+}

@@ -121,8 +121,10 @@ The actual Queue test uses mocked providers. Logs are
 
 ## Remaining qualification
 
-Measure the complete pipeline and storage against larger and complete real-source
-inventories. Current QRZ reads verify STATUS before each FETCH, so quota models
+Initial [normalized pipeline measurements](evidence-inventory-pipeline.md) found
+and removed empty selected-input Queue amplification through migration 0075.
+Continue qualification against larger and complete real-source inventories.
+Current QRZ reads verify STATUS before each FETCH, so quota models
 must include both requests per page plus catch-up and terminal recovery. Reusing
 book-identity verification needs a verified provider/credential/scope contract.
 

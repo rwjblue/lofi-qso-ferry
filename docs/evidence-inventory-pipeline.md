@@ -1,0 +1,161 @@
+# Inventory pipeline cost evidence
+
+Status: local native D1 qualification through migration 0075, 2026-11-08.
+Repository configuration keeps runtime activation off and exports disabled.
+Isolated benchmarks/replays perform the read-only runtime handoff. No deployment,
+production reset or vendor upload was performed.
+
+## Measurement boundary
+
+The [pipeline benchmark](../scripts/benchmark-inventory-pipeline.ts) starts with
+normalized synthetic observations. It includes read-only runtime handoff,
+registered source/destination selections, full-run ingestion, membership,
+catch-up, quarantine, coverage publication, index construction, encrypted
+projection, matching and durable comparison Queue publication/consumption.
+Schema installation, fixture credentials and diagnostic storage queries are
+outside the counters; runtime enrollment is inside them.
+
+Application code runs in Node against native D1/workerd. Queue messages use an
+in-memory transport and the real continuation/coordinator functions. The
+separate [actual Worker/Queue test](evidence-inventory-hosted-comparison.md)
+checks the hosted boundary with mocked providers. Neither measurement establishes
+production latency, billed Worker CPU or actual vendor pacing. Adapters, provider
+I/O, authentication renewal, source proofs, adoption and delivery are excluded.
+
+The destination baseline completes before the source baseline. The benchmark
+drains comparison after every normalized page, then completes source catch-up
+and coverage. This exercises background comparison while source coverage is
+incomplete, followed by automatic reprojection and classification. Source pages
+contain at most 1,000 records; operations are paged separately, with one operation
+per 100 contacts. Destination pages contain at most 250 receipts. Each contact
+has a distinct candidate identity and 580 bytes of synthetic notes.
+
+All SQL calls report native `rows_read` and `rows_written`, including trigger
+and index work. The shared meter routes `first()` through `all()` on the original
+statement, unwraps prepared statements before batches and asserts that every
+explicit statement has result metadata. No contact bodies or credentials appear
+in benchmark output. Vendor requests, uploads and delivery attempts are zero;
+credential envelopes are checked unchanged.
+
+## Empty invalidation amplification
+
+The first complete 200-contact run found 200 empty selected-input publication
+pages. Replacement match cohorts had already observed their source changes, but
+the coordinator still visited one pending selected-input job per eleven-phase
+cycle. That produced 2,388 Queue turns and 27,953 D1 calls.
+
+[Migration 0075](../migrations/0075_inventory_matching_selected_observed.sql)
+completes an observed job in the matching publication transaction when no current
+dependent has an older signal clock. It probes only the committed cohort's
+selected keys, at most twenty. A clock-leading reverse index bounds the absence
+check across every current route, including routes that are not presently
+eligible. The route-first index remains available for the bounded publisher.
+
+Native guards allow this metadata-only completion only when the work clock,
+frontier and fair-turn counter remain unchanged and no older dependent exists.
+Partial replacement leaves the old cohort pending. Any older dependent still
+uses the existing guarded page publisher. New signals retain their clocks and
+requeue normally. Completing a job does not make an upstream observation fresh.
+
+For 200 contacts and an empty destination, this reduces Queue turns from 2,388
+to 297 and D1 calls from 27,953 to 3,952, about an 86% call reduction. Empty
+selected-input pages fall from 200 to zero. This compares two versions of the
+new inventory pipeline, not the legacy sender's complete delivery cost.
+
+## Results
+
+All rows use 1,000-record source pages and one destination. These are complete
+normalized ingestion-to-comparison totals, not isolated ingestion statements.
+
+| Contacts | Destination | D1 calls | Explicit statements | Rows read | Rows written | Queue turns | Allocated growth |
+| -------- | ----------- | -------- | ------------------- | --------- | ------------ | ----------- | ---------------- |
+| 200 | Empty, through 0074 | 27,953 | 29,710 | 529,450 | 52,931 | 2,388 | 3,461,120 bytes |
+| 200 | Empty, through 0075 | 3,952 | 4,709 | 300,964 | 33,803 | 297 | 3,309,568 bytes |
+| 200 | All matched, through 0075 | 5,207 | 6,106 | 484,177 | 52,468 | 396 | 5,328,896 bytes |
+| 1,000 | Empty, through 0075 | 16,700 | 19,359 | 1,479,750 | 165,421 | 1,265 | 16,310,272 bytes |
+| 4,000 | Empty, through 0075 | 64,898 | 74,802 | 5,945,852 | 659,335 | 4,928 | 67,334,144 bytes |
+
+The [saved JSON measurements](benchmarks/inventory-pipeline-2026-11-08.json)
+retain every stage/phase counter and storage census. At 4,000 contacts, the
+benchmark publishes 4,000 current absence results with no empty selected-input
+pages. Calls and row work per contact remain close to the 1,000-contact case.
+
+Small read-count variation can occur between native fixtures; exact counts are
+individual observations, not universal per-contact constants. The source-first
+incomplete/ready transition retains two matching cohorts per twenty contacts
+and two source projection bodies per contact. An all-matched destination also
+retains receipt payloads and reverse matching evidence. No retention collector
+runs in these measurements.
+
+The 1,000-contact case retains 1,010 source records/payloads, 2,000 projection
+payloads with 1,000 current projections, 100 match sets, 2,000 captured match
+records, 8,000 probe tokens, 1,000 selected dependencies and 1,000 matching-work
+rows. All 1,000 current results are `absent_at_inventory`; every selected-input
+job is completed without an empty page. The matching-destination case asserts
+all results are `matched_existing`, not new delivery ownership.
+
+The initialized schema/fixture occupies 2,658,304 bytes through 0075. The
+1,000-contact case allocates an additional 16.3 MB, about 15.9 KiB/contact before
+collection. Encrypted inventory and projection envelopes account for 2,419,000
+bytes of that growth. Moving envelopes to R2 would leave substantial relational,
+index and retained-proof cost. This is a baseline snapshot, not a steady-state
+growth forecast or a qualified 200,000-contact density. The all-matched
+200-contact case is denser still; receipt and reverse-proof storage matter.
+The 4,000-contact empty case allocates 67.3 MB of growth, about 16.4 KiB/contact,
+including 9.7 MB of encrypted envelopes. This exceeds the upper edge of the
+earlier 4–16 KiB sensitivity range and makes collection a measured requirement.
+
+For budget sensitivity, the paid [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/)
+checked on November 8 includes 25 billion reads and 50 million writes/month,
+plus 5 GB storage. Write overage is $1/million. Paid
+[Queues pricing](https://developers.cloudflare.com/queues/platform/pricing/)
+includes one million operations/month plus $0.40/million; a successful small
+message normally uses three operations. These are shared account allowances.
+
+Uniformly multiplying the 1,000-contact empty baseline by 200 gives about
+33.1 million writes, 296 million reads and 759,000 comparison Queue operations
+for 200,000 contacts. That is an extrapolated one-time baseline, not a measured
+import or a monthly incoming-contact model. It excludes read-continuation
+messages, actual provider handling, retries, collection, ownership, proofs,
+delivery and Worker CPU. Storage, latency and the
+[10 GB per-database limit](https://developers.cloudflare.com/d1/platform/limits/)
+need separate qualification even when row-operation allowances appear adequate.
+
+## Recovery and boundedness
+
+Six new native cases cover complete replacement, a surviving old sibling cohort,
+old prepared pages, a later signal, late transaction rollback and recovery of a
+committed match receipt after a newer signal. A publication reading 1,091 rows
+continues to read 1,091 after adding 4,000 unrelated completed jobs. The existing
+selected-input publisher/map suite covers bounded expansion and missing/retired
+identities; the combined selected-input regression passes 33 cases. The actual
+hosted Worker test passes through the new migration. TypeScript, project lint,
+formatting, task validation and the Worker dry-run build pass.
+
+The encrypted real-source replay through 0075 is
+`4982f3ee-d7e6-486f-8801-55d36b2da5b4`. A fresh process reopens its private copy,
+with canonical inventories, checkpoints and credential envelopes unchanged. It
+allocates 17,268,736 bytes and retains the valid read-only comparison wakeup.
+The original captured source and QRZ baselines remain partial. Replaying them
+makes zero vendor requests and does not qualify complete real-source throughput.
+
+## Reproduction and remaining work
+
+```sh
+mise run benchmark-inventory-pipeline --contacts 200 --remote empty --schema 74
+mise run benchmark-inventory-pipeline --contacts 200 --remote empty
+mise run benchmark-inventory-pipeline --contacts 200 --remote matched
+mise run benchmark-inventory-pipeline --contacts 1000 --remote empty
+mise run benchmark-inventory-pipeline --contacts 4000 --remote empty
+```
+
+The `74` option pins the pre-optimization migrations. The default follows the
+current migration set. JSON output includes phase costs, stage costs, storage
+counts, allocated bytes and the boundary exclusions. Local wall time is a
+diagnostic only; parallel local jobs and Node-to-D1 IPC affect it.
+
+Next qualify larger matching receipt inventories, repeated incremental
+edits, dense/shared candidate buckets and retention. A larger complete managed
+read-only service trial must then include real adapter requests and pacing.
+Automatic adoption scheduling, ownership-aware planning, fresh source proofs
+and member-aware delivery remain separate implementation milestones.

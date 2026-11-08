@@ -63,6 +63,7 @@ export default {async fetch(request,env){
     { mf, db, store: new Store(db, keys) },
   );
   await applyMigration(db, "0052_inventory_projection_jobs.sql");
+  await applyMigration(db, "0056_inventory_current_work_selection.sql");
   const op = observation("op", "operation", 2);
   op.body = { ...(op.body as object), stationCall: "K1ABC" };
   await f.full([op, ...sources]);

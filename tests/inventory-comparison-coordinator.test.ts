@@ -461,19 +461,24 @@ test("a requested rebuild wakes an idle coordinator without retiring the old act
 
 test("managed activation validates pending work without scanning completed contact history", async (t) => {
   const costs = [];
-  for (const count of [3, 205]) {
+  for (const count of [3, 205, 405]) {
     const f = await activationFixture(count);
     try {
       const result = await f.coordinator.activate("a", f.pending, f.lease);
       assert.ok("statements" in result);
       assert.equal(result.statements, 3);
-      costs.push({ read: result.rowsRead, written: result.rowsWritten });
+      // Indexed probe counts can vary with generation ordering and populated
+      // indexes. Keep a fixed budget across larger completed histories rather
+      // than requiring identical counts for every index layout.
+      assert.ok(result.rowsRead <= 100);
+      costs.push({ count, read: result.rowsRead, written: result.rowsWritten });
     } finally {
       await f.mf.dispose();
     }
   }
-  assert.deepEqual(costs[1], costs[0]);
+  assert.equal(costs[1].written, costs[0].written);
+  assert.equal(costs[2].written, costs[0].written);
   t.diagnostic(
-    `managed activation with 205 contacts: 3 statements, ${costs[1].read} rows read, ${costs[1].written} rows written`,
+    `managed activation: 3 statements; contacts/read/written=${JSON.stringify(costs)}`,
   );
 });

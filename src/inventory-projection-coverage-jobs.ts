@@ -170,13 +170,10 @@ SELECT ?1,?6,?2,?3,?9,?7,?8,?10,?11,?12,?4,coalesce((SELECT max(record_key) FROM
       throw new Error("invalid_inventory_projection_coverage_scope");
     const job = await this.store
       .statement(
-        `SELECT j.* FROM inventory_projection_coverage_jobs j INDEXED BY inventory_projection_coverage_job_due
-JOIN accounts a ON a.id=j.tenant AND a.status='active' JOIN inventory_scopes s ON s.tenant=j.tenant AND s.scope_id=j.scope_id AND s.state='observing' AND s.config_version=j.config_version
-JOIN connections c ON c.tenant=s.tenant AND c.id=s.connection_id AND c.kind='lofi' AND c.status='active' AND c.remote_identity=s.logical_identity
-JOIN index_generations g ON g.tenant=j.tenant AND g.generation_id=j.generation_id AND g.state IN('active','building')
-JOIN comparison_builds b ON b.tenant=j.tenant AND b.generation_id=j.generation_id AND b.scope_id=j.scope_id AND b.complete=1 AND b.config_version=s.config_version
+        `WITH live AS MATERIALIZED(SELECT * FROM inventory_comparison_ready_builds WHERE tenant=?1 AND provider='lofi')
+SELECT j.* FROM live s CROSS JOIN inventory_projection_coverage_jobs j
 JOIN inventory_full_source_coverage cv ON cv.tenant=j.tenant AND cv.scope_id=j.scope_id AND cv.stream_id=j.coverage_stream AND cv.partition_id=j.coverage_partition AND cv.published_run_id=j.published_run
-WHERE j.tenant=? AND j.completed_version<j.work_version AND j.due_at<=? ORDER BY j.due_at,j.generation_id,j.scope_id LIMIT 1`,
+WHERE j.tenant=s.tenant AND j.generation_id=s.generation_id AND j.scope_id=s.scope_id AND j.config_version=s.config_version AND j.completed_version<j.work_version AND j.due_at<=?2 ORDER BY j.due_at,j.generation_id,j.scope_id LIMIT 1`,
         tenant,
         Date.now(),
       )

@@ -26,6 +26,8 @@ export async function coordinatorFixture(
       "0053_inventory_projection_coverage_jobs.sql",
       "0054_inventory_bounded_generation_setup.sql",
       "0055_inventory_comparison_coordinator.sql",
+      "0056_inventory_current_work_selection.sql",
+      "0057_inventory_scoped_activation_debt.sql",
     ])
       await applyMigration(f.db, name);
     const operation = observation("op", "operation");
@@ -47,7 +49,12 @@ export async function coordinatorFixture(
     throw error;
   }
 }
-export async function activationFixture(count = 3) {
+export async function activationFixture(
+  count = 3,
+  beforeRebuild?: (
+    fixture: Awaited<ReturnType<typeof coordinatorFixture>>,
+  ) => Promise<void>,
+) {
   const f = await coordinatorFixture(count);
   try {
     const prepareGeneration = async (generation: string) => {
@@ -73,6 +80,7 @@ export async function activationFixture(count = 3) {
         break;
     await new InventoryProjectionCoverageJobs(f.store).step("a");
     await f.builds.activate("a", f.generation);
+    await beforeRebuild?.(f);
     const domain = await f.generations.begin("a");
     if (!domain.pending_generation)
       throw new Error("coordinator fixture generation missing");

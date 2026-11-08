@@ -66,6 +66,7 @@ export default {async fetch(request,env){
   );
   await applyMigration(db, "0052_inventory_projection_jobs.sql");
   await applyMigration(db, "0053_inventory_projection_coverage_jobs.sql");
+  await applyMigration(db, "0056_inventory_current_work_selection.sql");
   const run = await f.begin();
   await f.observed(run.id, [observation("op", "operation"), ...sources]);
   for (let i = 0; i < sources.length; i += 20)

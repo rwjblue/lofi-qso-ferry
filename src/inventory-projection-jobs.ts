@@ -206,14 +206,13 @@ ON CONFLICT(tenant,generation_id,scope_id,record_key,facet) DO UPDATE SET work_v
   async expandNext(tenant: string, limit = 200) {
     if (!identifier(tenant))
       throw new Error("invalid_inventory_projection_tenant");
+    // Choose one indexed head per eligible scope before sorting. A global
+    // pending-work walk would revisit retained retired/disabled history.
     const job = await this.store
       .statement(
-        `SELECT j.* FROM inventory_projection_jobs j INDEXED BY inventory_projection_job_due
-JOIN accounts a ON a.id=j.tenant AND a.status='active' JOIN inventory_scopes s ON s.tenant=j.tenant AND s.scope_id=j.scope_id AND s.state='observing' AND s.config_version=j.config_version
-JOIN connections c ON c.tenant=s.tenant AND c.id=s.connection_id AND c.kind='lofi' AND c.status='active' AND c.remote_identity=s.logical_identity
-JOIN index_generations g ON g.tenant=j.tenant AND g.generation_id=j.generation_id AND g.state IN('active','building')
-JOIN comparison_builds b ON b.tenant=j.tenant AND b.generation_id=j.generation_id AND b.scope_id=j.scope_id AND b.complete=1 AND b.config_version=s.config_version
-WHERE j.tenant=? AND j.completed_version<j.work_version AND j.due_at<=? ORDER BY j.due_at,j.generation_id,j.scope_id,j.operation_key LIMIT 1`,
+        `WITH live AS MATERIALIZED(SELECT * FROM inventory_comparison_ready_builds WHERE tenant=?1 AND provider='lofi'),
+heads AS MATERIALIZED(SELECT s.*,(SELECT j.rowid FROM inventory_projection_jobs j INDEXED BY inventory_projection_job_scope_pending WHERE j.tenant=s.tenant AND j.generation_id=s.generation_id AND j.scope_id=s.scope_id AND j.config_version=s.config_version AND j.completed_version<j.work_version AND j.due_at<=?2 ORDER BY j.due_at,j.operation_key LIMIT 1) AS head FROM live s)
+SELECT j.* FROM heads h CROSS JOIN inventory_projection_jobs j WHERE j.rowid=h.head ORDER BY j.due_at,j.generation_id,j.scope_id,j.operation_key LIMIT 1`,
         tenant,
         Date.now(),
       )
@@ -247,22 +246,25 @@ WHERE j.tenant=? AND j.completed_version<j.work_version AND j.due_at<=? ORDER BY
       throw new Error("invalid_inventory_projection_tenant");
     const first = await this.store
       .statement(
-        `SELECT w.generation_id,w.scope_id FROM comparison_work w INDEXED BY comparison_work_pending JOIN inventory_scopes s ON s.tenant=w.tenant AND s.scope_id=w.scope_id AND s.state='observing'
-JOIN accounts a ON a.id=s.tenant AND a.status='active' JOIN connections c ON c.tenant=s.tenant AND c.id=s.connection_id AND c.status='active' AND c.kind=s.provider AND c.remote_identity=s.logical_identity
-JOIN index_generations g ON g.tenant=w.tenant AND g.generation_id=w.generation_id AND g.state IN('active','building')
-JOIN comparison_builds b ON b.tenant=w.tenant AND b.generation_id=w.generation_id AND b.scope_id=w.scope_id AND b.complete=1 AND b.config_version=s.config_version
-WHERE w.tenant=? AND w.completed_version<w.work_version AND w.due_at<=? ORDER BY w.due_at,w.generation_id,w.scope_id,w.record_key,w.facet LIMIT 1`,
+        `WITH live AS MATERIALIZED(SELECT * FROM inventory_comparison_ready_builds WHERE tenant=?1),
+heads AS MATERIALIZED(SELECT s.*,(SELECT w.rowid FROM comparison_work w INDEXED BY comparison_work_pending_scope WHERE w.tenant=s.tenant AND w.generation_id=s.generation_id AND w.scope_id=s.scope_id AND w.facet=CASE s.provider WHEN 'lofi' THEN 'source' ELSE 'receipt' END AND w.completed_version<w.work_version AND w.due_at<=?2 ORDER BY w.due_at,w.record_key,w.facet LIMIT 1) AS head FROM live s)
+SELECT w.generation_id,w.scope_id,w.facet FROM heads h CROSS JOIN comparison_work w WHERE w.rowid=h.head ORDER BY w.due_at,w.generation_id,w.scope_id,w.record_key,w.facet LIMIT 1`,
         tenant,
         Date.now(),
       )
-      .first<{ generation_id: string; scope_id: string }>();
+      .first<{
+        generation_id: string;
+        scope_id: string;
+        facet: "source" | "receipt";
+      }>();
     if (!first) return { kind: "idle" as const };
     const rows = await this.store
       .statement(
-        "SELECT record_key FROM comparison_work INDEXED BY comparison_work_pending_scope WHERE tenant=? AND generation_id=? AND scope_id=? AND completed_version<work_version AND due_at<=? ORDER BY due_at,record_key,facet LIMIT 20",
+        "SELECT record_key FROM comparison_work INDEXED BY comparison_work_pending_scope WHERE tenant=? AND generation_id=? AND scope_id=? AND facet=? AND completed_version<work_version AND due_at<=? ORDER BY due_at,record_key,facet LIMIT 20",
         tenant,
         first.generation_id,
         first.scope_id,
+        first.facet,
         Date.now(),
       )
       .all<{ record_key: string }>();

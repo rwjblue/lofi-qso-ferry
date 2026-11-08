@@ -130,6 +130,8 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0053_inventory_projection_coverage_jobs.sql",
       "0054_inventory_bounded_generation_setup.sql",
       "0055_inventory_comparison_coordinator.sql",
+      "0056_inventory_current_work_selection.sql",
+      "0057_inventory_scoped_activation_debt.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);

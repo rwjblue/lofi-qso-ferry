@@ -32,6 +32,7 @@ async function fixture(count = 3) {
       runtime,
     );
     await applyMigration(f.db, "0052_inventory_projection_jobs.sql");
+    await applyMigration(f.db, "0056_inventory_current_work_selection.sql");
     const jobs = new InventoryProjectionJobs(f.store);
     async function edit(order = 2) {
       const op = observation("op", "operation", order);

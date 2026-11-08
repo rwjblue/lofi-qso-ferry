@@ -30,6 +30,7 @@ async function fixture(
       "0051_inventory_historical_ownership.sql",
       "0052_inventory_projection_jobs.sql",
       "0053_inventory_projection_coverage_jobs.sql",
+      "0056_inventory_current_work_selection.sql",
     ])
       await applyMigration(f.db, name);
     const operation = observation("op", "operation");

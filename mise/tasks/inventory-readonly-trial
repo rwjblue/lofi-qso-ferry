@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Capture bounded real-service reads into an isolated encrypted local inventory"
+#USAGE flag "--persona <persona>" help="Keychain persona (auto-select only if exactly one matches)"
+#USAGE flag "--page-size <size>" default="1000" help="LoFi per-stream read limit, at most 1000"
+#USAGE flag "--pages <pages>" default="2" help="Maximum LoFi pages, at most 3"
+set -euo pipefail
+npx tsx scripts/inventory-readonly-trial.ts "$@"

@@ -68,7 +68,7 @@ export function readonlyVendorTransport(
   };
 }
 /** Keychain secrets are captured in subprocess memory; stderr/errors are never echoed. */
-async function keychainCredentials(persona: string, provider: Provider) {
+export async function keychainCredentials(persona: string, provider: Provider) {
   const result = await execute(
     "mise",
     [

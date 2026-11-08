@@ -3,8 +3,9 @@
 Status: local current-dependency indexing and bounded bucket invalidation,
 2026-11-08. Bounded scope/source-set/connection enrollment is now covered in the
 [pair-census evidence](evidence-inventory-matching-pairs.md). Coverage/ownership
-recovery and coordinator/hosted integration remain unfinished. Runtime activation is off;
-no production reset, vendor upload or deployment was performed.
+recovery and coordinator/hosted integration are covered in the
+[hosted comparison evidence](evidence-inventory-hosted-comparison.md). Runtime
+activation is off; no production reset, vendor upload or deployment was performed.
 
 ## Current dependencies and clocks
 
@@ -37,6 +38,14 @@ dependencies. Pending invalidation processes only entries older than its capture
 clock. A comparison already recomputed after that signal needs no additional work.
 The reverse index orders the clock before the cohort ID, so skipping current
 observations does not scan all newer cohorts.
+
+[Migration 0076](../migrations/0076_inventory_matching_bucket_observed.sql) now
+completes a pending job when its final older current dependency is collected.
+This removes empty pages after cohorts already recomputed. Surviving older
+cohorts still require the bounded publisher; clocks/frontiers stay intact and
+completion rolls back with result replacement. The matched-log operation-edit
+profile drops from 1,097 to 66 Queue turns with zero empty bucket pages; see the
+[incremental measurements](evidence-inventory-incremental.md).
 
 These tables populate through new result publication. The fresh-database cutover
 installs them before the first comparison. Existing derived results would require

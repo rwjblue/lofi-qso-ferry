@@ -1,0 +1,2120 @@
+{
+  "measuredOn": "2026-11-08",
+  "profiles": [
+    {
+      "profile": "empty-200-one-round",
+      "schemaThrough": 75,
+      "result": {
+        "event": "incremental-result",
+        "contacts": 200,
+        "remote": "empty",
+        "pageSize": 1000,
+        "schema": "current",
+        "rounds": 1,
+        "stages": [
+          {
+            "stage": "delta-empty-1",
+            "wallMs": 1116.793375000001,
+            "database": {
+              "calls": 155,
+              "statements": 205,
+              "metadataStatements": 205,
+              "rowsRead": 1493,
+              "rowsWritten": 177,
+              "sqlMs": 13
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-stable-1",
+            "wallMs": 792.6535000000003,
+            "database": {
+              "calls": 156,
+              "statements": 217,
+              "metadataStatements": 217,
+              "rowsRead": 12908,
+              "rowsWritten": 1980,
+              "sqlMs": 16
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-contact-edit-1",
+            "wallMs": 2007.1409999999996,
+            "database": {
+              "calls": 412,
+              "statements": 523,
+              "metadataStatements": 523,
+              "rowsRead": 15076,
+              "rowsWritten": 1604,
+              "sqlMs": 201
+            },
+            "queueTurns": 31,
+            "queueMessages": 31
+          },
+          {
+            "stage": "delta-operation-edit-1",
+            "wallMs": 4067.7239580000023,
+            "database": {
+              "calls": 886,
+              "statements": 1067,
+              "metadataStatements": 1067,
+              "rowsRead": 85069,
+              "rowsWritten": 8117,
+              "sqlMs": 100
+            },
+            "queueTurns": 66,
+            "queueMessages": 66
+          },
+          {
+            "stage": "delta-retire-1",
+            "wallMs": 1274.3768339999988,
+            "database": {
+              "calls": 287,
+              "statements": 375,
+              "metadataStatements": 375,
+              "rowsRead": 13591,
+              "rowsWritten": 1433,
+              "sqlMs": 72
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          },
+          {
+            "stage": "delta-restore-1",
+            "wallMs": 1395.2245409999996,
+            "database": {
+              "calls": 299,
+              "statements": 398,
+              "metadataStatements": 398,
+              "rowsRead": 14128,
+              "rowsWritten": 1493,
+              "sqlMs": 71
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          }
+        ],
+        "outcomes": [
+          {
+            "stage": "delta-empty-1",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 202,
+              "projectionPayloads": 400,
+              "matchSets": 20,
+              "selectedPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 202,
+              "projectionPayloads": 400,
+              "matchSets": 20,
+              "selectedPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 200
+            }
+          },
+          {
+            "stage": "delta-stable-1",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 202,
+              "projectionPayloads": 400,
+              "matchSets": 20,
+              "selectedPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 202,
+              "projectionPayloads": 400,
+              "matchSets": 20,
+              "selectedPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 200
+            }
+          },
+          {
+            "stage": "delta-contact-edit-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 202,
+              "projectionPayloads": 400,
+              "matchSets": 20,
+              "selectedPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 203,
+              "projectionPayloads": 401,
+              "matchSets": 22,
+              "selectedPages": 1
+            },
+            "states": {
+              "absent_at_inventory": 200
+            }
+          },
+          {
+            "stage": "delta-operation-edit-1",
+            "changedResults": 100,
+            "storageBefore": {
+              "inventoryPayloads": 203,
+              "projectionPayloads": 401,
+              "matchSets": 22,
+              "selectedPages": 1
+            },
+            "storageAfter": {
+              "inventoryPayloads": 204,
+              "projectionPayloads": 501,
+              "matchSets": 27,
+              "selectedPages": 1
+            },
+            "states": {
+              "absent_at_inventory": 200
+            }
+          },
+          {
+            "stage": "delta-retire-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 204,
+              "projectionPayloads": 501,
+              "matchSets": 27,
+              "selectedPages": 1
+            },
+            "storageAfter": {
+              "inventoryPayloads": 205,
+              "projectionPayloads": 501,
+              "matchSets": 28,
+              "selectedPages": 2
+            },
+            "states": {
+              "incomplete": 1,
+              "absent_at_inventory": 199
+            }
+          },
+          {
+            "stage": "delta-restore-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 205,
+              "projectionPayloads": 501,
+              "matchSets": 28,
+              "selectedPages": 2
+            },
+            "storageAfter": {
+              "inventoryPayloads": 206,
+              "projectionPayloads": 502,
+              "matchSets": 29,
+              "selectedPages": 3
+            },
+            "states": {
+              "absent_at_inventory": 200
+            }
+          }
+        ],
+        "database": {
+          "calls": 2195,
+          "statements": 2785,
+          "metadataStatements": 2785,
+          "rowsRead": 142265,
+          "rowsWritten": 14804,
+          "sqlMs": 473
+        },
+        "queueTurns": 165,
+        "storage": {
+          "sqliteBytesBefore": 5955584,
+          "sqliteBytesAfter": 6828032,
+          "growthBytes": 872448
+        },
+        "wallMs": 10574.553292,
+        "normalizedInput": true,
+        "adaptersVendorPacingAndProofsExcluded": true,
+        "execution": "node_with_native_d1",
+        "vendorRequests": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "profile": "empty-1000-two-rounds",
+      "schemaThrough": 75,
+      "result": {
+        "event": "incremental-result",
+        "contacts": 1000,
+        "remote": "empty",
+        "pageSize": 1000,
+        "schema": "current",
+        "rounds": 2,
+        "stages": [
+          {
+            "stage": "delta-empty-1",
+            "wallMs": 1072.7934999999998,
+            "database": {
+              "calls": 155,
+              "statements": 205,
+              "metadataStatements": 205,
+              "rowsRead": 1493,
+              "rowsWritten": 177,
+              "sqlMs": 14
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-stable-1",
+            "wallMs": 1049.0490839999984,
+            "database": {
+              "calls": 156,
+              "statements": 217,
+              "metadataStatements": 217,
+              "rowsRead": 58508,
+              "rowsWritten": 9180,
+              "sqlMs": 53
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-contact-edit-1",
+            "wallMs": 2437.2132500000007,
+            "database": {
+              "calls": 412,
+              "statements": 523,
+              "metadataStatements": 523,
+              "rowsRead": 15076,
+              "rowsWritten": 1604,
+              "sqlMs": 215
+            },
+            "queueTurns": 31,
+            "queueMessages": 31
+          },
+          {
+            "stage": "delta-operation-edit-1",
+            "wallMs": 4702.150999999998,
+            "database": {
+              "calls": 886,
+              "statements": 1067,
+              "metadataStatements": 1067,
+              "rowsRead": 85118,
+              "rowsWritten": 8117,
+              "sqlMs": 143
+            },
+            "queueTurns": 66,
+            "queueMessages": 66
+          },
+          {
+            "stage": "delta-retire-1",
+            "wallMs": 1672.2834169999987,
+            "database": {
+              "calls": 287,
+              "statements": 375,
+              "metadataStatements": 375,
+              "rowsRead": 13636,
+              "rowsWritten": 1433,
+              "sqlMs": 80
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          },
+          {
+            "stage": "delta-restore-1",
+            "wallMs": 1687.0269999999873,
+            "database": {
+              "calls": 299,
+              "statements": 398,
+              "metadataStatements": 398,
+              "rowsRead": 14128,
+              "rowsWritten": 1493,
+              "sqlMs": 88
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          },
+          {
+            "stage": "delta-empty-2",
+            "wallMs": 863.6679580000055,
+            "database": {
+              "calls": 155,
+              "statements": 205,
+              "metadataStatements": 205,
+              "rowsRead": 1493,
+              "rowsWritten": 177,
+              "sqlMs": 8
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-stable-2",
+            "wallMs": 1114.5392090000096,
+            "database": {
+              "calls": 156,
+              "statements": 217,
+              "metadataStatements": 217,
+              "rowsRead": 58508,
+              "rowsWritten": 9180,
+              "sqlMs": 54
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-contact-edit-2",
+            "wallMs": 2182.049749999991,
+            "database": {
+              "calls": 412,
+              "statements": 523,
+              "metadataStatements": 523,
+              "rowsRead": 15089,
+              "rowsWritten": 1603,
+              "sqlMs": 86
+            },
+            "queueTurns": 31,
+            "queueMessages": 31
+          },
+          {
+            "stage": "delta-operation-edit-2",
+            "wallMs": 5260.880250000002,
+            "database": {
+              "calls": 886,
+              "statements": 1067,
+              "metadataStatements": 1067,
+              "rowsRead": 85110,
+              "rowsWritten": 8117,
+              "sqlMs": 126
+            },
+            "queueTurns": 66,
+            "queueMessages": 66
+          },
+          {
+            "stage": "delta-retire-2",
+            "wallMs": 1593.585208000004,
+            "database": {
+              "calls": 287,
+              "statements": 375,
+              "metadataStatements": 375,
+              "rowsRead": 13644,
+              "rowsWritten": 1433,
+              "sqlMs": 81
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          },
+          {
+            "stage": "delta-restore-2",
+            "wallMs": 1661.0665000000008,
+            "database": {
+              "calls": 299,
+              "statements": 398,
+              "metadataStatements": 398,
+              "rowsRead": 14128,
+              "rowsWritten": 1493,
+              "sqlMs": 77
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          }
+        ],
+        "outcomes": [
+          {
+            "stage": "delta-empty-1",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 1010,
+              "projectionPayloads": 2000,
+              "matchSets": 100,
+              "selectedPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 1010,
+              "projectionPayloads": 2000,
+              "matchSets": 100,
+              "selectedPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 1000
+            }
+          },
+          {
+            "stage": "delta-stable-1",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 1010,
+              "projectionPayloads": 2000,
+              "matchSets": 100,
+              "selectedPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 1010,
+              "projectionPayloads": 2000,
+              "matchSets": 100,
+              "selectedPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 1000
+            }
+          },
+          {
+            "stage": "delta-contact-edit-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 1010,
+              "projectionPayloads": 2000,
+              "matchSets": 100,
+              "selectedPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 1011,
+              "projectionPayloads": 2001,
+              "matchSets": 102,
+              "selectedPages": 1
+            },
+            "states": {
+              "absent_at_inventory": 1000
+            }
+          },
+          {
+            "stage": "delta-operation-edit-1",
+            "changedResults": 100,
+            "storageBefore": {
+              "inventoryPayloads": 1011,
+              "projectionPayloads": 2001,
+              "matchSets": 102,
+              "selectedPages": 1
+            },
+            "storageAfter": {
+              "inventoryPayloads": 1012,
+              "projectionPayloads": 2101,
+              "matchSets": 107,
+              "selectedPages": 1
+            },
+            "states": {
+              "absent_at_inventory": 1000
+            }
+          },
+          {
+            "stage": "delta-retire-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 1012,
+              "projectionPayloads": 2101,
+              "matchSets": 107,
+              "selectedPages": 1
+            },
+            "storageAfter": {
+              "inventoryPayloads": 1013,
+              "projectionPayloads": 2101,
+              "matchSets": 108,
+              "selectedPages": 2
+            },
+            "states": {
+              "incomplete": 1,
+              "absent_at_inventory": 999
+            }
+          },
+          {
+            "stage": "delta-restore-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 1013,
+              "projectionPayloads": 2101,
+              "matchSets": 108,
+              "selectedPages": 2
+            },
+            "storageAfter": {
+              "inventoryPayloads": 1014,
+              "projectionPayloads": 2102,
+              "matchSets": 109,
+              "selectedPages": 3
+            },
+            "states": {
+              "absent_at_inventory": 1000
+            }
+          },
+          {
+            "stage": "delta-empty-2",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 1014,
+              "projectionPayloads": 2102,
+              "matchSets": 109,
+              "selectedPages": 3
+            },
+            "storageAfter": {
+              "inventoryPayloads": 1014,
+              "projectionPayloads": 2102,
+              "matchSets": 109,
+              "selectedPages": 3
+            },
+            "states": {
+              "absent_at_inventory": 1000
+            }
+          },
+          {
+            "stage": "delta-stable-2",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 1014,
+              "projectionPayloads": 2102,
+              "matchSets": 109,
+              "selectedPages": 3
+            },
+            "storageAfter": {
+              "inventoryPayloads": 1014,
+              "projectionPayloads": 2102,
+              "matchSets": 109,
+              "selectedPages": 3
+            },
+            "states": {
+              "absent_at_inventory": 1000
+            }
+          },
+          {
+            "stage": "delta-contact-edit-2",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 1014,
+              "projectionPayloads": 2102,
+              "matchSets": 109,
+              "selectedPages": 3
+            },
+            "storageAfter": {
+              "inventoryPayloads": 1015,
+              "projectionPayloads": 2103,
+              "matchSets": 111,
+              "selectedPages": 4
+            },
+            "states": {
+              "absent_at_inventory": 1000
+            }
+          },
+          {
+            "stage": "delta-operation-edit-2",
+            "changedResults": 100,
+            "storageBefore": {
+              "inventoryPayloads": 1015,
+              "projectionPayloads": 2103,
+              "matchSets": 111,
+              "selectedPages": 4
+            },
+            "storageAfter": {
+              "inventoryPayloads": 1016,
+              "projectionPayloads": 2203,
+              "matchSets": 116,
+              "selectedPages": 4
+            },
+            "states": {
+              "absent_at_inventory": 1000
+            }
+          },
+          {
+            "stage": "delta-retire-2",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 1016,
+              "projectionPayloads": 2203,
+              "matchSets": 116,
+              "selectedPages": 4
+            },
+            "storageAfter": {
+              "inventoryPayloads": 1017,
+              "projectionPayloads": 2203,
+              "matchSets": 117,
+              "selectedPages": 5
+            },
+            "states": {
+              "incomplete": 1,
+              "absent_at_inventory": 999
+            }
+          },
+          {
+            "stage": "delta-restore-2",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 1017,
+              "projectionPayloads": 2203,
+              "matchSets": 117,
+              "selectedPages": 5
+            },
+            "storageAfter": {
+              "inventoryPayloads": 1018,
+              "projectionPayloads": 2204,
+              "matchSets": 118,
+              "selectedPages": 6
+            },
+            "states": {
+              "absent_at_inventory": 1000
+            }
+          }
+        ],
+        "database": {
+          "calls": 4390,
+          "statements": 5570,
+          "metadataStatements": 5570,
+          "rowsRead": 375931,
+          "rowsWritten": 44007,
+          "sqlMs": 1025
+        },
+        "queueTurns": 330,
+        "storage": {
+          "sqliteBytesBefore": 18980864,
+          "sqliteBytesAfter": 21184512,
+          "growthBytes": 2203648
+        },
+        "wallMs": 25134.700207999995,
+        "normalizedInput": true,
+        "adaptersVendorPacingAndProofsExcluded": true,
+        "execution": "node_with_native_d1",
+        "vendorRequests": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "profile": "matched-200-two-rounds-before",
+      "schemaThrough": 75,
+      "result": {
+        "event": "incremental-result",
+        "contacts": 200,
+        "remote": "matched",
+        "pageSize": 1000,
+        "schema": "current",
+        "rounds": 2,
+        "stages": [
+          {
+            "stage": "delta-empty-1",
+            "wallMs": 1037.8922079999975,
+            "database": {
+              "calls": 155,
+              "statements": 205,
+              "metadataStatements": 205,
+              "rowsRead": 1493,
+              "rowsWritten": 177,
+              "sqlMs": 7
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-stable-1",
+            "wallMs": 948.0727909999987,
+            "database": {
+              "calls": 156,
+              "statements": 217,
+              "metadataStatements": 217,
+              "rowsRead": 12908,
+              "rowsWritten": 1980,
+              "sqlMs": 18
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-contact-edit-1",
+            "wallMs": 1510.8023329999996,
+            "database": {
+              "calls": 280,
+              "statements": 380,
+              "metadataStatements": 380,
+              "rowsRead": 24341,
+              "rowsWritten": 2287,
+              "sqlMs": 48
+            },
+            "queueTurns": 20,
+            "queueMessages": 20
+          },
+          {
+            "stage": "delta-operation-edit-1",
+            "wallMs": 59478.320875,
+            "database": {
+              "calls": 12736,
+              "statements": 13417,
+              "metadataStatements": 13417,
+              "rowsRead": 255864,
+              "rowsWritten": 22332,
+              "sqlMs": 915
+            },
+            "queueTurns": 1097,
+            "queueMessages": 1097
+          },
+          {
+            "stage": "delta-retire-1",
+            "wallMs": 2098.8511660000077,
+            "database": {
+              "calls": 335,
+              "statements": 434,
+              "metadataStatements": 434,
+              "rowsRead": 23982,
+              "rowsWritten": 2269,
+              "sqlMs": 228
+            },
+            "queueTurns": 25,
+            "queueMessages": 25
+          },
+          {
+            "stage": "delta-restore-1",
+            "wallMs": 1750.2219590000022,
+            "database": {
+              "calls": 302,
+              "statements": 402,
+              "metadataStatements": 402,
+              "rowsRead": 4125,
+              "rowsWritten": 474,
+              "sqlMs": 74
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          },
+          {
+            "stage": "delta-empty-2",
+            "wallMs": 839.8493749999907,
+            "database": {
+              "calls": 155,
+              "statements": 205,
+              "metadataStatements": 205,
+              "rowsRead": 1493,
+              "rowsWritten": 177,
+              "sqlMs": 4
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-stable-2",
+            "wallMs": 873.6523329999909,
+            "database": {
+              "calls": 156,
+              "statements": 217,
+              "metadataStatements": 217,
+              "rowsRead": 12908,
+              "rowsWritten": 1980,
+              "sqlMs": 14
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-contact-edit-2",
+            "wallMs": 1499.5923330000078,
+            "database": {
+              "calls": 277,
+              "statements": 376,
+              "metadataStatements": 376,
+              "rowsRead": 3494,
+              "rowsWritten": 430,
+              "sqlMs": 21
+            },
+            "queueTurns": 20,
+            "queueMessages": 20
+          },
+          {
+            "stage": "delta-operation-edit-2",
+            "wallMs": 54336.942666999996,
+            "database": {
+              "calls": 12736,
+              "statements": 13417,
+              "metadataStatements": 13417,
+              "rowsRead": 261383,
+              "rowsWritten": 22134,
+              "sqlMs": 846
+            },
+            "queueTurns": 1097,
+            "queueMessages": 1097
+          },
+          {
+            "stage": "delta-retire-2",
+            "wallMs": 1626.3541250000126,
+            "database": {
+              "calls": 335,
+              "statements": 434,
+              "metadataStatements": 434,
+              "rowsRead": 23949,
+              "rowsWritten": 2268,
+              "sqlMs": 90
+            },
+            "queueTurns": 25,
+            "queueMessages": 25
+          },
+          {
+            "stage": "delta-restore-2",
+            "wallMs": 1565.7921249999781,
+            "database": {
+              "calls": 302,
+              "statements": 402,
+              "metadataStatements": 402,
+              "rowsRead": 4133,
+              "rowsWritten": 474,
+              "sqlMs": 68
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          }
+        ],
+        "outcomes": [
+          {
+            "stage": "delta-empty-1",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 402,
+              "projectionPayloads": 600,
+              "matchSets": 20,
+              "selectedPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 402,
+              "projectionPayloads": 600,
+              "matchSets": 20,
+              "selectedPages": 0
+            },
+            "states": {
+              "matched_existing": 200
+            }
+          },
+          {
+            "stage": "delta-stable-1",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 402,
+              "projectionPayloads": 600,
+              "matchSets": 20,
+              "selectedPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 402,
+              "projectionPayloads": 600,
+              "matchSets": 20,
+              "selectedPages": 0
+            },
+            "states": {
+              "matched_existing": 200
+            }
+          },
+          {
+            "stage": "delta-contact-edit-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 402,
+              "projectionPayloads": 600,
+              "matchSets": 20,
+              "selectedPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 403,
+              "projectionPayloads": 601,
+              "matchSets": 21,
+              "selectedPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 1,
+              "matched_existing": 199
+            }
+          },
+          {
+            "stage": "delta-operation-edit-1",
+            "changedResults": 100,
+            "storageBefore": {
+              "inventoryPayloads": 403,
+              "projectionPayloads": 601,
+              "matchSets": 21,
+              "selectedPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 404,
+              "projectionPayloads": 701,
+              "matchSets": 26,
+              "selectedPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 1,
+              "matched_existing": 199
+            }
+          },
+          {
+            "stage": "delta-retire-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 404,
+              "projectionPayloads": 701,
+              "matchSets": 26,
+              "selectedPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 405,
+              "projectionPayloads": 701,
+              "matchSets": 28,
+              "selectedPages": 1
+            },
+            "states": {
+              "incomplete": 1,
+              "matched_existing": 199
+            }
+          },
+          {
+            "stage": "delta-restore-1",
+            "changedResults": 1,
+            "storageBefore": {
+              "inventoryPayloads": 405,
+              "projectionPayloads": 701,
+              "matchSets": 28,
+              "selectedPages": 1
+            },
+            "storageAfter": {
+              "inventoryPayloads": 406,
+              "projectionPayloads": 702,
+              "matchSets": 29,
+              "selectedPages": 2
+            },
+            "states": {
+              "matched_existing": 200
+            }
+          },
+          {
+            "stage": "delta-empty-2",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 406,
+              "projectionPayloads": 702,
+              "matchSets": 29,
+              "selectedPages": 2
+            },
+            "storageAfter": {
+              "inventoryPayloads": 406,
+              "projectionPayloads": 702,
+              "matchSets": 29,
+              "selectedPages": 2
+            },
+            "states": {
+              "matched_existing": 200
+            }
+          },
+          {
+            "stage": "delta-stable-2",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 406,
+              "projectionPayloads": 702,
+              "matchSets": 29,
+              "selectedPages": 2
+            },
+            "storageAfter": {
+              "inventoryPayloads": 406,
+              "projectionPayloads": 702,
+              "matchSets": 29,
+              "selectedPages": 2
+            },
+            "states": {
+              "matched_existing": 200
+            }
+          },
+          {
+            "stage": "delta-contact-edit-2",
+            "changedResults": 1,
+            "storageBefore": {
+              "inventoryPayloads": 406,
+              "projectionPayloads": 702,
+              "matchSets": 29,
+              "selectedPages": 2
+            },
+            "storageAfter": {
+              "inventoryPayloads": 407,
+              "projectionPayloads": 703,
+              "matchSets": 30,
+              "selectedPages": 2
+            },
+            "states": {
+              "absent_at_inventory": 1,
+              "matched_existing": 199
+            }
+          },
+          {
+            "stage": "delta-operation-edit-2",
+            "changedResults": 100,
+            "storageBefore": {
+              "inventoryPayloads": 407,
+              "projectionPayloads": 703,
+              "matchSets": 30,
+              "selectedPages": 2
+            },
+            "storageAfter": {
+              "inventoryPayloads": 408,
+              "projectionPayloads": 803,
+              "matchSets": 35,
+              "selectedPages": 2
+            },
+            "states": {
+              "absent_at_inventory": 1,
+              "matched_existing": 199
+            }
+          },
+          {
+            "stage": "delta-retire-2",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 408,
+              "projectionPayloads": 803,
+              "matchSets": 35,
+              "selectedPages": 2
+            },
+            "storageAfter": {
+              "inventoryPayloads": 409,
+              "projectionPayloads": 803,
+              "matchSets": 37,
+              "selectedPages": 3
+            },
+            "states": {
+              "incomplete": 1,
+              "matched_existing": 199
+            }
+          },
+          {
+            "stage": "delta-restore-2",
+            "changedResults": 1,
+            "storageBefore": {
+              "inventoryPayloads": 409,
+              "projectionPayloads": 803,
+              "matchSets": 37,
+              "selectedPages": 3
+            },
+            "storageAfter": {
+              "inventoryPayloads": 410,
+              "projectionPayloads": 804,
+              "matchSets": 38,
+              "selectedPages": 4
+            },
+            "states": {
+              "matched_existing": 200
+            }
+          }
+        ],
+        "database": {
+          "calls": 27925,
+          "statements": 30106,
+          "metadataStatements": 30106,
+          "rowsRead": 630073,
+          "rowsWritten": 56982,
+          "sqlMs": 2333
+        },
+        "queueTurns": 2376,
+        "storage": {
+          "sqliteBytesBefore": 7938048,
+          "sqliteBytesAfter": 10424320,
+          "growthBytes": 2486272
+        },
+        "wallMs": 127481.320375,
+        "normalizedInput": true,
+        "adaptersVendorPacingAndProofsExcluded": true,
+        "execution": "node_with_native_d1",
+        "vendorRequests": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "profile": "matched-100-one-round-before",
+      "schemaThrough": 75,
+      "result": {
+        "event": "incremental-result",
+        "contacts": 100,
+        "remote": "matched",
+        "pageSize": 1000,
+        "schema": "current",
+        "rounds": 1,
+        "stages": [
+          {
+            "stage": "delta-empty-1",
+            "wallMs": 844.070249999997,
+            "database": {
+              "calls": 155,
+              "statements": 205,
+              "metadataStatements": 205,
+              "rowsRead": 1493,
+              "rowsWritten": 177,
+              "sqlMs": 10
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-stable-1",
+            "wallMs": 704.1990829999995,
+            "database": {
+              "calls": 156,
+              "statements": 217,
+              "metadataStatements": 217,
+              "rowsRead": 7208,
+              "rowsWritten": 1080,
+              "sqlMs": 12
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-contact-edit-1",
+            "wallMs": 1306.7106669999994,
+            "database": {
+              "calls": 280,
+              "statements": 380,
+              "metadataStatements": 380,
+              "rowsRead": 21614,
+              "rowsWritten": 2287,
+              "sqlMs": 35
+            },
+            "queueTurns": 20,
+            "queueMessages": 20
+          },
+          {
+            "stage": "delta-operation-edit-1",
+            "wallMs": 50819.462583,
+            "database": {
+              "calls": 12736,
+              "statements": 13417,
+              "metadataStatements": 13417,
+              "rowsRead": 237259,
+              "rowsWritten": 22332,
+              "sqlMs": 821
+            },
+            "queueTurns": 1097,
+            "queueMessages": 1097
+          },
+          {
+            "stage": "delta-retire-1",
+            "wallMs": 1690.5977909999929,
+            "database": {
+              "calls": 335,
+              "statements": 434,
+              "metadataStatements": 434,
+              "rowsRead": 21304,
+              "rowsWritten": 2269,
+              "sqlMs": 208
+            },
+            "queueTurns": 25,
+            "queueMessages": 25
+          },
+          {
+            "stage": "delta-restore-1",
+            "wallMs": 1394.6464169999963,
+            "database": {
+              "calls": 302,
+              "statements": 402,
+              "metadataStatements": 402,
+              "rowsRead": 4133,
+              "rowsWritten": 474,
+              "sqlMs": 69
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          }
+        ],
+        "outcomes": [
+          {
+            "stage": "delta-empty-1",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 201,
+              "projectionPayloads": 300,
+              "matchSets": 10,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 201,
+              "projectionPayloads": 300,
+              "matchSets": 10,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "matched_existing": 100
+            }
+          },
+          {
+            "stage": "delta-stable-1",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 201,
+              "projectionPayloads": 300,
+              "matchSets": 10,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 201,
+              "projectionPayloads": 300,
+              "matchSets": 10,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "matched_existing": 100
+            }
+          },
+          {
+            "stage": "delta-contact-edit-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 201,
+              "projectionPayloads": 300,
+              "matchSets": 10,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 202,
+              "projectionPayloads": 301,
+              "matchSets": 11,
+              "selectedPages": 0,
+              "bucketPages": 1,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 1,
+              "matched_existing": 99
+            }
+          },
+          {
+            "stage": "delta-operation-edit-1",
+            "changedResults": 100,
+            "storageBefore": {
+              "inventoryPayloads": 202,
+              "projectionPayloads": 301,
+              "matchSets": 11,
+              "selectedPages": 0,
+              "bucketPages": 1,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 203,
+              "projectionPayloads": 401,
+              "matchSets": 16,
+              "selectedPages": 0,
+              "bucketPages": 100,
+              "emptyBucketPages": 96
+            },
+            "states": {
+              "absent_at_inventory": 1,
+              "matched_existing": 99
+            }
+          },
+          {
+            "stage": "delta-retire-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 203,
+              "projectionPayloads": 401,
+              "matchSets": 16,
+              "selectedPages": 0,
+              "bucketPages": 100,
+              "emptyBucketPages": 96
+            },
+            "storageAfter": {
+              "inventoryPayloads": 204,
+              "projectionPayloads": 401,
+              "matchSets": 18,
+              "selectedPages": 1,
+              "bucketPages": 100,
+              "emptyBucketPages": 96
+            },
+            "states": {
+              "incomplete": 1,
+              "matched_existing": 99
+            }
+          },
+          {
+            "stage": "delta-restore-1",
+            "changedResults": 1,
+            "storageBefore": {
+              "inventoryPayloads": 204,
+              "projectionPayloads": 401,
+              "matchSets": 18,
+              "selectedPages": 1,
+              "bucketPages": 100,
+              "emptyBucketPages": 96
+            },
+            "storageAfter": {
+              "inventoryPayloads": 205,
+              "projectionPayloads": 402,
+              "matchSets": 19,
+              "selectedPages": 2,
+              "bucketPages": 100,
+              "emptyBucketPages": 96
+            },
+            "states": {
+              "matched_existing": 100
+            }
+          }
+        ],
+        "database": {
+          "calls": 13964,
+          "statements": 15055,
+          "metadataStatements": 15055,
+          "rowsRead": 293011,
+          "rowsWritten": 28619,
+          "sqlMs": 1155
+        },
+        "queueTurns": 1188,
+        "storage": {
+          "sqliteBytesBefore": 5406720,
+          "sqliteBytesAfter": 6664192,
+          "growthBytes": 1257472
+        },
+        "wallMs": 56678.189708,
+        "normalizedInput": true,
+        "adaptersVendorPacingAndProofsExcluded": true,
+        "execution": "node_with_native_d1",
+        "vendorRequests": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "profile": "matched-100-one-round-after",
+      "schemaThrough": 76,
+      "result": {
+        "event": "incremental-result",
+        "contacts": 100,
+        "remote": "matched",
+        "pageSize": 1000,
+        "schema": "current",
+        "rounds": 1,
+        "stages": [
+          {
+            "stage": "delta-empty-1",
+            "wallMs": 1190.1425420000014,
+            "database": {
+              "calls": 155,
+              "statements": 205,
+              "metadataStatements": 205,
+              "rowsRead": 1493,
+              "rowsWritten": 177,
+              "sqlMs": 11
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-stable-1",
+            "wallMs": 1043.2119999999995,
+            "database": {
+              "calls": 156,
+              "statements": 217,
+              "metadataStatements": 217,
+              "rowsRead": 7208,
+              "rowsWritten": 1080,
+              "sqlMs": 18
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-contact-edit-1",
+            "wallMs": 2107.7196250000015,
+            "database": {
+              "calls": 280,
+              "statements": 380,
+              "metadataStatements": 380,
+              "rowsRead": 21619,
+              "rowsWritten": 2287,
+              "sqlMs": 47
+            },
+            "queueTurns": 20,
+            "queueMessages": 20
+          },
+          {
+            "stage": "delta-operation-edit-1",
+            "wallMs": 6177.809500000003,
+            "database": {
+              "calls": 926,
+              "statements": 1137,
+              "metadataStatements": 1137,
+              "rowsRead": 137004,
+              "rowsWritten": 13116,
+              "sqlMs": 184
+            },
+            "queueTurns": 66,
+            "queueMessages": 66
+          },
+          {
+            "stage": "delta-retire-1",
+            "wallMs": 2315.6849160000056,
+            "database": {
+              "calls": 290,
+              "statements": 379,
+              "metadataStatements": 379,
+              "rowsRead": 20924,
+              "rowsWritten": 2229,
+              "sqlMs": 226
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          },
+          {
+            "stage": "delta-restore-1",
+            "wallMs": 2478.506791,
+            "database": {
+              "calls": 302,
+              "statements": 402,
+              "metadataStatements": 402,
+              "rowsRead": 21735,
+              "rowsWritten": 2325,
+              "sqlMs": 107
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          }
+        ],
+        "outcomes": [
+          {
+            "stage": "delta-empty-1",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 201,
+              "projectionPayloads": 300,
+              "matchSets": 10,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 201,
+              "projectionPayloads": 300,
+              "matchSets": 10,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "matched_existing": 100
+            }
+          },
+          {
+            "stage": "delta-stable-1",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 201,
+              "projectionPayloads": 300,
+              "matchSets": 10,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 201,
+              "projectionPayloads": 300,
+              "matchSets": 10,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "matched_existing": 100
+            }
+          },
+          {
+            "stage": "delta-contact-edit-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 201,
+              "projectionPayloads": 300,
+              "matchSets": 10,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 202,
+              "projectionPayloads": 301,
+              "matchSets": 11,
+              "selectedPages": 0,
+              "bucketPages": 1,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 1,
+              "matched_existing": 99
+            }
+          },
+          {
+            "stage": "delta-operation-edit-1",
+            "changedResults": 100,
+            "storageBefore": {
+              "inventoryPayloads": 202,
+              "projectionPayloads": 301,
+              "matchSets": 11,
+              "selectedPages": 0,
+              "bucketPages": 1,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 203,
+              "projectionPayloads": 401,
+              "matchSets": 16,
+              "selectedPages": 0,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 1,
+              "matched_existing": 99
+            }
+          },
+          {
+            "stage": "delta-retire-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 203,
+              "projectionPayloads": 401,
+              "matchSets": 16,
+              "selectedPages": 0,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 204,
+              "projectionPayloads": 401,
+              "matchSets": 17,
+              "selectedPages": 1,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "incomplete": 1,
+              "matched_existing": 99
+            }
+          },
+          {
+            "stage": "delta-restore-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 204,
+              "projectionPayloads": 401,
+              "matchSets": 17,
+              "selectedPages": 1,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 205,
+              "projectionPayloads": 402,
+              "matchSets": 18,
+              "selectedPages": 2,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "matched_existing": 100
+            }
+          }
+        ],
+        "database": {
+          "calls": 2109,
+          "statements": 2720,
+          "metadataStatements": 2720,
+          "rowsRead": 209983,
+          "rowsWritten": 21214,
+          "sqlMs": 593
+        },
+        "queueTurns": 154,
+        "storage": {
+          "sqliteBytesBefore": 5394432,
+          "sqliteBytesAfter": 6742016,
+          "growthBytes": 1347584
+        },
+        "wallMs": 15202.470834000003,
+        "normalizedInput": true,
+        "adaptersVendorPacingAndProofsExcluded": true,
+        "execution": "node_with_native_d1",
+        "vendorRequests": 0,
+        "uploads": 0
+      }
+    },
+    {
+      "profile": "matched-200-two-rounds-after",
+      "schemaThrough": 76,
+      "result": {
+        "event": "incremental-result",
+        "contacts": 200,
+        "remote": "matched",
+        "pageSize": 1000,
+        "schema": "current",
+        "rounds": 2,
+        "stages": [
+          {
+            "stage": "delta-empty-1",
+            "wallMs": 1301.2547919999997,
+            "database": {
+              "calls": 155,
+              "statements": 205,
+              "metadataStatements": 205,
+              "rowsRead": 1493,
+              "rowsWritten": 177,
+              "sqlMs": 13
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-stable-1",
+            "wallMs": 1139.4504579999993,
+            "database": {
+              "calls": 156,
+              "statements": 217,
+              "metadataStatements": 217,
+              "rowsRead": 12908,
+              "rowsWritten": 1980,
+              "sqlMs": 20
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-contact-edit-1",
+            "wallMs": 1868.5514580000017,
+            "database": {
+              "calls": 280,
+              "statements": 380,
+              "metadataStatements": 380,
+              "rowsRead": 24342,
+              "rowsWritten": 2287,
+              "sqlMs": 207
+            },
+            "queueTurns": 20,
+            "queueMessages": 20
+          },
+          {
+            "stage": "delta-operation-edit-1",
+            "wallMs": 6089.765500000001,
+            "database": {
+              "calls": 926,
+              "statements": 1137,
+              "metadataStatements": 1137,
+              "rowsRead": 155588,
+              "rowsWritten": 13116,
+              "sqlMs": 259
+            },
+            "queueTurns": 66,
+            "queueMessages": 66
+          },
+          {
+            "stage": "delta-retire-1",
+            "wallMs": 2245.186499999996,
+            "database": {
+              "calls": 290,
+              "statements": 379,
+              "metadataStatements": 379,
+              "rowsRead": 23602,
+              "rowsWritten": 2229,
+              "sqlMs": 237
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          },
+          {
+            "stage": "delta-restore-1",
+            "wallMs": 2099.7988330000007,
+            "database": {
+              "calls": 302,
+              "statements": 402,
+              "metadataStatements": 402,
+              "rowsRead": 24405,
+              "rowsWritten": 2325,
+              "sqlMs": 93
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          },
+          {
+            "stage": "delta-empty-2",
+            "wallMs": 1101.7381249999962,
+            "database": {
+              "calls": 155,
+              "statements": 205,
+              "metadataStatements": 205,
+              "rowsRead": 1493,
+              "rowsWritten": 177,
+              "sqlMs": 8
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-stable-2",
+            "wallMs": 1121.9586659999986,
+            "database": {
+              "calls": 156,
+              "statements": 217,
+              "metadataStatements": 217,
+              "rowsRead": 12908,
+              "rowsWritten": 1980,
+              "sqlMs": 24
+            },
+            "queueTurns": 12,
+            "queueMessages": 12
+          },
+          {
+            "stage": "delta-contact-edit-2",
+            "wallMs": 2011.5461250000008,
+            "database": {
+              "calls": 280,
+              "statements": 380,
+              "metadataStatements": 380,
+              "rowsRead": 24418,
+              "rowsWritten": 2285,
+              "sqlMs": 44
+            },
+            "queueTurns": 20,
+            "queueMessages": 20
+          },
+          {
+            "stage": "delta-operation-edit-2",
+            "wallMs": 6305.369333000002,
+            "database": {
+              "calls": 926,
+              "statements": 1137,
+              "metadataStatements": 1137,
+              "rowsRead": 155925,
+              "rowsWritten": 13012,
+              "sqlMs": 182
+            },
+            "queueTurns": 66,
+            "queueMessages": 66
+          },
+          {
+            "stage": "delta-retire-2",
+            "wallMs": 2186.9716250000056,
+            "database": {
+              "calls": 290,
+              "statements": 379,
+              "metadataStatements": 379,
+              "rowsRead": 23615,
+              "rowsWritten": 2228,
+              "sqlMs": 99
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          },
+          {
+            "stage": "delta-restore-2",
+            "wallMs": 2354.9622919999965,
+            "database": {
+              "calls": 302,
+              "statements": 402,
+              "metadataStatements": 402,
+              "rowsRead": 24405,
+              "rowsWritten": 2325,
+              "sqlMs": 83
+            },
+            "queueTurns": 22,
+            "queueMessages": 22
+          }
+        ],
+        "outcomes": [
+          {
+            "stage": "delta-empty-1",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 402,
+              "projectionPayloads": 600,
+              "matchSets": 20,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 402,
+              "projectionPayloads": 600,
+              "matchSets": 20,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "matched_existing": 200
+            }
+          },
+          {
+            "stage": "delta-stable-1",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 402,
+              "projectionPayloads": 600,
+              "matchSets": 20,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 402,
+              "projectionPayloads": 600,
+              "matchSets": 20,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "matched_existing": 200
+            }
+          },
+          {
+            "stage": "delta-contact-edit-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 402,
+              "projectionPayloads": 600,
+              "matchSets": 20,
+              "selectedPages": 0,
+              "bucketPages": 0,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 403,
+              "projectionPayloads": 601,
+              "matchSets": 21,
+              "selectedPages": 0,
+              "bucketPages": 1,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 1,
+              "matched_existing": 199
+            }
+          },
+          {
+            "stage": "delta-operation-edit-1",
+            "changedResults": 100,
+            "storageBefore": {
+              "inventoryPayloads": 403,
+              "projectionPayloads": 601,
+              "matchSets": 21,
+              "selectedPages": 0,
+              "bucketPages": 1,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 404,
+              "projectionPayloads": 701,
+              "matchSets": 26,
+              "selectedPages": 0,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 1,
+              "matched_existing": 199
+            }
+          },
+          {
+            "stage": "delta-retire-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 404,
+              "projectionPayloads": 701,
+              "matchSets": 26,
+              "selectedPages": 0,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 405,
+              "projectionPayloads": 701,
+              "matchSets": 27,
+              "selectedPages": 1,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "incomplete": 1,
+              "matched_existing": 199
+            }
+          },
+          {
+            "stage": "delta-restore-1",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 405,
+              "projectionPayloads": 701,
+              "matchSets": 27,
+              "selectedPages": 1,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 406,
+              "projectionPayloads": 702,
+              "matchSets": 28,
+              "selectedPages": 2,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "matched_existing": 200
+            }
+          },
+          {
+            "stage": "delta-empty-2",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 406,
+              "projectionPayloads": 702,
+              "matchSets": 28,
+              "selectedPages": 2,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 406,
+              "projectionPayloads": 702,
+              "matchSets": 28,
+              "selectedPages": 2,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "matched_existing": 200
+            }
+          },
+          {
+            "stage": "delta-stable-2",
+            "changedResults": 0,
+            "storageBefore": {
+              "inventoryPayloads": 406,
+              "projectionPayloads": 702,
+              "matchSets": 28,
+              "selectedPages": 2,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 406,
+              "projectionPayloads": 702,
+              "matchSets": 28,
+              "selectedPages": 2,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "matched_existing": 200
+            }
+          },
+          {
+            "stage": "delta-contact-edit-2",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 406,
+              "projectionPayloads": 702,
+              "matchSets": 28,
+              "selectedPages": 2,
+              "bucketPages": 6,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 407,
+              "projectionPayloads": 703,
+              "matchSets": 29,
+              "selectedPages": 2,
+              "bucketPages": 7,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 1,
+              "matched_existing": 199
+            }
+          },
+          {
+            "stage": "delta-operation-edit-2",
+            "changedResults": 100,
+            "storageBefore": {
+              "inventoryPayloads": 407,
+              "projectionPayloads": 703,
+              "matchSets": 29,
+              "selectedPages": 2,
+              "bucketPages": 7,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 408,
+              "projectionPayloads": 803,
+              "matchSets": 34,
+              "selectedPages": 2,
+              "bucketPages": 12,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "absent_at_inventory": 1,
+              "matched_existing": 199
+            }
+          },
+          {
+            "stage": "delta-retire-2",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 408,
+              "projectionPayloads": 803,
+              "matchSets": 34,
+              "selectedPages": 2,
+              "bucketPages": 12,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 409,
+              "projectionPayloads": 803,
+              "matchSets": 35,
+              "selectedPages": 3,
+              "bucketPages": 12,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "incomplete": 1,
+              "matched_existing": 199
+            }
+          },
+          {
+            "stage": "delta-restore-2",
+            "changedResults": 20,
+            "storageBefore": {
+              "inventoryPayloads": 409,
+              "projectionPayloads": 803,
+              "matchSets": 35,
+              "selectedPages": 3,
+              "bucketPages": 12,
+              "emptyBucketPages": 0
+            },
+            "storageAfter": {
+              "inventoryPayloads": 410,
+              "projectionPayloads": 804,
+              "matchSets": 36,
+              "selectedPages": 4,
+              "bucketPages": 12,
+              "emptyBucketPages": 0
+            },
+            "states": {
+              "matched_existing": 200
+            }
+          }
+        ],
+        "database": {
+          "calls": 4218,
+          "statements": 5440,
+          "metadataStatements": 5440,
+          "rowsRead": 485102,
+          "rowsWritten": 44121,
+          "sqlMs": 1269
+        },
+        "queueTurns": 308,
+        "storage": {
+          "sqliteBytesBefore": 7970816,
+          "sqliteBytesAfter": 10661888,
+          "growthBytes": 2691072
+        },
+        "wallMs": 29695.404125,
+        "normalizedInput": true,
+        "adaptersVendorPacingAndProofsExcluded": true,
+        "execution": "node_with_native_d1",
+        "vendorRequests": 0,
+        "uploads": 0
+      }
+    }
+  ]
+}

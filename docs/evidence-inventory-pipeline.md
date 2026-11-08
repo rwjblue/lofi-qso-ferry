@@ -67,13 +67,13 @@ new inventory pipeline, not the legacy sender's complete delivery cost.
 All rows use 1,000-record source pages and one destination. These are complete
 normalized ingestion-to-comparison totals, not isolated ingestion statements.
 
-| Contacts | Destination | D1 calls | Explicit statements | Rows read | Rows written | Queue turns | Allocated growth |
-| -------- | ----------- | -------- | ------------------- | --------- | ------------ | ----------- | ---------------- |
-| 200 | Empty, through 0074 | 27,953 | 29,710 | 529,450 | 52,931 | 2,388 | 3,461,120 bytes |
-| 200 | Empty, through 0075 | 3,952 | 4,709 | 300,964 | 33,803 | 297 | 3,309,568 bytes |
-| 200 | All matched, through 0075 | 5,207 | 6,106 | 484,177 | 52,468 | 396 | 5,328,896 bytes |
-| 1,000 | Empty, through 0075 | 16,700 | 19,359 | 1,479,750 | 165,421 | 1,265 | 16,310,272 bytes |
-| 4,000 | Empty, through 0075 | 64,898 | 74,802 | 5,945,852 | 659,335 | 4,928 | 67,334,144 bytes |
+| Contacts | Destination               | D1 calls | Explicit statements | Rows read | Rows written | Queue turns | Allocated growth |
+| -------- | ------------------------- | -------- | ------------------- | --------- | ------------ | ----------- | ---------------- |
+| 200      | Empty, through 0074       | 27,953   | 29,710              | 529,450   | 52,931       | 2,388       | 3,461,120 bytes  |
+| 200      | Empty, through 0075       | 3,952    | 4,709               | 300,964   | 33,803       | 297         | 3,309,568 bytes  |
+| 200      | All matched, through 0075 | 5,207    | 6,106               | 484,177   | 52,468       | 396         | 5,328,896 bytes  |
+| 1,000    | Empty, through 0075       | 16,700   | 19,359              | 1,479,750 | 165,421      | 1,265       | 16,310,272 bytes |
+| 4,000    | Empty, through 0075       | 64,898   | 74,802              | 5,945,852 | 659,335      | 4,928       | 67,334,144 bytes |
 
 The [saved JSON measurements](benchmarks/inventory-pipeline-2026-11-08.json)
 retain every stage/phase counter and storage census. At 4,000 contacts, the
@@ -159,3 +159,8 @@ edits, dense/shared candidate buckets and retention. A larger complete managed
 read-only service trial must then include real adapter requests and pacing.
 Automatic adoption scheduling, ownership-aware planning, fresh source proofs
 and member-aware delivery remain separate implementation milestones.
+
+[Incremental qualification](evidence-inventory-incremental.md) now covers
+empty/stable polls, contact/operation edits and retirement/restoration through
+0076. It found and removed a second empty bucket-job amplification. Larger and
+complete real-source qualification, retention and delivery remain open.

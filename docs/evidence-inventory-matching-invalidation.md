@@ -1,8 +1,9 @@
 # Bucket invalidation evidence
 
 Status: local current-dependency indexing and bounded bucket invalidation,
-2026-11-08. Scope/coverage/connection/ownership invalidation, initial enrollment
-and coordinator/hosted integration remain unfinished. Runtime activation is off;
+2026-11-08. Bounded scope/source-set/connection enrollment is now covered in the
+[pair-census evidence](evidence-inventory-matching-pairs.md). Coverage/ownership
+recovery and coordinator/hosted integration remain unfinished. Runtime activation is off;
 no production reset, vendor upload or deployment was performed.
 
 ## Current dependencies and clocks
@@ -202,9 +203,9 @@ Worker dry-run build pass. Logs are
 
 ## Remaining work
 
-Add bounded invalidation for scope/source-set/connection/coverage changes and
-ownership-aware planning, plus initial enrollment for preexisting projections.
-Then integrate fair invalidation/matching turns, due holds and conservative
+Bounded pair enrollment now covers scope/source-set/connection changes and
+preexisting projections. Add selective coverage recovery and ownership-aware
+planning. Then integrate fair invalidation/matching turns, due holds and conservative
 historical adoption into coordinator/Queue/cron recovery. This bucket path alone
 does not make reconciliation fully automatic.
 

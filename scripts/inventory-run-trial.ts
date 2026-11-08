@@ -15,13 +15,13 @@ import { InventoryRunner } from "../src/inventory-runner.ts";
 import { type InventoryRun, InventoryRuns } from "../src/inventory-runs.ts";
 import type { LoFiCredentials } from "../src/lofi.ts";
 import { type QrzBook, QrzClient } from "../src/qrz.ts";
-import type { Keyring } from "../src/security.ts";
+import { canonical, type Keyring, sha256 } from "../src/security.ts";
 import { type Connection, Store } from "../src/store.ts";
 import { vendorFetch } from "../src/vendor-requests.ts";
 import { applyMigration } from "../tests/helpers.ts";
 import { createInventoryTrialTransport } from "./inventory-trial-transport.ts";
 
-async function openTrial(directory: string) {
+export async function openInventoryTrial(directory: string) {
   const keys = JSON.parse(
     await readFile(join(directory, "keys.json"), "utf8"),
   ) as Keyring;
@@ -36,7 +36,7 @@ async function openTrial(directory: string) {
     }),
   );
   try {
-    const db = await mf.getD1Database("DB");
+    const db = (await mf.getD1Database("DB")) as unknown as D1Database;
     const store = new Store(db, keys);
     return { mf, db, store };
   } catch (error) {
@@ -46,11 +46,11 @@ async function openTrial(directory: string) {
 }
 
 /** Uses an existing encrypted trial's connections; original rows are SELECT-only. */
-export async function inventoryRunTrial(
+export async function inventoryTrialAccess(
   captureDirectory: string,
   dependencies: { lofiCredentials?: () => Promise<LoFiCredentials> } = {},
 ) {
-  const captured = await openTrial(captureDirectory);
+  const captured = await openInventoryTrial(captureDirectory);
   let source: Connection | null;
   let qrz: Connection | null;
   let lotw: Connection | null;
@@ -58,7 +58,25 @@ export async function inventoryRunTrial(
   let qrzCredential: { apiKey: string } | null;
   let lotwCredential: { username: string; password: string } | null;
   let reportDay: string;
+  let captureFingerprint: string;
   try {
+    const rows = await Promise.all(
+      ["accounts", "connections", "inventory_streams"].map((table) =>
+        captured.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+      ),
+    );
+    const credentials = await captured.db
+      .prepare(
+        "SELECT * FROM private_data WHERE kind='credential' ORDER BY tenant,connection,id",
+      )
+      .all();
+    captureFingerprint = await sha256(
+      canonical({
+        keys: captured.store.keys,
+        rows: rows.map((row) => row.results),
+        credentials: credentials.results,
+      }),
+    );
     [source, qrz, lotw] = await Promise.all([
       captured.store.connection("trial", "lofi"),
       captured.store.connection("trial", "qrz"),
@@ -85,12 +103,12 @@ export async function inventoryRunTrial(
         qrz.credential_version,
         "credential",
       ),
-      captured.store.private<{ username: string; password: string }>(
-        "trial",
-        "lotw",
-        lotw.credential_version,
-        "credential",
-      ),
+      captured.store
+        .private<
+          | { username: string; password: string }
+          | { query: { username: string; password: string } }
+        >("trial", "lotw", lotw.credential_version, "credential")
+        .then((value) => value && ("query" in value ? value.query : value)),
     ]);
     const sample = await captured.db
       .prepare(
@@ -116,6 +134,31 @@ export async function inventoryRunTrial(
     !lotwCredential.password
   )
     throw new Error("trial_capture_credentials_unavailable");
+  return {
+    source,
+    qrz,
+    lotw,
+    sourceCredential,
+    qrzCredential,
+    lotwCredential,
+    reportDay,
+    captureFingerprint,
+  };
+}
+
+export async function inventoryRunTrial(
+  captureDirectory: string,
+  dependencies: { lofiCredentials?: () => Promise<LoFiCredentials> } = {},
+) {
+  const {
+    source,
+    qrz,
+    lotw,
+    sourceCredential,
+    qrzCredential,
+    lotwCredential,
+    reportDay,
+  } = await inventoryTrialAccess(captureDirectory, dependencies);
   const directory = join(
     homedir(),
     "Library/Application Support/LoFi QSO Ferry/inventory-run-trials",
@@ -131,7 +174,7 @@ export async function inventoryRunTrial(
     mode: 0o600,
     flag: "wx",
   });
-  const f = await openTrial(directory);
+  const f = await openInventoryTrial(directory);
   const transport = createInventoryTrialTransport(fetch, { maxRequests: 8 });
   try {
     for (const name of [
@@ -405,7 +448,7 @@ export async function inventoryRunTrial(
 }
 
 export async function inspectInventoryRunTrial(directory: string) {
-  const f = await openTrial(directory);
+  const f = await openInventoryTrial(directory);
   try {
     const runs = await f.db
       .prepare(
@@ -420,7 +463,7 @@ export async function inspectInventoryRunTrial(directory: string) {
         scope_id: string;
         entity_family: string;
         record_key: string;
-        facet: string;
+        facet: "source" | "receipt";
       }>();
     const body = sample
       ? await new InventoryIngestion(f.store).body(

@@ -164,7 +164,12 @@ export async function matchingFixture(
     throw new Error("matching fixture run limit");
   }
   async function project(scope: string) {
-    await builds.step("a", f.generation, scope);
+    for (let pass = 0; pass < 1000; pass++) {
+      const result = await builds.step("a", f.generation, scope);
+      assert.ok(!("deferred" in result));
+      if (result.complete) break;
+      assert.ok(pass < 999, "matching fixture build limit");
+    }
     const rows = (
       await f.db
         .prepare(

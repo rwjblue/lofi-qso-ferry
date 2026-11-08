@@ -14,6 +14,7 @@ import {
 } from "../src/inventory-comparison-lookup.ts";
 import { inventoryComparisonHint } from "../src/inventory-comparison-pages.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
+import { InventoryMatchingResults } from "../src/inventory-matching-results.ts";
 import {
   InventoryMatchingWorkspace,
   type PreparedInventoryMatchingSnapshot,
@@ -119,6 +120,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0047_inventory_context_membership.sql",
       "0048_inventory_projection_publication.sql",
       "0049_inventory_matching_read_indexes.sql",
+      "0050_inventory_match_results.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -274,16 +276,53 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
     if (!sourcePreparation)
       throw new Error("comparison_trial_source_projections_missing");
     const matchingSnapshots: PreparedInventoryMatchingSnapshot[] = [];
-    for (const scope of scopes.filter((row) => row.provider !== "lofi"))
-      matchingSnapshots.push(
-        await new InventoryMatchingWorkspace(store).prepare(
+    const matchingPublications: (Awaited<
+      ReturnType<InventoryMatchingResults["publish"]>
+    > & {
+      receiptReplayRecovered: boolean;
+      currentResults: number;
+      currentRowsRead: number;
+    })[] = [];
+    for (const scope of scopes.filter((row) => row.provider !== "lofi")) {
+      const prepared = await new InventoryMatchingWorkspace(store).prepare(
+        "trial",
+        scope.scope_id,
+        sourcePreparation.rows
+          .slice(0, 10)
+          .map((row) => ({ scope: source.scope_id, key: row.key })),
+      );
+      matchingSnapshots.push(prepared);
+      const lease = await store.claim(
+        "trial",
+        `matching:${scope.scope_id}`,
+        Date.now(),
+        60_000,
+      );
+      if (!lease) throw new Error("comparison_trial_matching_lease_busy");
+      const matches = new InventoryMatchingResults(store);
+      try {
+        const result = await matches.publish(prepared, lease);
+        const replay = await matches.publish(prepared, lease, result.setId);
+        const current = await matches.current(
           "trial",
           scope.scope_id,
-          sourcePreparation.rows
-            .slice(0, 10)
-            .map((row) => ({ scope: source.scope_id, key: row.key })),
-        ),
-      );
+          prepared.selected,
+        );
+        if (
+          !replay.recovered ||
+          current.results.length !== prepared.selected.length
+        )
+          throw new Error("comparison_trial_matching_publication_failed");
+        matchingPublications.push({
+          ...result,
+          receiptReplayRecovered: true,
+          currentResults: current.results.length,
+          currentRowsRead: current.rowsRead,
+        });
+      } finally {
+        await store.release(lease);
+      }
+    }
     await writeFile(
       join(directory, "matching-snapshots.json"),
       JSON.stringify(matchingSnapshots),
@@ -312,23 +351,32 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       indexCounts,
       projections: { published: true, phases: projectionPhases },
       matchingSnapshots: {
-        published: false,
-        phases: matchingSnapshots.map((row) => ({
+        published: true,
+        resultsPublished: matchingPublications.reduce(
+          (sum, row) => sum + row.records,
+          0,
+        ),
+        phases: matchingSnapshots.map((row, index) => ({
           provider: scopes.find((scope) => scope.scope_id === row.destination)
             ?.provider,
           selected: row.selected.length,
           states: Object.fromEntries(
-            ["none", "unique", "ambiguous", "incomplete", "excluded"].map(
-              (state) => [
-                state,
-                row.graph.results.filter((result) => result.state === state)
-                  .length,
-              ],
-            ),
+            [
+              "absent_at_inventory",
+              "matched_existing",
+              "projection_mismatch",
+              "ambiguous",
+              "incomplete",
+              "excluded",
+            ].map((state) => [
+              state,
+              row.results.filter((result) => result.state === state).length,
+            ]),
           ),
           records: row.records.length,
           lookupProbes: row.lookups.length,
           stats: row.stats,
+          publication: matchingPublications[index],
         })),
       },
       lookup: {
@@ -366,7 +414,10 @@ export async function reopenInventoryComparisonTrial(directory: string) {
   ) as Keyring;
   const report = JSON.parse(
     await readFile(join(directory, "comparison-report.json"), "utf8"),
-  ) as { projections?: { published: boolean } };
+  ) as {
+    projections?: { published: boolean };
+    matchingSnapshots?: { published: boolean };
+  };
   const mf = new Miniflare(
     convertV4MiniflareOptions({
       modules: true,
@@ -507,6 +558,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       throw error;
     });
     let matchingSnapshotsValidated = 0;
+    let matchingResultsValidated = 0;
     if (matchingText) {
       const snapshots = JSON.parse(
         matchingText,
@@ -536,8 +588,36 @@ export async function reopenInventoryComparisonTrial(directory: string) {
           stats: _newStats,
           ...newState
         } = fresh;
-        if (canonical(oldState) !== canonical(newState))
+        // Older capture manifests predate classified results and format tags.
+        // Reproduce all their original fields without inventing new evidence.
+        const comparable = Object.fromEntries(
+          Object.keys(oldState).map((key) => [key, Reflect.get(newState, key)]),
+        );
+        if (canonical(oldState) !== canonical(comparable))
           throw new Error("comparison_trial_matching_snapshot_not_reproduced");
+        if (report.matchingSnapshots?.published) {
+          const current = await new InventoryMatchingResults(store).current(
+            "trial",
+            snapshot.destination,
+            snapshot.selected,
+          );
+          if (
+            current.results.length !== snapshot.results.length ||
+            current.results.some(
+              (row) =>
+                !snapshot.results.some(
+                  (expected) =>
+                    expected.source.scope === row.source_scope &&
+                    expected.source.key === row.record_key &&
+                    expected.state === row.state &&
+                    expected.reason === row.reason &&
+                    (expected.remote?.key ?? null) === row.remote_key,
+                ),
+            )
+          )
+            throw new Error("comparison_trial_matching_results_not_recovered");
+          matchingResultsValidated += current.results.length;
+        }
         matchingSnapshotsValidated++;
       }
     }
@@ -551,6 +631,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       publishedProjectionsValidated,
       publishedProjectionReadStats: loaded.stats,
       matchingSnapshotsValidated,
+      matchingResultsValidated,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

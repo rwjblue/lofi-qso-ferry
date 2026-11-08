@@ -5,5 +5,8 @@
 #USAGE   choices "empty" "matched"
 #USAGE }
 #USAGE flag "--page-size <page_size>" default="1000" help="Source contacts per normalized page from 1 to 1000"
+#USAGE flag "--schema <schema>" default="current" help="Current migrations or pre-optimization schema through 0074" {
+#USAGE   choices "current" "74"
+#USAGE }
 set -euo pipefail
 npx tsx scripts/benchmark-inventory-pipeline.ts "$@"

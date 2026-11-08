@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import {
   type ComparisonQueueMessage,
@@ -17,7 +18,7 @@ import {
   startInventorySelections,
 } from "../src/inventory-scheduler.ts";
 import { Store } from "../src/store.ts";
-import { database, seed } from "../tests/helpers.ts";
+import { applyMigration, database, seed } from "../tests/helpers.ts";
 import { applyAdditionalMigrations } from "../tests/runtime-fixtures.ts";
 import {
   type Counters,
@@ -31,6 +32,7 @@ const { values } = parseArgs({
     contacts: { type: "string", default: "200" },
     remote: { type: "string", default: "empty" },
     "page-size": { type: "string", default: "1000" },
+    schema: { type: "string", default: "current" },
   },
 });
 const contacts = Number(values.contacts),
@@ -40,10 +42,23 @@ assert.ok(
 );
 assert.ok(Number.isSafeInteger(pageSize) && pageSize >= 1 && pageSize <= 1000);
 assert.ok(values.remote === "empty" || values.remote === "matched");
+assert.ok(values.schema === "current" || values.schema === "74");
 const remote = values.remote;
 const base = await database();
 try {
-  await applyAdditionalMigrations(base.db);
+  if (values.schema === "current") await applyAdditionalMigrations(base.db);
+  else
+    for (const name of (
+      await readdir(new URL("../migrations/", import.meta.url))
+    )
+      .filter(
+        (name) =>
+          name.endsWith(".sql") &&
+          name !== "0001_foundation.sql" &&
+          name < "0075_",
+      )
+      .sort())
+      await applyMigration(base.db, name);
   await seed(base.store);
   const book = {
     bookId: "7",
@@ -474,6 +489,7 @@ try {
       contacts,
       remote,
       pageSize,
+      schema: values.schema,
       stages,
       database: meter.totals,
       queueSends,

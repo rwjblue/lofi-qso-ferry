@@ -60,12 +60,17 @@ export default {async fetch(request,env){
   const sources = Array.from({ length: 21 }, (_, i) =>
     sourceContact(`q${String(i).padStart(4, "0")}`, "13:00:00", `W${i}AW`),
   );
+  const orphan = sourceContact("orphan", "13:00:00", "K1ABC");
+  orphan.parentKey = "missing-operation";
+  orphan.body = { ...(orphan.body as object), operation: orphan.parentKey };
+  sources.push(orphan);
   const f = await matchingFixture(
     { sources, receipts: [] },
     { mf, db, store: new Store(db, keys) },
   );
   await applyMigration(db, "0052_inventory_projection_jobs.sql");
   await applyMigration(db, "0053_inventory_projection_coverage_jobs.sql");
+  await applyMigration(db, "0066_inventory_projection_coverage_holds.sql");
   await applyMigration(db, "0056_inventory_current_work_selection.sql");
   const run = await f.begin();
   await f.observed(run.id, [observation("op", "operation"), ...sources]);
@@ -84,7 +89,7 @@ export default {async fetch(request,env){
         )
         .first<{ n: number }>()
     )?.n,
-    21,
+    22,
   );
   await f.observed(run.id, []);
   await f.finish(run.id);
@@ -107,11 +112,11 @@ export default {async fetch(request,env){
   };
   assert.deepEqual(
     report.turns.map((row) => row.recover.records ?? 0),
-    [20, 1, 0],
+    [20, 2, 0],
   );
   assert.deepEqual(
     report.turns.map((row) => row.project.records ?? 0),
-    [20, 1, 0],
+    [20, 2, 0],
   );
   assert.equal(report.turns[2].recover.kind, "idle");
   assert.equal(report.turns[2].project.kind, "idle");
@@ -131,4 +136,38 @@ export default {async fetch(request,env){
     await f.store.private("a", "source", "v1", "credential"),
     credential,
   );
+  assert.equal(
+    (
+      await db
+        .prepare(
+          "SELECT reason FROM comparison_projections WHERE record_key='orphan'",
+        )
+        .first<{ reason: string }>()
+    )?.reason,
+    "operation_context_incomplete",
+  );
+  await f.full([observation("op", "operation"), ...sources]);
+  const current = (
+    await db.prepare("SELECT * FROM comparison_work ORDER BY record_key").all()
+  ).results;
+  const unchanged = await mf.dispatchFetch(
+    "http://localhost/coverage-recovery",
+  );
+  assert.equal(unchanged.status, 200, await unchanged.clone().text());
+  const repeated = (await unchanged.json()) as typeof report;
+  assert.equal(repeated.ready, 21);
+  assert.deepEqual(
+    repeated.turns.map((row) => row.recover.records ?? 0),
+    [0, 0, 0],
+  );
+  assert.ok(repeated.turns.every((row) => row.project.kind === "idle"));
+  assert.deepEqual(
+    (
+      await db
+        .prepare("SELECT * FROM comparison_work ORDER BY record_key")
+        .all()
+    ).results,
+    current,
+  );
+  assert.equal(outbound, 0);
 });

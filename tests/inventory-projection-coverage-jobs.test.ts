@@ -31,6 +31,7 @@ async function fixture(
       "0052_inventory_projection_jobs.sql",
       "0053_inventory_projection_coverage_jobs.sql",
       "0056_inventory_current_work_selection.sql",
+      "0066_inventory_projection_coverage_holds.sql",
     ])
       await applyMigration(f.db, name);
     const operation = observation("op", "operation");
@@ -136,7 +137,7 @@ async function resign(page: PreparedCoverageRecovery) {
   page.digest = await sha256(canonical(manifest));
 }
 
-test("full source completion recovers context-held contacts in bounded pages without contact fan-out during ingestion", async (t) => {
+test("full source completion recovers coverage-held contacts in bounded pages without contact fan-out during ingestion", async (t) => {
   const f = await fixture(205);
   try {
     assert.equal((await f.recovery.step("a")).kind, "idle");
@@ -222,7 +223,7 @@ test("full source completion recovers context-held contacts in bounded pages wit
   }
 });
 
-test("unchanged verification revisits only held context and preserves ready payloads and work versions", async () => {
+test("unchanged verification preserves ready payloads and work versions", async () => {
   const f = await fixture(3, { complete: true });
   try {
     await f.recovery.step("a");
@@ -273,6 +274,39 @@ test("missing operation context stays held without spinning and later operation 
     assert.ok("held" in held);
     assert.equal(held.held, 1);
     assert.equal((await f.recovery.step("a")).kind, "idle");
+    assert.equal((await f.jobs.projectNext("a")).kind, "idle");
+    const heldProjection = await f.db
+      .prepare("SELECT * FROM comparison_projections WHERE record_key='q0000'")
+      .first<{ reason: string }>();
+    assert.equal(heldProjection?.reason, "operation_context_incomplete");
+    const work = (
+      await f.db
+        .prepare("SELECT * FROM comparison_work ORDER BY record_key")
+        .all()
+    ).results;
+    await f.full(f.sources);
+    const unchanged = await f.recovery.step("a");
+    assert.ok("records" in unchanged);
+    assert.equal(unchanged.records, 0);
+    assert.equal(unchanged.complete, true);
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT * FROM comparison_projections WHERE record_key='q0000'",
+        )
+        .first(),
+      heldProjection,
+      "an unchanged scan does not rewrite a persistent context hold",
+    );
+    assert.deepEqual(
+      (
+        await f.db
+          .prepare("SELECT * FROM comparison_work ORDER BY record_key")
+          .all()
+      ).results,
+      work,
+      "a context change, rather than another full scan, must wake this contact",
+    );
     assert.equal((await f.jobs.projectNext("a")).kind, "idle");
     await f.full([f.operation, ...f.sources]);
     const expanded = await f.jobs.expandNext("a");

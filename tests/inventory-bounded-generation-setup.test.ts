@@ -24,6 +24,7 @@ async function fixture(count: number) {
       "0053_inventory_projection_coverage_jobs.sql",
       "0054_inventory_bounded_generation_setup.sql",
       "0056_inventory_current_work_selection.sql",
+      "0066_inventory_projection_coverage_holds.sql",
     ])
       await applyMigration(f.db, name);
     const operations = Array.from({ length: count }, (_, i) =>

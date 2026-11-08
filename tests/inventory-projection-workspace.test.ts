@@ -131,7 +131,7 @@ test("incomplete upstream context holds projections until the full collection an
     );
     const held = await workspace.prepare("a", f.generation, "source", ["q"]);
     assert.equal(held.rows[0].state, "held");
-    assert.equal(held.rows[0].reason, "operation_context_incomplete");
+    assert.equal(held.rows[0].reason, "source_coverage_incomplete");
     assert.equal(
       (await decrypt(f, held, "q")).record.STATION_CALLSIGN,
       undefined,

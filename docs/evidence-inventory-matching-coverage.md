@@ -156,10 +156,17 @@ comparisons prepared at or after its captured scope clock; late signals and lost
 acknowledgements must leave newer work pending. Whole-log recovery per completed
 LoTW day remains disallowed.
 
-Also separate projections held for missing full-source coverage from those held
-for missing/unresolved operation/event context. The existing projection-coverage
-job currently uses the same reason for both and can revisit permanent context
-holds after an unchanged full scan. Narrow that recovery before activation.
+Projection recovery is now narrowed by
+[migration 0066](../migrations/0066_inventory_projection_coverage_holds.sql).
+Missing full-source coverage uses `source_coverage_incomplete`; missing/unresolved
+operation/event context retains `operation_context_incomplete`. Only the former
+enters the partial recovery index. An actual Worker recovers 22 baseline-held
+contacts into 21 ready projections and one missing-operation hold. An unchanged
+full scan then queues zero contacts and preserves all projection work versions;
+later operation arrival still repairs context through the operation job.
+The focused native/Worker/projection suite passes 27 tests. Logs are
+`/tmp/lofi-ferry-projection-coverage-holds-focused.log` and
+`/tmp/lofi-ferry-projection-coverage-holds-types.log`.
 
 Then integrate coverage, pair, bucket, matching and conservative adoption phases
 with the durable coordinator/hosted wakeups. Ownership-aware planning, source

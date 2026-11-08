@@ -26,7 +26,7 @@ const identifier = (value: unknown): value is string =>
 const leaseScope = (generation: string, scope: string) =>
   canonical(["projection-coverage", generation, scope]);
 
-/** Full baseline completion wakes context-held projections through a bounded
+/** Full baseline completion wakes coverage-held projections through a bounded
  * native keyset. It does not refresh upstream evidence or create write authority. */
 export class InventoryProjectionCoverageJobs {
   constructor(readonly store: Store) {}
@@ -123,7 +123,7 @@ export class InventoryProjectionCoverageJobs {
     try {
       result = await this.store.db.batch([
         this.store.statement(
-          `WITH selected AS MATERIALIZED(SELECT record_key FROM comparison_projections INDEXED BY comparison_projection_context_held WHERE tenant=?1 AND generation_id=?2 AND scope_id=?3 AND facet='source' AND state='held' AND reason='operation_context_incomplete' AND record_key>?4 ORDER BY record_key LIMIT ?5+1), chunk AS MATERIALIZED(SELECT record_key FROM selected ORDER BY record_key LIMIT ?5)
+          `WITH selected AS MATERIALIZED(SELECT record_key FROM comparison_projections INDEXED BY comparison_projection_coverage_held WHERE tenant=?1 AND generation_id=?2 AND scope_id=?3 AND facet='source' AND state='held' AND reason='source_coverage_incomplete' AND record_key>?4 ORDER BY record_key LIMIT ?5+1), chunk AS MATERIALIZED(SELECT record_key FROM selected ORDER BY record_key LIMIT ?5)
 INSERT INTO inventory_projection_coverage_pages(tenant,page_id,generation_id,scope_id,config_version,work_version,completed_version,coverage_stream,coverage_partition,published_run,previous_cursor,next_cursor,row_count,complete,lease_token,lease_fence,input_digest,prepared_at)
 SELECT ?1,?6,?2,?3,?9,?7,?8,?10,?11,?12,?4,coalesce((SELECT max(record_key) FROM chunk),?4),(SELECT count(*) FROM chunk),CASE WHEN (SELECT count(*) FROM selected)>?5 THEN 0 ELSE 1 END,?13,?14,?15,?16`,
           j.tenant,

@@ -18,6 +18,7 @@ export async function matchingWorkFixture(
       "0056_inventory_current_work_selection.sql",
       "0057_inventory_scoped_activation_debt.sql",
       "0058_inventory_matching_work.sql",
+      "0066_inventory_projection_coverage_holds.sql",
     ])
       await applyMigration(f.db, name);
     return {

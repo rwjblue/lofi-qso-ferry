@@ -379,7 +379,7 @@ export class InventoryProjectionWorkspace {
             ref.parent_key === input.parent_key,
         );
         if (input.parent_key && !coverageReady)
-          reason = "operation_context_incomplete";
+          reason = "source_coverage_incomplete";
         else if (input.parent_key && contextOverflow)
           reason = "projection_context_bound";
         else if (coverageReady && input.member_state !== "present")

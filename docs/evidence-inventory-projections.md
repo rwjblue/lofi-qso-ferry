@@ -153,12 +153,15 @@ An intervening collection/hold, new full run, changed source binding, retired in
 account lock or expired/replaced lease prevents stale progress. A new full baseline
 advances the job version and resets its cursor while preserving completed history.
 
-Recovery visits at most 200 `operation_context_incomplete` source projections per
+Recovery visits at most 200 `source_coverage_incomplete` source projections per
 page through a dedicated partial index. Native SQL derives the frontier/count and
 queues those contacts for the existing guarded projection publisher. Already dirty
-work is coalesced. Ready projections never enter the recovery index. Missing
-operation data remains held after one revisit; another unchanged job turn cannot
-spin on it. Later operation data uses the separate topology job to repair context.
+work is coalesced. Ready projections never enter the recovery index.
+[Migration 0066](../migrations/0066_inventory_projection_coverage_holds.sql)
+separates these temporary baseline holds from `operation_context_incomplete`.
+Missing/unresolved operation or event data remains held after one revisit and
+does not reenter recovery on an unchanged full scan. Later operation/event data
+uses the separate topology job to repair context.
 
 One explicit INSERT drives the fixed native publication sequence: authority and
 range admission, bulk work upsert, continuation advancement and receipt completion.

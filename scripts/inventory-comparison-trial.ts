@@ -199,6 +199,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0063_inventory_matching_pair_pages.sql",
       "0064_inventory_matching_result_update.sql",
       "0065_inventory_matching_coverage_recovery.sql",
+      "0066_inventory_projection_coverage_holds.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);

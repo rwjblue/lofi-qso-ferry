@@ -98,12 +98,14 @@ function measured(database: D1Database) {
   };
 }
 function difference(after: Counters, before: Counters): Counters {
-  return Object.fromEntries(
-    Object.entries(after).map(([key, value]) => [
-      key,
-      value - before[key as keyof Counters],
-    ]),
-  ) as unknown as Counters;
+  return {
+    calls: after.calls - before.calls,
+    statements: after.statements - before.statements,
+    metadataStatements: after.metadataStatements - before.metadataStatements,
+    rowsRead: after.rowsRead - before.rowsRead,
+    rowsWritten: after.rowsWritten - before.rowsWritten,
+    sqlMs: after.sqlMs - before.sqlMs,
+  };
 }
 function observations(offset: number, count: number, edit = -1) {
   return Array.from({ length: count }, (_, position): InventoryObservation => {

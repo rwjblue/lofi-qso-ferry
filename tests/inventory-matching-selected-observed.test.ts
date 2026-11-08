@@ -12,6 +12,11 @@ async function fixture(count = 20) {
   });
   try {
     await applyMigration(f.db, "0075_inventory_matching_selected_observed.sql");
+    await applyMigration(f.db, "0076_inventory_matching_bucket_observed.sql");
+    await applyMigration(
+      f.db,
+      "0077_inventory_matching_selected_collected.sql",
+    );
     await f.matches.match("a", "destination", f.selected);
     return f;
   } catch (error) {

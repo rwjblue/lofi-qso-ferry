@@ -297,6 +297,19 @@ async function verifyHeld(directory: string, m: Manifest, runs: InventoryRuns) {
     await finishVerification(directory, m, runs);
   }
 }
+/** Validate each shared proof once; a whole-log currentness view repeats it per row. */
+export async function managedInventoryResultCounts(
+  db: D1Database,
+  tenant: string,
+) {
+  return db
+    .prepare(
+      "WITH live AS MATERIALIZED(SELECT DISTINCT tenant,set_id FROM match_results WHERE tenant=?1), valid AS MATERIALIZED(SELECT h.set_id FROM live c CROSS JOIN inventory_match_sets h WHERE h.tenant=c.tenant AND h.set_id=c.set_id AND h.state='committed' AND NOT EXISTS(SELECT 1 FROM inventory_match_stale_sets x WHERE x.tenant=h.tenant AND x.set_id=h.set_id)) SELECT s.provider,r.state,r.reason,count(*) AS records FROM valid v CROSS JOIN match_results r INDEXED BY match_result_set JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.destination WHERE r.tenant=?1 AND r.set_id=v.set_id GROUP BY s.provider,r.state,r.reason ORDER BY s.provider,r.state,r.reason",
+    )
+    .bind(tenant)
+    .all();
+}
+
 async function audit(f: Runtime, m: Manifest) {
   const runs = await f.db
     .prepare(
@@ -323,11 +336,7 @@ async function audit(f: Runtime, m: Manifest) {
       "SELECT state,reason,count(*) AS records FROM comparison_projections_current WHERE tenant='trial' GROUP BY state,reason ORDER BY state,reason",
     )
     .all();
-  const results = await f.db
-    .prepare(
-      "SELECT s.provider,r.state,r.reason,count(*) AS records FROM match_results_current r JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.destination WHERE r.tenant='trial' GROUP BY s.provider,r.state,r.reason ORDER BY s.provider,r.state,r.reason",
-    )
-    .all();
+  const results = await managedInventoryResultCounts(f.db, "trial");
   const control = await f.db
     .prepare(
       "SELECT c.phase,c.phase_count,c.idle_turns,c.work_version,c.observed_version,w.not_before FROM inventory_comparison_coordinators c JOIN inventory_comparison_wakeups w ON w.tenant=c.tenant WHERE c.tenant='trial'",
@@ -432,18 +441,21 @@ export async function inventoryManagedTrial(
       lastProgress = 0,
       stopReason = "time_limit";
     const deadline = Date.now() + maxDurationMs;
-    const progress = () => {
+    const progress = async () => {
       lastProgress = Date.now();
-      dependencies.progress?.({
+      const value = {
         event: "inventory_managed_progress",
         elapsedMs: Date.now() - started,
         readTurns,
         comparisonTurns,
         requests: transport.metrics,
         remainingMs: Math.max(0, deadline - Date.now()),
-      });
+        database: { ...meter.totals },
+      };
+      await privateJson(directory, "progress.json", value);
+      dependencies.progress?.(value);
     };
-    progress();
+    await progress();
     while (Date.now() < deadline) {
       const next = await store
         .statement(
@@ -513,8 +525,9 @@ export async function inventoryManagedTrial(
             Math.min(1000, next.due - Date.now(), deadline - Date.now()),
           ),
         );
-      if (Date.now() - lastProgress >= 30000) progress();
+      if (Date.now() - lastProgress >= 30000) await progress();
     }
+    await progress(); // Retain final continuation costs even if the audit fails.
     const state = await audit(f, m);
     if (
       ["quiescent", "comparison_parked"].includes(stopReason) &&
@@ -561,7 +574,7 @@ export async function inventoryManagedTrial(
     };
     await privateJson(directory, `report-${m.invocations}.json`, report);
     await privateJson(directory, "report.json", report);
-    progress();
+    await progress();
     return report;
   } finally {
     await f?.mf.dispose();

@@ -25,6 +25,15 @@ export interface InventoryMatchResult {
   set_id: string;
   derived_at: number;
 }
+export interface InventoryMatchingWorkClaim {
+  scope: string;
+  key: string;
+  workVersion: number;
+  completedVersion: number;
+  sourceConfigVersion: number;
+  destinationConfigVersion: number;
+  dueAt: number;
+}
 const refKey = (row: { scope: string; key: string; facet: string }) =>
   canonical([row.scope, row.key, row.facet]);
 const scope = (destination: string) => `matching:${destination}`;
@@ -35,7 +44,11 @@ const identifier = (value: unknown): value is string =>
  * proof, delivery attempt or vendor write is created by matching publication. */
 export class InventoryMatchingResults {
   constructor(readonly store: Store) {}
-  private async recover(page: PreparedInventoryMatchingSnapshot, id: string) {
+  private async recover(
+    page: PreparedInventoryMatchingSnapshot,
+    id: string,
+    digest = page.digest,
+  ) {
     const receipt = await this.store
       .statement(
         "SELECT input_digest,row_count,state FROM inventory_match_sets WHERE tenant=? AND set_id=?",
@@ -44,7 +57,7 @@ export class InventoryMatchingResults {
       )
       .first<MatchReceipt>();
     if (!receipt) return null;
-    if (receipt.input_digest !== page.digest || receipt.state !== "committed")
+    if (receipt.input_digest !== digest || receipt.state !== "committed")
       throw new Error("inventory_match_receipt_conflict");
     return {
       setId: id,
@@ -59,9 +72,11 @@ export class InventoryMatchingResults {
     page: PreparedInventoryMatchingSnapshot,
     lease: Lease,
     id: string = crypto.randomUUID(),
+    work?: readonly InventoryMatchingWorkClaim[],
   ) {
     page = structuredClone(page);
     lease = structuredClone(lease);
+    work = structuredClone(work);
     const { digest, ...manifest } = page;
     if (digest !== (await sha256(canonical(manifest))))
       throw new Error("inventory_matching_preparation_changed");
@@ -73,7 +88,37 @@ export class InventoryMatchingResults {
       lease.scope !== scope(page.destination)
     )
       throw new Error("invalid_inventory_matching_lease");
-    const receipt = await this.recover(page, id);
+    if (
+      work &&
+      (work.length !== page.selected.length ||
+        !work.length ||
+        new Set(work.map((row) => canonical([row.scope, row.key]))).size !==
+          work.length ||
+        work.some(
+          (row) =>
+            !page.selected.some(
+              (selected) =>
+                selected.scope === row.scope && selected.key === row.key,
+            ) ||
+            ![
+              row.workVersion,
+              row.completedVersion,
+              row.sourceConfigVersion,
+              row.destinationConfigVersion,
+              row.dueAt,
+            ].every(Number.isSafeInteger) ||
+            row.workVersion <= row.completedVersion ||
+            row.completedVersion < 0 ||
+            row.sourceConfigVersion < 1 ||
+            row.destinationConfigVersion < 1 ||
+            row.dueAt < 0,
+        ))
+    )
+      throw new Error("invalid_inventory_matching_work_claim");
+    const inputDigest = work
+      ? await sha256(canonical({ matchingDigest: page.digest, work }))
+      : page.digest;
+    const receipt = await this.recover(page, id, inputDigest);
     if (receipt) return receipt;
     if (
       page.formatVersion !== 1 ||
@@ -143,7 +188,7 @@ export class InventoryMatchingResults {
         page.generation,
         page.domainVersion,
         page.sourceSetVersion,
-        page.digest,
+        inputDigest,
         lease.token,
         lease.fence,
         page.preparedAt,
@@ -214,12 +259,40 @@ export class InventoryMatchingResults {
       `json_extract(value,'$.source.scope'),json_extract(value,'$.source.key'),json_extract(value,'$.expectedVersion'),json_extract(value,'$.state'),json_extract(value,'$.reason'),json_extract(value,'$.remote.key'),json_extract(value,'$.coverage')`,
       rows,
     );
+    if (work) {
+      plan.push(
+        this.store.statement(
+          "INSERT INTO inventory_match_work_claims(tenant,set_id,row_count) VALUES(?,?,?)",
+          page.tenant,
+          id,
+          work.length,
+        ),
+      );
+      stage(
+        "inventory_match_work_rows",
+        "generation_id,destination,source_scope,record_key,work_version,completed_version,source_config_version,destination_config_version,due_at",
+        "json_extract(value,'$.generation'),json_extract(value,'$.destination'),json_extract(value,'$.scope'),json_extract(value,'$.key'),json_extract(value,'$.workVersion'),json_extract(value,'$.completedVersion'),json_extract(value,'$.sourceConfigVersion'),json_extract(value,'$.destinationConfigVersion'),json_extract(value,'$.dueAt')",
+        work.map((row) => ({
+          ...row,
+          generation: page.generation,
+          destination: page.destination,
+        })),
+      );
+    }
     const bound = (sql: string) => this.store.statement(sql, page.tenant, id);
     plan.push(
       bound("INSERT INTO inventory_match_guards(tenant,set_id) VALUES(?,?)"),
       bound(`INSERT INTO match_results(tenant,destination,source_scope,record_key,version,set_id,state,reason,remote_key,derived_at,next_eligible_at)
        SELECT q.tenant,h.destination,q.source_scope,q.record_key,q.expected_version+1,q.set_id,q.state,q.reason,q.remote_key,h.prepared_at,h.prepared_at+60000 FROM inventory_match_rows q JOIN inventory_match_sets h ON h.tenant=q.tenant AND h.set_id=q.set_id WHERE q.tenant=? AND q.set_id=?
        ON CONFLICT(tenant,destination,source_scope,record_key) DO UPDATE SET version=excluded.version,set_id=excluded.set_id,state=excluded.state,reason=excluded.reason,remote_key=excluded.remote_key,derived_at=excluded.derived_at,next_eligible_at=excluded.next_eligible_at`),
+    );
+    if (work)
+      plan.push(
+        bound(
+          `UPDATE matching_work SET completed_version=work_version,last_completed_set=?2,hold_reason=NULL WHERE rowid IN(SELECT w.rowid FROM inventory_match_work_rows q CROSS JOIN matching_work w WHERE q.tenant=?1 AND q.set_id=?2 AND w.tenant=q.tenant AND w.generation_id=q.generation_id AND w.destination=q.destination AND w.source_scope=q.source_scope AND w.record_key=q.record_key)`,
+        ),
+      );
+    plan.push(
       bound(
         "UPDATE inventory_match_sets SET state='committed' WHERE tenant=? AND set_id=?",
       ),
@@ -230,7 +303,9 @@ export class InventoryMatchingResults {
     try {
       results = await this.store.db.batch(plan);
     } catch (error) {
-      const recovered = await this.recover(page, id).catch(() => null);
+      const recovered = await this.recover(page, id, inputDigest).catch(
+        () => null,
+      );
       if (recovered) return recovered;
       throw error;
     }

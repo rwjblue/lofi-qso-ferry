@@ -11,6 +11,7 @@ import {
   InventoryIngestion,
   type InventoryObservation,
 } from "../src/inventory-ingestion.ts";
+import { planInventoryRun } from "../src/inventory-run-plans.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import { activateInventoryRuntime } from "../src/inventory-runtime.ts";
 import {
@@ -27,22 +28,33 @@ import {
   measureD1,
 } from "./inventory-benchmark-metrics.ts";
 
+type SyntheticObservation = InventoryObservation & {
+  body: Record<string, unknown>;
+};
+
 const { values } = parseArgs({
   options: {
     contacts: { type: "string", default: "200" },
     remote: { type: "string", default: "empty" },
     "page-size": { type: "string", default: "1000" },
     schema: { type: "string", default: "current" },
+    "incremental-rounds": { type: "string", default: "0" },
   },
 });
 const contacts = Number(values.contacts),
-  pageSize = Number(values["page-size"]);
+  pageSize = Number(values["page-size"]),
+  incrementalRounds = Number(values["incremental-rounds"]);
 assert.ok(
   Number.isSafeInteger(contacts) && contacts >= 1 && contacts <= 200000,
 );
 assert.ok(Number.isSafeInteger(pageSize) && pageSize >= 1 && pageSize <= 1000);
 assert.ok(values.remote === "empty" || values.remote === "matched");
 assert.ok(values.schema === "current" || values.schema === "74");
+assert.ok(
+  Number.isSafeInteger(incrementalRounds) &&
+    incrementalRounds >= 0 &&
+    incrementalRounds <= 20,
+);
 const remote = values.remote;
 const base = await database();
 try {
@@ -245,7 +257,7 @@ try {
       .toString(36)
       .toUpperCase()}`;
   const at = (i: number) => Date.UTC(2026, 0, 1, 13) + i * 60000;
-  const sourceRows: InventoryObservation[] = Array.from(
+  const sourceRows: SyntheticObservation[] = Array.from(
     { length: contacts },
     (_, i) => ({
       family: "qso",
@@ -268,7 +280,7 @@ try {
       },
     }),
   );
-  const operations: InventoryObservation[] = Array.from(
+  const operations: SyntheticObservation[] = Array.from(
     { length: operationCount },
     (_, i) => ({
       family: "operation",
@@ -329,15 +341,37 @@ try {
     );
     assert.ok(lease);
     try {
+      const prior = context.stream.checkpoint as {
+        policyEpoch?: string;
+        operations?: { watermark: number };
+        qsos?: { watermark: number };
+      };
+      const watermark = (family: string, floor: number) =>
+        Math.max(
+          floor,
+          ...rows
+            .filter((row) => row.family === family)
+            .map((row) => Number(row.order)),
+        );
       const checkpoint =
         context.stream.provider === "lofi"
           ? {
               mode: "forward",
               accountId: context.stream.logicalIdentity,
               readerPolicy: "all-clients-v1",
-              policyEpoch: id,
-              operations: { watermark: stamp },
-              qsos: { watermark: stamp + contacts },
+              policyEpoch: prior.policyEpoch ?? id,
+              operations: {
+                watermark: watermark(
+                  "operation",
+                  prior.operations?.watermark ?? stamp,
+                ),
+              },
+              qsos: {
+                watermark: watermark(
+                  "qso",
+                  prior.qsos?.watermark ?? stamp + contacts,
+                ),
+              },
             }
           : { synthetic: true };
       const requestBinding =
@@ -355,6 +389,7 @@ try {
           completedStreams: complete ? context.run.requiredStreams : [],
           proposedCheckpoint: complete ? checkpoint : undefined,
           nextDueAt: Date.now(),
+          origin: context.run.mode === "delta" ? "forward" : "historical",
         }),
       );
     } finally {
@@ -512,6 +547,231 @@ try {
       uploads: 0,
     }),
   );
+  if (incrementalRounds) {
+    const baseline = { ...meter.totals },
+      baselineTurns = turns;
+    const incrementalStarted = performance.now();
+    const firstStage = stages.length;
+    async function results() {
+      return (
+        await base.db
+          .prepare(
+            "SELECT record_key,version,set_id,state,reason FROM match_results_current ORDER BY record_key",
+          )
+          .all<{
+            record_key: string;
+            version: number;
+            set_id: string;
+            state: string;
+            reason: string | null;
+          }>()
+      ).results;
+    }
+    async function retained() {
+      const row = await base.db
+        .prepare(
+          "SELECT (SELECT count(*) FROM inventory_payloads) AS inventoryPayloads,(SELECT count(*) FROM comparison_projection_payloads) AS projectionPayloads,(SELECT count(*) FROM inventory_match_sets) AS matchSets,(SELECT count(*) FROM inventory_matching_selected_pages) AS selectedPages,(SELECT count(*) FROM inventory_matching_bucket_pages) AS bucketPages,(SELECT count(*) FROM inventory_matching_bucket_pages WHERE row_count=0) AS emptyBucketPages",
+        )
+        .first();
+      assert.ok(row);
+      return row;
+    }
+    async function delta(rows: InventoryObservation[]) {
+      const stream = await inventory.snapshot("a", source.scope, source.stream);
+      assert.ok(stream);
+      const lease = await store.claim(
+        "a",
+        `inventory:${source.scope}`,
+        Date.now(),
+        60000,
+      );
+      assert.ok(lease);
+      let id: string;
+      try {
+        id = (
+          await runs.begin({
+            stream,
+            lease,
+            definition: await planInventoryRun(
+              stream,
+              { provider: "lofi", pageSize },
+              { mode: "delta" },
+            ),
+          })
+        ).id;
+      } finally {
+        await store.release(lease);
+      }
+      await append(id, rows, true);
+      await finish(id);
+      await drain();
+    }
+    const incrementalSizeBefore = (await base.db.prepare("SELECT 1").run()).meta
+      .size_after;
+    const outcomes: unknown[] = [];
+    let revision = stamp + contacts + 100;
+    async function exercise(
+      name: string,
+      rows: InventoryObservation[],
+      unchanged: boolean,
+      scopeSize: number,
+    ) {
+      stage = name;
+      const previous = await results(),
+        storageBefore = await retained();
+      assert.equal(previous.length, contacts);
+      await delta(rows);
+      const current = await results();
+      assert.equal(current.length, contacts);
+      const storageAfter = await retained();
+      if (unchanged) {
+        assert.deepEqual(
+          current,
+          previous,
+          `${name} rewrote comparison results`,
+        );
+        assert.deepEqual(
+          storageAfter,
+          storageBefore,
+          `${name} retained new bodies or match evidence`,
+        );
+      }
+      for (let i = scopeSize; i < contacts; i++)
+        assert.deepEqual(
+          current[i],
+          previous[i],
+          `${name} changed an unrelated result`,
+        );
+      assert.deepEqual(
+        await base.db
+          .prepare(
+            "SELECT (SELECT count(*) FROM matching_work WHERE completed_version<work_version) AS matching,(SELECT count(*) FROM inventory_matching_selected_jobs WHERE completed_version<work_version) AS selected,(SELECT count(*) FROM inventory_matching_bucket_jobs WHERE completed_version<work_version) AS buckets,(SELECT count(*) FROM inventory_comparison_wakeups WHERE not_before IS NOT NULL) AS wakeups",
+          )
+          .first(),
+        { matching: 0, selected: 0, buckets: 0, wakeups: 0 },
+      );
+      outcomes.push({
+        stage: name,
+        changedResults: current.filter(
+          (row, i) =>
+            row.version !== previous[i]?.version ||
+            row.set_id !== previous[i]?.set_id,
+        ).length,
+        storageBefore,
+        storageAfter,
+        states: Object.fromEntries(
+          [...new Set(current.map((row) => row.state))].map((state) => [
+            state,
+            current.filter((row) => row.state === state).length,
+          ]),
+        ),
+      });
+      checkpoint();
+    }
+    function changed(
+      row: InventoryObservation,
+      body: Record<string, unknown>,
+      status: "active" | "deleted" = "active",
+    ): SyntheticObservation {
+      revision++;
+      return {
+        ...row,
+        body: { ...body, syncedAtMillis: revision },
+        status,
+        order: revision,
+        revision: String(revision),
+      };
+    }
+    for (let round = 1; round <= incrementalRounds; round++) {
+      await exercise(`delta-empty-${round}`, [], true, 0);
+      await exercise(
+        `delta-stable-${round}`,
+        sourceRows.slice(0, pageSize),
+        true,
+        0,
+      );
+      const original = sourceRows[0];
+      assert.ok(original);
+      const edit = changed(original, {
+        ...original.body,
+        their: { call: `N0ED${round}` },
+      });
+      await exercise(
+        `delta-contact-edit-${round}`,
+        [edit],
+        false,
+        Math.min(100, contacts),
+      );
+      const operation = operations[0];
+      assert.ok(operation);
+      operations[0] = changed(operation, {
+        ...operation.body,
+        grid: round % 2 ? "FN32" : "FN33",
+      });
+      await exercise(
+        `delta-operation-edit-${round}`,
+        [operations[0]],
+        false,
+        Math.min(100, contacts),
+      );
+      const retired = changed(edit, edit.body, "deleted");
+      await exercise(
+        `delta-retire-${round}`,
+        [retired],
+        false,
+        Math.min(100, contacts),
+      );
+      sourceRows[0] = changed(original, original.body);
+      await exercise(
+        `delta-restore-${round}`,
+        [sourceRows[0]],
+        false,
+        Math.min(100, contacts),
+      );
+    }
+    const finalSize = (await base.db.prepare("SELECT 1").run()).meta.size_after;
+    assert.equal(meter.totals.metadataStatements, meter.totals.statements);
+    assert.equal(delayed.length, 0);
+    assert.deepEqual(
+      (
+        await base.db
+          .prepare(
+            "SELECT * FROM private_data WHERE kind='credential' ORDER BY connection",
+          )
+          .all()
+      ).results,
+      credentials.results,
+    );
+    assert.deepEqual(
+      await base.db.prepare("SELECT count(*) AS n FROM attempts").first(),
+      { n: 0 },
+    );
+    console.log(
+      JSON.stringify({
+        event: "incremental-result",
+        contacts,
+        remote,
+        pageSize,
+        schema: values.schema,
+        rounds: incrementalRounds,
+        stages: stages.slice(firstStage),
+        outcomes,
+        database: difference(meter.totals, baseline),
+        queueTurns: turns - baselineTurns,
+        storage: {
+          sqliteBytesBefore: incrementalSizeBefore,
+          sqliteBytesAfter: finalSize,
+          growthBytes: finalSize - incrementalSizeBefore,
+        },
+        wallMs: performance.now() - incrementalStarted,
+        normalizedInput: true,
+        adaptersVendorPacingAndProofsExcluded: true,
+        execution: "node_with_native_d1",
+        vendorRequests: 0,
+        uploads: 0,
+      }),
+    );
+  }
 } finally {
   await base.mf.dispose();
 }

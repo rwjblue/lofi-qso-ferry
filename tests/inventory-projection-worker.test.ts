@@ -7,11 +7,12 @@ import { Store } from "../src/store.ts";
 import { applyMigration, keys } from "./helpers.ts";
 import { fixture, observation } from "./inventory-context-fixtures.ts";
 
-test("native workerd prepares and decrypts a shared source projection cohort without modifying inventory or sending HTTP", async (t) => {
+test("native workerd publishes and recovers a shared source projection cohort without changing canonical inventory or sending HTTP", async (t) => {
   const bundle = await build({
     stdin: {
       contents: `
 import { InventoryProjectionWorkspace, inventoryProjectionIdentity, inventoryProjectionDigest } from './src/inventory-projection-workspace.ts';
+import { InventoryProjections } from './src/inventory-projections.ts';
 import { keyring, open } from './src/security.ts';
 import { Store } from './src/store.ts';
 export default { async fetch(request,env) {
@@ -26,7 +27,15 @@ export default { async fetch(request,env) {
   decoded++;
  }
  const { digest,...input }=page;
- return Response.json({decoded,allMatch,stats:page.stats,digestMatches:digest===await inventoryProjectionDigest(input),plaintextLeaked:JSON.stringify(page).includes('Private native source narrative')});
+ const publisher=new InventoryProjections(store);
+ const lease=await store.claim('a','projection:'+generation+':source',Date.now(),60000);
+ if(!lease)throw new Error('projection fixture lease missing');
+ try {
+  const publication=await publisher.publish(page,lease,'native-projections');
+  const replay=await publisher.publish(page,lease,'native-projections');
+  const stored=await publisher.body('a',generation,'source','q0','source');
+  return Response.json({decoded,allMatch,stats:page.stats,digestMatches:digest===await inventoryProjectionDigest(input),plaintextLeaked:JSON.stringify(page).includes('Private native source narrative'),publication,recovered:replay.recovered,storedMatches:stored?.version===1&&stored.body.record.STATION_CALLSIGN==='K1ABC'});
+ } finally { await store.release(lease); }
 } };`,
       loader: "ts",
       resolveDir: process.cwd(),
@@ -58,6 +67,7 @@ export default { async fetch(request,env) {
   const db = (await runtime.getD1Database("DB")) as D1Database;
   await applyMigration(db, "0001_foundation.sql");
   const f = await fixture({ mf: runtime, db, store: new Store(db, keys) });
+  await applyMigration(db, "0048_inventory_projection_publication.sql");
   const qsos = Array.from({ length: 20 }, (_, i) => {
     const row = observation(`q${i}`);
     row.body = {
@@ -90,6 +100,9 @@ export default { async fetch(request,env) {
     stats: { dependencies: number; decryptedBodies: number };
     digestMatches: boolean;
     plaintextLeaked: boolean;
+    publication: { records: number; ready: number; statements: number };
+    recovered: boolean;
+    storedMatches: boolean;
   };
   assert.equal(result.decoded, 20);
   assert.equal(result.allMatch, true);
@@ -97,6 +110,11 @@ export default { async fetch(request,env) {
   assert.equal(result.plaintextLeaked, false);
   assert.equal(result.stats.dependencies, 22);
   assert.equal(result.stats.decryptedBodies, 22);
+  assert.equal(result.publication.records, 20);
+  assert.equal(result.publication.ready, 20);
+  assert.ok(result.publication.statements < 20);
+  assert.equal(result.recovered, true);
+  assert.equal(result.storedMatches, true);
   assert.equal(outbound, 0);
   assert.deepEqual(await f.inventory.snapshot("a", "source", "sync"), before);
   assert.deepEqual(
@@ -104,6 +122,6 @@ export default { async fetch(request,env) {
     credential,
   );
   t.diagnostic(
-    "native workerd: 20 encrypted source projections, 22 shared dependency decryptions, no canonical writes or vendor HTTP",
+    "native workerd: 20 encrypted source projections published/recovered, 22 shared dependency decryptions, no canonical writes or vendor HTTP",
   );
 });

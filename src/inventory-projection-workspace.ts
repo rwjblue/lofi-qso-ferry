@@ -389,7 +389,12 @@ export class InventoryProjectionWorkspace {
           (!operation?.payload_id ||
             operation.status !== "active" ||
             operation.member_state !== "present" ||
-            eventRefs.some((ref) => ref.member_state !== "present"))
+            eventRefs.some(
+              (ref) =>
+                ref.member_state !== "present" ||
+                !ref.payload_id ||
+                ref.semantic_version === null,
+            ))
         )
           reason = "operation_context_incomplete";
         else

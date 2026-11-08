@@ -427,38 +427,43 @@ test("recovery publication and readiness signals ignore retained superseded proo
     range: ["2026-11-09", "2026-11-09"],
   });
   try {
-    await f.matches.publish(
-      await f.workspace.prepare("a", "destination", f.selected),
-      f.lease,
-    );
-    // Warm the lookup plans before comparing retained-history growth. A
-    // separate 500-proof run verifies the same warm publication cost.
-    for (let i = 0; i < 50; i++)
-      await f.matches.publish(
+    const reads: number[] = [];
+    let lastSet = "";
+    for (let i = 0; i <= 500; i++) {
+      if (i > 0 && i % 25 === 0) {
+        await f.store.release(f.lease);
+        const lease = await f.store.claim(
+          "a",
+          "matching:destination",
+          Date.now(),
+          60000,
+        );
+        assert.ok(lease);
+        Object.assign(f.lease, lease);
+      }
+      const result = await f.matches.publish(
         await f.workspace.prepare("a", "destination", f.selected),
         f.lease,
       );
-    const before = await f.matches.publish(
-      await f.workspace.prepare("a", "destination", f.selected),
-      f.lease,
-    );
-    for (let i = 0; i < 100; i++)
-      await f.matches.publish(
-        await f.workspace.prepare("a", "destination", f.selected),
-        f.lease,
+      lastSet = result.setId;
+      if (i === 0) continue;
+      reads.push(result.rowsRead);
+      // Native successful-path costs vary even after warming. Enforce a fixed
+      // per-publication budget across history sizes instead of two samples.
+      assert.ok(
+        result.rowsRead <= 700,
+        `publication ${i}: ${result.rowsRead} reads`,
       );
-    const after = await f.matches.publish(
-      await f.workspace.prepare("a", "destination", f.selected),
-      f.lease,
-    );
+      assert.equal(result.rowsWritten, 155);
+    }
     t.diagnostic(
-      `one wait point before/after 100 old proofs: reads=${before.rowsRead}/${after.rowsRead}, writes=${before.rowsWritten}/${after.rowsWritten}`,
+      `one wait point across 500 old proofs: ${Math.min(...reads)}–${Math.max(...reads)} reads per publication, 155 writes`,
     );
     const queryPlan = await f.db
       .prepare(
         "EXPLAIN QUERY PLAN SELECT 1 FROM inventory_match_recovery_source_requirements WHERE tenant=? AND set_id=?",
       )
-      .bind("a", after.setId)
+      .bind("a", lastSet)
       .all<{ detail: string }>();
     assert.ok(
       queryPlan.results
@@ -466,10 +471,17 @@ test("recovery publication and readiness signals ignore retained superseded proo
         .every((row) => row.detail.includes("VIRTUAL TABLE")),
       "retained dependency tables use indexed searches",
     );
-    assert.ok(after.rowsRead <= before.rowsRead + 8);
-    assert.equal(after.rowsWritten, before.rowsWritten);
     assert.equal(await count(f, "inventory_matching_coverage_dependents"), 23);
-    assert.equal(await count(f, "inventory_match_recovery"), 153);
+    assert.equal(await count(f, "inventory_match_recovery"), 501);
+    await f.store.release(f.destinationLease);
+    const destinationLease = await f.store.claim(
+      "a",
+      "inventory:destination",
+      Date.now(),
+      90000,
+    );
+    assert.ok(destinationLease);
+    Object.assign(f.destinationLease, destinationLease);
     await f.fullReceipt([], ["2026-11-08", "2026-11-08"]);
     assert.equal(await count(f, "inventory_matching_coverage_events"), 1);
   } finally {

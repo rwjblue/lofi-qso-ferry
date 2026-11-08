@@ -117,19 +117,20 @@ The default path stages metadata, publishes canonical records and deletes scratc
 
 ### Comparison and work tables
 
-| Table                       | Key                                                         | Principal columns                                                                                                        |
-| --------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `index_generations`         | `(tenant, generation_id)`                                   | fixed key ID, bucket/normalization versions, state, captured source positions and catch-up progress                      |
-| `comparison_domains`        | `(tenant)`                                                  | one contact-comparison domain per tenant initially; monotonic `version`, `source_set_version`, active/pending generation |
-| `inventory_comparison_keys` | `(tenant)`                                                  | stable key ID and envelope-encrypted tenant HMAC secret, independent of credential and KEK versions                      |
-| `comparison_builds`         | `(tenant, generation_id, scope_id)`                         | configuration/version, bounded keyset cursor and index-census completion                                                 |
-| `projection_domains`        | `(tenant, source, operation_key)`                           | `topology_version`, `ready_version`, pending work and bounded continuation                                               |
-| `comparison_index`          | `(tenant, generation_id, scope_id, record_key, facet)`      | key class, `bucket_hash`, semantic/configuration/projection versions, parent/topology version, readiness                 |
-| `bucket_versions`           | `(tenant, generation_id, scope_id, key_class, bucket_hash)` | monotonic `version`                                                                                                      |
-| `comparison_work`           | `(tenant, generation_id, scope_id, record_key, facet)`      | coalesced projection work, monotonic work/completed versions and due time                                                |
-| `matching_work`             | `(tenant, destination, work_key)`                           | work `version`, `priority`, `due_at`, bounded continuation cursor, fixed failure code                                    |
-| `match_results`             | `(tenant, source, qso, destination)`                        | `source_generation`, result, remote reference, `policy_version`, fixed reason, `next_eligible_at`                        |
-| `match_dependencies`        | result key plus dependency kind, scope and dependency key   | key/index version, expected bucket/coverage/projection/ownership version                                                 |
+| Table                           | Key                                                         | Principal columns                                                                                                        |
+| ------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `index_generations`             | `(tenant, generation_id)`                                   | fixed key ID, bucket/normalization versions, state, captured source positions and catch-up progress                      |
+| `comparison_domains`            | `(tenant)`                                                  | one contact-comparison domain per tenant initially; monotonic `version`, `source_set_version`, active/pending generation |
+| `inventory_comparison_keys`     | `(tenant)`                                                  | stable key ID and envelope-encrypted tenant HMAC secret, independent of credential and KEK versions                      |
+| `comparison_builds`             | `(tenant, generation_id, scope_id)`                         | configuration/version, bounded keyset cursor and index-census completion                                                 |
+| `projection_domains`            | `(tenant, source, operation_key)`                           | `topology_version`, `ready_version`, pending work and bounded continuation                                               |
+| `comparison_index`              | `(tenant, generation_id, scope_id, record_key, facet)`      | key class, `bucket_hash`, semantic/configuration/projection versions, parent/topology version, readiness                 |
+| `bucket_versions`               | `(tenant, generation_id, scope_id, key_class, bucket_hash)` | monotonic `version`                                                                                                      |
+| `comparison_work`               | `(tenant, generation_id, scope_id, record_key, facet)`      | coalesced projection work, monotonic work/completed versions and due time                                                |
+| `inventory_membership_versions` | `(tenant, scope_id, entity_family, record_key, facet)`      | monotonic source membership certainty version, independent of unchanged observation freshness                            |
+| `matching_work`                 | `(tenant, destination, work_key)`                           | work `version`, `priority`, `due_at`, bounded continuation cursor, fixed failure code                                    |
+| `match_results`                 | `(tenant, source, qso, destination)`                        | `source_generation`, result, remote reference, `policy_version`, fixed reason, `next_eligible_at`                        |
+| `match_dependencies`            | result key plus dependency kind, scope and dependency key   | key/index version, expected bucket/coverage/projection/ownership version                                                 |
 
 The comparison index is derived and rebuildable. Only ordinary contacts enter it as QSO candidates; operation and event data remain projection dependencies. Initial complete records store one time bucket. Key classes are `call_and_time`, `call_only`, `time_only` and `unknown`; each class has a distinct HMAC domain. Pending/unavailable records immediately enter the narrowest known fallback domain. They cannot simply disappear behind a `readiness='ready'` filter.
 
@@ -491,6 +492,8 @@ Results distinguish `matched_existing`, `matched_ferry_owned`, `absent_at_invent
 ### Invalidation
 
 Every relevant insert/edit/status change updates old and new bucket generations and enqueues affected work atomically. A result records dependencies for every forward and reverse lookup, including buckets that returned zero rows. Preserve aggregate source visibility across relevant linked LoFi scopes when proving reverse uniqueness.
+
+Source membership certainty is a separate dependency from raw semantic versions and bucket membership. Operation/event membership changes advance the affected operation topology alongside semantic edits, coalesced once per page. Ordinary contact membership changes retain their hash, advance their membership version and queue only their own projection work. Every supplied candidate, including an excluded or presently irrelevant one, retains these dependencies; storing dependencies only for the eventual match would miss a later context change. Unresolved membership cannot establish deletion or absence. Unchanged successful verification updates coverage/freshness without forcing these per-record versions to advance.
 
 An absent bucket-version row means version zero. Its first mutation creates version one; subsequent changes increment it. Version rows are not deleted/recreated within a generation. Compaction must advance a generation checked by every surviving dependency, preventing an old empty result from becoming current after a bucket changes and is emptied again.
 

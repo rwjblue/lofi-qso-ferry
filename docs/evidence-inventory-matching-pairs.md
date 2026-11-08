@@ -134,10 +134,11 @@ and the Worker dry-run build pass. Logs are
 
 ## Remaining work
 
-Add selective recovery for source and destination date coverage. Completing a
-LoTW day must wake the affected blocked comparisons without sweeping the entire
-source log once per day. Coverage-set clocks already reject preparations that
-missed a newly added partition; they do not themselves schedule recovery.
+[Coverage wait points and readiness journaling](evidence-inventory-matching-coverage.md)
+now retain the selective recovery input. Complete the event dispatcher and bounded
+rematching publisher so a LoTW day wakes affected blocked comparisons without a
+whole-log sweep. Coverage-set clocks already reject preparations that missed a
+newly added partition; the new input tables do not themselves dispatch work.
 
 Then integrate fair pair/bucket/matching/adoption phases into the durable
 coordinator and hosted Queue/cron path. Ownership changes, due holds, source

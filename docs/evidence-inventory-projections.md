@@ -1,6 +1,6 @@
-# Encrypted comparison projection preparation
+# Encrypted comparison projections
 
-Status: local bounded preparation and encrypted capture replay, 2026-11-08. Projection publication, persisted matching and delivery integration are unfinished. Nothing was pushed, deployed, uploaded or reset in production.
+Status: local preparation, native publication, bounded bulk loading and encrypted capture replay, 2026-11-08. Complete matching snapshots, persisted results and delivery integration are unfinished. Nothing was pushed, deployed, uploaded or reset in production.
 
 The [workspace](../src/inventory-projection-workspace.ts) prepares up to twenty source or receipt projections. It captures the comparison generation/configuration, index/projection/work versions, semantic inputs, current operation topology, source membership versions and applicable source coverage. The index census must already be complete for that scope. It admits the union of at most 256 references against four-MiB ciphertext and plaintext budgets, loads immutable payload IDs in bulk and decrypts shared dependencies once.
 
@@ -20,6 +20,10 @@ The returned preparations contain only opaque metadata and envelope-encrypted bo
 - The final inventory selection passed **248 tests**, including hosted Queue execution and the native projection test. The preceding full regression checkpoint passed 2,054 tests; the serializer extraction separately passed 59 delivery/precision/signing tests. These overlapping counts should not be added.
 - TypeScript, repository lint/formatting and the Worker dry-run build passed. Logs are `/tmp/lofi-ferry-projection-workspace.log`, `/tmp/lofi-ferry-projection-worker.log`, `/tmp/lofi-ferry-inventory-projections-final.log` and `/tmp/lofi-ferry-projections-build.log`.
 
+These preparation checkpoints precede native publication. The later full inventory selection passed **271 tests**, including publication guards, metadata lookup, hosted Queue execution and native Worker checks. Its log is `/tmp/lofi-ferry-inventory-publication-regression.log`. The subsequent shared-body reader passed **28 focused publication/reader/Worker tests**, recorded in `/tmp/lofi-ferry-projection-bulk-read-final.log`. TypeScript passed after that change. Counts overlap and should not be added.
+
+After the shared reader and relation pass, repository lint/formatting, TypeScript, all 29 mise task definitions and the Worker dry-run build passed. The final dry-run log is `/tmp/lofi-ferry-projection-bulk-final-build.log`; inventory runtime and export activation remain off.
+
 ## Encrypted real-data replay
 
 The [capture trial](../scripts/inventory-comparison-trial.ts) now retains private `projection-preparations.json` artifacts as well as its count-only report. It still copies the original encrypted run capture into a new private directory, preserving credential identities and checking that canonical facets/timestamps and stream checkpoints remain unchanged. No vendor request or upload was made.
@@ -34,10 +38,30 @@ LoFi's capture still has incomplete full source coverage, so its twenty samples 
 
 This replay's database occupied **14,012,416 bytes**, in addition to the private sealed preparation artifact. An earlier run of the same index/membership schema measured 14,028,800 bytes. These small fixture allocation measurements do not establish full-log storage or throughput. The earlier [comparison evidence](evidence-inventory-comparison.md) records its publication statement/row boundaries.
 
-## Required native publication
+## Native publication and current reads
 
-The next change must publish the preparations through one guarded native batch. It must check the active/pending generation, scope configuration, current lease/account/connection, exact index/projection/work versions, every immutable input reference, semantic and membership versions, operation topology and captured coverage. Ready/excluded source rows with a parent require a complete, present operation/event closure. Native checks must reject missing dependencies, raced additions/moves and truncation independently of the application digest.
+[Migration 0048](../migrations/0048_inventory_projection_publication.sql) and [InventoryProjections](../src/inventory-projections.ts) implement one guarded publication batch. Native admission and final commit checks cover the active/pending generation, scope configuration, current lease/account/connection, exact index/projection/work versions, every immutable input reference, semantic and membership versions, operation topology and captured coverage. Ready/excluded source rows with a parent require a complete, present operation/event closure. Native checks reject omitted dependencies and raced event additions independently of a recomputed application digest. Admission alone cannot authorize a later commit after authority changes.
 
-Persist encrypted bodies separately from versioned projection metadata, then advance index readiness/projection versions and complete only the captured work versions atomically. Preserve hashes for context-dependent exclusions. A newer invalidation must remain pending, and a lost acknowledgement must recover a receipt without incrementing versions twice. Loading a retained projection must detect changed semantic/topology/membership/configuration inputs. Derivation cannot renew a vendor witness.
+Encrypted bodies live separately from versioned projection metadata. Publication advances index readiness/projection versions and completes only the captured work version atomically. Context-dependent exclusions retain their hashes. Lost acknowledgements recover immutable receipts without incrementing versions twice. Newer work stays pending. Late SQL failure rolls the entire body/metadata/work publication back. Twenty ready source projections sharing one operation use **12 publication statements, 1,672 rows read and 269 rows written**; lease, preparation and receipt lookup are outside that boundary.
 
-Soft multi-contact capacity failures must be split before publication; they must not permanently complete otherwise projectable work. Held context may need reevaluation when coverage completes even without a new semantic edit. Stable completed coverage must not force all ready projections to rebuild merely because a successful unchanged poll advanced a control version.
+Current reads reject changed semantic/topology/membership/configuration inputs and collecting source coverage. Bulk candidate lookup keeps those records visible as pending with no usable body reference. Unchanged full verification restores the existing ready projection without rebuilding it or changing its derivation time. Source membership and scan coverage still need separate matching checks; body availability does not grant current upstream membership or absence authority.
+
+The bulk body reader accepts at most 128 distinct immutable references across the complete forward/reverse union. Repeated references load and decrypt once. A metadata query admits total encrypted bytes against four MiB before loading ciphertext; decoding also enforces the plaintext bound. Missing or stale references remain explicit. Twenty shared bodies use **two reads, 360 rows read and twenty decryptions**; adding 5,000 unrelated projection/index rows leaves those metrics unchanged. The actual Worker WebCrypto test also bulk-loads the published cohort without external requests.
+
+Soft multi-contact capacity failures must be split before publication; they cannot permanently complete otherwise projectable work. The native publisher rejects such mixed capacity holds. Automatic work selection, coverage-completion wakeups for held context, bounded operation-child reprojection and payload/receipt collection remain unfinished.
+
+## Published real-data replay
+
+The next isolated replay published all 42 preparations through three guarded transactions. Each provider's commit receipt replay recovered with zero publication statements. Credentials, canonical facet versions/timestamps and stream checkpoints stayed unchanged.
+
+| Provider | Published | Ready | Held | Publication statements | Rows read | Rows written |
+| -------- | --------: | ----: | ---: | ---------------------: | --------: | -----------: |
+| LoFi     |        20 |     0 |   20 |                     12 |     1,096 |          266 |
+| LoTW     |         2 |     2 |    0 |                     12 |       132 |           32 |
+| QRZ      |        20 |    20 |    0 |                     12 |     1,014 |          266 |
+
+The incomplete LoFi capture correctly remains held. Its other 1,929 candidates remain pending and 51 bookkeeping entries retired; QRZ retains 230 pending candidates in addition to the twenty ready samples. LoTW's two receipt projections are ready, but its coverage still applies only to the explicitly selected day. No match, absence or adoption result was published.
+
+A fresh process authenticated and decrypted all **42 persisted projections**, in addition to the sealed preparations, through the bulk reader. The combined read used **two queries, 608 rows read, 21,495 encrypted input bytes, 9,107 plaintext bytes and 42 decryptions**. It recovered the active generation and checked an original stored hash for each provider. An older preparation-only capture also reopened without requiring projection publication tables.
+
+The published replay occupied **14,503,936 database bytes**. Like the earlier small captures, this does not establish full-log density or production throughput. The private directory ends in `bc6bfd0e-4b44-453d-af07-34c3de2f34b6`; count-only logs are `/tmp/lofi-ferry-projection-publication-capture.log`, `/tmp/lofi-ferry-projection-bulk-reopen.log` and `/tmp/lofi-ferry-projection-preparation-compat-reopen.log`. All replay/reopen runs made **zero vendor HTTP requests and zero uploads**.

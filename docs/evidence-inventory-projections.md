@@ -1,6 +1,6 @@
 # Encrypted comparison projections
 
-Status: local preparation, native publication, bounded bulk loading and encrypted capture replay, 2026-11-08. The later [matching evidence](evidence-inventory-matching.md) adds bounded forward/reverse collection and native comparison-result publication. Ownership/adoption and delivery integration are unfinished. Nothing was pushed, deployed, uploaded or reset in production.
+Status: local preparation, native publication, bounded bulk loading, encrypted capture replay and durable operation projection jobs, 2026-11-08. The later [matching evidence](evidence-inventory-matching.md) adds bounded forward/reverse collection and native comparison-result publication; [ownership evidence](evidence-inventory-ownership.md) covers historical adoption. Hosted comparison scheduling and delivery integration remain unfinished. Nothing was pushed, deployed, uploaded or reset in production.
 
 The [workspace](../src/inventory-projection-workspace.ts) prepares up to twenty source or receipt projections. It captures the comparison generation/configuration, index/projection/work versions, semantic inputs, current operation topology, source membership versions and applicable source coverage. The index census must already be complete for that scope. It admits the union of at most 256 references against four-MiB ciphertext and plaintext budgets, loads immutable payload IDs in bulk and decrypts shared dependencies once.
 
@@ -48,7 +48,7 @@ Current reads reject changed semantic/topology/membership/configuration inputs a
 
 The bulk body reader accepts at most 128 distinct immutable references across the complete forward/reverse union. Repeated references load and decrypt once. A metadata query admits total encrypted bytes against four MiB before loading ciphertext; decoding also enforces the plaintext bound. Missing or stale references remain explicit. Twenty shared bodies use **two reads, 360 rows read and twenty decryptions**; adding 5,000 unrelated projection/index rows leaves those metrics unchanged. The actual Worker WebCrypto test also bulk-loads the published cohort without external requests.
 
-Soft multi-contact capacity failures must be split before publication; they cannot permanently complete otherwise projectable work. The native publisher rejects such mixed capacity holds. Automatic work selection, coverage-completion wakeups for held context, bounded operation-child reprojection and payload/receipt collection remain unfinished.
+Soft multi-contact capacity failures must be split before publication; they cannot permanently complete otherwise projectable work. The native publisher rejects such mixed capacity holds. Bounded operation-child reprojection and pending-work selection are now implemented below. Hosted scheduling, coverage-completion wakeups for held context and payload/receipt collection remain unfinished.
 
 ## Published real-data replay
 
@@ -65,3 +65,73 @@ The incomplete LoFi capture correctly remains held. Its other 1,929 candidates r
 A fresh process authenticated and decrypted all **42 persisted projections**, in addition to the sealed preparations, through the bulk reader. The combined read used **two queries, 608 rows read, 21,495 encrypted input bytes, 9,107 plaintext bytes and 42 decryptions**. It recovered the active generation and checked an original stored hash for each provider. An older preparation-only capture also reopened without requiring projection publication tables.
 
 The published replay occupied **14,503,936 database bytes**. Like the earlier small captures, this does not establish full-log density or production throughput. The private directory ends in `bc6bfd0e-4b44-453d-af07-34c3de2f34b6`; count-only logs are `/tmp/lofi-ferry-projection-publication-capture.log`, `/tmp/lofi-ferry-projection-bulk-reopen.log` and `/tmp/lofi-ferry-projection-preparation-compat-reopen.log`. All replay/reopen runs made **zero vendor HTTP requests and zero uploads**.
+
+## Durable operation projection jobs
+
+[Migration 0052](../migrations/0052_inventory_projection_jobs.sql) and
+[InventoryProjectionJobs](../src/inventory-projection-jobs.ts) bridge operation
+barriers to bounded child work. An operation/event topology change queues one job
+per active/pending index generation in the ingestion transaction. It does not
+update every contact. Generation creation and source configuration changes enroll
+the corresponding jobs; existing domains receive a one-time enrollment.
+
+Each job retains its captured configuration/topology, monotonic work/completed
+versions and child keyset cursor. At most 200 child references enter one expansion
+page. Native admission validates the exact key range, count and completion claim,
+the current generation/scope/index census, account/connection and fenced lease.
+The batch queues stale children, advances only the captured continuation and commits
+an immutable receipt. Final guards repeat authority/version checks and ensure the
+qualifying children remain pending. It loads no encrypted contact bodies.
+
+Already dirty child work is coalesced rather than incremented again. Current child
+projections are skipped. A newer topology/configuration resets the job cursor and
+advances its work version; an old prepared page cannot complete it. Late SQL,
+account or topology changes roll the whole expansion back. Lost acknowledgement
+recovery returns the original receipt without advancing a newer continuation.
+Pending jobs cannot be deleted, and receipts have a seven-day minimum retention.
+Receipt collection itself remains future work.
+
+`expandNext()` selects one due operation job with a complete index census.
+`projectNext()` selects up to twenty pending records for one generation/scope and
+uses the existing guarded projection publisher. Deterministic multi-record capacity
+failures halve that cohort before retry; a single oversized record remains an
+explicit held projection. Pending-only global and per-scope due indexes replace
+the previous full work index, so completed history is absent from those selectors.
+The child index supports an operation's keyset range rather than repeatedly
+scanning already visited children or unrelated operations.
+
+A 205-contact fixture enqueues one operation job, expands it as 200 plus five
+children, then projects it in cohorts of at most twenty. Its source checkpoint and
+credential ciphertext remain unchanged throughout expansion/projection. Stable
+context verification does not enqueue the completed operation again. Separate
+tests cover omitted children, early completion, superseding topology, lost
+acknowledgements, account/lease races, late rollback, new-generation enrollment and
+coalescing of work that is already pending. The actual Worker drains 21 changed
+contacts as twenty plus one and returns to idle with zero external requests.
+
+These APIs do not yet constitute the complete hosted comparison coordinator.
+Coverage completion must wake context-held projections that were completed while
+the baseline was partial. Automatic generation/build selection, matching work and
+ownership-aware planning, Queue/cron integration and end-to-end fairness/retry
+policies remain unfinished. They must be connected before runtime activation;
+operation fan-out alone cannot establish full-log progress or the hours target.
+
+The 200-child expansion used **four statements, 1,238 rows read and 605 rows
+written**, excluding selection, preparation, receipt recovery and lease calls. An
+earlier version retaining the now-redundant full work index wrote 805 rows for the
+same expansion. Pending indexes add row/index work to future ingestion and
+projection completion; their complete cost belongs in the next end-to-end
+benchmark. Statement count alone does not measure that work.
+
+The inventory regression passed **366 tests**, including the new Worker and job
+tests, with no failures, skips or cancellations. Its 200-child measurement still
+included the redundant full work index. After that index was removed, the final
+focused selection passed fourteen tests against the final native SQL and measured
+the 605 writes above; those counts overlap. TypeScript, lint, formatting and the
+Worker dry-run build passed. Logs are
+`/tmp/lofi-ferry-inventory-projection-jobs-regression.log`,
+`/tmp/lofi-ferry-projection-jobs-final.log`,
+`/tmp/lofi-ferry-projection-jobs-types-verified.log`,
+`/tmp/lofi-ferry-projection-jobs-lint.log`,
+`/tmp/lofi-ferry-projection-jobs-format.log` and
+`/tmp/lofi-ferry-projection-jobs-build.log`.

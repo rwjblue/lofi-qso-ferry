@@ -10,11 +10,12 @@ import {
   sourceContact,
 } from "./inventory-matching-fixtures.ts";
 
-test("native workerd collects and publishes matching results without changing inventory or sending HTTP", async (t) => {
+test("native workerd matches and adopts historical records without changing inventory or sending HTTP", async (t) => {
   const bundle = await build({
     stdin: {
       contents: `
 import {InventoryMatchingResults} from './src/inventory-matching-results.ts';
+import {InventoryAssociations} from './src/inventory-associations.ts';
 import {Store} from './src/store.ts';
 import {keyring,canonical} from './src/security.ts';
 export default {async fetch(request,env){
@@ -23,8 +24,12 @@ export default {async fetch(request,env){
  const matches=new InventoryMatchingResults(store);
  const publication=await matches.match('a','destination',selected);
  const current=await matches.current('a','destination',selected);
- const activeLease=await store.statement("SELECT count(*) AS n FROM leases WHERE tenant='a' AND scope='matching:destination' AND expires_at>unixepoch('subsec')*1000").first();
- return Response.json({publication,current:current.results.filter(row=>row.state==='matched_existing'&&row.version===1).length,activeLease:activeLease.n,plaintextLeaked:canonical(current).includes('Private matching')});
+ const associations=new InventoryAssociations(store);
+ const adoption=await associations.adopt('a','destination',selected);
+ const replay=await associations.adopt('a','destination',selected);
+ const activeLease=await store.statement("SELECT count(*) AS n FROM leases WHERE tenant='a' AND (scope='matching:destination' OR scope='inventory-ownership:qrz') AND expires_at>unixepoch('subsec')*1000").first();
+ const readOnly=await store.statement("SELECT count(*) AS n FROM inventory_historical_write_blocks WHERE tenant='a'").first();
+ return Response.json({publication,adoption,replayRecords:replay.records,readOnly:readOnly.n,current:current.results.filter(row=>row.state==='matched_existing'&&row.version===1).length,activeLease:activeLease.n,plaintextLeaked:canonical({current,adoption,replay}).includes('Private matching')});
 }};`,
       resolveDir: process.cwd(),
       loader: "ts",
@@ -80,11 +85,17 @@ export default {async fetch(request,env){
       };
     };
     current: number;
+    adoption: { records: number };
+    replayRecords: number;
+    readOnly: number;
     activeLease: number;
     plaintextLeaked: boolean;
   };
   assert.equal(result.publication.records, 20);
   assert.equal(result.current, 20);
+  assert.equal(result.adoption.records, 20);
+  assert.equal(result.replayRecords, 0);
+  assert.equal(result.readOnly, 20);
   assert.equal(result.activeLease, 0);
   assert.equal(result.publication.preparation.decryptedBodies, 40);
   assert.equal(result.publication.preparation.bodyQueries, 4);

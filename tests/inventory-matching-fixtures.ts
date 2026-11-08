@@ -58,6 +58,7 @@ export async function matchingFixture(
   const f = await fixture(existing);
   await applyMigration(f.db, "0049_inventory_matching_read_indexes.sql");
   await applyMigration(f.db, "0050_inventory_match_results.sql");
+  await applyMigration(f.db, "0051_inventory_historical_ownership.sql");
   const provider = options.provider ?? "qrz";
   if (provider === "lotw")
     await f.db
@@ -91,8 +92,13 @@ export async function matchingFixture(
   async function fullReceipt(
     records: InventoryObservation[],
     range: [string, string] = options.range ?? ["2026-11-08", "2026-11-08"],
-    filters: { stationCallsign?: string; workedCallsign?: string } = {},
+    selectionOptions: {
+      stationCallsign?: string;
+      workedCallsign?: string;
+      replaceHeld?: boolean;
+    } = {},
   ) {
+    const { replaceHeld, ...filters } = selectionOptions;
     const stream = await f.inventory.snapshot("a", "destination", "receipt");
     assert.ok(stream);
     const plan: InventoryScanPlan =
@@ -112,7 +118,12 @@ export async function matchingFixture(
             selection: { startDate: range[0], endDate: range[1], ...filters },
           };
     const definition = await planInventoryRun(stream, plan);
-    await f.runs.begin({ stream, lease: destinationLease, definition });
+    await f.runs.begin({
+      stream,
+      lease: destinationLease,
+      definition,
+      replaceHeld,
+    });
     for (let pass = 0; pass < 10; pass++) {
       const context = await f.runs.context("a", definition.id);
       if (

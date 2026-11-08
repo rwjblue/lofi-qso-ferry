@@ -1,6 +1,10 @@
 import type { AdifRecord } from "./adif.ts";
-import { InventoryComparisonGenerations } from "./inventory-comparison-generations.ts";
 import {
+  type InventoryComparisonDomain,
+  InventoryComparisonGenerations,
+} from "./inventory-comparison-generations.ts";
+import {
+  type InventoryComparisonKeyContext,
   type InventoryComparisonToken,
   inventoryComparisonLookup,
 } from "./inventory-comparison-keys.ts";
@@ -69,13 +73,38 @@ function identifier(value: unknown): value is string {
 export class InventoryComparisonLookup {
   constructor(readonly store: Store) {}
 
+  /** Request-local key reuse. Every query still checks the captured domain in
+   * SQL; a session cannot survive generation/source-roster changes silently. */
+  async open(tenant: string, options: { generation?: string } = {}) {
+    const requestedGeneration = options.generation;
+    const writers = await new InventoryComparisonGenerations(
+      this.store,
+    ).writers(tenant);
+    const generation = requestedGeneration ?? writers?.domain.active_generation;
+    const context = writers?.contexts.find(
+      (key) => key.generation === generation,
+    );
+    if (!writers || !context)
+      throw new Error("inventory_comparison_generation_unavailable");
+    return Object.freeze({
+      generation: context.generation,
+      domainVersion: writers.domain.version,
+      sourceSetVersion: writers.domain.source_set_version,
+      active: writers.domain.active_generation === context.generation,
+      probe: (requests: InventoryComparisonRequest[]) =>
+        this.collect(tenant, requests, writers.domain, context),
+    });
+  }
   async probe(
     tenant: string,
     requests: InventoryComparisonRequest[],
     options: { generation?: string } = {},
   ) {
+    requests = this.requests(tenant, requests);
+    return (await this.open(tenant, options)).probe(requests);
+  }
+  private requests(tenant: string, requests: InventoryComparisonRequest[]) {
     requests = structuredClone(requests);
-    const requestedGeneration = options.generation;
     if (
       !identifier(tenant) ||
       requests.length < 1 ||
@@ -87,15 +116,15 @@ export class InventoryComparisonLookup {
       encoder.encode(canonical(requests)).byteLength > 128 * 1024
     )
       throw new Error("invalid_inventory_comparison_requests");
-    const writers = await new InventoryComparisonGenerations(
-      this.store,
-    ).writers(tenant);
-    const generation = requestedGeneration ?? writers?.domain.active_generation;
-    const context = writers?.contexts.find(
-      (key) => key.generation === generation,
-    );
-    if (!writers || !context)
-      throw new Error("inventory_comparison_generation_unavailable");
+    return requests;
+  }
+  private async collect(
+    tenant: string,
+    requests: InventoryComparisonRequest[],
+    domain: InventoryComparisonDomain,
+    context: InventoryComparisonKeyContext,
+  ) {
+    requests = this.requests(tenant, requests);
     const probes = await Promise.all(
       requests.map(async (request) => ({
         id: request.id,
@@ -136,7 +165,7 @@ export class InventoryComparisonLookup {
        WHERE d.tenant=?2 AND d.version=?3`,
         canonical(probes),
         tenant,
-        writers.domain.version,
+        domain.version,
         context.generation,
         candidateLimit + 1,
       )
@@ -189,9 +218,9 @@ export class InventoryComparisonLookup {
       });
     return {
       generation: context.generation,
-      domainVersion: writers.domain.version,
-      sourceSetVersion: writers.domain.source_set_version,
-      active: writers.domain.active_generation === context.generation,
+      domainVersion: domain.version,
+      sourceSetVersion: domain.source_set_version,
+      active: domain.active_generation === context.generation,
       observations,
       candidateLimit,
       rowsRead: result.meta.rows_read,

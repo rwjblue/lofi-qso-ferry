@@ -292,3 +292,38 @@ test("probe input bounds and tenant/generation isolation fail closed", async () 
     await f.mf.dispose();
   }
 });
+
+test("a request-local lookup session reuses its key and rejects later domain changes", async () => {
+  const f = await fixture();
+  try {
+    let keyReads = 0;
+    const original = f.store.statement.bind(f.store);
+    f.store.statement = (sql, ...params) => {
+      if (
+        sql.startsWith("SELECT key_id,envelope FROM inventory_comparison_keys")
+      )
+        keyReads++;
+      return original(sql, ...params);
+    };
+    const session = await f.lookup.open("a", { generation: f.generation });
+    for (let pass = 0; pass < 2; pass++) {
+      const result = await session.probe([
+        { id: "selected", scope: "source", record: record("W1AW") },
+      ]);
+      assert.equal(result.domainVersion, session.domainVersion);
+      assert.equal(result.sourceSetVersion, session.sourceSetVersion);
+    }
+    assert.equal(keyReads, 1);
+    await original(
+      "UPDATE comparison_domains SET version=version+1,source_set_version=source_set_version+1 WHERE tenant='a'",
+    ).run();
+    await assert.rejects(
+      session.probe([
+        { id: "selected", scope: "source", record: record("W1AW") },
+      ]),
+      /generation_changed/,
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});

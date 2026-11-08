@@ -212,3 +212,87 @@ test("installing the current selected map schedules existing proofs for revalida
     await f.mf.dispose();
   }
 });
+
+test("mixed source cohorts retain each selected input for every remaining owner route", async () => {
+  const f = await selectedFixture({ receipts: [] });
+  try {
+    await f.db
+      .prepare(
+        "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at) VALUES('a','source-b','lofi','source-b','Second source','active','v1',1)",
+      )
+      .run();
+    await (
+      await f.store.putPrivate("a", "source-b", "v1", "credential", {
+        key: "browser:fixture",
+        secret: "fixture-secret",
+        token: "fixture-token",
+      })
+    ).run();
+    await f.inventory.initialize(
+      {
+        tenant: "a",
+        scope: "source-b",
+        connection: "source-b",
+        provider: "lofi",
+        logicalIdentity: "source-b",
+        adapterBinding: "test-v1",
+        ordering: "numeric",
+      },
+      "sync",
+      "all-clients-v1",
+    );
+    const selected = [...f.selected, { scope: "source-b", key: "missing" }];
+    const initial = await f.matches.match("a", "destination", selected);
+    assert.ok("setId" in initial);
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT source_scope,count(*) AS n FROM inventory_matching_selected_dependents GROUP BY source_scope ORDER BY source_scope",
+        )
+        .all()
+        .then((result) => result.results),
+      [
+        { source_scope: "source", n: 2 },
+        { source_scope: "source-b", n: 2 },
+      ],
+    );
+    await f.matches.match("a", "destination", f.selected);
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT source_scope,scope_id,record_key FROM inventory_matching_selected_dependents WHERE set_id=? ORDER BY scope_id",
+        )
+        .bind(initial.setId)
+        .all()
+        .then((result) => result.results),
+      [
+        { source_scope: "source-b", scope_id: "source", record_key: "q0" },
+        {
+          source_scope: "source-b",
+          scope_id: "source-b",
+          record_key: "missing",
+        },
+      ],
+    );
+    await f.matches.match("a", "destination", selected.slice(1));
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT count(*) AS n FROM inventory_matching_selected_dependents WHERE set_id=?",
+        )
+        .bind(initial.setId)
+        .first(),
+      { n: 0 },
+    );
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT count(*) AS n FROM inventory_matching_selected_dependents",
+        )
+        .first(),
+      { n: 2 },
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});

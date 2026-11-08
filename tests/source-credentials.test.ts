@@ -91,6 +91,32 @@ test("unavailable credentials are rejected using actual expiry and revocation st
   );
 });
 
+test("a rejected bearer can be cleared durably without changing the client or credential identity", async (t) => {
+  const h = await setup(t);
+  const session = await openSourceCredentials(h.store, h.source);
+  const rejected = { ...credentials, token: undefined };
+  // Existing renewal-only callers retain their narrower contract.
+  await session.persistRenewal(rejected);
+  assert.equal((await h.saved())?.token, credentials.token);
+  await session.persistTokenState(rejected);
+  assert.deepEqual(await h.saved(), {
+    key: credentials.key,
+    secret: credentials.secret,
+  });
+  assert.equal(
+    (await h.store.connection("a", "source"))?.credential_version,
+    "v1",
+  );
+  const next = await openSourceCredentials(h.store, h.source);
+  await next.persistTokenState({
+    ...next.credentials,
+    token: "recovered-token",
+  });
+  // A delayed invalidation cannot clear a concurrent successful renewal.
+  await session.persistTokenState(rejected);
+  assert.equal((await h.saved())?.token, "recovered-token");
+});
+
 test("late bearer renewal cannot overwrite concurrent envelope, expiry, revocation, account or credential changes", async (t) => {
   for (const change of [
     "renewal",

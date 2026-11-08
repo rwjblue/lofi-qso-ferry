@@ -16,6 +16,7 @@ import {
 } from "../src/inventory-comparison-lookup.ts";
 import { inventoryComparisonHint } from "../src/inventory-comparison-pages.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
+import { InventoryMatchingCoverageEvents } from "../src/inventory-matching-coverage-events.ts";
 import { InventoryMatchingInvalidations } from "../src/inventory-matching-invalidations.ts";
 import { InventoryMatchingPairs } from "../src/inventory-matching-pairs.ts";
 import {
@@ -101,6 +102,22 @@ async function coverageRecoveryState(db: D1Database) {
  (SELECT count(*) FROM inventory_matching_coverage_events WHERE tenant='trial' AND completed_version<work_version) AS pendingEvents,
  (SELECT count(*) FROM inventory_matching_coverage_dependents d WHERE d.tenant='trial' AND (NOT EXISTS(SELECT 1 FROM inventory_match_recovery q JOIN inventory_match_sets h ON h.tenant=q.tenant AND h.set_id=q.set_id AND h.state='committed' AND h.generation_id=d.generation_id AND h.destination=d.destination JOIN inventory_match_scopes s ON s.tenant=q.tenant AND s.set_id=q.set_id AND s.scope_id=q.scope_id AND s.coverage_clock=d.seen_clock WHERE q.tenant=d.tenant AND q.set_id=d.set_id AND q.recovery_id=d.recovery_id AND q.scope_id=d.scope_id AND q.facet=d.facet AND (q.facet='source' OR q.subject_scope=d.source_scope) AND json_extract(q.nodes,'$['||d.node_index||']')=d.node_hash) OR NOT EXISTS(SELECT 1 FROM match_results r WHERE r.tenant=d.tenant AND r.set_id=d.set_id AND r.source_scope=d.source_scope AND r.state='incomplete'))) AS invalidReferences`)
     .first<CoverageRecoveryState>();
+}
+
+interface CoverageDispatchState {
+  receipts: number;
+  jobs: number;
+  pendingJobs: number;
+  invalidBindings: number;
+}
+async function coverageDispatchState(db: D1Database) {
+  return db
+    .prepare(`SELECT
+ (SELECT count(*) FROM inventory_matching_coverage_dispatches WHERE tenant='trial' AND state='committed') AS receipts,
+ (SELECT count(*) FROM inventory_matching_coverage_jobs WHERE tenant='trial') AS jobs,
+ (SELECT count(*) FROM inventory_matching_coverage_jobs WHERE tenant='trial' AND completed_version<work_version) AS pendingJobs,
+ (SELECT count(*) FROM inventory_matching_coverage_jobs j WHERE j.tenant='trial' AND NOT EXISTS(SELECT 1 FROM inventory_matching_coverage_dispatches h JOIN inventory_matching_coverage_clocks c ON c.tenant=h.tenant AND c.scope_id=h.scope_id AND c.facet=h.facet AND c.version>=h.scope_clock WHERE h.tenant=j.tenant AND h.dispatch_id=j.last_dispatch AND h.state='committed' AND h.generation_id=j.generation_id AND h.scope_id=j.scope_id AND h.facet=j.facet AND h.config_version=j.config_version AND h.scope_clock=j.signal_clock AND EXISTS(SELECT 1 FROM json_each(h.nodes) WHERE value=j.node_hash))) AS invalidBindings`)
+    .first<CoverageDispatchState>();
 }
 
 /** Offline replay of the encrypted three-provider run capture. The original is
@@ -200,6 +217,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0064_inventory_matching_result_update.sql",
       "0065_inventory_matching_coverage_recovery.sql",
       "0066_inventory_projection_coverage_holds.sql",
+      "0067_inventory_matching_coverage_dispatch.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -548,6 +566,16 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
     ).results;
     const pairState = await matchingPairState(db);
     const coverageState = await coverageRecoveryState(db);
+    const coverageDispatch = await new InventoryMatchingCoverageEvents(
+      store,
+    ).step("trial");
+    const dispatchState = await coverageDispatchState(db);
+    if (
+      coverageDispatch.kind !== "idle" ||
+      !dispatchState ||
+      dispatchState.invalidBindings !== 0
+    )
+      throw new Error("comparison_trial_unexpected_coverage_dispatch");
     if (
       !coverageState ||
       coverageState.trackedSets !== matchingSnapshots.length ||
@@ -597,6 +625,11 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
         manifestDigest: await sha256(canonical(pairState)),
       },
       coverageRecovery: { sampled: true, state: coverageState },
+      coverageDispatch: {
+        sampled: true,
+        kind: coverageDispatch.kind,
+        state: dispatchState,
+      },
       matchingInvalidation: {
         sampled: true,
         kind: invalidation.kind,
@@ -698,6 +731,11 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       manifestDigest: string;
     };
     coverageRecovery?: { sampled: boolean; state: CoverageRecoveryState };
+    coverageDispatch?: {
+      sampled: boolean;
+      kind: string;
+      state: CoverageDispatchState;
+    };
     historicalAdoption?: { evaluated: boolean; associationsCreated: number };
     projectionJobs?: {
       sampled: boolean;
@@ -1163,6 +1201,16 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       coverageRecoveryStateRecovered = true;
     }
     let matchingInvalidationStateRecovered: boolean | undefined;
+    let coverageDispatchStateRecovered: boolean | undefined;
+    if (report.coverageDispatch?.sampled) {
+      const state = await coverageDispatchState(db);
+      if (
+        state?.invalidBindings !== 0 ||
+        canonical(state) !== canonical(report.coverageDispatch.state)
+      )
+        throw new Error("comparison_trial_coverage_dispatch_not_recovered");
+      coverageDispatchStateRecovered = true;
+    }
     if (report.matchingInvalidation?.sampled) {
       if (
         canonical(await matchingDependencyState(db)) !==
@@ -1196,6 +1244,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       matchingInvalidationStateRecovered,
       matchingPairRowsValidated,
       coverageRecoveryStateRecovered,
+      coverageDispatchStateRecovered,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

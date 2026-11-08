@@ -1,6 +1,6 @@
 # Durable matching work evidence
 
-Status: local guarded matching-work lifecycle, 2026-11-08. Full bucket/scope
+Status: local guarded matching-work lifecycle, 2026-11-08. Scope/coverage
 invalidation, coordinator/hosted integration, ownership-aware planning and delivery
 remain unfinished. Runtime activation is off; no production reset or vendor upload
 was performed.
@@ -125,12 +125,12 @@ TypeScript, lint, formatting and the Worker dry-run build pass. Logs are
 
 ## Remaining work
 
-Source projection enrollment is not comprehensive matching invalidation. Add
-bounded old/new bucket and reverse-dependency continuations, source-set/scope/
-coverage/routing/ownership changes and initial enrollment for preexisting source
-projections. Immediate current-result dependency checks already hide stale facts;
-the new continuations must reliably schedule their replacement without intake
-fan-out or a whole-log scan for each ordinary change.
+The [bucket invalidation path](evidence-inventory-matching-invalidation.md) now
+adds current reverse dependencies, bounded old/new bucket continuations,
+projection-version wakeups and source-retirement enrollment. Source-set/scope/
+coverage/connection/ownership changes and initial enrollment for preexisting
+projections remain unfinished. Immediate current-result dependency checks hide
+stale facts while those additional scheduling paths are developed.
 
 Then integrate matching turns and due holds into durable coordinator/Queue/cron
 recovery, select current results with ownership, and conservatively adopt history.

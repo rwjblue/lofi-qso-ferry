@@ -173,7 +173,9 @@ schema and receipts; neither is a full-log storage density estimate. Logs are
 ## Remaining work
 
 The [matching-work lifecycle](evidence-inventory-matching-work.md) now captures and
-completes bounded work versions independently. Add comprehensive invalidation,
+completes bounded work versions independently, and the [bucket invalidation
+path](evidence-inventory-matching-invalidation.md) now expands current dependencies.
+Add scope/coverage/connection invalidation,
 matching turns, ownership-aware result selection and conservative adoption to the
 coordinator. Connect bounded Queue/cron wakeups
 with retry/fairness and lost-message recovery. Qualify full-turn D1/CPU/storage costs

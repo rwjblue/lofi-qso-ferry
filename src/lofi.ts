@@ -36,6 +36,13 @@ export interface SyncPage {
   complete: boolean;
   /** A client implementation is not proof of a vendor replay boundary. */
   coverage: "client-contract-only";
+  pacing?: { loopDelayMs?: number; checkPeriodMs?: number };
+}
+
+/** Larger inbound reads are opt-in; existing proof/intake callers keep bounds. */
+export interface LoFiReadBounds {
+  maxSyncRecords: number;
+  maxResponseBytes: number;
 }
 
 export interface OperationQsosState {
@@ -91,6 +98,29 @@ function count(value: unknown): number | undefined {
     : undefined;
 }
 
+function pacingHints(meta: SourceRecord): SyncPage["pacing"] {
+  const flags = optionalObject(meta.flags);
+  const knob = (camel: string, snake: string) => {
+    const value = meta[camel] ?? meta[snake] ?? flags[snake];
+    return count(
+      typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value,
+    );
+  };
+  const loopDelayMs = knob(
+    "suggestedSyncLoopDelay",
+    "suggested_sync_loop_delay",
+  );
+  const checkPeriodMs = knob(
+    "suggestedSyncCheckPeriod",
+    "suggested_sync_check_period",
+  );
+  const result = {
+    ...(loopDelayMs === undefined ? {} : { loopDelayMs }),
+    ...(checkPeriodMs ? { checkPeriodMs } : {}),
+  };
+  return Object.keys(result).length ? result : undefined;
+}
+
 /** Cleanup cannot delay or replace an already determined response outcome. */
 function cancelBestEffort(stream: { cancel(): Promise<void> } | null): void {
   try {
@@ -100,7 +130,10 @@ function cancelBestEffort(stream: { cancel(): Promise<void> } | null): void {
   }
 }
 
-async function boundedJson(response: Response): Promise<SourceRecord> {
+async function boundedJson(
+  response: Response,
+  maxBytes = 2 * 1024 * 1024,
+): Promise<SourceRecord> {
   if (untrustedResponse(response)) {
     cancelBestEffort(response.body);
     throw new LoFiError("vendor_redirect_or_opaque_response", response.status);
@@ -119,7 +152,7 @@ async function boundedJson(response: Response): Promise<SourceRecord> {
       const chunk = await reader.read();
       if (chunk.done) break;
       size += chunk.value.byteLength;
-      if (size > 2 * 1024 * 1024) {
+      if (size > maxBytes) {
         cancelBestEffort(reader);
         throw new LoFiError("response_too_large");
       }
@@ -154,15 +187,30 @@ function untrustedResponse(response: Response): boolean {
 /** No user-controlled hostname; injected fetch is for tests/service bindings. */
 export class LoFiClient {
   private credentials: LoFiCredentials;
+  private readonly syncLimit: number;
+  private readonly responseLimit: number;
 
   constructor(
     credentials: LoFiCredentials,
     private readonly fetcher: typeof fetch = fetch,
+    bounds: Partial<LoFiReadBounds> = {},
   ) {
     if (!credentials.key || !credentials.secret) {
       throw new LoFiError("missing_client_identity");
     }
     this.credentials = { ...credentials };
+    this.syncLimit = bounds.maxSyncRecords ?? 200;
+    this.responseLimit = bounds.maxResponseBytes ?? 2 * 1024 * 1024;
+    if (
+      !Number.isSafeInteger(this.syncLimit) ||
+      this.syncLimit < 1 ||
+      this.syncLimit > 5000 ||
+      !Number.isSafeInteger(this.responseLimit) ||
+      this.responseLimit < 1 ||
+      this.responseLimit > 8 * 1024 * 1024
+    ) {
+      throw new LoFiError("invalid_read_bounds");
+    }
   }
 
   credentialsSnapshot(): LoFiCredentials {
@@ -191,7 +239,7 @@ export class LoFiClient {
         redirect: "manual",
       },
     );
-    const result = await boundedJson(response);
+    const result = await boundedJson(response, this.responseLimit);
     if (typeof result.token !== "string" || !result.token) {
       throw new LoFiError("missing_token");
     }
@@ -229,7 +277,7 @@ export class LoFiClient {
         this.credentials.token = undefined;
         continue;
       }
-      return boundedJson(response);
+      return boundedJson(response, this.responseLimit);
     }
     throw new LoFiError("authentication_failed");
   }
@@ -336,7 +384,7 @@ export class LoFiClient {
       now <= 0 ||
       !Number.isSafeInteger(limit) ||
       limit < 1 ||
-      limit > 200
+      limit > this.syncLimit
     ) {
       throw new LoFiError("invalid_sync_window");
     }
@@ -468,6 +516,7 @@ export class LoFiClient {
       next,
       complete,
       coverage: "client-contract-only",
+      ...(pacingHints(meta) ? { pacing: pacingHints(meta) } : {}),
     };
   }
 }

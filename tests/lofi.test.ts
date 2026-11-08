@@ -88,6 +88,82 @@ test("sync limits reject non-integers before transport", async () => {
   assert.equal(requests, 0);
 });
 
+test("inventory readers opt in to larger bounded pages without widening operation proofs", async () => {
+  let requests = 0;
+  const client = new LoFiClient(
+    credentials,
+    async (_input, init) => {
+      requests++;
+      const body = JSON.parse(String(init?.body));
+      assert.equal(body.meta.sync.qsos.limit, 1000);
+      return json(
+        reply(
+          [],
+          [
+            {
+              uuid: "large",
+              syncedAtMillis: 1,
+              notes: "x".repeat(2 * 1024 * 1024),
+            },
+          ],
+          { records_left: 0 },
+          { records_left: 0 },
+        ),
+      );
+    },
+    { maxSyncRecords: 1000, maxResponseBytes: 4 * 1024 * 1024 },
+  );
+  assert.equal((await client.syncPage(initial, 1000, 1000)).qsos.length, 1);
+  await assert.rejects(
+    client.operationQsosPage("op", {}, 1000),
+    /invalid_operation_window/,
+  );
+  assert.equal(requests, 1);
+  for (const maxSyncRecords of [0, 1.5, 5001, Infinity])
+    assert.throws(
+      () => new LoFiClient(credentials, fetch, { maxSyncRecords }),
+      /invalid_read_bounds/,
+    );
+});
+
+test("sync retains validated server loop and idle hints including zero loop delay", async () => {
+  for (const [meta, expected] of [
+    [
+      { suggestedSyncLoopDelay: 35000, suggestedSyncCheckPeriod: 90000 },
+      { loopDelayMs: 35000, checkPeriodMs: 90000 },
+    ],
+    [
+      {
+        flags: {
+          suggested_sync_loop_delay: "0",
+          suggested_sync_check_period: "60000",
+        },
+      },
+      { loopDelayMs: 0, checkPeriodMs: 60000 },
+    ],
+    [
+      { suggested_sync_loop_delay: -1, suggested_sync_check_period: 0 },
+      undefined,
+    ],
+    [
+      { suggested_sync_loop_delay: "oops", suggested_sync_check_period: 1.5 },
+      undefined,
+    ],
+  ] as const) {
+    const client = new LoFiClient(credentials, async () =>
+      json({
+        ...reply([], [], { records_left: 0 }, { records_left: 0 }),
+        meta: {
+          operations: { records_left: 0 },
+          qsos: { records_left: 0 },
+          ...meta,
+        },
+      }),
+    );
+    assert.deepEqual((await client.syncPage(initial, 1000)).pacing, expected);
+  }
+});
+
 test("LoFi pulls without mutations and resumes separate opaque cursors after restart", async () => {
   const requests: Record<string, unknown>[] = [];
   const fetcher = fake(async (input, init) => {

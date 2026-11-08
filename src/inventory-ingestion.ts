@@ -1,4 +1,10 @@
 import {
+  type InventoryRunPublication,
+  inventoryRunCleanup,
+  inventoryRunEffects,
+  inventoryRunPrelude,
+} from "./inventory-run-publication.ts";
+import {
   canonical,
   type Envelope,
   open,
@@ -53,6 +59,7 @@ export interface InventoryPageInput {
   nextResume: unknown;
   /** Absent until the adapter's incremental run, not merely this page, ends. */
   nextCheckpoint?: unknown;
+  run?: InventoryRunPublication;
 }
 interface CurrentRow {
   family: string;
@@ -584,6 +591,7 @@ export class InventoryIngestion {
         input.origin,
       ),
     ];
+    plan.push(...inventoryRunPrelude(this.store, input));
     for (const chunk of inventoryJsonChunks(rows)) {
       plan.push(
         statement(
@@ -643,6 +651,7 @@ export class InventoryIngestion {
       bound(
         `INSERT INTO inventory_work(tenant,scope_id,work_key,work_version,due_at) SELECT p.tenant,p.scope_id,json_array(r.entity_family,r.record_key,r.facet),1,p.request_started_at ${accepted} AND r.semantic_changed=1 ON CONFLICT(tenant,scope_id,work_key) DO UPDATE SET work_version=inventory_work.work_version+1,due_at=min(inventory_work.due_at,excluded.due_at)`,
       ),
+      ...inventoryRunEffects(this.store, input),
       bound(
         `UPDATE inventory_scopes SET accepted_sequence=accepted_sequence+1 WHERE tenant=? AND scope_id=(SELECT scope_id FROM ingestion_pages WHERE tenant=inventory_scopes.tenant AND page_id=?)`,
       ),
@@ -653,6 +662,7 @@ export class InventoryIngestion {
         "UPDATE ingestion_pages SET state='committed' WHERE tenant=? AND page_id=?",
       ),
       bound("DELETE FROM ingestion_page_rows WHERE tenant=? AND page_id=?"),
+      ...inventoryRunCleanup(this.store, input),
       bound("DELETE FROM ingestion_page_guards WHERE tenant=? AND page_id=?"),
     );
     requireValue(plan.length <= 200, "inventory_transaction_too_large");

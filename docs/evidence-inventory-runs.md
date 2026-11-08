@@ -32,7 +32,7 @@ The local publication horizon is twelve hours. Cloudflare currently documents up
 
 Completed runs can start a new incremental run under the original wakeup's job fence. The current generation's outbox must identify that completed run; loading an older completed run alongside today's idle job cannot select old query bounds. A LoTW selection without a usable receive checkpoint repeats a bounded full read.
 
-These are library entry points. The hosted `queue` handler, recovery cron invocation, initial partition scheduler and explicit legacy-reader ownership switch are not wired yet.
+The subsequent [hosted runtime milestone](evidence-inventory-runtime.md) wires these entry points to cron and Queue handlers, adds durable reader ownership and registers fixed selections. Automatic LoTW date-universe discovery and adaptive overflow splitting remain unfinished.
 
 ## Verification
 
@@ -71,4 +71,4 @@ A separate process reopened the new database without vendor reads. LoFi remained
 
 ## Remaining work
 
-Complete scheduler integration and its explicit reader handoff, initial/reverification partition scheduling, adaptive LoTW overflow splitting and QRZ empty-selection verification. Then implement shared comparison generations, bulk matching and dependency invalidation, historical associations, source proofs against the fresh inventory, upload preparation/batches and member-aware recovery. Garbage collection, restore quarantine, account-preserving fresh-state cutover and full-log cost/throughput trials remain required before replacement activation.
+The [hosted runtime](evidence-inventory-runtime.md) now implements scheduler/Queue integration, durable reader handoff and registered selection polling/reverification. Finish automatic LoTW date-universe discovery, adaptive overflow splitting and QRZ empty-selection verification. Then implement shared comparison generations, bulk matching and dependency invalidation, historical associations, source proofs against the fresh inventory, upload preparation/batches and member-aware recovery. Garbage collection, restore quarantine, account-preserving fresh-state cutover and full-log cost/throughput trials remain required before replacement activation.

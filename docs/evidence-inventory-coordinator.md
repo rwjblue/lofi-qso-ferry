@@ -1,7 +1,7 @@
 # Comparison coordinator evidence
 
 Status: local durable build/projection coordination and managed generation
-activation, 2026-11-08. Hosted comparison Queue/cron wiring, durable matching work,
+activation, 2026-11-08. Hosted comparison Queue/cron wiring, matching invalidation/coordination,
 ownership-aware planning and delivery remain unfinished. Runtime activation is off;
 nothing was pushed, deployed, uploaded or reset in production.
 
@@ -172,8 +172,10 @@ schema and receipts; neither is a full-log storage density estimate. Logs are
 
 ## Remaining work
 
-Add durable matching invalidation/claim/completion, ownership-aware result selection
-and conservative adoption to the coordinator. Connect bounded Queue/cron wakeups
+The [matching-work lifecycle](evidence-inventory-matching-work.md) now captures and
+completes bounded work versions independently. Add comprehensive invalidation,
+matching turns, ownership-aware result selection and conservative adoption to the
+coordinator. Connect bounded Queue/cron wakeups
 with retry/fairness and lost-message recovery. Qualify full-turn D1/CPU/storage costs
 and many-scope/large-history behavior on the larger workloads. Then integrate fresh source
 proofs, new delivery ownership, QRZ submission and member-aware LoTW recovery.

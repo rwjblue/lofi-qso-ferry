@@ -37,6 +37,20 @@ Those tests check segment-aware station/location/reference/comment projection, t
 
 ## Reproducible focused flows
 
+`mise run benchmark-qrz-upload` measures tick Store database calls and QRZ request
+amplification for direct, covering-fallback and idle workloads using local D1 and
+synthetic vendors. Use `mise run benchmark-qrz-upload fallback-six` for the
+six-contact request-budget case. It performs no live vendor requests; the local
+results and remaining limits are recorded in the [capacity plan](capacity-plan.md#qrz-upload-refactor--local-measurements-2026-10-28).
+The `direct-six` case isolates source-proof collection when QRZ reads return an
+unambiguous empty result. Output includes LoFi sync reads, native proof counts,
+fair rounds and metered database counters; the [cohort/idle follow-up](capacity-plan.md#source-proof-cohorts-and-idle-work--follow-up-2026-10-28)
+records the second refactor's same-work comparisons and counter boundaries.
+Use `mise run benchmark-qrz-upload queue-10 queue-20` for the bounded bulk
+preparation/dispatch phase. Its output reports planning separately and excludes
+source-proof setup; the [bulk-work measurements](capacity-plan.md#bulk-preparation-and-queued-dispatch--local-measurements-2026-10-30)
+distinguish those phase counters from the complete scheduler invocation.
+
 ```sh
 npx tsx --test tests/worker-e2e.test.ts
 npx tsx --test tests/signing-runtime.test.ts

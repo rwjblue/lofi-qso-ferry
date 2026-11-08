@@ -156,12 +156,22 @@ export async function sourceHistoricalIndexKey(
   tenant: string,
 ): Promise<SourceHistoricalIndexKey> {
   if (!tenant) throw new Error("invalid_source_historical_tenant");
-  let state = await store
+  const state = await store
     .statement(
       "SELECT key_id,key_envelope FROM source_historical_state WHERE tenant=?",
       tenant,
     )
     .first<State>();
+  return loadSourceHistoricalIndexKey(store, tenant, state);
+}
+
+/** Reuse a caller's coherent state read, while retaining key validation and CAS. */
+async function loadSourceHistoricalIndexKey(
+  store: Store,
+  tenant: string,
+  state: Pick<State, "key_id" | "key_envelope"> | null,
+): Promise<SourceHistoricalIndexKey> {
+  if (!tenant) throw new Error("invalid_source_historical_tenant");
   if (!state?.key_envelope) {
     const secret = randomToken();
     const key = await importIndexSecret(secret, tenant);
@@ -614,7 +624,20 @@ export async function backfillSourceHistoricalIndex(
     now < 0
   )
     throw new Error("invalid_source_historical_backfill");
-  const key = await sourceHistoricalIndexKey(store, tenant);
+  // The keyed dirty probe needs no source bodies. A clean, initialized index
+  // can validate its encrypted key and finish in one RPC instead of opening
+  // an empty page and rereading unchanged state on every scheduler turn.
+  const observed = await store
+    .statement(
+      `SELECT s.*,EXISTS(SELECT 1 FROM source_historical_index i INDEXED BY source_historical_backfill
+       WHERE i.tenant=s.tenant AND i.dirty=1) AS dirty
+       FROM source_historical_state s WHERE s.tenant=?`,
+      tenant,
+    )
+    .first<State & { dirty: number }>();
+  const key = await loadSourceHistoricalIndexKey(store, tenant, observed);
+  if (observed?.key_envelope && !observed.rebuilding && !observed.dirty)
+    return { examined: 0, published: 0, held: 0, rebuilding: false };
   const initial = await store.db.batch<State>([
     activate(store, tenant, key.keyId),
     store.statement(

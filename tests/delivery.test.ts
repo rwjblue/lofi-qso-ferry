@@ -438,6 +438,14 @@ test("saved test payloads never reach either vendor and only unsent attempts are
   }
   await applyMigration(h.db, "0030_source_export_guards.sql");
   await applyMigration(h.db, "0031_qrz_fresh_insert_authorization.sql");
+  for (const name of (await readdir(new URL("../migrations/", import.meta.url)))
+    .filter(
+      (name) =>
+        name.endsWith(".sql") &&
+        name > "0031_qrz_fresh_insert_authorization.sql",
+    )
+    .sort())
+    await applyMigration(h.db, name);
   for (const { id, state, payload } of saved) {
     assert.deepEqual(
       await dispatchAttempt(h.store, "a", id, gates, {
@@ -1850,19 +1858,32 @@ test("QRZ preparation and final dispatch independently verify a positive coverin
         let covers = 0;
         let statuses = 0;
         let targeted = 0;
-        const connection = h.store.connection.bind(h.store);
-        h.store.connection = async (tenant, id) => {
+        const statement = h.store.statement.bind(h.store);
+        h.store.statement = (...args) => {
+          const query = statement(...args);
           if (
             scenario === "scope changed before write" &&
             covers === 2 &&
-            id === "destination"
-          )
-            await h.store
-              .statement(
-                "UPDATE connections SET config=json_set(config,'$.bookId','changed-after-read') WHERE tenant='a' AND id='destination'",
-              )
-              .run();
-          return connection(tenant, id);
+            args[0].includes("INSERT INTO vendor_requests")
+          ) {
+            // Change scope after the INSERT's native request reservation,
+            // independently of how authorization reads are grouped.
+            return new Proxy(query, {
+              get(target, property) {
+                const value = Reflect.get(target, property, target);
+                if (property === "first")
+                  return async (...values: unknown[]) => {
+                    const result = await Reflect.apply(value, target, values);
+                    await statement(
+                      "UPDATE connections SET config=json_set(config,'$.bookId','changed-after-read') WHERE tenant='a' AND id='destination'",
+                    ).run();
+                    return result;
+                  };
+                return typeof value === "function" ? value.bind(target) : value;
+              },
+            });
+          }
+          return query;
         };
         const fetcher: typeof fetch = async (input, init) => {
           const body = new URLSearchParams(String(init?.body));
@@ -1925,7 +1946,11 @@ test("QRZ preparation and final dispatch independently verify a positive coverin
         );
         assert.equal(
           result.state,
-          scenario === "deliver" ? "delivered" : "rejected",
+          scenario === "deliver"
+            ? "delivered"
+            : scenario === "scope changed before write"
+              ? "blocked"
+              : "rejected",
         );
         assert.equal(h.mutations.length, scenario === "deliver" ? 1 : 0);
         assert.equal(covers, 2);

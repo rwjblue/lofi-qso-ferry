@@ -711,16 +711,19 @@ export async function pendingContactBatch(
   readyContextOnly = false,
   preference?: ReconciliationScopePreference,
 ): Promise<{ contacts: IntakeContact[]; selected: number }> {
-  const policy = await sourceReadPolicy(store, source.tenant, source.id);
-  if (policy && policy.phase !== "ready") return { contacts: [], selected: 0 };
+  // Policy and context must describe the same observation. Joining them also
+  // avoids a separate policy RPC on every empty scheduler selection.
   const context = await store
     .statement(
-      "SELECT cursor,generation FROM cursors c WHERE tenant=? AND connection=? AND stream='context' AND (NOT EXISTS(SELECT 1 FROM source_read_policies p WHERE p.tenant=c.tenant AND p.source=c.connection) OR EXISTS(SELECT 1 FROM source_read_policy_ready p WHERE p.tenant=c.tenant AND p.source=c.connection AND p.epoch=?))",
+      "SELECT c.cursor,c.generation,policy.epoch AS policy_epoch FROM cursors c LEFT JOIN source_read_policies policy ON policy.tenant=c.tenant AND policy.source=c.connection WHERE c.tenant=? AND c.connection=? AND c.stream='context' AND (policy.source IS NULL OR (policy.phase='ready' AND EXISTS(SELECT 1 FROM source_read_policy_ready p WHERE p.tenant=c.tenant AND p.source=c.connection AND p.epoch=policy.epoch)))",
       source.tenant,
       source.id,
-      policy?.epoch ?? null,
     )
-    .first<{ cursor: string; generation: number }>();
+    .first<{
+      cursor: string;
+      generation: number;
+      policy_epoch: string | null;
+    }>();
   if (
     !context ||
     !(JSON.parse(context.cursor) as { complete: boolean }).complete
@@ -770,7 +773,10 @@ export async function pendingContactBatch(
   const contacts: IntakeContact[] = [];
   for (const row of rows) {
     try {
-      if (policy && row.policy_seen_epoch !== policy.epoch)
+      if (
+        context.policy_epoch !== null &&
+        row.policy_seen_epoch !== context.policy_epoch
+      )
         throw new Error("source_policy_membership_unavailable");
       const raw = await openSourcePayload(
         store,
@@ -845,7 +851,7 @@ export async function pendingContactBatch(
             source,
             row.operation_id,
             now,
-            policy?.epoch,
+            context.policy_epoch ?? undefined,
           );
           contexts.set(row.operation_id, saved);
         }
@@ -1670,25 +1676,26 @@ export async function rereadOperation(
   processedBefore?: number,
 ) {
   const startedAt = Date.now();
-  const policy = await sourceReadPolicy(
-    store,
-    connection.tenant,
-    connection.id,
-  );
-  if (policy && policy.phase !== "ready")
-    return { complete: false, records: 0, pages: 0 };
   const liveOperation = `(w.priority='live' OR EXISTS(SELECT 1 FROM source_work q WHERE q.tenant=w.tenant AND q.source=w.source AND q.operation_id=w.id AND q.kind='qso' AND ${liveWorkSql("q")}))`;
-  const operation = await store
-    .statement(
-      `SELECT w.*,CASE WHEN ${liveOperation} THEN 'live' ELSE 'background' END AS request_priority FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='operation' AND w.state='pending' AND w.deleted=0 AND w.expires_at>? AND (? IS NULL OR (w.policy_seen_epoch=? AND EXISTS(SELECT 1 FROM source_read_policy_ready p WHERE p.tenant=w.tenant AND p.source=w.source AND p.epoch=w.policy_seen_epoch))) ${priority ? `AND ${liveOperation}=${priority === "live" ? 1 : 0}` : ""} ${processedBefore === undefined ? "" : "AND w.processed_at<?"} ORDER BY ${liveOperation} DESC,w.processed_at,w.id LIMIT 1`,
+  const [policy, candidates] = await store.db.batch<
+    Work & { phase?: string; request_priority: VendorPriority }
+  >([
+    store.statement(
+      "SELECT phase FROM source_read_policies WHERE tenant=? AND source=?",
+      connection.tenant,
+      connection.id,
+    ),
+    store.statement(
+      `SELECT w.*,CASE WHEN ${liveOperation} THEN 'live' ELSE 'background' END AS request_priority FROM source_work w WHERE w.tenant=? AND w.source=? AND w.kind='operation' AND w.state='pending' AND w.deleted=0 AND w.expires_at>? AND (NOT EXISTS(SELECT 1 FROM source_read_policies p WHERE p.tenant=w.tenant AND p.source=w.source) OR EXISTS(SELECT 1 FROM source_read_policy_ready p WHERE p.tenant=w.tenant AND p.source=w.source AND p.epoch=w.policy_seen_epoch)) ${priority ? `AND ${liveOperation}=${priority === "live" ? 1 : 0}` : ""} ${processedBefore === undefined ? "" : "AND w.processed_at<?"} ORDER BY ${liveOperation} DESC,w.processed_at,w.id LIMIT 1`,
       connection.tenant,
       connection.id,
       now,
-      policy?.epoch ?? null,
-      policy?.epoch ?? null,
       ...(processedBefore === undefined ? [] : [processedBefore]),
-    )
-    .first<Work & { request_priority: VendorPriority }>();
+    ),
+  ]);
+  if (policy.results[0] && policy.results[0].phase !== "ready")
+    return { complete: false, records: 0, pages: 0 };
+  const operation = candidates.results[0];
   if (!operation) return { complete: true, records: 0, pages: 0 };
   const lease = await store.claim(
     connection.tenant,

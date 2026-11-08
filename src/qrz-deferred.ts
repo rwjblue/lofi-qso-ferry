@@ -19,6 +19,15 @@ export class DeferredQrzPlanning {
   #entries = new Map<string, Readonly<DeferredQrzKey>>();
   #seen = new Set<string>();
 
+  has(source: Pick<Connection, "tenant" | "id">, priority: VendorPriority) {
+    return [...this.#entries.values()].some(
+      (key) =>
+        key.tenant === source.tenant &&
+        key.source === source.id &&
+        key.priority === priority,
+    );
+  }
+
   add(key: DeferredQrzKey) {
     const id = JSON.stringify([
       key.tenant,
@@ -38,6 +47,7 @@ export class DeferredQrzPlanning {
     limit: number,
     now: () => number,
     admitted: () => boolean,
+    eligible: (key: Readonly<DeferredQrzKey>) => boolean = () => true,
   ): Promise<{ contacts: IntakeContact[]; destinations: Map<string, string> }> {
     const contacts: IntakeContact[] = [];
     const destinations = new Map<string, string>();
@@ -50,6 +60,7 @@ export class DeferredQrzPlanning {
       )
         continue;
       if (!admitted() || visited >= Math.min(20, Math.max(0, limit))) break;
+      if (!eligible(key)) continue;
       // Burn before the first await. Failed projections, races, and blocked proofs
       // cannot turn into an invocation-local retry loop.
       this.#entries.delete(id);

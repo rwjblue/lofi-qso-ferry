@@ -92,7 +92,7 @@ export async function selectReconciliationWork(
         }
       : undefined;
   for (const scoped of preferred ? [preferred, undefined] : [undefined]) {
-    const rows: ReconciliationWork[] = [];
+    const selections: D1PreparedStatement[] = [];
     for (const lane of priority
       ? [priority]
       : (["live", "background"] as const)) {
@@ -101,10 +101,9 @@ export async function selectReconciliationWork(
       for (const readiness of readyContextOnly
         ? ["ready"]
         : ["ready", "held", "expired"]) {
-        if (rows.length >= limit) break;
         const ready = readiness === "held" ? 0 : 1;
-        const batch = await store
-          .statement(
+        selections.push(
+          store.statement(
             `SELECT w.*,r.version AS reconciliation_version FROM ${scoped ? "json_each(?) ids CROSS JOIN reconciliation_work r" : "reconciliation_work r INDEXED BY reconciliation_due"} JOIN source_work w ON w.tenant=r.tenant AND w.source=r.source AND w.id=r.qso AND w.kind='qso' WHERE ${scoped ? "r.qso=ids.value AND " : ""}r.tenant=? AND r.source=? AND r.priority=? AND r.eligible=1 AND r.context_ready=? AND r.next_due_at<=? AND r.selected_at<? AND w.expires_at>? ${ready ? `AND r.context_expires_at${readiness === "expired" ? "<=" : ">"}?` : ""} ${scoped ? "AND EXISTS(SELECT 1 FROM json_each(?) ds CROSS JOIN connections d WHERE d.tenant=r.tenant AND d.id=ds.value AND d.status='active' AND d.kind IN(SELECT value FROM json_each(?)))" : ""} ORDER BY r.next_due_at,r.selected_at,r.qso LIMIT ?`,
             ...(scoped ? [scoped.qsos] : []),
             source.tenant,
@@ -116,11 +115,20 @@ export async function selectReconciliationWork(
             now,
             ...(ready ? [now] : []),
             ...(scoped ? [scoped.destinations, scoped.vendors] : []),
-            limit - rows.length,
-          )
-          .all<ReconciliationWork>();
-        rows.push(...batch.results);
+            limit,
+          ),
+        );
       }
+    }
+    // At most six indexed lanes, each returning bounded metadata only. Preserve
+    // lane precedence and the final contact limit while sharing one transaction
+    // and RPC, especially when every lane is empty. Ciphertexts load only for
+    // the selected rows in intake, never for the discarded scheduling hints.
+    const batches = await store.db.batch<ReconciliationWork>(selections);
+    const rows: ReconciliationWork[] = [];
+    for (const batch of batches) {
+      rows.push(...batch.results.slice(0, limit - rows.length));
+      if (rows.length >= limit) break;
     }
     // Do not pad a finite rollout cohort with unrelated history: preparation
     // follows the whole cohort. The normal selected_at fence lets later rounds

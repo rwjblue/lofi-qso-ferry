@@ -3,9 +3,17 @@ import {
   normalizeAdifValue,
   serializeAdifRecord,
 } from "./adif.ts";
+import {
+  deliveryWorkKey,
+  type DispatchWork,
+  loadDispatchWork,
+  loadPreparationWork,
+  type PreparationWork,
+} from "./delivery-work.ts";
 import { historyCoveringRange } from "./history-inventory.ts";
 import {
   availableIdentityClaim,
+  claimedAttemptChecks,
   claimedAttemptCurrent,
   destinationIdentityClaim,
 } from "./identity-claims.ts";
@@ -22,6 +30,7 @@ import { type Contact, isTestCallsign, isTestContact } from "./projection.ts";
 import {
   mergeQrzCorrection,
   QrzClient,
+  type QrzCoveringRead,
   QrzError,
   type QrzOptions,
   sameQrzIdentity,
@@ -33,7 +42,15 @@ import {
   lotwRemoteIdentity,
   reconcileQrzAttempt,
 } from "./reconcile.ts";
-import { b64, canonical, randomToken, sha256, unb64 } from "./security.ts";
+import {
+  b64,
+  canonical,
+  type Envelope,
+  open,
+  randomToken,
+  sha256,
+  unb64,
+} from "./security.ts";
 import {
   buildSignedTq8,
   canonicalSigningData,
@@ -43,22 +60,24 @@ import {
   type SigningCredential,
 } from "./signing.ts";
 import {
-  attemptSourceExportAuthorizationMode,
   attemptSourceExportProofCurrent,
   attemptSourceExportProofGuard,
   loadCurrentSourceExportProof,
   lotwFreshInsertCurrent,
   qrzFreshInsertCurrent,
+  qrzFreshInsertEligibleGuard,
   type SourceExportAuthorization,
   type SourceExportAuthorizationMode,
 } from "./source-export-proofs.ts";
 import {
   type Connection,
   type Lease,
+  type Ledger,
   type LedgerKey,
   LOTW_PRIOR_IDENTITY_NOTICE,
   type LotwIdentityEvidence,
   type Store,
+  type StageInput,
 } from "./store.ts";
 import {
   renderNarrative,
@@ -68,6 +87,7 @@ import {
 } from "./templates.ts";
 import {
   VendorDeferredError,
+  type VendorAdmission,
   type VendorPriority,
   vendorFetch,
 } from "./vendor-requests.ts";
@@ -130,6 +150,14 @@ function certificateCurrentlyValid(
 }
 interface QrzCredential {
   apiKey: string;
+}
+interface QrzCredentialSnapshot {
+  source_envelope: string;
+  source_created_at: number;
+  source_expires_at: number | null;
+  destination_envelope: string;
+  destination_created_at: number;
+  destination_expires_at: number | null;
 }
 interface LotwCredential {
   signing?: SigningCredential;
@@ -361,20 +389,27 @@ async function sourceContextUnchanged(
   generation: number | null,
   now: number,
 ): Promise<boolean> {
-  if (generation === null) return true;
-  return Boolean(
-    await store
-      .statement(
-        "SELECT 1 current FROM ledger l JOIN cursors c ON c.tenant=l.tenant AND c.connection=l.source AND c.stream='context' JOIN source_work w ON w.tenant=l.tenant AND w.source=l.source AND w.id=l.qso AND w.kind='qso' WHERE l.tenant=? AND l.source=? AND l.qso=? AND l.destination=? AND l.context_generation=? AND c.generation=? AND json_extract(c.cursor,'$.complete')=1 AND w.state IN('pending','waiting') AND w.expires_at>?",
-        key.tenant,
-        key.source,
-        key.qso,
-        key.destination,
-        generation,
-        generation,
-        now,
-      )
-      .first(),
+  const check = sourceContextCheck(store, key, generation, now);
+  if (!check) return true;
+  return Boolean(await check.first());
+}
+
+function sourceContextCheck(
+  store: Store,
+  key: LedgerKey,
+  generation: number | null,
+  now: number,
+): D1PreparedStatement | null {
+  if (generation === null) return null;
+  return store.statement(
+    "SELECT 1 current FROM ledger l JOIN cursors c ON c.tenant=l.tenant AND c.connection=l.source AND c.stream='context' JOIN source_work w ON w.tenant=l.tenant AND w.source=l.source AND w.id=l.qso AND w.kind='qso' WHERE l.tenant=? AND l.source=? AND l.qso=? AND l.destination=? AND l.context_generation=? AND c.generation=? AND json_extract(c.cursor,'$.complete')=1 AND w.state IN('pending','waiting') AND w.expires_at>?",
+    key.tenant,
+    key.source,
+    key.qso,
+    key.destination,
+    generation,
+    generation,
+    now,
   );
 }
 function structuredContactAdif(contact: Contact): AdifRecord {
@@ -617,6 +652,8 @@ export class QrzEmptyObservationScope {
   #issued = 0;
   readonly #store: Store;
   #observations = new WeakMap<object, { binding: string; expiresAt: number }>();
+  #covers = new Map<string, { read: QrzCoveringRead; expiresAt: number }>();
+  #coverBytes = 0;
   constructor(store: Store) {
     this.#store = store;
   }
@@ -624,6 +661,8 @@ export class QrzEmptyObservationScope {
   close() {
     this.#open = false;
     this.#observations = new WeakMap();
+    this.#covers.clear();
+    this.#coverBytes = 0;
   }
 
   async #credentials(input: QrzObservationInput, now: number) {
@@ -665,13 +704,54 @@ export class QrzEmptyObservationScope {
       throw new QrzError("blocked", "QRZ observation scope unavailable");
     const captured = qrzObservationInput(input);
     const time = deliveryClock(deps.now);
-    const expiresAt = time() + 60_000;
+    let expiresAt = time() + 60_000;
     const before =
       captured && this.#issued < 20
         ? await this.#credentials(input, time())
         : null;
     if (!this.#open)
       throw new QrzError("blocked", "QRZ observation scope unavailable");
+    // A covering read contains all records in its range, including neighbors
+    // relevant only to later contacts. Bind reuse to the exact source/book and
+    // encrypted credential snapshots, and retain its ORIGINAL expiry.
+    const coverBinding =
+      before && captured
+        ? await sha256(
+            canonical([
+              qrzObservationConnection(input.source, true),
+              qrzObservationConnection(input.destination),
+              before,
+              apiKey,
+            ]),
+          )
+        : null;
+    const fallback = qrzNeighborhoodFallback(
+      this.#store,
+      input.source,
+      input.destination,
+      time,
+    );
+    if (coverBinding)
+      fallback.planningCoverage = {
+        load: (cover) => {
+          const saved = this.#covers.get(canonical([coverBinding, cover]));
+          if (!this.#open || !saved || time() >= saved.expiresAt)
+            return undefined;
+          expiresAt = Math.min(expiresAt, saved.expiresAt);
+          return structuredClone(saved.read);
+        },
+        save: (read) => {
+          if (!this.#open || time() >= expiresAt || this.#covers.size >= 20)
+            return;
+          const bytes = new TextEncoder().encode(canonical(read)).byteLength;
+          if (this.#coverBytes + bytes > 2 * 1024 * 1024) return;
+          this.#coverBytes += bytes;
+          this.#covers.set(canonical([coverBinding, read.cover]), {
+            read: structuredClone(read),
+            expiresAt,
+          });
+        },
+      };
     const records = await new QrzClient(apiKey, {
       fetch: qrzPlanningFetch(
         this.#store,
@@ -680,12 +760,7 @@ export class QrzEmptyObservationScope {
         time,
         deps.qrzPlanning,
       ),
-      neighborhoodFallback: qrzNeighborhoodFallback(
-        this.#store,
-        input.source,
-        input.destination,
-        time,
-      ),
+      neighborhoodFallback: fallback,
     }).findNeighborhood(structuredContactAdif(input.contact));
     let observation: QrzEmptyObservation | undefined;
     if (
@@ -723,6 +798,7 @@ export class QrzEmptyObservationScope {
     input: QrzObservationInput,
     credential: QrzCredential,
     now: () => number,
+    loaded?: QrzCredentialSnapshot | null,
   ): Promise<boolean> {
     if (!observation) return false;
     const scope = observation.scope;
@@ -742,7 +818,8 @@ export class QrzEmptyObservationScope {
     const captured = qrzObservationInput(input);
     if (captured === undefined) return false;
     const apiKey = credential.apiKey;
-    const current = await scope.#credentials(input, now());
+    const current =
+      loaded === undefined ? await scope.#credentials(input, now()) : loaded;
     const binding = await sha256(canonical([captured, current, apiKey]));
     return (
       scope.#open &&
@@ -766,6 +843,7 @@ function qrzClient(
   ) => Promise<void>,
   authorizationMode: SourceExportAuthorizationMode = "source_boundary",
   planning?: QrzPlanningAllowance,
+  command?: { admit: VendorAdmission; current: () => Promise<boolean> },
 ): QrzClient {
   if (!credential.apiKey) throw new Error("QRZ credential is unavailable");
   const currentTime = deliveryClock(deps.now);
@@ -775,6 +853,10 @@ function qrzClient(
     scope.destination,
     currentTime,
   );
+  // Queue callbacks check local gates/deadlines. The command executes fresh
+  // SQL authorization with reservation before EVERY HTTP request, including
+  // FETCH/STATUS. A previous request's decision never admits another request.
+  if (command) neighborhoodFallback.isCurrent = command.current;
   const transport: typeof fetch = async (input, init) => {
     const form = new URLSearchParams(String(init?.body));
     const action = form.get("ACTION");
@@ -792,13 +874,20 @@ function qrzClient(
     return (deps.fetcher ?? fetch)(input, init);
   };
   return new QrzClient(credential.apiKey, {
-    fetch: qrzPlanningFetch(
-      store,
-      transport,
-      deps.priority,
-      currentTime,
-      planning,
-    ),
+    fetch: command
+      ? (input, init) =>
+          vendorFetch(store, "qrz", transport, {
+            priority: deps.priority,
+            now: currentTime(),
+            admit: command.admit,
+          })(input, init)
+      : qrzPlanningFetch(
+          store,
+          transport,
+          deps.priority,
+          currentTime,
+          planning,
+        ),
     writesEnabled: modeEnabled(gates, authorizationMode),
     replacementContractVerified: config.replacementContractVerified === true,
     beforeWrite: async () =>
@@ -831,6 +920,9 @@ async function activeTemplate(
     )
     .first<{ id: string; config: string }>();
   if (!row) throw new Error("No immutable QRZ template profile is configured");
+  return decodeTemplate(row);
+}
+function decodeTemplate(row: { id: string; config: string }): TemplateVersion {
   const config = JSON.parse(row.config) as TemplateVersion;
   return { ...config, id: row.id, profile: config.profile ?? TEMPLATE_PROFILE };
 }
@@ -840,8 +932,9 @@ async function unchangedProjection(
   generation: string,
   projectionHash: string,
   now: number,
+  loaded?: Ledger,
 ): Promise<boolean> {
-  const row = await store.ledger(key);
+  const row = loaded ?? (await store.ledger(key));
   if (!row || row.generation !== generation || row.sent_hash !== projectionHash)
     return false;
   const result = await store
@@ -893,6 +986,154 @@ export async function prepareDue(
   gates: DeliveryGates,
   deps: DeliveryDependencies = {},
 ): Promise<DeliveryResult> {
+  return prepareDueWork(store, key, contact, gates, deps);
+}
+
+export interface PrepareDueMember {
+  key: LedgerKey;
+  contact: Contact;
+  deps: DeliveryDependencies;
+}
+/** Load a QRZ cohort once and stage its eligible plans in one transaction.
+ * All authority remains in the existing native stage guards. Other operations
+ * and unresolved attempts retain their ordinary recovery paths. */
+export async function prepareDueBatch(
+  store: Store,
+  members: readonly PrepareDueMember[],
+  gates: DeliveryGates,
+): Promise<PromiseSettledResult<DeliveryResult>[]> {
+  if (
+    !members.length ||
+    members.length > 20 ||
+    new Set(members.map(({ key }) => key.tenant)).size !== 1
+  )
+    throw new Error("invalid preparation cohort");
+  const eligible = members.filter(
+    ({ deps, contact }) =>
+      deps.sourceProof?.authorizationMode === "qrz_fresh_insert" &&
+      !testContact(contact) &&
+      !contact.deleted,
+  );
+  let loaded: Map<string, PreparationWork>;
+  try {
+    loaded = eligible.length
+      ? await loadPreparationWork(
+          store,
+          await Promise.all(
+            eligible.map(async ({ key, contact, deps }) => {
+              const proof = deps.sourceProof;
+              if (!proof) throw new Error("missing cohort proof");
+              return {
+                key,
+                generation: contact.generation,
+                identityHash: (
+                  await destinationIdentityClaim(
+                    "qrz",
+                    structuredContactAdif(contact),
+                  )
+                ).hash,
+                proof,
+              };
+            }),
+          ),
+          deliveryClock(members[0].deps.now)(),
+        )
+      : new Map<string, PreparationWork>();
+  } catch {
+    const isolated: PromiseSettledResult<DeliveryResult>[] = [];
+    for (const member of members) {
+      try {
+        isolated.push({
+          status: "fulfilled",
+          value: await prepareDue(
+            store,
+            member.key,
+            member.contact,
+            gates,
+            member.deps,
+          ),
+        });
+      } catch (reason) {
+        isolated.push({ status: "rejected", reason });
+      }
+    }
+    return isolated;
+  }
+  const plans: { input: StageInput; member: number }[] = [];
+  const results: PromiseSettledResult<DeliveryResult>[] = [];
+  let backgroundPlans = 0;
+  for (const [index, member] of members.entries()) {
+    const work = loaded.get(deliveryWorkKey(member.key));
+    const fast = work?.destination.kind === "qrz" && !work.unresolved;
+    try {
+      const value = await prepareDueWork(
+        store,
+        member.key,
+        member.contact,
+        gates,
+        member.deps,
+        fast
+          ? {
+              ...work,
+              backgroundBacklog: work.backgroundBacklog + backgroundPlans,
+            }
+          : undefined,
+        fast
+          ? (input) => {
+              plans.push({ input, member: index });
+              if (input.priority === "background") backgroundPlans++;
+              return "planned";
+            }
+          : undefined,
+      );
+      results.push({ status: "fulfilled", value });
+    } catch (reason) {
+      results.push({ status: "rejected", reason });
+    }
+  }
+  if (plans.length) {
+    try {
+      const ids = await store.stageBatch(plans.map(({ input }) => input));
+      plans.forEach(({ member }, index) => {
+        results[member] = {
+          status: "fulfilled",
+          value: { state: "prepared", attemptId: ids[index] },
+        };
+      });
+    } catch {
+      // Native constraint failures roll back the cohort. Ordinary preparation
+      // also detects a persisted attempt after an ambiguous database failure.
+      for (const { member } of plans) {
+        const input = members[member];
+        try {
+          results[member] = {
+            status: "fulfilled",
+            value: await prepareDue(
+              store,
+              input.key,
+              input.contact,
+              gates,
+              input.deps,
+            ),
+          };
+        } catch (reason) {
+          results[member] = { status: "rejected", reason };
+        }
+      }
+    }
+  }
+  return results;
+}
+
+async function prepareDueWork(
+  store: Store,
+  key: LedgerKey,
+  contact: Contact,
+  gates: DeliveryGates,
+  deps: DeliveryDependencies,
+  work?: PreparationWork,
+  stage?: (input: StageInput) => string,
+): Promise<DeliveryResult> {
   const currentTime = deliveryClock(deps.now);
   const now = currentTime();
   if (deps.preparationAllowed?.() === false)
@@ -906,8 +1147,26 @@ export async function prepareDue(
     !gates.allowedDestinationIds.includes(key.destination)
   )
     return { state: "blocked", reason: "destination_outside_rollout_scope" };
-  const row = await store.ledger(key);
-  if (await store.historicalAssociationOnly(key))
+  const [ledger, association] = work
+    ? [{ results: [work.ledger] }, { results: work.held ? [work.ledger] : [] }]
+    : await store.db.batch<Ledger>([
+        store.statement(
+          "SELECT * FROM ledger WHERE tenant=? AND source=? AND qso=? AND destination=?",
+          key.tenant,
+          key.source,
+          key.qso,
+          key.destination,
+        ),
+        store.statement(
+          "SELECT 1 held FROM historical_association_write_blocks WHERE tenant=? AND source=? AND qso=? AND destination=? LIMIT 1",
+          key.tenant,
+          key.source,
+          key.qso,
+          key.destination,
+        ),
+      ]);
+  const row = ledger.results[0];
+  if (association.results.length)
     return { state: "blocked", reason: "historical_association_read_only" };
   if (row?.provenance === "adoption_conflict")
     return { state: "blocked", reason: "remote_identity_claim_conflict" };
@@ -922,18 +1181,22 @@ export async function prepareDue(
     return { state: "skipped", reason: "not_due_or_current" };
   if (
     row.context_generation != null &&
-    !(await sourceContextUnchanged(store, key, row.context_generation, now))
+    !(work
+      ? work.contextCurrent
+      : await sourceContextUnchanged(store, key, row.context_generation, now))
   )
     return { state: "blocked", reason: "source_not_exportable" };
-  const unresolved = await store
-    .statement(
-      "SELECT a.id,s.state FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled') LIMIT 1",
-      key.tenant,
-      key.source,
-      key.qso,
-      key.destination,
-    )
-    .first<{ id: string; state: string }>();
+  const unresolved = work
+    ? null
+    : await store
+        .statement(
+          "SELECT a.id,s.state FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.source=? AND a.qso=? AND a.destination=? AND s.state NOT IN('delivered','observed','rejected','cancelled') LIMIT 1",
+          key.tenant,
+          key.source,
+          key.qso,
+          key.destination,
+        )
+        .first<{ id: string; state: string }>();
   if (
     unresolved &&
     (unresolved.state !== "prepared" ||
@@ -945,8 +1208,22 @@ export async function prepareDue(
       )))
   )
     return { state: "skipped", reason: "unresolved_attempt" };
-  const connection = await store.connection(key.tenant, key.destination);
-  const source = await store.connection(key.tenant, key.source);
+  const connections = work
+    ? [{ results: [work.destination] }, { results: [work.source] }]
+    : await store.db.batch<Connection>([
+        store.statement(
+          "SELECT * FROM connections WHERE tenant=? AND id=?",
+          key.tenant,
+          key.destination,
+        ),
+        store.statement(
+          "SELECT * FROM connections WHERE tenant=? AND id=?",
+          key.tenant,
+          key.source,
+        ),
+      ]);
+  const connection = connections[0].results[0];
+  const source = connections[1].results[0];
   if (
     connection?.status !== "active" ||
     source?.status !== "active" ||
@@ -966,9 +1243,11 @@ export async function prepareDue(
     authorizationMode === "source_boundary" ||
     (modeEnabled(gates, authorizationMode) &&
       scoped(gates, key, true) &&
-      (await (authorizationMode === "qrz_fresh_insert"
-        ? qrzFreshInsertCurrent(store, key)
-        : lotwFreshInsertCurrent(store, key))) &&
+      (work
+        ? work.freshCurrent
+        : await (authorizationMode === "qrz_fresh_insert"
+            ? qrzFreshInsertCurrent(store, key)
+            : lotwFreshInsertCurrent(store, key))) &&
       modeEnabled(gates, authorizationMode) &&
       scoped(gates, key, true));
   if (!(await freshInsertCurrent()))
@@ -983,17 +1262,19 @@ export async function prepareDue(
     Boolean(
       sourceProof.scope.tenant === key.tenant &&
         sourceProof.scope.source === key.source &&
-        (await loadCurrentSourceExportProof(
-          store,
-          sourceProof.scope,
-          sourceProof.proofId,
-          {
-            qso: key.qso,
-            generation: contact.generation,
-            reconciliationVersion: sourceProof.reconciliationVersion,
-          },
-          currentTime(),
-        )),
+        (work
+          ? work.proofExpiresAt > currentTime()
+          : await loadCurrentSourceExportProof(
+              store,
+              sourceProof.scope,
+              sourceProof.proofId,
+              {
+                qso: key.qso,
+                generation: contact.generation,
+                reconciliationVersion: sourceProof.reconciliationVersion,
+              },
+              currentTime(),
+            )),
     );
   if (!(await sourceProofCurrent()))
     return { state: "blocked", reason: "source_export_proof_unavailable" };
@@ -1006,17 +1287,19 @@ export async function prepareDue(
     connection.kind === "lotw"
       ? await store.lotwIdentityClaimGuard(key, identity.hash)
       : { sql: "1", params: [] };
-  const ownership = await store
-    .statement(
-      `SELECT (${available.sql}) AND (${retained.sql}) available,EXISTS(SELECT 1 FROM legacy_qrz_identity_reservations r WHERE r.tenant=? AND r.destination=?) legacy,EXISTS(SELECT 1 FROM legacy_outbound_identity_reservations r WHERE r.tenant=? AND r.destination=?) legacy_attempt`,
-      ...available.params,
-      ...retained.params,
-      key.tenant,
-      key.destination,
-      key.tenant,
-      key.destination,
-    )
-    .first<{ available: number; legacy: number; legacy_attempt: number }>();
+  const ownership =
+    work?.ownership ??
+    (await store
+      .statement(
+        `SELECT (${available.sql}) AND (${retained.sql}) available,EXISTS(SELECT 1 FROM legacy_qrz_identity_reservations r WHERE r.tenant=? AND r.destination=?) legacy,EXISTS(SELECT 1 FROM legacy_outbound_identity_reservations r WHERE r.tenant=? AND r.destination=?) legacy_attempt`,
+        ...available.params,
+        ...retained.params,
+        key.tenant,
+        key.destination,
+        key.tenant,
+        key.destination,
+      )
+      .first<{ available: number; legacy: number; legacy_attempt: number }>());
   if (ownership?.legacy)
     return {
       state: "blocked",
@@ -1030,13 +1313,15 @@ export async function prepareDue(
   if (!ownership?.available)
     return { state: "blocked", reason: "outbound_identity_claim_conflict" };
   if (deps.priority === "background") {
-    const backlog = await store
-      .statement(
-        "SELECT COUNT(*) n FROM (SELECT 1 FROM attempt_state s JOIN attempts a ON a.tenant=s.tenant AND a.id=s.attempt JOIN connections c ON c.tenant=a.tenant AND c.id=a.destination AND c.status='active' JOIN connections src ON src.tenant=a.tenant AND src.id=a.source AND src.status='active' WHERE s.state='prepared' AND s.priority='background' AND c.kind=? AND a.credential_version=c.credential_version AND EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=a.tenant AND p.connection=a.destination AND p.id=a.credential_version AND p.kind='credential' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)) LIMIT 2)",
-        connection.kind,
-        now,
-      )
-      .first<{ n: number }>();
+    const backlog = work
+      ? { n: work.backgroundBacklog }
+      : await store
+          .statement(
+            "SELECT COUNT(*) n FROM (SELECT 1 FROM attempt_state s JOIN attempts a ON a.tenant=s.tenant AND a.id=s.attempt JOIN connections c ON c.tenant=a.tenant AND c.id=a.destination AND c.status='active' JOIN connections src ON src.tenant=a.tenant AND src.id=a.source AND src.status='active' WHERE s.state='prepared' AND s.priority='background' AND c.kind=? AND a.credential_version=c.credential_version AND EXISTS(SELECT 1 FROM private_data p WHERE p.tenant=a.tenant AND p.connection=a.destination AND p.id=a.credential_version AND p.kind='credential' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)) LIMIT 2)",
+            connection.kind,
+            now,
+          )
+          .first<{ n: number }>();
     if ((backlog?.n ?? 0) >= 2)
       return { state: "skipped", reason: "background_outbox_full" };
   }
@@ -1048,12 +1333,26 @@ export async function prepareDue(
     const config = JSON.parse(connection.config) as QrzConfig;
     if (!routedQrz(config, contact))
       return { state: "blocked", reason: "qrz_station_or_date_route_mismatch" };
-    const credential = await store.private<QrzCredential>(
-      key.tenant,
-      key.destination,
-      connection.credential_version,
-      "credential",
-    );
+    const credential = work
+      ? work.credentials
+        ? await open<QrzCredential>(
+            JSON.parse(work.credentials.destination_envelope) as Envelope,
+            {
+              tenant: key.tenant,
+              connection: key.destination,
+              id: connection.credential_version,
+              kind: "credential",
+              purpose: "storage",
+            },
+            store.keys,
+          )
+        : null
+      : await store.private<QrzCredential>(
+          key.tenant,
+          key.destination,
+          connection.credential_version,
+          "credential",
+        );
     if (!credential)
       return { state: "blocked", reason: "credential_unavailable" };
     const client = qrzClient(
@@ -1073,7 +1372,13 @@ export async function prepareDue(
     );
     let record = structured;
     if (row.narrative !== "remote_preserved") {
-      const version = await activeTemplate(store, key, row.template_version);
+      const version = work
+        ? work.template
+          ? decodeTemplate(work.template)
+          : null
+        : await activeTemplate(store, key, row.template_version);
+      if (!version)
+        throw new Error("No immutable QRZ template profile is configured");
       expectedTemplate = version.id;
       record = {
         ...structured,
@@ -1178,6 +1483,7 @@ export async function prepareDue(
           { key, contact, source, destination: connection },
           credential,
           currentTime,
+          work?.credentials,
         ))
       ) &&
       (await client.findNeighborhood(record)).length
@@ -1197,6 +1503,7 @@ export async function prepareDue(
         contact.generation,
         projectionHash,
         now,
+        work?.ledger,
       )
     )
       return { state: "skipped", reason: "transmitted_projection_unchanged" };
@@ -1465,22 +1772,39 @@ export async function prepareDue(
     // Yield before persisting an artifact that cannot get a dispatch turn.
     if (deps.preparationAllowed?.() === false)
       return { state: "blocked", reason: "dispatch_headroom_unavailable" };
-    attemptId = await store.stage(
-      key,
-      contact.generation,
-      payload,
-      connection.credential_version,
-      expectedTemplate,
-      currentTime(),
-      payload.projectionHash,
-      lotwIdentityId,
-      deps.priority ?? "live",
-      {
-        claim: identityClaim,
-        sourceVersion: sourceProof.reconciliationVersion,
-      },
-      { ...sourceProof, authorizationMode },
-    );
+    attemptId = stage
+      ? stage({
+          key,
+          generation: contact.generation,
+          payload,
+          credentialVersion: connection.credential_version,
+          expectedTemplate,
+          now: currentTime(),
+          transmittedHash: payload.projectionHash,
+          lotwIdentityId,
+          priority: deps.priority ?? "live",
+          identity: {
+            claim: identityClaim,
+            sourceVersion: sourceProof.reconciliationVersion,
+          },
+          sourceProof: { ...sourceProof, authorizationMode },
+        })
+      : await store.stage(
+          key,
+          contact.generation,
+          payload,
+          connection.credential_version,
+          expectedTemplate,
+          currentTime(),
+          payload.projectionHash,
+          lotwIdentityId,
+          deps.priority ?? "live",
+          {
+            claim: identityClaim,
+            sourceVersion: sourceProof.reconciliationVersion,
+          },
+          { ...sourceProof, authorizationMode },
+        );
   } catch (error) {
     if (
       error instanceof LotwOwnershipUnavailable ||
@@ -1597,9 +1921,153 @@ export async function dispatchAttempt(
 ): Promise<DeliveryResult> {
   if (!deliveryMode(gates, "qrz") && !deliveryMode(gates, "lotw"))
     return { state: "blocked", reason: "exports_disabled" };
+  const work = await loadDispatchWork(
+    store,
+    tenant,
+    [id],
+    deliveryClock(deps.now)(),
+  );
+  return dispatchAttemptWork(
+    store,
+    tenant,
+    id,
+    gates,
+    deps,
+    work.get(id) ?? null,
+  );
+}
+
+export async function dispatchAttemptBatch(
+  store: Store,
+  tenant: string,
+  members: readonly { id: string; deps: DeliveryDependencies }[],
+  gates: DeliveryGates,
+): Promise<PromiseSettledResult<DeliveryResult>[]> {
+  if (!members.length) return [];
+  if (
+    members.length > 25 ||
+    new Set(members.map((member) => member.id)).size !== members.length
+  )
+    throw new Error("invalid dispatch cohort");
+  if (!deliveryMode(gates, "qrz") && !deliveryMode(gates, "lotw"))
+    return members.map(() => ({
+      status: "fulfilled",
+      value: { state: "blocked", reason: "exports_disabled" },
+    }));
+  const time = deliveryClock(members[0]?.deps.now);
+  let work: Map<string, DispatchWork>;
+  const current = new Map<string, boolean>();
+  try {
+    work = await loadDispatchWork(
+      store,
+      tenant,
+      members.map(({ id }) => id),
+      time(),
+    );
+    const identityInputs = [];
+    for (const member of members) {
+      const data = work.get(member.id);
+      if (
+        data?.payload.kind === "qrz" &&
+        data.attempt.attempt_state === "prepared"
+      )
+        identityInputs.push({
+          id: member.id,
+          checks: claimedAttemptChecks(
+            store,
+            tenant,
+            member.id,
+            await preparedIdentityClaim(data.payload),
+            time(),
+          ),
+        });
+    }
+    if (identityInputs.length) {
+      const checks = await store.db.batch(
+        identityInputs.flatMap(({ checks }) => checks),
+      );
+      let offset = 0;
+      for (const input of identityInputs) {
+        current.set(
+          input.id,
+          checks
+            .slice(offset, offset + input.checks.length)
+            .every((result) => result.results.length === 1),
+        );
+        offset += input.checks.length;
+      }
+    }
+  } catch {
+    const isolated: PromiseSettledResult<DeliveryResult>[] = [];
+    for (const member of members) {
+      try {
+        isolated.push({
+          status: "fulfilled",
+          value: await dispatchAttempt(
+            store,
+            tenant,
+            member.id,
+            gates,
+            member.deps,
+          ),
+        });
+      } catch (reason) {
+        isolated.push({ status: "rejected", reason });
+      }
+    }
+    return isolated;
+  }
+  const leases = new Map<string, Lease | null>();
+  const leaseFor = async (destination: string) => {
+    if (!leases.has(destination))
+      leases.set(
+        destination,
+        await store.claim(tenant, `delivery:${destination}`, time(), 120_000),
+      );
+    return leases.get(destination) ?? null;
+  };
+  const results: PromiseSettledResult<DeliveryResult>[] = [];
+  try {
+    for (const member of members) {
+      try {
+        results.push({
+          status: "fulfilled",
+          value: await dispatchAttemptWork(
+            store,
+            tenant,
+            member.id,
+            gates,
+            member.deps,
+            work.get(member.id) ?? null,
+            current.get(member.id),
+            leaseFor,
+          ),
+        });
+      } catch (reason) {
+        results.push({ status: "rejected", reason });
+      }
+    }
+  } finally {
+    for (const lease of leases.values()) if (lease) await store.release(lease);
+  }
+  return results;
+}
+
+async function dispatchAttemptWork(
+  store: Store,
+  tenant: string,
+  id: string,
+  gates: DeliveryGates,
+  deps: DeliveryDependencies,
+  work: DispatchWork | null,
+  identityCurrent?: boolean,
+  leaseFor?: (destination: string) => Promise<Lease | null>,
+): Promise<DeliveryResult> {
+  if (!deliveryMode(gates, "qrz") && !deliveryMode(gates, "lotw"))
+    return { state: "blocked", reason: "exports_disabled" };
   const currentTime = deliveryClock(deps.now);
   const now = currentTime();
-  const data = await attemptData(store, tenant, id);
+  const data = work;
   if (
     data &&
     gates.allowedQsoIds &&
@@ -1613,7 +2081,7 @@ export async function dispatchAttempt(
     !gates.allowedDestinationIds.includes(data.attempt.destination)
   )
     return { state: "blocked", reason: "destination_outside_rollout_scope" };
-  const key = { tenant, ...data.attempt };
+  const key = { ...data.attempt, tenant };
   if (
     isTestCallsign(
       data.payload.kind === "qrz"
@@ -1648,13 +2116,9 @@ export async function dispatchAttempt(
       return { state: "blocked", reason: "lotw_signing_fields_unavailable" };
     }
   }
-  if (await store.historicalAssociationOnly(key))
+  if (data.held)
     return { state: "blocked", reason: "historical_association_read_only" };
-  const authorizationMode = await attemptSourceExportAuthorizationMode(
-    store,
-    tenant,
-    id,
-  );
+  const authorizationMode = data.authorizationMode;
   if (!authorizationMode || !modeEnabled(gates, authorizationMode))
     return {
       state: "blocked",
@@ -1678,22 +2142,17 @@ export async function dispatchAttempt(
       reason: freshInsertUnavailable(authorizationMode),
     };
   const proofCheckedAt = currentTime();
-  const proofExpiresAt = await store
-    .statement(
-      "SELECT expires_at FROM attempt_source_export_proofs_current WHERE tenant=? AND attempt=? AND created_at<=? AND expires_at>?",
-      tenant,
-      id,
-      proofCheckedAt,
-      proofCheckedAt,
-    )
-    .first<number>("expires_at");
-  if (proofExpiresAt === null || currentTime() >= proofExpiresAt) {
+  const proofExpiresAt = data.proofExpiresAt;
+  if (proofExpiresAt <= proofCheckedAt || currentTime() >= proofExpiresAt) {
     await cancelStalePreparedSourceProof(store, tenant, id, currentTime());
     return { state: "blocked", reason: "source_export_proof_unavailable" };
   }
   const identity = await preparedIdentityClaim(data.payload);
   if (
-    !(await claimedAttemptCurrent(store, tenant, id, identity, currentTime()))
+    !(
+      identityCurrent ??
+      (await claimedAttemptCurrent(store, tenant, id, identity, currentTime()))
+    )
   ) {
     if (await cancelStalePreparedSourceProof(store, tenant, id, currentTime()))
       return { state: "blocked", reason: "source_export_proof_unavailable" };
@@ -1716,26 +2175,35 @@ export async function dispatchAttempt(
     ]);
     return { state: "blocked", reason: "outbound_identity_claim_unavailable" };
   }
-  const sourceContext = await sourceExportContext(
-    store,
-    key,
-    now,
-    deps.sourceContact,
-  );
+  const sourceContext =
+    data.contextGeneration === null ||
+    (deps.sourceContact?.id === data.attempt.qso &&
+      deps.sourceContact.generation === data.attempt.generation &&
+      deps.sourceContact.contextGeneration === data.contextGeneration)
+      ? data.contextGeneration
+      : await sourceExportContext(store, key, now, deps.sourceContact);
   if (sourceContext === undefined)
     return { state: "blocked", reason: "source_not_exportable" };
-  const lease = await store.claim(
-    tenant,
-    `delivery:${data.attempt.destination}`,
-    currentTime(),
-    120000,
-  );
+  const lease = leaseFor
+    ? await leaseFor(data.attempt.destination)
+    : await store.claim(
+        tenant,
+        `delivery:${data.attempt.destination}`,
+        currentTime(),
+        120000,
+      );
   if (!lease) return { state: "skipped", reason: "delivery_lease_busy" };
   let ownershipLease: Lease | undefined;
   let ownershipExpiresAt = 0;
   let claimed = false;
   let mutationStarted = false;
   let mutationBlocked = false;
+  const cohortCommand = Boolean(
+    leaseFor &&
+      data.payload.kind === "qrz" &&
+      data.credential &&
+      authorizationMode === "qrz_fresh_insert",
+  );
   const retireUnsentProof = async (): Promise<DeliveryResult> => {
     // This is used only before transport begins. Return through the existing
     // fenced unsent transition before cancelling; never rewrite uncertainty.
@@ -1779,6 +2247,7 @@ export async function dispatchAttempt(
       ownershipExpiresAt = ownership.expiresAt;
     }
     if (
+      !cohortCommand &&
       !(await store.claimAttempt(
         tenant,
         id,
@@ -1796,74 +2265,128 @@ export async function dispatchAttempt(
       ))
     )
       return { state: "skipped", reason: "attempt_not_claimable" };
-    claimed = true;
+    claimed = !cohortCommand;
     let state: "delivered" | "submitted" | "uncertain" | "rejected" =
       "uncertain";
     let remoteId: string | null = null;
     if (data.payload.kind === "qrz") {
-      const credential = await store.private<QrzCredential>(
-        tenant,
-        data.attempt.destination,
-        data.attempt.credential_version,
-        "credential",
-      );
+      const credential = data.credential;
       if (!credential) {
         await store.resolve(tenant, id, lease, "rejected", null, currentTime());
         return { state: "rejected", reason: "credential_revoked" };
       }
-      const authorized = async () => {
-        const current = await store.connection(
-          tenant,
-          data.attempt.destination,
-        );
-        const activeSource = await store.connection(
-          tenant,
-          data.attempt.source,
-        );
-        const liveLease = await store
-          .statement(
-            "SELECT 1 n FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?",
-            tenant,
+      const authorizationChecks = () => {
+        const at = currentTime();
+        const context = sourceContextCheck(store, key, sourceContext, at);
+        const fresh =
+          authorizationMode === "qrz_fresh_insert"
+            ? qrzFreshInsertEligibleGuard(key, id)
+            : null;
+        return [
+          store.statement(
+            `SELECT p.envelope FROM connections d
+             JOIN connections src ON src.tenant=d.tenant AND src.id=?
+             JOIN private_data p ON p.tenant=d.tenant AND p.connection=d.id AND p.id=d.credential_version AND p.kind='credential'
+             JOIN leases lease ON lease.tenant=d.tenant AND lease.scope=? AND lease.token=? AND lease.fence=? AND lease.expires_at>?
+             WHERE d.tenant=? AND d.id=? AND d.status='active' AND d.credential_version=?
+              AND d.remote_identity=? AND d.config=? AND src.status='active'
+              AND src.remote_identity IS ? AND src.credential_version IS ?
+              AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?)`,
+            data.attempt.source,
             lease.scope,
             lease.token,
             lease.fence,
-            currentTime(),
-          )
-          .first();
-        const active =
-          operationAuthorized() &&
-          current?.status === "active" &&
-          current.credential_version === data.attempt.credential_version &&
-          current.remote_identity === data.connection.remote_identity &&
-          current.config === data.connection.config &&
-          activeSource?.status === "active" &&
-          Boolean(liveLease) &&
-          (await claimedAttemptCurrent(
-            store,
+            at,
             tenant,
-            id,
-            identity,
-            currentTime(),
-            lease,
-          )) &&
-          (await sourceContextUnchanged(
-            store,
-            key,
-            sourceContext,
-            currentTime(),
-          )) &&
-          Boolean(
-            await store.private(
-              tenant,
-              data.attempt.destination,
-              data.attempt.credential_version,
-              "credential",
-            ),
-          ) &&
-          (authorizationMode !== "qrz_fresh_insert" ||
-            (await qrzFreshInsertCurrent(store, key, id)));
-        return active;
+            data.attempt.destination,
+            data.attempt.credential_version,
+            data.connection.remote_identity,
+            data.connection.config,
+            data.source.remote_identity,
+            data.source.credential_version,
+            Math.max(at, Date.now()),
+          ),
+          ...claimedAttemptChecks(store, tenant, id, identity, at, lease),
+          ...(context ? [context] : []),
+          ...(fresh
+            ? [
+                store.statement(
+                  `SELECT 1 current WHERE ${fresh.sql}`,
+                  ...fresh.params,
+                ),
+              ]
+            : []),
+        ];
       };
+      const authorizationResult = async (
+        results: D1Result<{ envelope: string }>[],
+      ) => {
+        if (!results.every((result) => result.results.length === 1))
+          return false;
+        const current = await open<QrzCredential>(
+          JSON.parse(results[0].results[0].envelope) as Envelope,
+          {
+            tenant,
+            connection: data.attempt.destination,
+            id: data.attempt.credential_version,
+            kind: "credential",
+            purpose: "storage",
+          },
+          store.keys,
+        );
+        return (
+          operationAuthorized() &&
+          currentTime() < Math.min(proofExpiresAt, lease.expires_at) &&
+          current?.apiKey === credential.apiKey
+        );
+      };
+      const authorized = async () =>
+        operationAuthorized() &&
+        authorizationResult(
+          await store.db.batch<{ envelope: string }>(authorizationChecks()),
+        );
+      let commandAuthorized = false;
+      const command = cohortCommand
+        ? {
+            current: async () =>
+              operationAuthorized() &&
+              currentTime() < Math.min(proofExpiresAt, lease.expires_at),
+            admit: async (reservation: D1PreparedStatement) => {
+              commandAuthorized = false;
+              if (!operationAuthorized()) throw new UnsentAuthorizationError();
+              const claim = claimed
+                ? []
+                : [
+                    store.claimAttemptStatement(
+                      tenant,
+                      id,
+                      lease,
+                      currentTime(),
+                    ),
+                  ];
+              const checks = authorizationChecks();
+              // Native guards fence the first claim and each later request in
+              // the same transaction as its rate reservation. Validate the
+              // returned current credential before handing anything to HTTP.
+              const results = await store.db.batch<{
+                envelope: string;
+                window_start: number;
+                cooldown_until: number;
+              }>([...claim, ...checks, reservation]);
+              if (claim.length) claimed = results[0].results.length === 1;
+              commandAuthorized =
+                claimed &&
+                (await authorizationResult(
+                  results.slice(claim.length, claim.length + checks.length),
+                ));
+              if (!commandAuthorized) {
+                mutationBlocked = claimed;
+                throw new UnsentAuthorizationError();
+              }
+              return results.at(-1)?.results[0] ?? null;
+            },
+          }
+        : undefined;
       const client = qrzClient(
         store,
         credential,
@@ -1871,10 +2394,10 @@ export async function dispatchAttempt(
         gates,
         { ...deps, now: currentTime() },
         {
-          source: await store.connection(tenant, data.attempt.source),
+          source: data.source,
           destination: data.connection,
         },
-        authorized,
+        command ? command.current : authorized,
         async (input, init) => {
           mutationBlocked = true;
           const validRequest = () => {
@@ -1896,7 +2419,7 @@ export async function dispatchAttempt(
           };
           if (
             !validRequest() ||
-            !(await authorized()) ||
+            !(command ? commandAuthorized : await authorized()) ||
             !operationAuthorized() ||
             !validRequest() ||
             currentTime() >= Math.min(proofExpiresAt, lease.expires_at)
@@ -1907,6 +2430,8 @@ export async function dispatchAttempt(
           mutationStarted = true;
         },
         authorizationMode,
+        undefined,
+        command,
       );
       try {
         if (
@@ -1928,6 +2453,8 @@ export async function dispatchAttempt(
         remoteId = receipt.logId;
         state = "delivered";
       } catch (error) {
+        if (cohortCommand && !claimed)
+          return { state: "skipped", reason: "attempt_not_claimable" };
         if (error instanceof VendorDeferredError) throw error;
         if (mutationBlocked && !mutationStarted)
           return await retryBlockedTransport();
@@ -2239,22 +2766,10 @@ export async function dispatchAttempt(
       data.payload.kind === "lotw"
         ? await lotwAttemptIdentity(data.payload.station, data.payload.contact)
         : undefined,
-    );
-    if (
       state === "delivered" &&
-      data.payload.kind === "qrz" &&
-      data.payload.operation === "insert"
-    )
-      await store
-        .statement(
-          "UPDATE ledger SET provenance='ferry_created' WHERE tenant=? AND source=? AND qso=? AND destination=? AND remote_id=?",
-          tenant,
-          data.attempt.source,
-          data.attempt.qso,
-          data.attempt.destination,
-          remoteId,
-        )
-        .run();
+        data.payload.kind === "qrz" &&
+        data.payload.operation === "insert",
+    );
     return { state, attemptId: id };
   } catch (error) {
     if (
@@ -2327,7 +2842,7 @@ export async function dispatchAttempt(
     return { state: "uncertain", attemptId: id };
   } finally {
     if (ownershipLease) await store.release(ownershipLease);
-    await store.release(lease);
+    if (!leaseFor) await store.release(lease);
   }
 }
 export async function reconcileAttempt(

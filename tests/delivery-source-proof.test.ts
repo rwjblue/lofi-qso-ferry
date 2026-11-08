@@ -257,7 +257,7 @@ test("expiry during signing advances an injected clock and cannot stage the resu
 function delayAdmission(
   store: Store,
   vendor: "qrz" | "lotw",
-  delayed: () => void,
+  delayed: () => void | Promise<void>,
 ): Store {
   let reservations = 0;
   return new Proxy(store, {
@@ -276,7 +276,7 @@ function delayAdmission(
               if (name === "first")
                 return async (...values: unknown[]) => {
                   const result = await Reflect.apply(value, inner, values);
-                  if (++reservations === 2) delayed();
+                  if (++reservations === 2) await delayed();
                   return result;
                 };
               return typeof value === "function" ? value.bind(inner) : value;
@@ -333,6 +333,51 @@ test("proof expiry during mutation budget admission cancels only known-unsent wo
         1,
       );
     });
+});
+
+test("batched QRZ authorization rejects a same-version API key replacement after budget admission", async (t) => {
+  const h = await setup(t);
+  const prepared = await prepareDue(h.store, h.key(), h.contact, gates, {
+    sourceProof: h.sourceProof,
+    fetcher: h.fetcher,
+  });
+  assert(prepared.attemptId);
+  let changed = false;
+  const delayed = delayAdmission(h.store, "qrz", async () => {
+    await h.store
+      .statement(
+        "DELETE FROM private_data WHERE tenant='a' AND connection='destination' AND id='fixture-qrz' AND kind='credential'",
+      )
+      .run();
+    await (
+      await h.store.putPrivate(
+        "a",
+        "destination",
+        "fixture-qrz",
+        "credential",
+        {
+          apiKey: "different-synthetic-key",
+        },
+      )
+    ).run();
+    changed = true;
+  });
+  const result = await dispatchAttempt(
+    delayed,
+    "a",
+    prepared.attemptId,
+    gates,
+    {
+      fetcher: h.fetcher,
+      sourceContact: h.contact,
+    },
+  );
+  assert(changed);
+  assert.equal(result.state, "blocked");
+  assert.equal(result.reason, "authorization_changed_before_transport");
+  assert.equal(h.calls.qrzWrites, 0);
+  assert.equal(await h.state(prepared.attemptId), "prepared");
+  assert.equal(await h.claims(), 1);
 });
 
 test("a stale prepared pin can be retired and rebuilt, while a dispatched uncertain pin never rebinds", async (t) => {

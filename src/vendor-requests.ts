@@ -32,6 +32,39 @@ interface Budget {
   window_start: number;
   cooldown_until: number;
 }
+/** Execute this request's native reservation together with a caller's guards. */
+export type VendorAdmission = (
+  reservation: D1PreparedStatement,
+) => Promise<Budget | null>;
+
+/** Scheduling hint only. Actual requests must still reserve their own slot. */
+export async function vendorRequestsAvailable(
+  store: Store,
+  vendor: Vendor,
+  priority: VendorPriority,
+  now: number,
+): Promise<boolean> {
+  if (!Number.isSafeInteger(now) || now < 0)
+    throw new Error("Invalid vendor scheduling clock");
+  const policy = VENDOR_POLICIES[vendor];
+  if (priority === "background" && policy.background === 0) return false;
+  const window = Math.floor(now / policy.windowMs) * policy.windowMs;
+  return Boolean(
+    await store
+      .statement(
+        `SELECT 1 available WHERE NOT EXISTS(SELECT 1 FROM vendor_requests
+     WHERE vendor=? AND (cooldown_until>? OR (window_start>=? AND
+      (requests>=? OR (?=1 AND background_requests>=?)))))`,
+        vendor,
+        now,
+        window,
+        policy.total,
+        priority === "background" ? 1 : 0,
+        policy.background,
+      )
+      .first(),
+  );
+}
 
 /** The persisted cooldown determines the outcome, independently of cleanup. */
 function cancelBestEffort(stream: { cancel(): Promise<void> } | null): void {
@@ -68,6 +101,7 @@ export function vendorFetch(
     priority?: VendorPriority;
     now?: number;
     policy?: VendorPolicy;
+    admit?: VendorAdmission;
   } = {},
 ): typeof fetch {
   const policy = options.policy ?? VENDOR_POLICIES[vendor];
@@ -87,9 +121,8 @@ export function vendorFetch(
     const window = Math.floor(now / policy.windowMs) * policy.windowMs;
     // The conflict guard and both counters are one atomic statement. A stale
     // invocation cannot move the window backwards and refill another's budget.
-    const reserved = await store
-      .statement(
-        `INSERT INTO vendor_requests(vendor,window_start,requests,background_requests,cooldown_until)
+    const reservation = store.statement(
+      `INSERT INTO vendor_requests(vendor,window_start,requests,background_requests,cooldown_until)
          SELECT ?1,?2,1,?3,0 WHERE ?3=0 OR ?4>0
          ON CONFLICT(vendor) DO UPDATE SET
           window_start=MAX(vendor_requests.window_start,excluded.window_start),
@@ -99,14 +132,16 @@ export function vendorFetch(
           AND (vendor_requests.window_start<excluded.window_start OR vendor_requests.requests<?6)
           AND (?3=0 OR ?4>0 AND (vendor_requests.window_start<excluded.window_start OR vendor_requests.background_requests<?4))
          RETURNING window_start,cooldown_until`,
-        vendor,
-        window,
-        background,
-        policy.background,
-        now,
-        policy.total,
-      )
-      .first<Budget>();
+      vendor,
+      window,
+      background,
+      policy.background,
+      now,
+      policy.total,
+    );
+    const reserved = options.admit
+      ? await options.admit(reservation)
+      : await reservation.first<Budget>();
     if (!reserved) {
       const budget = await store
         .statement(

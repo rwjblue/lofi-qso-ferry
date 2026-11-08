@@ -409,6 +409,61 @@ test("late rows behind the incremental rebuild cursor remain globally dirty", as
   assert.equal((await lookup(store)).rows.length, 3);
 });
 
+test("clean index maintenance uses one RPC, wakes dirty work, and still validates its key", async (t) => {
+  const h = await fixture(t);
+  await retain(h.store, qso("first"));
+  await backfillSourceHistoricalIndex(h.store, "a");
+  const measured = measuredDatabase(h.db);
+  const store = new Store(measured.database, h.store.keys);
+  assert.deepEqual(await backfillSourceHistoricalIndex(store, "a"), {
+    examined: 0,
+    published: 0,
+    held: 0,
+    rebuilding: false,
+  });
+  assert.equal(measured.metrics.calls, 1);
+  assert.equal(measured.metrics.statements, 1);
+  await retain(h.store, qso("later"));
+  const changed = await backfillSourceHistoricalIndex(store, "a");
+  assert.equal(changed.examined, 1);
+  assert.equal(changed.published, 1);
+  assert.equal((await lookup(store)).rows.length, 2);
+  await h.store
+    .statement(
+      "UPDATE source_historical_state SET key_envelope='{}',clock=clock+1 WHERE tenant='a'",
+    )
+    .run();
+  await assert.rejects(
+    backfillSourceHistoricalIndex(store, "a"),
+    SourceHistoricalIndexKeyUnavailableError,
+  );
+});
+
+test("clean maintenance dirty probes stay keyed with unrelated tenant backlog", async (t) => {
+  const h = await fixture(t);
+  await backfillSourceHistoricalIndex(h.store, "a");
+  await seed(h.store, "b");
+  await h.store
+    .statement(
+      "WITH RECURSIVE n(i) AS(SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<4000) INSERT INTO source_historical_index(tenant,source,qso,revision,synced_at,private_id) SELECT 'b','source','q'||i,'revision',100,'body'||i FROM n",
+    )
+    .run();
+  let probe: { sql: string; values: (string | number | null)[] } | undefined;
+  const store = new Store(h.db, h.store.keys);
+  const statement = store.statement.bind(store);
+  store.statement = (sql, ...values) => {
+    if (sql.includes("AS dirty")) probe = { sql, values };
+    return statement(sql, ...values);
+  };
+  await backfillSourceHistoricalIndex(store, "a");
+  assert(probe);
+  const result = await h.store.statement(probe.sql, ...probe.values).all();
+  assert(
+    result.meta.rows_read < 10,
+    `dirty probe read ${result.meta.rows_read} rows`,
+  );
+});
+
 test("canonical intake publishes weak keys in its real atomic checkpoint", async (t) => {
   const h = await fixture(t);
   await h.store

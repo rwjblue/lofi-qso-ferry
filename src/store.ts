@@ -653,6 +653,35 @@ export class Store {
     ];
     return { id, statements, ownership };
   }
+  /** Compile the guarded transition so request admission can share its transaction. */
+  claimAttemptStatement(
+    tenant: string,
+    id: string,
+    lease: Lease,
+    now: number,
+    winner: string | null = null,
+  ) {
+    return this.statement(
+      `UPDATE attempt_state SET state='dispatching',dispatched_at=?,updated_at=?,lease_token=?,fence=?,reason=CASE WHEN ? IS NULL THEN reason ELSE ? END WHERE tenant=? AND attempt=? AND state='prepared' AND due_at<=? AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?) AND EXISTS(SELECT 1 FROM attempts a JOIN connections c ON c.tenant=a.tenant AND c.id=a.destination JOIN connections src ON src.tenant=a.tenant AND src.id=a.source AND src.status='active' JOIN private_data p ON p.tenant=a.tenant AND p.connection=a.destination AND p.id=a.credential_version AND p.kind='credential' WHERE a.tenant=? AND a.id=? AND c.status='active' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) AND c.credential_version=a.credential_version) RETURNING attempt`,
+      now,
+      now,
+      lease.token,
+      lease.fence,
+      winner,
+      winner,
+      tenant,
+      id,
+      now,
+      tenant,
+      lease.scope,
+      lease.token,
+      lease.fence,
+      now,
+      tenant,
+      id,
+      now,
+    );
+  }
   async claimAttempt(
     tenant: string,
     id: string,
@@ -697,26 +726,7 @@ export class Store {
         : null;
     const results = await this.db.batch([
       ...(ownership?.begin ?? []),
-      this.statement(
-        `UPDATE attempt_state SET state='dispatching',dispatched_at=?,updated_at=?,lease_token=?,fence=?,reason=CASE WHEN ? IS NULL THEN reason ELSE ? END WHERE tenant=? AND attempt=? AND state='prepared' AND due_at<=? AND EXISTS(SELECT 1 FROM leases WHERE tenant=? AND scope=? AND token=? AND fence=? AND expires_at>?) AND EXISTS(SELECT 1 FROM attempts a JOIN connections c ON c.tenant=a.tenant AND c.id=a.destination JOIN connections src ON src.tenant=a.tenant AND src.id=a.source AND src.status='active' JOIN private_data p ON p.tenant=a.tenant AND p.connection=a.destination AND p.id=a.credential_version AND p.kind='credential' WHERE a.tenant=? AND a.id=? AND c.status='active' AND p.revoked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?) AND c.credential_version=a.credential_version) RETURNING attempt`,
-        now,
-        now,
-        lease.token,
-        lease.fence,
-        winner,
-        winner,
-        tenant,
-        id,
-        now,
-        tenant,
-        lease.scope,
-        lease.token,
-        lease.fence,
-        now,
-        tenant,
-        id,
-        now,
-      ),
+      this.claimAttemptStatement(tenant, id, lease, now, winner),
       ...identityStatements,
       ...(winner
         ? [
@@ -740,6 +750,7 @@ export class Store {
     remoteId: string | null = null,
     now = Date.now(),
     lotwIdentity?: LotwIdentityEvidence,
+    ferryCreated = false,
   ) {
     const guard = randomToken();
     const identityStatements = ["submitted", "uncertain", "observed"].includes(
@@ -784,7 +795,8 @@ export class Store {
       ),
       ...identityStatements,
       this.statement(
-        `UPDATE ledger SET state=CASE WHEN state IN('source_deleted','retained_old_route') THEN state WHEN source_hash!=(SELECT source_hash FROM attempts WHERE tenant=? AND id=?) THEN 'changed' ELSE ? END,remote_id=COALESCE(?,remote_id),sent_hash=(SELECT payload_hash FROM attempts WHERE tenant=? AND id=?),baseline_hash=(SELECT source_hash FROM attempts WHERE tenant=? AND id=?) WHERE tenant=? AND (source,qso,destination) IN(SELECT source,qso,destination FROM attempts WHERE tenant=? AND id=?) AND ? IN ('delivered','observed','submitted')`,
+        `UPDATE ledger SET provenance=CASE WHEN ? THEN 'ferry_created' ELSE provenance END,state=CASE WHEN state IN('source_deleted','retained_old_route') THEN state WHEN source_hash!=(SELECT source_hash FROM attempts WHERE tenant=? AND id=?) THEN 'changed' ELSE ? END,remote_id=COALESCE(?,remote_id),sent_hash=(SELECT payload_hash FROM attempts WHERE tenant=? AND id=?),baseline_hash=(SELECT source_hash FROM attempts WHERE tenant=? AND id=?) WHERE tenant=? AND (source,qso,destination) IN(SELECT source,qso,destination FROM attempts WHERE tenant=? AND id=?) AND ? IN ('delivered','observed','submitted')`,
+        ferryCreated ? 1 : 0,
         tenant,
         id,
         state,

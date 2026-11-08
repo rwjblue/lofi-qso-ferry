@@ -5,11 +5,11 @@ import { measuredDatabase } from "../src/database-metrics.ts";
 import {
   finishReconciliationWork,
   finishReconciliationWorkStatement,
+  type ReconciliationScopePreference,
   reconciliationCheckDue,
   reconciliationCheckStatement,
   reconciliationPreflight,
   reconciliationPreflightBatch,
-  type ReconciliationScopePreference,
   recordReconciliationCheck,
   selectReconciliationWork,
   syncReconciliationPolicy,
@@ -111,6 +111,36 @@ async function hold(store: Store) {
   assert(await finishReconciliationWork(store, source, "q1", v, now));
   return v;
 }
+
+test("empty readiness lanes share one RPC and finite rollout fallback stays bounded", async () => {
+  const h = await fixture();
+  try {
+    const measured = measuredDatabase(h.db);
+    const store = new Store(measured.database, keys);
+    const options = { limit: 20, now, priority: "background" as const };
+    assert.deepEqual(
+      await selectReconciliationWork(store, source, options),
+      [],
+    );
+    assert.equal(measured.metrics.calls, 1);
+    assert.equal(measured.metrics.statements, 3);
+    assert.deepEqual(
+      await selectReconciliationWork(store, source, {
+        ...options,
+        preference: {
+          qsoIds: ["absent"],
+          destinationIds: ["destination"],
+          vendorKinds: ["qrz"],
+        },
+      }),
+      [],
+    );
+    assert.equal(measured.metrics.calls, 3);
+    assert.equal(measured.metrics.statements, 9);
+  } finally {
+    await h.mf.dispose();
+  }
+});
 
 test("one-query reconciliation preflight preserves generation, memo, attempt and tenant fences", async () => {
   const attemptedKey = { ...key, qso: "attempted" };
@@ -926,31 +956,21 @@ test("selecting a bounded batch reads only indexed candidates in a large backlog
         now + 86400000,
       )
       .run();
-    const reads: number[] = [];
-    const measured = new Store(h.db, keys);
-    const statement = measured.statement.bind(measured);
-    measured.statement = (sql, ...params) =>
-      new Proxy(statement(sql, ...params), {
-        get(target, property) {
-          if (property === "all")
-            return async () => {
-              const result = await target.all();
-              reads.push(result.meta.rows_read);
-              return result;
-            };
-          const value = Reflect.get(target, property);
-          return typeof value === "function" ? value.bind(target) : value;
-        },
-      });
-    const rows = await selectReconciliationWork(measured, source, {
-      limit: 25,
-      now,
-      priority: "background",
-      readyContextOnly: true,
-    });
+    const measured = measuredDatabase(h.db);
+    const rows = await selectReconciliationWork(
+      new Store(measured.database, keys),
+      source,
+      {
+        limit: 25,
+        now,
+        priority: "background",
+        readyContextOnly: true,
+      },
+    );
     assert.equal(rows.length, 25);
-    assert.equal(reads.length, 1);
-    assert(reads[0]! < 200, JSON.stringify(reads));
+    assert.equal(measured.metrics.calls, 1);
+    assert.equal(measured.metrics.statements, 1);
+    assert(measured.metrics.rowsRead < 200, JSON.stringify(measured.metrics));
   } finally {
     await h.mf.dispose();
   }

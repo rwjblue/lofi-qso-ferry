@@ -10,6 +10,221 @@ the minute-precision fixture measures **124 / 312 / 1,379**. These are local
 same-work measurements, not production speedup or capacity claims. See the
 [initial-recognition and idle measurements](#integrated-lotw-historical-recognition--local-measurements).
 
+## Bulk preparation and queued dispatch — local measurements (2026-10-30)
+
+Preparation now loads a bounded cohort's ledger, connections, encrypted
+credentials, template, ownership/eligibility flags and current source-proof
+metadata in one D1 batch with two SELECTs. Payload construction uses that explicit
+work bundle, and one native stage batch commits the eligible plans. A raced member
+rolls back the stage transaction; individual recovery isolates it and lets healthy
+members progress. Immutable attempts, source pins and native guards remain the
+authority. No generic query cache or cross-invocation plaintext cache is added.
+
+Dispatch loads queued artifacts and connection/proof metadata together, checks
+the queued identity claims together, and shares a fenced delivery lease across
+the bounded cohort. For fresh QRZ inserts, each vendor request combines the native
+rate reservation, current authorization checks and initial attempt claim in one
+transaction. Every network request gets a new transaction and credential
+validation. The final QRZ neighborhood remains fresh for each individual write.
+Receipt/provenance recording now uses the existing guarded resolution transaction.
+
+The isolated queue workload starts with genuine canonical source proofs and
+completed planning reads. It uses the ordinary live QRZ allowance, synthetic HTTP
+and native local D1/workerd; it does not raise vendor limits or the scheduler's
+two-contact background dispatch allowance. It measures **preparation and dispatch
+only**, excluding the explicitly reported planning and source-proof setup costs:
+
+| Already observed queue | Uploads | Preparation RPCs | Preparation + dispatch RPCs | RPCs/contact | SQL statements |
+| ---------------------- | ------: | ---------------: | --------------------------: | -----------: | -------------: |
+| 10 contacts            |      10 |                2 |                          36 |          3.6 |            296 |
+| 20 contacts            |      20 |                2 |                          66 |          3.3 |            586 |
+
+Three consecutive runs reproduce every counter in both this phase workload and
+the complete scheduler workloads below. Local elapsed time varies with concurrent
+tests and is not used as a production speedup claim.
+
+The remaining three per-contact RPCs admit the final read, admit INSERT, and
+record its result. The six fixed RPCs load/stage the cohort, load/check dispatch
+inputs, and acquire/release the book's delivery lease. Multiple guarded SQL
+statements remain inside each native transaction; the RPC reduction does not
+mean fewer than five SQL statements per contact.
+
+**The end-to-end target of fewer than five RPCs per contact is not met.** The
+same complete scheduler workloads, compared with the preceding source-cohort
+refactor, measure:
+
+| Workload                        | D1 RPCs before → after | SQL before → after | Uploads |
+| ------------------------------- | ---------------------: | -----------------: | ------: |
+| One contact, direct empty       |              178 → 148 |          270 → 243 |       1 |
+| One contact, covering fallback  |              188 → 156 |          280 → 261 |       1 |
+| Following idle tick             |                57 → 57 |            83 → 83 |       0 |
+| Six contacts, direct empty      |              584 → 386 |          981 → 801 |       6 |
+| Six contacts, covering fallback |              463 → 323 |          777 → 689 |       4 |
+
+The single-contact trace still spends 86 RPCs on scheduling/polling/maintenance,
+18 on reconciliation/planning and 35 on acquiring source proof. Those earlier
+phases are the next bulk-work units to replace. In the 10/20-contact isolated
+workload, planning alone still costs 60/120 RPCs; hiding that cost would give a
+misleading end-to-end claim. The scheduler currently feeds the execution API its
+existing two-background/six-live turn sizes; larger read/admission cohorts still
+need to be integrated across those fair turns.
+
+Reproduce the original complete workloads or the explicitly scoped queue phase:
+
+```sh
+mise run benchmark-qrz-upload
+mise run benchmark-qrz-upload queue-10 queue-20
+```
+
+No migration, deployment, live vendor request or production throughput claim is
+part of this refactor. Focused coverage includes native cohort rollback,
+revocation after the final read, vendor exhaustion and the existing write races.
+
+Validation: `mise run check` passes all **1,814 cases** collected by that full
+run, plus formatting, lint, both TypeScript projects and the Worker dry-run build.
+Three further cohort cases added during the run pass focused checks: the
+background outbox/batch bounds, pausing a destination between queued writes, and
+preserving uncertainty after a lost INSERT response. All seven cohort cases and
+the tightened full-scheduler performance budgets pass.
+
+Pre-commit verification repeated on **2026-11-07**: `mise run check` passes all
+**1,817 tests**, formatting, lint, both TypeScript projects and the Worker dry-run
+build. All seven benchmark workloads reproduce the recorded upload and RPC
+counts. The benchmark task's scenario choices and help also pass validation.
+
+## Source-proof cohorts and idle work — follow-up (2026-10-28)
+
+The follow-up keeps dispatch at two background contacts per fair round while
+letting up to six fitting contacts share source presence collection and its final
+canonical drain. Only current, due QRZ negatives deferred before their planning
+scan can join the source-only lookahead. Quiet contacts, failed vendor reads and
+incomplete history cannot enter it. A source proof does not establish QRZ absence:
+every deferred contact still needs its own planning, preparation and final guards.
+Cached proofs retain their original IDs, source generations and expiry.
+
+If collection exhausts its four-request allowance, only deferred keys with a
+proved closure can resume. These are primitive scheduling hints; current proofs
+are reloaded from D1 before preparation. A read-only vendor-budget hint avoids
+revisiting contacts after QRZ quota is exhausted, without reserving capacity or
+replacing atomic request admission. The non-prefix regression observes and sends
+only three proven later contacts, leaving the unproved prefix unsent.
+
+Idle maintenance now validates a clean tenant index and probes its indexed dirty
+queue in one RPC. Dirty/rebuilding work retains the existing guarded backfill;
+corrupt keys still fail closed. Readiness selection batches at most six indexed
+metadata lanes, preserves their precedence and returns only the bounded selected
+contacts for ciphertext loading. An empty successful forward poll refreshes
+authority without forcing another otherwise-idle fair round; empty policy
+transitions and actual work still drive continuation.
+
+All fixtures use native local D1/workerd and synthetic vendors. The comparison is
+against the preceding local refactor below, with identical source/vendor data and
+unchanged request limits, export gates and dispatch fairness. Three consecutive
+refactored runs reproduce the counters; wall-clock timings are not production
+capacity claims.
+Database figures use the existing tick Store meter. Both versions exclude the
+authentication cleanup batch (one RPC/seven statements) and outer scheduler
+heartbeat/backlog sampling.
+
+| Workload                        | D1 RPCs before → after | SQL before → after | Uploads before → after | LoFi sync reads before → after |
+| ------------------------------- | ---------------------: | -----------------: | ---------------------: | -----------------------------: |
+| One contact, direct empty       |              205 → 178 |          290 → 270 |                  1 → 1 |                          3 → 3 |
+| One contact, covering fallback  |              215 → 188 |          300 → 280 |                  1 → 1 |                          3 → 3 |
+| Following idle tick             |               116 → 57 |           144 → 83 |                  0 → 0 |                          1 → 1 |
+| Six contacts, covering fallback |              526 → 463 |          821 → 777 |                  4 → 4 |                          5 → 3 |
+| Six contacts, direct empty      |              492 → 584 |          787 → 981 |                  4 → 6 |                          5 → 3 |
+
+Idle RPCs fall **50.9%**, with the canonical freshness poll preserved. The fallback
+workload uses **12.0% fewer RPCs** and **40% fewer LoFi sync requests**, still
+delivering four contacts within exactly 24 QRZ requests. The added direct-empty
+six-contact comparison isolates the source bottleneck: it delivers **50% more
+contacts**, using 18 QRZ requests instead of twelve (three per upload in both
+versions). Metered RPCs rise with the additional deliveries, while RPCs per
+upload fall from **123 to 97.3**. All six proofs share one collection/drain.
+
+Reproduce the same original workloads or isolate the source-cohort case:
+
+```sh
+mise run benchmark-qrz-upload
+mise run benchmark-qrz-upload direct-six
+mise run benchmark-qrz-upload direct fallback fallback-six
+```
+
+The QRZ background allowance remains the binding constraint in the fallback
+fixture. Selective cover-first planning remains the next request reduction;
+final duplicate checks cannot be shared across writes. Idle work is lower but
+still includes admission, canonical polling, retention and ownership maintenance.
+No migration, deployment or live upload is part of these measurements.
+
+Validation completed **2026-10-29**: all **1,809 tests** pass, together with
+formatting, lint, both TypeScript projects and the Worker dry-run build. Focused
+regressions cover partial/non-prefix proof collection, unchanged dispatch limits,
+exhausted vendor quota, indexed idle reads and stale budget hints.
+
+## QRZ upload refactor — local measurements (2026-10-28)
+
+The local refactor batches preparation and final QRZ authorization reads, joins
+source policy/context selection, and shares complete same-book planning covers
+within one source turn. It changes no migrations, vendor limits or export gates.
+This work has not been deployed or measured against live uploads.
+
+The reproducible workload uses native local D1/workerd and synthetic LoFi/QRZ
+HTTP, including genuine source collection, final drain, immutable proof, staging
+and dispatch. Baseline runtime is `128a3e0`; both versions use the same fixture.
+Database counts include metered source work and Store maintenance; authentication
+cleanup and outer scheduler bookkeeping are outside this counter in both versions.
+
+| Workload                                 | Baseline D1 RPCs / SQL | Refactored D1 RPCs / SQL | Uploads before → after | QRZ requests before → after |
+| ---------------------------------------- | ---------------------: | -----------------------: | ---------------------: | --------------------------: |
+| One contact, direct empty result         |              228 / 301 |                205 / 290 |                  1 → 1 |                       3 → 3 |
+| One contact, one-page covering fallback  |              238 / 311 |                215 / 300 |                  1 → 1 |                       7 → 7 |
+| Following idle tick                      |              126 / 150 |                116 / 144 |                  0 → 0 |                       0 → 0 |
+| Six eligible contacts, one-page fallback |              581 / 834 |                526 / 821 |                  3 → 4 |                     24 → 24 |
+
+Three consecutive refactored six-contact runs each deliver four contacts with
+526 RPCs / 821 statements and 24 QRZ requests. That is 33% more deliveries within
+the unchanged request allowance and 32.1% fewer RPCs per delivered contact
+(193.7 → 131.5). Local elapsed times varied with concurrent test load and are not
+used to claim a latency improvement or deployed uploads/hour.
+
+Final authorization still runs before write admission and again after the native
+vendor-budget reservation, with current identity, source proof, connection,
+credential, context and lease checks. The credential is decrypted again and its
+API key must still match the prepared transport. The separate identity and proof
+statements stay separate inside the same transaction to avoid deep SQL nesting.
+
+Planning coverage retains every record in the complete cover, independently
+filtering each later contact. It binds the source/book/configuration and encrypted
+credential snapshots, retains the original expiry, and is limited to twenty
+entries and two MiB per scope. It cannot cross source turns or invocations, and
+failed/partial reads publish nothing. Dispatch clients never receive shared
+coverage: every INSERT still performs a new final neighborhood and any required
+STATUS/covering read. A partial final scan leaves the immutable attempt unsent.
+
+Reproduce all workloads or repeat only the six-contact case:
+
+```sh
+mise run benchmark-qrz-upload
+mise run benchmark-qrz-upload fallback-six
+```
+
+The six-contact benchmark requires at least four uploads within 24 QRZ requests.
+Focused regressions cover later-contact neighbors, retained-record mutation,
+original expiry, separate scopes, credential/configuration changes, failed
+coverage, final collisions, and changes after budget admission.
+
+The full suite exercised 1,801 cases: 1,799 passed, with only two outdated exact
+RPC-count expectations failing (operation rereads 11 → 10; shared projection
+6 → 5). Both assertions are tightened to the new counts and pass on targeted
+rerun. Formatting, lint, both TypeScript projects and the Worker build also pass.
+
+The next bottlenecks are still visible: an idle tick costs 116 database RPCs,
+individual contacts repeat source-scope/proof work, and fallback-heavy delivery
+still exhausts the global background QRZ allowance. Cover-first planning could
+avoid unsuccessful targeted reads, but final absence cannot be shared across
+writes. Larger source-proof cohorts and fair account/book admission need their
+own measurements. Queues alone would preserve this request amplification.
+
 ## Current read-only release — 0386af30
 
 [CI for deployed `0386af30`](https://github.com/rwjblue/lofi-qso-ferry/actions/runs/40154037329)
@@ -1284,8 +1499,9 @@ Share certificate validation only within its validated scope and dispatch turn.
 
 #### QRZ request reduction stages
 
-Stage 1 is deployed with exports disabled and measured locally above; stage 2
-remains planned. Planning admission and deferred-key re-entry are also deployed,
+Stage 1 is deployed with exports disabled and measured locally above; stage 2 is
+now implemented locally with measurements in the October 28 section above.
+Planning admission and deferred-key re-entry are also deployed,
 without changing the shared vendor budgets.
 Preserve the final write-adjacent
 duplicate query, immutable attempt and all after-budget source-proof, credential,

@@ -191,6 +191,12 @@ export interface QrzOptions {
     ) => Promise<[string, string] | null>;
     isCurrent: () => Promise<boolean>;
     now?: () => number;
+    /** Planning only: complete coverage retained by one bounded source turn.
+     * Dispatch clients never receive this capability. */
+    planningCoverage?: {
+      load: (cover: [string, string]) => QrzCoveringRead | undefined;
+      save: (read: QrzCoveringRead) => void;
+    };
   };
 }
 export interface QrzFetchOptions {
@@ -672,6 +678,11 @@ export class QrzClient {
         "blocked",
         "QRZ neighborhood covering range unavailable",
       );
+    const reused = fallback.planningCoverage?.load(cover);
+    if (reused && cover[0] <= target[0] && cover[1] >= target[1]) {
+      await check();
+      return reused.records.filter(matching);
+    }
     await this.verifyBook(book, deadline);
     await check();
     const observed = await this.readCoveringRange({
@@ -683,6 +694,7 @@ export class QrzClient {
       shouldContinue: () => !deadline.aborted,
     });
     await check();
+    fallback.planningCoverage?.save(observed);
     return observed.records.filter(matching);
   }
   async insert(

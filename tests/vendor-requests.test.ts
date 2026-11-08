@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { VendorDeferredError, vendorFetch } from "../src/vendor-requests.ts";
 import type { VendorPolicy } from "../src/vendor-requests.ts";
+import {
+  VendorDeferredError,
+  vendorFetch,
+  vendorRequestsAvailable,
+} from "../src/vendor-requests.ts";
 import { database } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
@@ -63,6 +67,67 @@ test("overlapping wrappers share atomic vendor budgets and reserve capacity for 
     );
     await vendorFetch(h.store, "lotw", fetcher, { now: 100, policy })(endpoint);
     assert.equal(sent.length, 6);
+  } finally {
+    await h.mf.dispose();
+  }
+});
+
+test("availability hints honor priority, cooldown and rollover without reserving or bypassing quota", async () => {
+  const h = await fixture();
+  try {
+    assert(await vendorRequestsAvailable(h.store, "qrz", "background", 100));
+    assert.equal(
+      await h.store
+        .statement("SELECT count(*) n FROM vendor_requests")
+        .first<number>("n"),
+      0,
+    );
+    await h.store
+      .statement("INSERT INTO vendor_requests VALUES('qrz',0,24,24,0)")
+      .run();
+    assert.equal(
+      await vendorRequestsAvailable(h.store, "qrz", "background", 100),
+      false,
+    );
+    assert(await vendorRequestsAvailable(h.store, "qrz", "live", 100));
+    await h.store
+      .statement(
+        "UPDATE vendor_requests SET cooldown_until=600000 WHERE vendor='qrz'",
+      )
+      .run();
+    assert.equal(
+      await vendorRequestsAvailable(h.store, "qrz", "live", 300000),
+      false,
+    );
+    await h.store
+      .statement(
+        "UPDATE vendor_requests SET requests=120,cooldown_until=0 WHERE vendor='qrz'",
+      )
+      .run();
+    assert.equal(
+      await vendorRequestsAvailable(h.store, "qrz", "live", 100),
+      false,
+    );
+    assert(await vendorRequestsAvailable(h.store, "qrz", "background", 300000));
+    // A previously positive hint cannot authorize a request after another
+    // invocation consumes the new window's allowance.
+    await h.store
+      .statement(
+        "UPDATE vendor_requests SET window_start=300000 WHERE vendor='qrz'",
+      )
+      .run();
+    await assert.rejects(
+      vendorFetch(
+        h.store,
+        "qrz",
+        async () => assert.fail("Exhausted quota reached transport"),
+        {
+          priority: "background",
+          now: 300000,
+        },
+      )(endpoint),
+      VendorDeferredError,
+    );
   } finally {
     await h.mf.dispose();
   }
@@ -313,4 +378,41 @@ test("failed network requests consume their reserved slot", async () => {
   } finally {
     await h.mf.dispose();
   }
+});
+
+test("guarded admission reserves the native slot once and cannot bypass exhaustion", async (t) => {
+  const h = await fixture();
+  t.after(() => h.mf.dispose());
+  let sent = 0;
+  let admissions = 0;
+  const fetcher = vendorFetch(
+    h.store,
+    "qrz",
+    async () => {
+      sent++;
+      return new Response("ok");
+    },
+    {
+      now: 100,
+      policy: { windowMs: 1000, total: 1, background: 0 },
+      admit: async (reservation) => {
+        admissions++;
+        const results = await h.store.db.batch<{
+          window_start: number;
+          cooldown_until: number;
+        }>([h.store.statement("SELECT 1 current"), reservation]);
+        return results[1].results[0] ?? null;
+      },
+    },
+  );
+  await fetcher(endpoint);
+  await assert.rejects(fetcher(endpoint), VendorDeferredError);
+  assert.equal(sent, 1);
+  assert.equal(admissions, 2);
+  assert.equal(
+    await h.store
+      .statement("SELECT requests n FROM vendor_requests WHERE vendor='qrz'")
+      .first("n"),
+    1,
+  );
 });

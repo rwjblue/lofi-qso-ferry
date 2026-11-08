@@ -60,15 +60,63 @@ a seven-day minimum retention; collection remains future work.
 | Managed activation publication | Measurement |
 | ------------------------------ | ----------: |
 | Explicit statements            |           3 |
-| Rows read                      |          41 |
+| Rows read                      |       67–73 |
 | Rows written                   |          12 |
 
-These counts are identical with three and 205 completed source contacts. The
-publication validates pending metadata rather than scanning completed contact
-history. Key/domain/debt lookups, coordinator/child leases, phase selection and
-control advancement are outside that native batch measurement. It is not a
-complete-turn RPC or hosted latency figure. Large retired/disabled-work histories
-and many scopes still need selector/query-plan qualification before hosted use.
+Across fixtures with three, 205 and 405 completed source contacts, publication
+reads stay within 67–73 and writes stay at twelve. The original migration-0055
+publication used 41 reads; scope-first selection adds fixed metadata/probe work
+to avoid the pending-history traversals below. Generation ordering and populated
+indexes can vary individual probe counts. Key/domain/debt lookups, coordinator/
+child leases, phase selection and control advancement are outside that native
+batch measurement. It is not a complete-turn RPC or hosted latency figure;
+many-scope and hosted qualification remain outstanding.
+
+## Current-work selection
+
+[Migration 0056](../migrations/0056_inventory_current_work_selection.sql) selects
+current active/pending generations and eligible, completely built scopes before
+probing pending work. Operation selection takes one indexed head per scope, with
+the current configuration in the index prefix. Contact selection likewise takes
+one pending source/receipt head per scope, then loads at most twenty keys from the
+chosen scope. Coverage selection uses the exact generation/scope job key. Sorting
+these heads depends on scope count rather than retained contact/job history.
+
+[Migration 0057](../migrations/0057_inventory_scoped_activation_debt.sql) applies
+the same principle to activation preflight and both native publication fences.
+Each eligible scope uses an indexed existence check for its pending work. The
+separate all-scope index-census guard still blocks missing/incomplete builds and
+configuration mismatches. Disabled work does not acquire authority or get marked
+complete merely because activation ignores it.
+
+The native benchmark initially found that adding 5,000 pending contact rows and
+5,000 operation jobs in a retired generation raised both idle selectors from one
+row read to **25,000**. An activation preflight with 5,000 disabled pending rows
+read **30,011** rows; 5,000 obsolete-configuration operation jobs raised its reads
+from eight to **10,008**. Those traversals were hidden by small clean fixtures.
+
+The final broad inventory run measures these standalone selector reads. Individual
+probe counts vary slightly with generation ordering; each growth comparison keeps
+its scope/generation metadata unchanged.
+
+| Retained work case                       | Operation | Projection | Coverage | Activation preflight |
+| ---------------------------------------- | --------: | ---------: | -------: | -------------------: |
+| No retired work / 5,000 retired rows     |   12 / 12 |    12 / 12 |  12 / 12 |              21 / 21 |
+| Disabled scope: 100 / 5,000 pending rows |   24 / 24 |    24 / 24 |  24 / 24 |              34 / 34 |
+| No obsolete jobs / 5,000 obsolete jobs   |   12 / 12 |    13 / 13 |  12 / 12 |              24 / 24 |
+
+The disabled case has two current generations. Its empty pending-index preflight
+uses thirty reads; populating that index adds four fixed probe reads, which stay flat
+from 100 to 5,000 rows. The fixture then successfully activates through the native
+guards while retaining all 5,000 disabled pending contact rows. Current eligible
+operation/projection work remains processable, retired work remains untouched and
+future-due contact work remains idle until due. These measurements exclude leases,
+payload loading and coordinator control advancement, and are not whole-turn costs.
+
+Three superseded tenant-global pending indexes are removed rather than retained
+alongside their scoped replacements. On the same encrypted capture, source index
+backfill writes fall from 35,696 to **33,747** for 2,000 records. This is index-build
+publication work, not ingestion cost or a production throughput measurement.
 
 ## Native verification
 
@@ -87,21 +135,20 @@ contacts, releases its leases and makes zero external requests. Source checkpoin
 and credential ciphertext stay unchanged. No matching result, ledger mapping or
 upload attempt is created by this coordinator.
 
-The broad inventory regression passed **400 tests** with no failures, skips or
-cancellations. After adding the activation-cost case, the final focused coordinator
-selection passed **fourteen tests**; these selections overlap. TypeScript, lint,
-formatting and the Worker dry-run build passed. Logs are
-`/tmp/lofi-ferry-inventory-coordinator-final.log`,
-`/tmp/lofi-ferry-coordinator-final-verified.log`,
-`/tmp/lofi-ferry-coordinator-types-final-verified.log`,
-`/tmp/lofi-ferry-coordinator-lint-verified.log`,
-`/tmp/lofi-ferry-coordinator-format.log` and
-`/tmp/lofi-ferry-coordinator-build-verified.log`.
+The final broad inventory regression passed **404 tests** with no failures, skips
+or cancellations. A focused activation/selector run passed sixteen tests; these
+selections overlap. TypeScript, lint, formatting and the Worker dry-run build
+passed. Logs are `/tmp/lofi-ferry-scoped-work-inventory-final.log`,
+`/tmp/lofi-ferry-scoped-activation-verified.log`,
+`/tmp/lofi-ferry-scoped-work-types-verified.log`,
+`/tmp/lofi-ferry-scoped-work-lint-verified.log`,
+`/tmp/lofi-ferry-scoped-work-format-verified.log` and
+`/tmp/lofi-ferry-scoped-work-build-final.log`.
 
 ## Encrypted capture replay
 
 The [comparison trial](../scripts/inventory-comparison-trial.ts) applies migrations
-through 0055, samples the existing projection jobs and then runs four persisted
+through 0057, samples the existing projection jobs and then runs four persisted
 coordinator turns before capturing matching results. Build/operation/coverage turns
 are idle in this bounded sample. The projection turn publishes twenty additional
 held source bodies and records the next phase as activation, with observed wake
@@ -115,11 +162,12 @@ incomplete matching results and zero historical associations. An earlier capture
 without coordinator tables still reopens. Canonical inventory, checkpoints and
 credentials remain unchanged; vendor requests/uploads are zero.
 
-The private directory ends in `7df042e7-50ef-4480-b4fb-d78b5bd95120`; database
-allocation is 15,638,528 bytes. This includes a larger projection sample, control
-schema and receipts, not a full-log storage density estimate. Logs are
-`/tmp/lofi-ferry-coordinator-capture-verified.log`,
-`/tmp/lofi-ferry-coordinator-reopen-verified.log` and
+The latest private directory ends in `33cb9095-2ed2-46d2-aeec-92f67982ae0c`;
+database allocation is **15,372,288 bytes**. The earlier 0055 replay allocated
+15,638,528 bytes. These small allocations include projection samples, control
+schema and receipts; neither is a full-log storage density estimate. Logs are
+`/tmp/lofi-ferry-scoped-work-capture-final.log`,
+`/tmp/lofi-ferry-scoped-work-reopen-final.log` and
 `/tmp/lofi-ferry-coordinator-compat-reopen.log`.
 
 ## Remaining work
@@ -127,6 +175,6 @@ schema and receipts, not a full-log storage density estimate. Logs are
 Add durable matching invalidation/claim/completion, ownership-aware result selection
 and conservative adoption to the coordinator. Connect bounded Queue/cron wakeups
 with retry/fairness and lost-message recovery. Qualify full-turn D1/CPU/storage costs
-and old-generation histories on the larger workloads. Then integrate fresh source
+and many-scope/large-history behavior on the larger workloads. Then integrate fresh source
 proofs, new delivery ownership, QRZ submission and member-aware LoTW recovery.
 Retention/GC, restore quarantine and account-preserving cutover remain unfinished.

@@ -473,3 +473,26 @@ test("publish snapshots before awaiting and a replacement lease can recover the 
     await f.mf.dispose();
   }
 });
+
+test("publication assertions remain bounded as unrelated inventory grows", async () => {
+  const f = await fixture();
+  try {
+    const first = await f.inventory.publish(
+      await f.page(Array.from({ length: 100 }, (_, i) => qso(`first-${i}`))),
+    );
+    await f.db
+      .prepare(
+        "WITH RECURSIVE seq(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM seq WHERE n<5000) INSERT INTO inventory_records SELECT 'a','source','qso',printf('unrelated-%d',n),'qso',NULL,1,'active',0,0,'unrelated' FROM seq",
+      )
+      .run();
+    const next = await f.inventory.publish(
+      await f.page(Array.from({ length: 100 }, (_, i) => qso(`next-${i}`))),
+    );
+    assert.ok(
+      next.rowsRead < first.rowsRead + 200,
+      `${first.rowsRead} -> ${next.rowsRead} reads`,
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});

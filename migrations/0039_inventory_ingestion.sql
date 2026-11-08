@@ -153,15 +153,19 @@ CREATE TRIGGER ingestion_page_commit BEFORE UPDATE ON ingestion_pages WHEN NEW.s
   THEN RAISE(ABORT,'inventory publication lease expired') END;
  SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM inventory_scopes s JOIN private_data d ON d.tenant=s.tenant AND d.connection=s.connection_id AND d.id=OLD.credential_version AND d.kind='credential' WHERE s.tenant=OLD.tenant AND s.scope_id=OLD.scope_id AND d.revoked_at IS NULL AND (d.expires_at IS NULL OR d.expires_at>unixepoch('subsec')*1000))
   THEN RAISE(ABORT,'inventory publication credential expired') END;
- SELECT CASE WHEN (SELECT count(*) FROM inventory_record_facets f WHERE f.tenant=OLD.tenant AND f.scope_id=OLD.scope_id AND f.last_page_id=OLD.page_id)!=OLD.accepted_count
-  OR (SELECT count(*) FROM inventory_records e WHERE e.tenant=OLD.tenant AND e.scope_id=OLD.scope_id AND e.last_page_id=OLD.page_id)!=OLD.accepted_count
+ -- Drive assertions from the bounded page, not the entire growing inventory.
+ SELECT CASE WHEN (SELECT count(*) FROM ingestion_page_rows r CROSS JOIN inventory_record_facets f
+   WHERE r.tenant=OLD.tenant AND r.page_id=OLD.page_id AND r.accepted=1 AND f.tenant=r.tenant AND f.scope_id=OLD.scope_id AND f.entity_family=r.entity_family AND f.record_key=r.record_key AND f.facet=r.facet AND f.last_page_id=OLD.page_id)!=OLD.accepted_count
+  OR (SELECT count(*) FROM ingestion_page_rows r CROSS JOIN inventory_records e
+   WHERE r.tenant=OLD.tenant AND r.page_id=OLD.page_id AND r.accepted=1 AND e.tenant=r.tenant AND e.scope_id=OLD.scope_id AND e.entity_family=r.entity_family AND e.record_key=r.record_key AND e.last_page_id=OLD.page_id)!=OLD.accepted_count
   OR (SELECT checkpoint_version FROM inventory_streams WHERE tenant=OLD.tenant AND scope_id=OLD.scope_id AND stream_id=OLD.stream_id)!=OLD.expected_stream_version+1
   OR (SELECT accepted_sequence FROM inventory_scopes WHERE tenant=OLD.tenant AND scope_id=OLD.scope_id)!=OLD.expected_sequence+1
   THEN RAISE(ABORT,'inventory publication incomplete') END;
  SELECT CASE WHEN EXISTS(
-  SELECT 1 FROM inventory_record_facets f JOIN inventory_payloads b ON b.tenant=f.tenant AND b.scope_id=f.scope_id AND b.payload_id=f.payload_id
-  JOIN inventory_scopes s ON s.tenant=f.tenant AND s.scope_id=f.scope_id
-  WHERE f.tenant=OLD.tenant AND f.scope_id=OLD.scope_id AND f.last_page_id=OLD.page_id
+  SELECT 1 FROM ingestion_page_rows r CROSS JOIN inventory_record_facets f CROSS JOIN inventory_payloads b CROSS JOIN inventory_scopes s
+  WHERE r.tenant=OLD.tenant AND r.page_id=OLD.page_id AND r.accepted=1
+   AND f.tenant=r.tenant AND f.scope_id=OLD.scope_id AND f.entity_family=r.entity_family AND f.record_key=r.record_key AND f.facet=r.facet
+   AND b.tenant=f.tenant AND b.scope_id=f.scope_id AND b.payload_id=f.payload_id AND s.tenant=f.tenant AND s.scope_id=f.scope_id
    AND (b.connection_id!=s.connection_id OR b.kind!=CASE f.facet WHEN 'source' THEN 'inventory_source' ELSE 'inventory_receipt' END)
  ) THEN RAISE(ABORT,'inventory payload binding mismatch') END;
 END;

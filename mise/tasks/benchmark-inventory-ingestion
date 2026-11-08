@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Benchmark encrypted inventory ingestion with synthetic records and isolated local D1"
+#USAGE flag "--sizes <sizes>" default="200,500,1000,2000,5000" help="Comma-separated profile sizes from 1 to 5000; at most ten sizes"
+#USAGE flag "--total <total>" help="Optional total import from 1 to 200000, using 1000-record pages"
+set -euo pipefail
+npx tsx scripts/benchmark-inventory-ingestion.ts "$@"

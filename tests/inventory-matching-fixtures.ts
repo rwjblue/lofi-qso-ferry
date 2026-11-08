@@ -58,6 +58,7 @@ export async function matchingFixture(
   const f = await fixture(existing);
   await applyMigration(f.db, "0049_inventory_matching_read_indexes.sql");
   await applyMigration(f.db, "0050_inventory_match_results.sql");
+  await applyMigration(f.db, "0061_inventory_matching_coverage_clocks.sql");
   await applyMigration(f.db, "0051_inventory_historical_ownership.sql");
   const provider = options.provider ?? "qrz";
   if (provider === "lotw")

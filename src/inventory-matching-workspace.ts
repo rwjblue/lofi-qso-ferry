@@ -36,9 +36,12 @@ export interface InventoryMatchingScope {
   buildComplete: number | null;
   unresolved: number;
   source: number;
+  coverageClock?: number;
 }
-interface ScopeRow extends Omit<InventoryMatchingScope, "configHash"> {
+interface ScopeRow
+  extends Omit<InventoryMatchingScope, "configHash" | "coverageClock"> {
   config: string;
+  coverageClock: number | null;
 }
 export interface InventoryMatchingCoverage {
   scope: string;
@@ -226,7 +229,13 @@ function coveringCoverage(
  * candidate relations. A future native publication must validate the manifest's
  * complete dependencies; this class never publishes match/adoption/write state. */
 export class InventoryMatchingWorkspace {
-  constructor(readonly store: Store) {}
+  private readonly trackCoverageClocks: boolean;
+  constructor(
+    readonly store: Store,
+    options: { trackCoverageClocks?: boolean } = {},
+  ) {
+    this.trackCoverageClocks = options.trackCoverageClocks !== false;
+  }
 
   async prepare(
     tenant: string,
@@ -263,10 +272,12 @@ export class InventoryMatchingWorkspace {
         `SELECT c.id AS connection,c.kind,c.status AS connectionState,c.remote_identity AS logicalIdentity,c.config,
        s.scope_id AS scope,s.provider,s.logical_identity AS scopeIdentity,s.config_version AS configVersion,s.state,
        b.config_version AS buildConfigVersion,b.complete AS buildComplete,(c.kind='lofi' OR s.provider='lofi') AS source,
+       ${this.trackCoverageClocks ? "CASE WHEN s.scope_id IS NULL THEN NULL ELSE coalesce(cv.version,0) END" : "NULL"} AS coverageClock,
        EXISTS(SELECT 1 FROM inventory_partition_membership m INDEXED BY inventory_unresolved_members WHERE m.tenant=d.tenant AND m.scope_id=s.scope_id AND m.facet=CASE s.provider WHEN 'lofi' THEN 'source' ELSE 'receipt' END AND m.state='unresolved') AS unresolved
        FROM comparison_domains d JOIN accounts a ON a.id=d.tenant AND a.status='active' JOIN connections c ON c.tenant=d.tenant
        LEFT JOIN inventory_scopes s ON s.tenant=c.tenant AND s.connection_id=c.id
        LEFT JOIN comparison_builds b ON b.tenant=s.tenant AND b.scope_id=s.scope_id AND b.generation_id=?3
+       ${this.trackCoverageClocks ? "LEFT JOIN inventory_matching_coverage_clocks cv ON cv.tenant=s.tenant AND cv.scope_id=s.scope_id AND cv.facet=CASE s.provider WHEN 'lofi' THEN 'source' ELSE 'receipt' END" : ""}
        WHERE d.tenant=?1 AND d.version=?2 AND (c.kind='lofi' OR s.provider='lofi' OR s.scope_id=?4) ORDER BY c.id,s.scope_id LIMIT 22`,
         tenant,
         session.domainVersion,
@@ -279,9 +290,10 @@ export class InventoryMatchingWorkspace {
     if (header.results.length > 21)
       throw new Error("inventory_matching_scope_split_required");
     const scopes = await Promise.all(
-      header.results.map(async ({ config, ...row }) => ({
+      header.results.map(async ({ config, coverageClock, ...row }) => ({
         ...row,
         configHash: await sha256(config),
+        ...(coverageClock !== null ? { coverageClock } : {}),
       })),
     );
     const target = scopes.find((row) => row.scope === destination);
@@ -624,6 +636,7 @@ export class InventoryMatchingWorkspace {
     });
     const snapshot = {
       formatVersion: 1 as const,
+      coverageClocks: this.trackCoverageClocks ? (1 as const) : undefined,
       tenant,
       destination,
       generation: session.generation,

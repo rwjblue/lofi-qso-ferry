@@ -154,6 +154,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0058_inventory_matching_work.sql",
       "0059_inventory_live_bucket_dependencies.sql",
       "0060_inventory_matching_bucket_pages.sql",
+      "0061_inventory_matching_coverage_clocks.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -774,11 +775,9 @@ export async function reopenInventoryComparisonTrial(directory: string) {
           snapshot.generation !== context.generation
         )
           throw new Error("comparison_trial_matching_snapshot_changed");
-        const fresh = await new InventoryMatchingWorkspace(store).prepare(
-          "trial",
-          snapshot.destination,
-          snapshot.selected,
-        );
+        const fresh = await new InventoryMatchingWorkspace(store, {
+          trackCoverageClocks: snapshot.coverageClocks === 1,
+        }).prepare("trial", snapshot.destination, snapshot.selected);
         const {
           digest: _oldDigest,
           preparedAt: _oldTime,

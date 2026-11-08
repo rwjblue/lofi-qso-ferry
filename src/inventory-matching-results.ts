@@ -219,8 +219,12 @@ export class InventoryMatchingResults {
     };
     stage(
       "inventory_match_scopes",
-      "connection_id,scope_id,kind,connection_state,logical_identity,provider,scope_identity,config_version,scope_state,build_config_version,build_complete,unresolved,source",
-      `json_extract(value,'$.connection'),coalesce(json_extract(value,'$.scope'),''),json_extract(value,'$.kind'),json_extract(value,'$.connectionState'),json_extract(value,'$.logicalIdentity'),json_extract(value,'$.provider'),json_extract(value,'$.scopeIdentity'),json_extract(value,'$.configVersion'),json_extract(value,'$.state'),json_extract(value,'$.buildConfigVersion'),json_extract(value,'$.buildComplete'),json_extract(value,'$.unresolved'),json_extract(value,'$.source')`,
+      "connection_id,scope_id,kind,connection_state,logical_identity,provider,scope_identity,config_version,scope_state,build_config_version,build_complete,unresolved,source" +
+        (page.coverageClocks === 1 ? ",coverage_clock" : ""),
+      `json_extract(value,'$.connection'),coalesce(json_extract(value,'$.scope'),''),json_extract(value,'$.kind'),json_extract(value,'$.connectionState'),json_extract(value,'$.logicalIdentity'),json_extract(value,'$.provider'),json_extract(value,'$.scopeIdentity'),json_extract(value,'$.configVersion'),json_extract(value,'$.state'),json_extract(value,'$.buildConfigVersion'),json_extract(value,'$.buildComplete'),json_extract(value,'$.unresolved'),json_extract(value,'$.source')` +
+        (page.coverageClocks === 1
+          ? ",json_extract(value,'$.coverageClock')"
+          : ""),
       page.scopes,
     );
     stage(

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { InventoryMatchingResults } from "../src/inventory-matching-results.ts";
-import type { PreparedInventoryMatchingSnapshot } from "../src/inventory-matching-workspace.ts";
+import {
+  InventoryMatchingWorkspace,
+  type PreparedInventoryMatchingSnapshot,
+} from "../src/inventory-matching-workspace.ts";
 import { canonical, sha256 } from "../src/security.ts";
 import { Store } from "../src/store.ts";
 import { observation } from "./inventory-context-fixtures.ts";
@@ -147,8 +150,178 @@ test("collecting coverage hides results and unchanged full verification restores
     );
     await assert.rejects(
       f.matches.publish(f.page, f.lease),
-      /dependencies changed/,
+      /coverage set changed/,
     );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("a newly completed date partition fences a comparison that never observed that partition", async () => {
+  const f = await prepared({
+    provider: "lotw",
+    receipts: [],
+    range: ["2026-11-09", "2026-11-09"],
+  });
+  try {
+    assert.equal(f.page.results[0].state, "incomplete");
+    await f.fullReceipt([], ["2026-11-08", "2026-11-08"]);
+    await assert.rejects(
+      f.matches.publish(f.page, f.lease),
+      /coverage set changed/,
+    );
+    await empty(f);
+    const fresh = await f.workspace.prepare("a", "destination", f.selected);
+    assert.equal(fresh.results[0].state, "absent_at_inventory");
+    await f.matches.publish(fresh, f.lease);
+    assert.equal(
+      (await f.matches.current("a", "destination", f.selected)).results[0]
+        .state,
+      "absent_at_inventory",
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("a coverage partition added after admission rolls back with the whole comparison cohort", async () => {
+  const f = await prepared();
+  try {
+    const before = await f.db
+      .prepare(
+        "SELECT * FROM inventory_matching_coverage_clocks ORDER BY scope_id,facet",
+      )
+      .all();
+    const store = alteredStore(f, async (plan) => {
+      const changed = [...plan];
+      changed.splice(
+        changed.length - 1,
+        0,
+        f.db.prepare(
+          "INSERT INTO inventory_coverage(tenant,scope_id,stream_id,facet,partition_id,partition_binding) VALUES('a','destination','receipt','receipt','late','late')",
+        ),
+      );
+      return f.db.batch(changed);
+    });
+    await assert.rejects(
+      new InventoryMatchingResults(store).publish(f.page, f.lease),
+      /coverage set changed/,
+    );
+    await empty(f);
+    assert.deepEqual(
+      (
+        await f.db
+          .prepare(
+            "SELECT * FROM inventory_matching_coverage_clocks ORDER BY scope_id,facet",
+          )
+          .all()
+      ).results,
+      before.results,
+    );
+    assert.equal(
+      (
+        await f.db
+          .prepare(
+            "SELECT count(*) AS n FROM inventory_coverage WHERE partition_id='late'",
+          )
+          .first<{ n: number }>()
+      )?.n,
+      0,
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("coverage clocks track readiness changes while ignoring page bookkeeping and confirmations", async () => {
+  const f = await prepared({ provider: "lotw" });
+  try {
+    const clocks = async () =>
+      (
+        await f.db
+          .prepare(
+            "SELECT scope_id,facet,version FROM inventory_matching_coverage_clocks ORDER BY scope_id,facet",
+          )
+          .all()
+      ).results;
+    const before = await clocks();
+    await f.db
+      .prepare(
+        "UPDATE inventory_coverage SET version=version+1,completed_at=completed_at+1 WHERE scope_id='destination'",
+      )
+      .run();
+    assert.deepEqual(await clocks(), before);
+    await f.db
+      .prepare(
+        "INSERT INTO inventory_coverage(tenant,scope_id,stream_id,facet,partition_id,partition_binding) VALUES('a','destination','receipt','confirmation','confirmation','confirmation')",
+      )
+      .run();
+    await f.db
+      .prepare(
+        "UPDATE inventory_coverage SET version=version+1,state='held' WHERE facet='confirmation'",
+      )
+      .run();
+    assert.deepEqual(await clocks(), before);
+    // Prepare again because per-row publication dependencies still see the
+    // bookkeeping change, even though no coverage-set clock was necessary.
+    const page = await f.workspace.prepare("a", "destination", f.selected);
+    await f.matches.publish(page, f.lease);
+    const current = (await f.matches.current("a", "destination", f.selected))
+      .results;
+    await f.fullReceipt([receipt()]);
+    assert.notDeepEqual(await clocks(), before);
+    assert.deepEqual(
+      (await f.matches.current("a", "destination", f.selected)).results,
+      current,
+    );
+    await assert.rejects(
+      f.db
+        .prepare(
+          "UPDATE inventory_coverage SET version=version+1,partition_id='moved' WHERE facet='receipt'",
+        )
+        .run(),
+      /immutable inventory coverage identity/,
+    );
+    await assert.rejects(
+      f.db.prepare("DELETE FROM inventory_matching_coverage_clocks").run(),
+      /retained/,
+    );
+    await assert.rejects(
+      f.db
+        .prepare(
+          "UPDATE inventory_matching_coverage_clocks SET version=version+2",
+        )
+        .run(),
+      /regressed/,
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("legacy read-only snapshots cannot bypass coverage-set publication fences", async () => {
+  const f = await prepared();
+  try {
+    const legacy = await new InventoryMatchingWorkspace(f.store, {
+      trackCoverageClocks: false,
+    }).prepare("a", "destination", f.selected);
+    assert.equal(legacy.coverageClocks, undefined);
+    assert.ok(legacy.scopes.every((row) => row.coverageClock === undefined));
+    await assert.rejects(
+      f.matches.publish(legacy, f.lease),
+      /coverage set changed/,
+    );
+    await empty(f);
+    const forged = structuredClone(f.page);
+    const target = forged.scopes.find((row) => row.scope === "destination");
+    assert.ok(target);
+    target.coverageClock = 0;
+    await resign(forged);
+    await assert.rejects(
+      f.matches.publish(forged, f.lease),
+      /coverage set changed/,
+    );
+    await empty(f);
   } finally {
     await f.mf.dispose();
   }

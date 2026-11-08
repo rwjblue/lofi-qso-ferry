@@ -7,6 +7,7 @@ import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { historicalCandidateKeys } from "../src/historical-matching.ts";
 import { InventoryAssociations } from "../src/inventory-associations.ts";
 import { InventoryComparisonBuilds } from "../src/inventory-comparison-builds.ts";
+import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
 import { InventoryComparisonGenerations } from "../src/inventory-comparison-generations.ts";
 import { inventoryComparisonToken } from "../src/inventory-comparison-keys.ts";
 import {
@@ -128,6 +129,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0052_inventory_projection_jobs.sql",
       "0053_inventory_projection_coverage_jobs.sql",
       "0054_inventory_bounded_generation_setup.sql",
+      "0055_inventory_comparison_coordinator.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -297,6 +299,23 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       ].some((row) => row.kind === "deferred")
     )
       throw new Error("comparison_trial_projection_job_deferred");
+    const coordinatorTurns: Awaited<
+      ReturnType<InventoryComparisonCoordinator["step"]>
+    >[] = [];
+    for (let turn = 0; turn < 4; turn++) {
+      const result = await new InventoryComparisonCoordinator(store).step(
+        "trial",
+      );
+      if (result.kind === "deferred")
+        throw new Error("comparison_trial_coordinator_deferred");
+      coordinatorTurns.push(result);
+      if (!result.more) break;
+    }
+    const coordinatorControl = await db
+      .prepare(
+        "SELECT version,work_version,observed_version,phase,idle_turns,build_generation,build_scope FROM inventory_comparison_coordinators WHERE tenant='trial'",
+      )
+      .first();
     const matchingSnapshots: PreparedInventoryMatchingSnapshot[] = [];
     const historicalAdoptions: {
       provider: string;
@@ -399,6 +418,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       indexCounts,
       projections: { published: true, phases: projectionPhases },
       projectionJobs: projectionJobSample,
+      coordinator: { turns: coordinatorTurns, control: coordinatorControl },
       matchingSnapshots: {
         published: true,
         resultsPublished: matchingPublications.reduce(
@@ -480,6 +500,15 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       operation: { kind: string; pageId?: string; records?: number };
       coverage: { kind: string; pageId?: string; records?: number };
       projection: { kind: string; pageId?: string; records?: number };
+    };
+    coordinator?: {
+      turns: {
+        kind: string;
+        phase?: string;
+        pageId?: string;
+        records?: number;
+      }[];
+      control: Record<string, unknown>;
     };
   };
   const mf = new Miniflare(
@@ -710,6 +739,47 @@ export async function reopenInventoryComparisonTrial(directory: string) {
             throw new Error("comparison_trial_historical_adoption_not_stable");
         }
     }
+    const validateProjectionPage = async (
+      pageId: string | undefined,
+      records: number | undefined,
+    ) => {
+      if (
+        !pageId ||
+        records === undefined ||
+        !Number.isSafeInteger(records) ||
+        records < 1 ||
+        records > 20
+      )
+        throw new Error("comparison_trial_job_projection_manifest_changed");
+      const receipt = await db
+        .prepare(
+          "SELECT state,row_count FROM comparison_projection_pages WHERE tenant='trial' AND page_id=?",
+        )
+        .bind(pageId)
+        .first<{ state: string; row_count: number }>();
+      if (receipt?.state !== "committed" || receipt.row_count !== records)
+        throw new Error(
+          "comparison_trial_job_projection_receipt_not_recovered",
+        );
+      const refs = (
+        await db
+          .prepare(
+            "SELECT scope_id AS scope,record_key AS key,facet,version,payload_id AS payload FROM comparison_projections WHERE tenant='trial' AND last_page_id=? ORDER BY scope_id,record_key,facet",
+          )
+          .bind(pageId)
+          .all<InventoryProjectionRead>()
+      ).results;
+      if (refs.length !== records)
+        throw new Error("comparison_trial_job_projection_refs_changed");
+      const bodies = await new InventoryProjections(store).bodies(
+        "trial",
+        context.generation,
+        refs,
+      );
+      if (bodies.missing.length || bodies.items.length !== refs.length)
+        throw new Error("comparison_trial_job_projections_not_recovered");
+      return bodies.items.length;
+    };
     let jobProjectionsValidated: number | undefined;
     if (report.projectionJobs?.sampled) {
       const operation = report.projectionJobs.operation;
@@ -742,38 +812,28 @@ export async function reopenInventoryComparisonTrial(directory: string) {
           throw new Error("comparison_trial_coverage_job_not_recovered");
       }
       if (projection.kind === "projected") {
-        const receipt = await db
-          .prepare(
-            "SELECT state,row_count FROM comparison_projection_pages WHERE tenant='trial' AND page_id=?",
-          )
-          .bind(projection.pageId)
-          .first<{ state: string; row_count: number }>();
-        if (
-          receipt?.state !== "committed" ||
-          receipt.row_count !== projection.records
-        )
-          throw new Error(
-            "comparison_trial_job_projection_receipt_not_recovered",
-          );
-        const refs = (
-          await db
-            .prepare(
-              "SELECT scope_id AS scope,record_key AS key,facet,version,payload_id AS payload FROM comparison_projections WHERE tenant='trial' AND last_page_id=? ORDER BY scope_id,record_key,facet",
-            )
-            .bind(projection.pageId)
-            .all<InventoryProjectionRead>()
-        ).results;
-        if (refs.length !== projection.records)
-          throw new Error("comparison_trial_job_projection_refs_changed");
-        const bodies = await new InventoryProjections(store).bodies(
-          "trial",
-          context.generation,
-          refs,
+        jobProjectionsValidated = await validateProjectionPage(
+          projection.pageId,
+          projection.records,
         );
-        if (bodies.missing.length || bodies.items.length !== refs.length)
-          throw new Error("comparison_trial_job_projections_not_recovered");
-        jobProjectionsValidated = bodies.items.length;
       } else jobProjectionsValidated = 0;
+    }
+    let coordinatorProjectionsValidated: number | undefined;
+    if (report.coordinator) {
+      const control = await db
+        .prepare(
+          "SELECT version,work_version,observed_version,phase,idle_turns,build_generation,build_scope FROM inventory_comparison_coordinators WHERE tenant='trial'",
+        )
+        .first();
+      if (canonical(control) !== canonical(report.coordinator.control))
+        throw new Error("comparison_trial_coordinator_control_not_recovered");
+      coordinatorProjectionsValidated = 0;
+      for (const turn of report.coordinator.turns)
+        if (turn.kind === "advanced" && turn.phase === "project")
+          coordinatorProjectionsValidated += await validateProjectionPage(
+            turn.pageId,
+            turn.records,
+          );
     }
     return {
       directory,
@@ -788,6 +848,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       matchingResultsValidated,
       historicalAssociationsValidated,
       jobProjectionsValidated,
+      coordinatorProjectionsValidated,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

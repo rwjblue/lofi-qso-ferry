@@ -4,6 +4,7 @@ import { InventoryMatchingCoverage } from "./inventory-matching-coverage.ts";
 import { InventoryMatchingCoverageEvents } from "./inventory-matching-coverage-events.ts";
 import { InventoryMatchingInvalidations } from "./inventory-matching-invalidations.ts";
 import { InventoryMatchingPairs } from "./inventory-matching-pairs.ts";
+import { InventoryMatchingSelected } from "./inventory-matching-selected.ts";
 import { InventoryMatchingWork } from "./inventory-matching-work.ts";
 import { InventoryProjectionCoverageJobs } from "./inventory-projection-coverage-jobs.ts";
 import { InventoryProjectionJobs } from "./inventory-projection-jobs.ts";
@@ -31,6 +32,7 @@ const phases = [
   "coverage-events",
   "coverage-match",
   "match",
+  "selected",
 ] as const;
 export const INVENTORY_COMPARISON_PHASE_COUNT = phases.length;
 const identifier = (value: unknown): value is string =>
@@ -282,7 +284,8 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
         phase === "bucket" ||
         phase === "coverage-events" ||
         phase === "coverage-match" ||
-        phase === "match"
+        phase === "match" ||
+        phase === "selected"
       ) {
         const result =
           phase === "pair"
@@ -297,7 +300,11 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
                   )
                 : phase === "coverage-match"
                   ? await new InventoryMatchingCoverage(this.store).step(tenant)
-                  : await new InventoryMatchingWork(this.store).step(tenant);
+                  : phase === "selected"
+                    ? await new InventoryMatchingSelected(this.store).step(
+                        tenant,
+                      )
+                    : await new InventoryMatchingWork(this.store).step(tenant);
         progress = result.kind !== "idle" && result.kind !== "deferred";
         deferred = result.kind === "deferred";
         records = "records" in result ? (result.records ?? 0) : 0;

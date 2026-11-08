@@ -1,6 +1,15 @@
 import { applyMigration } from "./helpers.ts";
 
-export async function installMatchingCoordinator(db: D1Database) {
+export async function installSelectedCoordinator(db: D1Database) {
+  for (const name of [
+    "0070_inventory_matching_selected_inputs.sql",
+    "0071_inventory_matching_selected_pages.sql",
+    "0072_inventory_selected_matching_coordinator.sql",
+  ])
+    await applyMigration(db, name);
+}
+
+export async function installMatchingCoordinator(db: D1Database, through = 72) {
   for (const name of [
     "0059_inventory_live_bucket_dependencies.sql",
     "0060_inventory_matching_bucket_pages.sql",
@@ -11,4 +20,5 @@ export async function installMatchingCoordinator(db: D1Database) {
     "0069_inventory_matching_coordinator.sql",
   ])
     await applyMigration(db, name);
+  if (through >= 72) await installSelectedCoordinator(db);
 }

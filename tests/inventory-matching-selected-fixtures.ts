@@ -8,7 +8,7 @@ export async function selectedFixture(
 ) {
   const f = await matchingWorkFixture(options);
   try {
-    await installMatchingCoordinator(f.db);
+    await installMatchingCoordinator(f.db, 69);
     await applyMigration(f.db, "0070_inventory_matching_selected_inputs.sql");
     return f;
   } catch (error) {

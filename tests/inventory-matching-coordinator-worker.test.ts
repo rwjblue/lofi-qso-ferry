@@ -4,11 +4,12 @@ import { build } from "esbuild";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { Store } from "../src/store.ts";
 import { applyMigration, keys } from "./helpers.ts";
+import { observation } from "./inventory-context-fixtures.ts";
 import { installMatchingCoordinator } from "./inventory-matching-coordinator-fixtures.ts";
 import { sourceContact } from "./inventory-matching-fixtures.ts";
 import { matchingWorkFixture } from "./inventory-matching-work-fixtures.ts";
 
-test("native workerd automatically enrolls, matches and recovers a completed coverage selection", async (t) => {
+test("native workerd automatically recovers coverage and selected-source edits", async (t) => {
   const bundle = await build({
     stdin: {
       contents: `
@@ -108,4 +109,29 @@ export default {async fetch(request,env){
     await f.store.private("a", "source", "v1", "credential"),
     credential,
   );
+  const edited = sourceContact("q0", "14:00:00");
+  edited.order = 2;
+  edited.revision = "2";
+  await f.full([observation("op", "operation"), edited, ...f.sources.slice(1)]);
+  const editedSource = await f.inventory.snapshot("a", "source", "sync");
+  const repaired = await drain();
+  assert.deepEqual(repaired.state, recovered.state);
+  assert.ok(repaired.phases.includes("selected"));
+  assert.deepEqual(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_matching_selected_jobs WHERE completed_version<work_version",
+      )
+      .first(),
+    { n: 0 },
+  );
+  assert.deepEqual(
+    await f.inventory.snapshot("a", "source", "sync"),
+    editedSource,
+  );
+  assert.deepEqual(
+    await f.store.private("a", "source", "v1", "credential"),
+    credential,
+  );
+  assert.equal(outbound, 0);
 });

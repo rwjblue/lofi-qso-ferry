@@ -171,7 +171,7 @@ test("atomic ingestion wakeups restart an idle coordinator and stable turns pres
         observed_version: number;
         idle_turns: number;
       }>();
-    assert.equal(old?.idle_turns, 10);
+    assert.equal(old?.idle_turns, 11);
     const edited = sourceContact(f.sources[0].key, "14:00:00", "K1ABC");
     edited.order = 2;
     edited.revision = "2";
@@ -198,7 +198,7 @@ test("atomic ingestion wakeups restart an idle coordinator and stable turns pres
           .prepare("SELECT idle_turns FROM inventory_comparison_coordinators")
           .first<{ idle_turns: number }>()
       )?.idle_turns,
-      10,
+      11,
     );
   } finally {
     await f.mf.dispose();
@@ -392,7 +392,7 @@ test("a contended child keeps the coordinator durably pending instead of complet
     assert.ok(leader);
     await f.db
       .prepare(
-        "UPDATE inventory_comparison_coordinators SET version=version+1,observed_version=work_version,idle_turns=9 WHERE tenant='a'",
+        "UPDATE inventory_comparison_coordinators SET version=version+1,observed_version=work_version,idle_turns=10 WHERE tenant='a'",
       )
       .run();
     await f.store.release(leader);

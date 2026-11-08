@@ -189,7 +189,7 @@ test("native publication rejects omitted selected declarations and immutable map
 test("installing the current selected map schedules existing proofs for revalidation", async () => {
   const f = await matchingWorkFixture({ receipts: [] });
   try {
-    await installMatchingCoordinator(f.db);
+    await installMatchingCoordinator(f.db, 69);
     await f.matches.match("a", "destination", f.selected);
     await applyMigration(f.db, "0070_inventory_matching_selected_inputs.sql");
     assert.deepEqual(

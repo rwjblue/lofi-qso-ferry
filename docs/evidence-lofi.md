@@ -4,6 +4,11 @@ Initial adapter review: 2026-10-22, before live requests. The dated observations
 below record subsequent read-only vendor evidence; fixture results alone do not
 establish server compatibility or production coverage.
 
+The [2026-10-30 receipt-writeback investigation](lofi-receipt-writeback.md)
+records normal HaLo/PoLo field preservation, reproduced receipt-loss cases and
+whole-record conflict hazards. A safe server receipt-write contract remains
+unverified; Ferry's contact adapter remains read-only.
+
 ## Current scheduled source-proof evidence — D2, 2026-10-25 UTC
 
 Checked pairs C and D2 exercised the deployed c88d413e normal source-proof and

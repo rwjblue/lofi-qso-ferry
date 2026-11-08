@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { historicalCandidateKeys } from "../src/historical-matching.ts";
+import { InventoryAssociations } from "../src/inventory-associations.ts";
 import { InventoryComparisonBuilds } from "../src/inventory-comparison-builds.ts";
 import { InventoryComparisonGenerations } from "../src/inventory-comparison-generations.ts";
 import { inventoryComparisonToken } from "../src/inventory-comparison-keys.ts";
@@ -121,6 +122,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0048_inventory_projection_publication.sql",
       "0049_inventory_matching_read_indexes.sql",
       "0050_inventory_match_results.sql",
+      "0051_inventory_historical_ownership.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -276,6 +278,12 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
     if (!sourcePreparation)
       throw new Error("comparison_trial_source_projections_missing");
     const matchingSnapshots: PreparedInventoryMatchingSnapshot[] = [];
+    const historicalAdoptions: {
+      provider: string;
+      selected: number;
+      records: number;
+      skipped: Record<string, number>;
+    }[] = [];
     const matchingPublications: (Awaited<
       ReturnType<InventoryMatchingResults["publish"]>
     > & {
@@ -322,6 +330,26 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       } finally {
         await store.release(lease);
       }
+      const adoption = await new InventoryAssociations(store).adopt(
+        "trial",
+        scope.scope_id,
+        prepared.selected,
+      );
+      if (adoption.deferred)
+        throw new Error("comparison_trial_adoption_deferred");
+      historicalAdoptions.push({
+        provider: scope.provider,
+        selected: prepared.selected.length,
+        records: adoption.records,
+        skipped: Object.fromEntries(
+          [...new Set(adoption.skipped.map((row) => row.reason))].map(
+            (reason) => [
+              reason,
+              adoption.skipped.filter((row) => row.reason === reason).length,
+            ],
+          ),
+        ),
+      });
     }
     await writeFile(
       join(directory, "matching-snapshots.json"),
@@ -379,6 +407,14 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
           publication: matchingPublications[index],
         })),
       },
+      historicalAdoption: {
+        evaluated: true,
+        associationsCreated: historicalAdoptions.reduce(
+          (sum, row) => sum + row.records,
+          0,
+        ),
+        phases: historicalAdoptions,
+      },
       lookup: {
         contacts,
         probes: requests.length,
@@ -417,6 +453,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
   ) as {
     projections?: { published: boolean };
     matchingSnapshots?: { published: boolean };
+    historicalAdoption?: { evaluated: boolean; associationsCreated: number };
   };
   const mf = new Miniflare(
     convertV4MiniflareOptions({
@@ -559,6 +596,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
     });
     let matchingSnapshotsValidated = 0;
     let matchingResultsValidated = 0;
+    let historicalAssociationsValidated: number | undefined;
     if (matchingText) {
       const snapshots = JSON.parse(
         matchingText,
@@ -621,6 +659,30 @@ export async function reopenInventoryComparisonTrial(directory: string) {
         matchingSnapshotsValidated++;
       }
     }
+    if (report.historicalAdoption?.evaluated) {
+      const count = await db
+        .prepare(
+          "SELECT count(*) AS n FROM inventory_historical_associations WHERE tenant='trial'",
+        )
+        .first<{ n: number }>();
+      if (count?.n !== report.historicalAdoption.associationsCreated)
+        throw new Error(
+          "comparison_trial_historical_associations_not_recovered",
+        );
+      historicalAssociationsValidated = count.n;
+      if (matchingText)
+        for (const snapshot of JSON.parse(
+          matchingText,
+        ) as PreparedInventoryMatchingSnapshot[]) {
+          const adoption = await new InventoryAssociations(store).prepare(
+            "trial",
+            snapshot.destination,
+            snapshot.selected,
+          );
+          if (adoption.rows.length)
+            throw new Error("comparison_trial_historical_adoption_not_stable");
+        }
+    }
     return {
       directory,
       vendorHttpRequests: 0,
@@ -632,6 +694,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       publishedProjectionReadStats: loaded.stats,
       matchingSnapshotsValidated,
       matchingResultsValidated,
+      historicalAssociationsValidated,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

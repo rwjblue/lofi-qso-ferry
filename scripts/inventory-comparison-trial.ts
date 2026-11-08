@@ -20,6 +20,8 @@ import {
   InventoryMatchingWorkspace,
   type PreparedInventoryMatchingSnapshot,
 } from "../src/inventory-matching-workspace.ts";
+import { InventoryProjectionCoverageJobs } from "../src/inventory-projection-coverage-jobs.ts";
+import { InventoryProjectionJobs } from "../src/inventory-projection-jobs.ts";
 import {
   type InventoryProjectionBody,
   InventoryProjectionWorkspace,
@@ -123,6 +125,8 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0049_inventory_matching_read_indexes.sql",
       "0050_inventory_match_results.sql",
       "0051_inventory_historical_ownership.sql",
+      "0052_inventory_projection_jobs.sql",
+      "0053_inventory_projection_coverage_jobs.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -277,6 +281,21 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
     );
     if (!sourcePreparation)
       throw new Error("comparison_trial_source_projections_missing");
+    const projectionJobs = new InventoryProjectionJobs(store);
+    const projectionJobSample = {
+      sampled: true,
+      operation: await projectionJobs.expandNext("trial"),
+      coverage: await new InventoryProjectionCoverageJobs(store).step("trial"),
+      projection: await projectionJobs.projectNext("trial"),
+    };
+    if (
+      [
+        projectionJobSample.operation,
+        projectionJobSample.coverage,
+        projectionJobSample.projection,
+      ].some((row) => row.kind === "deferred")
+    )
+      throw new Error("comparison_trial_projection_job_deferred");
     const matchingSnapshots: PreparedInventoryMatchingSnapshot[] = [];
     const historicalAdoptions: {
       provider: string;
@@ -378,6 +397,7 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       phases,
       indexCounts,
       projections: { published: true, phases: projectionPhases },
+      projectionJobs: projectionJobSample,
       matchingSnapshots: {
         published: true,
         resultsPublished: matchingPublications.reduce(
@@ -454,6 +474,12 @@ export async function reopenInventoryComparisonTrial(directory: string) {
     projections?: { published: boolean };
     matchingSnapshots?: { published: boolean };
     historicalAdoption?: { evaluated: boolean; associationsCreated: number };
+    projectionJobs?: {
+      sampled: boolean;
+      operation: { kind: string; pageId?: string; records?: number };
+      coverage: { kind: string; pageId?: string; records?: number };
+      projection: { kind: string; pageId?: string; records?: number };
+    };
   };
   const mf = new Miniflare(
     convertV4MiniflareOptions({
@@ -683,6 +709,71 @@ export async function reopenInventoryComparisonTrial(directory: string) {
             throw new Error("comparison_trial_historical_adoption_not_stable");
         }
     }
+    let jobProjectionsValidated: number | undefined;
+    if (report.projectionJobs?.sampled) {
+      const operation = report.projectionJobs.operation;
+      if (operation.kind === "expanded") {
+        const receipt = await db
+          .prepare(
+            "SELECT state,row_count FROM inventory_projection_job_pages WHERE tenant='trial' AND page_id=?",
+          )
+          .bind(operation.pageId)
+          .first<{ state: string; row_count: number }>();
+        if (
+          receipt?.state !== "committed" ||
+          receipt.row_count !== operation.records
+        )
+          throw new Error("comparison_trial_operation_job_not_recovered");
+      }
+      const projection = report.projectionJobs.projection;
+      const coverage = report.projectionJobs.coverage;
+      if (coverage.kind === "queued") {
+        const receipt = await db
+          .prepare(
+            "SELECT state,row_count FROM inventory_projection_coverage_pages WHERE tenant='trial' AND page_id=?",
+          )
+          .bind(coverage.pageId)
+          .first<{ state: string; row_count: number }>();
+        if (
+          receipt?.state !== "committed" ||
+          receipt.row_count !== coverage.records
+        )
+          throw new Error("comparison_trial_coverage_job_not_recovered");
+      }
+      if (projection.kind === "projected") {
+        const receipt = await db
+          .prepare(
+            "SELECT state,row_count FROM comparison_projection_pages WHERE tenant='trial' AND page_id=?",
+          )
+          .bind(projection.pageId)
+          .first<{ state: string; row_count: number }>();
+        if (
+          receipt?.state !== "committed" ||
+          receipt.row_count !== projection.records
+        )
+          throw new Error(
+            "comparison_trial_job_projection_receipt_not_recovered",
+          );
+        const refs = (
+          await db
+            .prepare(
+              "SELECT scope_id AS scope,record_key AS key,facet,version,payload_id AS payload FROM comparison_projections WHERE tenant='trial' AND last_page_id=? ORDER BY scope_id,record_key,facet",
+            )
+            .bind(projection.pageId)
+            .all<InventoryProjectionRead>()
+        ).results;
+        if (refs.length !== projection.records)
+          throw new Error("comparison_trial_job_projection_refs_changed");
+        const bodies = await new InventoryProjections(store).bodies(
+          "trial",
+          context.generation,
+          refs,
+        );
+        if (bodies.missing.length || bodies.items.length !== refs.length)
+          throw new Error("comparison_trial_job_projections_not_recovered");
+        jobProjectionsValidated = bodies.items.length;
+      } else jobProjectionsValidated = 0;
+    }
     return {
       directory,
       vendorHttpRequests: 0,
@@ -695,6 +786,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       matchingSnapshotsValidated,
       matchingResultsValidated,
       historicalAssociationsValidated,
+      jobProjectionsValidated,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

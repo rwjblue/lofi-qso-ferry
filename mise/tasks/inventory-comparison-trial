@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+#MISE description="Backfill comparison generations and probe an isolated copy of an encrypted run capture without vendor reads"
+#USAGE flag "--capture <directory>" help="Existing three-provider encrypted inventory run trial"
+#USAGE flag "--reopen <directory>" help="Verify persisted generation and hashes without vendor reads"
+set -euo pipefail
+npx tsx scripts/inventory-comparison-trial.ts "$@"

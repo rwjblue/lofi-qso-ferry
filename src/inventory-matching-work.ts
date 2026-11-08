@@ -47,8 +47,8 @@ export class InventoryMatchingWork {
         selected.length
     )
       throw new Error("invalid_inventory_matching_work_selection");
-    const result = await this.store
-      .statement(
+    const result = await this.store.db.batch([
+      this.store.statement(
         `INSERT INTO matching_work(tenant,generation_id,destination,source_scope,record_key,source_config_version,destination_config_version)
 SELECT r.tenant,r.generation_id,r.destination,r.source_scope,json_extract(j.value,'$.key'),r.source_config_version,r.destination_config_version FROM json_each(?1) j CROSS JOIN inventory_matching_source_routes r WHERE r.tenant=?2 AND r.generation_id=?3 AND r.destination=?4 AND r.source_scope=json_extract(j.value,'$.scope')
 ON CONFLICT(tenant,generation_id,destination,source_scope,record_key) DO UPDATE SET source_config_version=excluded.source_config_version,destination_config_version=excluded.destination_config_version,work_version=matching_work.work_version+1,due_at=0,hold_reason=NULL`,
@@ -56,9 +56,13 @@ ON CONFLICT(tenant,generation_id,destination,source_scope,record_key) DO UPDATE 
         tenant,
         generation,
         destination,
-      )
-      .run();
-    return { records: result.meta.changes };
+      ),
+      this.store.statement(
+        "INSERT INTO inventory_comparison_coordinators(tenant) VALUES(?) ON CONFLICT(tenant) DO UPDATE SET work_version=inventory_comparison_coordinators.work_version+1",
+        tenant,
+      ),
+    ]);
+    return { records: result[0].meta.changes };
   }
   async step(tenant: string) {
     if (!identifier(tenant))

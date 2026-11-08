@@ -1,5 +1,10 @@
 import { InventoryComparisonBuilds } from "./inventory-comparison-builds.ts";
 import { InventoryComparisonGenerations } from "./inventory-comparison-generations.ts";
+import { InventoryMatchingCoverage } from "./inventory-matching-coverage.ts";
+import { InventoryMatchingCoverageEvents } from "./inventory-matching-coverage-events.ts";
+import { InventoryMatchingInvalidations } from "./inventory-matching-invalidations.ts";
+import { InventoryMatchingPairs } from "./inventory-matching-pairs.ts";
+import { InventoryMatchingWork } from "./inventory-matching-work.ts";
 import { InventoryProjectionCoverageJobs } from "./inventory-projection-coverage-jobs.ts";
 import { InventoryProjectionJobs } from "./inventory-projection-jobs.ts";
 import type { Lease, Store } from "./store.ts";
@@ -10,6 +15,8 @@ interface Control {
   observed_version: number;
   phase: number;
   idle_turns: number;
+  phase_count: number;
+  next_due_at: number;
   build_generation: string;
   build_scope: string;
 }
@@ -19,7 +26,13 @@ const phases = [
   "coverage",
   "project",
   "activate",
+  "pair",
+  "bucket",
+  "coverage-events",
+  "coverage-match",
+  "match",
 ] as const;
+export const INVENTORY_COMPARISON_PHASE_COUNT = phases.length;
 const identifier = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 512;
 
@@ -123,13 +136,15 @@ export class InventoryComparisonCoordinator {
     progress: boolean,
     nextPhase: number,
     build?: { generation_id: string; scope_id: string },
+    nextDueAt?: number,
   ) {
     return this.store
       .statement(
-        `UPDATE inventory_comparison_coordinators SET version=version+1,observed_version=work_version,phase=?,idle_turns=CASE WHEN ?=1 OR observed_version!=work_version THEN 0 ELSE min(5,idle_turns+1) END,build_generation=?,build_scope=?,updated_at=?
-WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a ON a.id=l.tenant AND a.status='active' WHERE l.tenant=? AND l.scope='inventory-comparison' AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000) RETURNING idle_turns,work_version,observed_version`,
+        `UPDATE inventory_comparison_coordinators SET version=version+1,observed_version=work_version,phase=?,idle_turns=CASE WHEN ?=1 OR observed_version!=work_version THEN 0 ELSE min(phase_count,idle_turns+1) END,next_due_at=coalesce(?,next_due_at),build_generation=?,build_scope=?,updated_at=?
+WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a ON a.id=l.tenant AND a.status='active' WHERE l.tenant=? AND l.scope='inventory-comparison' AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000) RETURNING idle_turns,work_version,observed_version,next_due_at`,
         nextPhase,
         Number(progress),
+        nextDueAt ?? null,
         build?.generation_id ?? control.build_generation,
         build?.scope_id ?? control.build_scope,
         Date.now(),
@@ -141,6 +156,7 @@ WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a O
       )
       .first<{
         idle_turns: number;
+        next_due_at: number;
         work_version: number;
         observed_version: number;
       }>();
@@ -169,13 +185,34 @@ WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a O
           tenant,
         )
         .run();
-      const control = await this.store
+      let control = await this.store
         .statement(
           "SELECT * FROM inventory_comparison_coordinators WHERE tenant=?",
           tenant,
         )
         .first<Control>();
-      if (!control) throw new Error("comparison_coordinator_unavailable");
+      if (!control || control.phase_count !== phases.length)
+        throw new Error("comparison_coordinator_unavailable");
+      if (
+        control.next_due_at > 0 &&
+        control.next_due_at <= Date.now() &&
+        control.idle_turns === control.phase_count &&
+        control.work_version === control.observed_version
+      ) {
+        const resumed = await this.store
+          .statement(
+            `UPDATE inventory_comparison_coordinators SET version=version+1,observed_version=work_version,idle_turns=0,next_due_at=0,updated_at=? WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l WHERE l.tenant=? AND l.scope='inventory-comparison' AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000) RETURNING *`,
+            Date.now(),
+            tenant,
+            control.version,
+            tenant,
+            lease.token,
+            lease.fence,
+          )
+          .first<Control>();
+        if (!resumed) return { kind: "deferred" as const, more: true };
+        control = resumed;
+      }
       const generations = new InventoryComparisonGenerations(this.store);
       let domain = await generations.domain(tenant);
       if (!domain?.active_generation && !domain?.pending_generation) {
@@ -193,6 +230,7 @@ WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a O
       let build: { generation_id: string; scope_id: string } | undefined;
       let records = 0;
       let pageId: string | undefined;
+      let nextDueAt: number | undefined;
       if (phase === "build") {
         const candidate = await this.store
           .statement(
@@ -239,6 +277,47 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
         pageId = "pageId" in result ? result.pageId : undefined;
         deferred = result.kind === "deferred";
         records = "records" in result ? result.records : 0;
+      } else if (
+        phase === "pair" ||
+        phase === "bucket" ||
+        phase === "coverage-events" ||
+        phase === "coverage-match" ||
+        phase === "match"
+      ) {
+        const result =
+          phase === "pair"
+            ? await new InventoryMatchingPairs(this.store).step(tenant)
+            : phase === "bucket"
+              ? await new InventoryMatchingInvalidations(this.store).step(
+                  tenant,
+                )
+              : phase === "coverage-events"
+                ? await new InventoryMatchingCoverageEvents(this.store).step(
+                    tenant,
+                  )
+                : phase === "coverage-match"
+                  ? await new InventoryMatchingCoverage(this.store).step(tenant)
+                  : await new InventoryMatchingWork(this.store).step(tenant);
+        progress = result.kind !== "idle" && result.kind !== "deferred";
+        deferred = result.kind === "deferred";
+        records = "records" in result ? (result.records ?? 0) : 0;
+        pageId =
+          "pageId" in result
+            ? result.pageId
+            : "dispatchId" in result
+              ? result.dispatchId
+              : "setId" in result
+                ? result.setId
+                : undefined;
+        if (phase === "match") {
+          const retry = await this.store
+            .statement(
+              `WITH routes AS MATERIALIZED(SELECT * FROM inventory_matching_coverage_live_routes WHERE tenant=?1),heads AS MATERIALIZED(SELECT (SELECT w.due_at FROM matching_work w INDEXED BY matching_work_scope_pending WHERE w.tenant=r.tenant AND w.generation_id=r.generation_id AND w.destination=r.destination AND w.source_scope=r.source_scope AND w.source_config_version=r.source_config_version AND w.destination_config_version=r.destination_config_version AND w.completed_version<w.work_version ORDER BY w.due_at,w.record_key LIMIT 1) AS due_at FROM routes r) SELECT coalesce(min(due_at),0) AS due_at FROM heads`,
+              tenant,
+            )
+            .first<{ due_at: number }>();
+          nextDueAt = retry?.due_at ?? 0;
+        }
       } else if (domain.pending_generation) {
         const result = await this.activate(
           tenant,
@@ -254,6 +333,7 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
         progress || deferred,
         (control.phase + 1) % phases.length,
         build,
+        nextDueAt,
       );
       return {
         kind:
@@ -268,6 +348,7 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
         records,
         pageId,
         more: !saved || deferred || saved.idle_turns < phases.length,
+        nextDueAt: saved?.next_due_at ?? 0,
       };
     } finally {
       await this.store.release(lease);

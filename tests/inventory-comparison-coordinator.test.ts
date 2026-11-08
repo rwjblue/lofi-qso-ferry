@@ -31,7 +31,7 @@ test("durable turns rotate builds and drain projections before managed activatio
     const built: number[] = [];
     let activations = 0;
     let finished = false;
-    for (let turn = 0; turn < 100; turn++) {
+    for (let turn = 0; turn < 300; turn++) {
       const result = await new InventoryComparisonCoordinator(f.store).step(
         "a",
       );
@@ -100,7 +100,17 @@ test("durable turns rotate builds and drain projections before managed activatio
       )?.n,
       0,
     );
-    for (const table of ["match_results", "ledger", "attempts"])
+    assert.equal(
+      (
+        await f.db
+          .prepare(
+            "SELECT count(*) AS n FROM match_results WHERE state='incomplete'",
+          )
+          .first<{ n: number }>()
+      )?.n,
+      205,
+    );
+    for (const table of ["ledger", "attempts"])
       assert.equal(
         (
           await f.db
@@ -161,7 +171,7 @@ test("atomic ingestion wakeups restart an idle coordinator and stable turns pres
         observed_version: number;
         idle_turns: number;
       }>();
-    assert.equal(old?.idle_turns, 5);
+    assert.equal(old?.idle_turns, 10);
     const edited = sourceContact(f.sources[0].key, "14:00:00", "K1ABC");
     edited.order = 2;
     edited.revision = "2";
@@ -188,7 +198,7 @@ test("atomic ingestion wakeups restart an idle coordinator and stable turns pres
           .prepare("SELECT idle_turns FROM inventory_comparison_coordinators")
           .first<{ idle_turns: number }>()
       )?.idle_turns,
-      5,
+      10,
     );
   } finally {
     await f.mf.dispose();
@@ -382,7 +392,7 @@ test("a contended child keeps the coordinator durably pending instead of complet
     assert.ok(leader);
     await f.db
       .prepare(
-        "UPDATE inventory_comparison_coordinators SET version=version+1,observed_version=work_version,idle_turns=4 WHERE tenant='a'",
+        "UPDATE inventory_comparison_coordinators SET version=version+1,observed_version=work_version,idle_turns=9 WHERE tenant='a'",
       )
       .run();
     await f.store.release(leader);
@@ -403,7 +413,7 @@ test("a contended child keeps the coordinator durably pending instead of complet
     assert.equal(result.more, true);
     const control = await f.db
       .prepare(
-        "SELECT idle_turns FROM inventory_comparison_coordinators INDEXED BY inventory_comparison_coordinator_due WHERE tenant='a' AND (idle_turns<5 OR observed_version<work_version)",
+        "SELECT idle_turns FROM inventory_comparison_coordinators INDEXED BY inventory_comparison_coordinator_due WHERE tenant='a' AND (idle_turns<phase_count OR observed_version<work_version)",
       )
       .first<{ idle_turns: number }>();
     assert.equal(control?.idle_turns, 0);

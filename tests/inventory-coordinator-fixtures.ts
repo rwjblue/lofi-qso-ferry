@@ -29,6 +29,17 @@ export async function coordinatorFixture(
       "0056_inventory_current_work_selection.sql",
       "0057_inventory_scoped_activation_debt.sql",
       "0066_inventory_projection_coverage_holds.sql",
+      "0058_inventory_matching_work.sql",
+      "0059_inventory_live_bucket_dependencies.sql",
+      "0060_inventory_matching_bucket_pages.sql",
+      "0061_inventory_matching_coverage_clocks.sql",
+      "0062_inventory_matching_pair_jobs.sql",
+      "0063_inventory_matching_pair_pages.sql",
+      "0064_inventory_matching_result_update.sql",
+      "0065_inventory_matching_coverage_recovery.sql",
+      "0067_inventory_matching_coverage_dispatch.sql",
+      "0068_inventory_matching_coverage_pages.sql",
+      "0069_inventory_matching_coordinator.sql",
     ])
       await applyMigration(f.db, name);
     const operation = observation("op", "operation");

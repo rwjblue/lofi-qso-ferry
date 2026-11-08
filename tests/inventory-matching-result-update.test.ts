@@ -72,7 +72,7 @@ test("a result update cannot borrow the guard of another admitted preparation", 
   }
 });
 
-test("exact-set result updates stay bounded as a hundred superseded proofs accumulate", async (t) => {
+test("exact-set result updates stay within a fixed read budget with 500 superseded proofs", async (t) => {
   const f = await matchingFixture();
   try {
     await applyMigration(f.db, "0064_inventory_matching_result_update.sql");
@@ -85,28 +85,43 @@ test("exact-set result updates stay bounded as a hundred superseded proofs accum
     assert.ok(lease);
     const selected = [{ scope: "source", key: "q0" }];
     const matches = new InventoryMatchingResults(f.store);
-    await matches.publish(
-      await f.workspace.prepare("a", "destination", selected),
-      lease,
-    );
-    const before = await matches.publish(
-      await f.workspace.prepare("a", "destination", selected),
-      lease,
-    );
-    for (let i = 0; i < 100; i++)
-      await matches.publish(
+    const reads: number[] = [];
+    for (let i = 0; i <= 500; i++) {
+      if (i > 0 && i % 25 === 0) {
+        await f.store.release(lease);
+        const current = await f.store.claim(
+          "a",
+          "matching:destination",
+          Date.now(),
+          60000,
+        );
+        assert.ok(current);
+        Object.assign(lease, current);
+      }
+      const result = await matches.publish(
         await f.workspace.prepare("a", "destination", selected),
         lease,
       );
-    const after = await matches.publish(
-      await f.workspace.prepare("a", "destination", selected),
-      lease,
-    );
+      if (i === 0) continue;
+      reads.push(result.rowsRead);
+      // Successful native paths vary by 31 reads even without history growth.
+      // A fixed budget at every size catches scans without comparing one low
+      // sample with one high sample. Extend past the old 100-proof sample.
+      assert.ok(
+        result.rowsRead <= 550,
+        `publication ${i}: ${result.rowsRead} reads`,
+      );
+      assert.equal(result.rowsWritten, 64);
+    }
+    const count = await f.db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_match_sets WHERE state='committed'",
+      )
+      .first<{ n: number }>();
+    assert.equal(count?.n, 501);
     t.diagnostic(
-      `ready result replacement before/after 100 old sets: reads=${before.rowsRead}/${after.rowsRead}, writes=${before.rowsWritten}/${after.rowsWritten}`,
+      `ready result replacement across 500 old sets: ${Math.min(...reads)}–${Math.max(...reads)} reads per publication, 64 writes`,
     );
-    assert.ok(after.rowsRead <= before.rowsRead + 8);
-    assert.equal(after.rowsWritten, before.rowsWritten);
   } finally {
     await f.mf.dispose();
   }

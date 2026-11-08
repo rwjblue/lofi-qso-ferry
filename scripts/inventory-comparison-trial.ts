@@ -25,6 +25,7 @@ import {
   type InventoryMatchingWorkClaim,
 } from "../src/inventory-matching-results.ts";
 import { InventoryMatchingWork } from "../src/inventory-matching-work.ts";
+import { InventoryMatchingSelected } from "../src/inventory-matching-selected.ts";
 import {
   InventoryMatchingWorkspace,
   type PreparedInventoryMatchingSnapshot,
@@ -137,6 +138,24 @@ async function coverageExpansionState(db: D1Database) {
     .first<CoverageExpansionState>();
 }
 
+interface SelectedInputState extends CoverageExpansionState {
+  dependents: number;
+  invalidReferences: number;
+  missingReferences: number;
+}
+async function selectedInputState(db: D1Database) {
+  return db
+    .prepare(`SELECT
+ (SELECT count(*) FROM inventory_matching_selected_dependents WHERE tenant='trial') AS dependents,
+ (SELECT count(*) FROM inventory_matching_selected_pages WHERE tenant='trial' AND state='committed') AS pages,
+ (SELECT count(*) FROM inventory_matching_selected_rows WHERE tenant='trial') AS "references",
+ (SELECT count(*) FROM inventory_matching_selected_jobs WHERE tenant='trial' AND completed_version<work_version) AS pendingJobs,
+ (SELECT count(*) FROM inventory_matching_selected_pages h WHERE h.tenant='trial' AND (h.state!='committed' OR NOT EXISTS(SELECT 1 FROM inventory_matching_selected_guards g WHERE g.tenant=h.tenant AND g.page_id=h.page_id) OR h.row_count!=(SELECT count(*) FROM inventory_matching_selected_rows q WHERE q.tenant=h.tenant AND q.page_id=h.page_id))) AS invalidReceipts,
+ (SELECT count(*) FROM inventory_matching_selected_dependents d JOIN inventory_match_sets h ON h.tenant=d.tenant AND h.set_id=d.set_id WHERE d.tenant='trial' AND (h.state!='committed' OR h.generation_id!=d.generation_id OR h.destination!=d.destination OR NOT EXISTS(SELECT 1 FROM inventory_match_rows q WHERE q.tenant=d.tenant AND q.set_id=d.set_id AND q.source_scope=d.scope_id AND q.record_key=d.record_key) OR NOT EXISTS(SELECT 1 FROM match_results r INDEXED BY match_result_set WHERE r.tenant=d.tenant AND r.set_id=d.set_id AND r.source_scope=d.source_scope) OR d.seen_clock>coalesce((SELECT j.work_version FROM inventory_matching_selected_jobs j WHERE j.tenant=d.tenant AND j.generation_id=d.generation_id AND j.scope_id=d.scope_id AND j.facet=d.facet AND j.record_key=d.record_key),0))) AS invalidReferences,
+ (SELECT count(*) FROM (SELECT tenant,set_id,source_scope FROM match_results WHERE tenant='trial' GROUP BY tenant,set_id,source_scope) r CROSS JOIN inventory_match_rows q WHERE q.tenant=r.tenant AND q.set_id=r.set_id AND NOT EXISTS(SELECT 1 FROM inventory_matching_selected_dependents d WHERE d.tenant=q.tenant AND d.set_id=q.set_id AND d.source_scope=r.source_scope AND d.scope_id=q.source_scope AND d.facet='source' AND d.record_key=q.record_key)) AS missingReferences`)
+    .first<SelectedInputState>();
+}
+
 /** Offline replay of the encrypted three-provider run capture. The original is
  * never opened for mutation; the working copy stays outside the repository. */
 export async function inventoryComparisonTrial(captureDirectory: string) {
@@ -237,6 +256,9 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0067_inventory_matching_coverage_dispatch.sql",
       "0068_inventory_matching_coverage_pages.sql",
       "0069_inventory_matching_coordinator.sql",
+      "0070_inventory_matching_selected_inputs.sql",
+      "0071_inventory_matching_selected_pages.sql",
+      "0072_inventory_selected_matching_coordinator.sql",
     ])
       await applyMigration(db, name);
     const generations = new InventoryComparisonGenerations(store);
@@ -588,6 +610,18 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "trial",
     );
     const expansionState = await coverageExpansionState(db);
+    const selectedInputs = await new InventoryMatchingSelected(store).step(
+      "trial",
+    );
+    const selectedState = await selectedInputState(db);
+    if (
+      selectedInputs.kind !== "idle" ||
+      !selectedState ||
+      selectedState.invalidReferences !== 0 ||
+      selectedState.missingReferences !== 0 ||
+      selectedState.invalidReceipts !== 0
+    )
+      throw new Error("comparison_trial_selected_inputs_incomplete");
     if (
       coverageExpansion.kind !== "idle" ||
       !expansionState ||
@@ -663,6 +697,11 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
         sampled: true,
         kind: coverageExpansion.kind,
         state: expansionState,
+      },
+      selectedInputs: {
+        sampled: true,
+        kind: selectedInputs.kind,
+        state: selectedState,
       },
       matchingInvalidation: {
         sampled: true,
@@ -774,6 +813,11 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       sampled: boolean;
       kind: string;
       state: CoverageExpansionState;
+    };
+    selectedInputs?: {
+      sampled: boolean;
+      kind: string;
+      state: SelectedInputState;
     };
     historicalAdoption?: { evaluated: boolean; associationsCreated: number };
     projectionJobs?: {
@@ -1244,6 +1288,18 @@ export async function reopenInventoryComparisonTrial(directory: string) {
     let matchingInvalidationStateRecovered: boolean | undefined;
     let coverageDispatchStateRecovered: boolean | undefined;
     let coverageExpansionStateRecovered: boolean | undefined;
+    let selectedInputStateRecovered: boolean | undefined;
+    if (report.selectedInputs?.sampled) {
+      const state = await selectedInputState(db);
+      if (
+        state?.invalidReferences !== 0 ||
+        state.missingReferences !== 0 ||
+        state.invalidReceipts !== 0 ||
+        canonical(state) !== canonical(report.selectedInputs.state)
+      )
+        throw new Error("comparison_trial_selected_inputs_not_recovered");
+      selectedInputStateRecovered = true;
+    }
     if (report.coverageExpansion?.sampled) {
       const state = await coverageExpansionState(db);
       if (
@@ -1297,6 +1353,7 @@ export async function reopenInventoryComparisonTrial(directory: string) {
       coverageRecoveryStateRecovered,
       coverageDispatchStateRecovered,
       coverageExpansionStateRecovered,
+      selectedInputStateRecovered,
       counts: await db
         .prepare(
           "SELECT (SELECT count(*) FROM comparison_index) AS records,(SELECT count(*) FROM bucket_versions) AS buckets,(SELECT count(*) FROM comparison_work) AS work,(SELECT count(*) FROM comparison_build_pages WHERE state='committed') AS buildPages",

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { measureD1 } from "../scripts/inventory-benchmark-metrics.ts";
 import { InventoryAdoptionWork } from "../src/inventory-adoption-work.ts";
 import { InventoryAssociations } from "../src/inventory-associations.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
+import { Store } from "../src/store.ts";
 import { applyMigration } from "./helpers.ts";
 import { installMatchingCoordinator } from "./inventory-matching-coordinator-fixtures.ts";
 import { receipt, sourceContact } from "./inventory-matching-fixtures.ts";
@@ -197,6 +199,44 @@ test("replacement results remove and restore pending adoption as a match changes
     ]);
     await f.project("destination");
     await expectMatch("matched_existing", 4, 1);
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("a contended ownership lease returns no adoption work and preserves its holder", async () => {
+  const f = await fixture("qrz", 1);
+  try {
+    await f.match();
+    const lease = await f.store.claim("a", "inventory-ownership:qrz");
+    assert.ok(lease);
+    const before = await jobs(f);
+    assert.equal(before.length, 1);
+    const resultSizes: number[] = [];
+    const meter = measureD1(f.db, (result) =>
+      resultSizes.push(result.results.length),
+    );
+    const adoption = new InventoryAdoptionWork(
+      new Store(meter.database, f.store.keys),
+    );
+    assert.deepEqual(await adoption.step("a"), { kind: "deferred" });
+    assert.equal(meter.totals.calls, 2);
+    assert.deepEqual(resultSizes, [1, 0, 0]);
+    assert.deepEqual(await jobs(f), before);
+    assert.deepEqual(
+      await f.db
+        .prepare("SELECT * FROM leases WHERE tenant=? AND scope=?")
+        .bind(lease.tenant, lease.scope)
+        .first(),
+      lease,
+    );
+    await f.store.release(lease);
+    assert.deepEqual(await f.adoption.step("a"), {
+      kind: "processed",
+      records: 1,
+      completed: 1,
+      held: 0,
+    });
   } finally {
     await f.mf.dispose();
   }

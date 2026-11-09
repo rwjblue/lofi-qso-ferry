@@ -128,6 +128,24 @@ by about 0.5%. The full 1,000-contact matched pipeline saved 150 D1
 calls and 100 SQL statements during classification and adoption. It
 verified all 1,000 current matches in the same 152 Queue deliveries.
 
+### Adoption work admission
+
+One native batch claims the provider ownership lease and reads up to 20
+due records under its token. Contention returns no work and preserves
+the current holder. Publication, completion and release retain their
+existing native guards.
+
+The same captured QRZ replay retained all 2,957 historical mappings
+and completed all 2,917 pending adoptions in 211 turns. D1 calls fell
+from 2,955 to 2,744 with the same 4,643 statements and 65,651 writes.
+Reads rose from 1,072,507 to 1,072,709. The replay verified credential
+envelopes, checkpoints and current classifications, and made zero
+provider requests or uploads.
+
+The 1,000-contact matched pipeline verified all current results in 152
+deliveries. Classification and adoption used 3,128 calls, down from
+3,178, with 5,684 statements in both runs.
+
 ### Coalesced idle coordinator phases
 
 The coordinator now checks consecutive idle phases under one lease and

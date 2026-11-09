@@ -1,5 +1,5 @@
 import { InventoryAssociations } from "./inventory-associations.ts";
-import { canonical } from "./security.ts";
+import { canonical, randomToken } from "./security.ts";
 import type { Lease, Store } from "./store.ts";
 
 interface Head {
@@ -79,29 +79,34 @@ export class InventoryAdoptionWork {
       )
       .first<Head>();
     if (!head) return { kind: "idle" as const };
-    const lease = await this.store.claim(
-      tenant,
-      `inventory-ownership:${head.provider}`,
-      Date.now(),
-      60000,
-    );
+    const scope = `inventory-ownership:${head.provider}`;
+    const now = Date.now();
+    const token = randomToken();
+    const [claimed, selected] = await this.store.db.batch([
+      this.store.claimStatement(tenant, scope, now, 60_000, { token }),
+      this.store.statement(
+        `SELECT w.source_scope AS scope,w.record_key AS key,w.result_set AS resultSet,w.result_version AS resultVersion,w.due_at AS dueAt
+         FROM leases l CROSS JOIN inventory_adoption_work w INDEXED BY inventory_adoption_work_set_due
+         WHERE l.tenant=?1 AND l.scope=?9 AND l.token=?10 AND l.expires_at>unixepoch('subsec')*1000
+         AND w.tenant=l.tenant AND w.result_set=?2 AND w.generation_id=?3 AND w.destination=?4 AND w.source_scope=?5 AND w.source_config_version=?6 AND w.destination_config_version=?7 AND w.due_at<=?8
+         ORDER BY w.due_at,w.record_key LIMIT 20`,
+        tenant,
+        head.result_set,
+        head.generation_id,
+        head.destination,
+        head.source_scope,
+        head.source_config_version,
+        head.destination_config_version,
+        now,
+        scope,
+        token,
+      ),
+    ]);
+    const lease = claimed.results[0] as Lease | undefined;
     if (!lease) return { kind: "deferred" as const };
     try {
-      const selected = await this.store
-        .statement(
-          "SELECT source_scope AS scope,record_key AS key,result_set AS resultSet,result_version AS resultVersion,due_at AS dueAt FROM inventory_adoption_work INDEXED BY inventory_adoption_work_set_due WHERE tenant=? AND result_set=? AND generation_id=? AND destination=? AND source_scope=? AND source_config_version=? AND destination_config_version=? AND due_at<=? ORDER BY due_at,record_key LIMIT 20",
-          tenant,
-          head.result_set,
-          head.generation_id,
-          head.destination,
-          head.source_scope,
-          head.source_config_version,
-          head.destination_config_version,
-          Date.now(),
-        )
-        .all<Claim>();
-      if (!selected.results.length) return { kind: "idle" as const };
-      let work = selected.results;
+      let work = selected.results as Claim[];
+      if (!work.length) return { kind: "idle" as const };
       for (;;) {
         try {
           const associations = new InventoryAssociations(this.store);

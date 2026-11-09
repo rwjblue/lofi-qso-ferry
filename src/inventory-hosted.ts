@@ -23,9 +23,10 @@ import {
 import { InventoryQrzDispatch } from "./inventory-qrz-dispatch.ts";
 import {
   type InventoryDeliveryEnvironment,
-  InventoryQrzSendQueue,
-  isQrzSendWakeup,
-} from "./inventory-qrz-send.ts";
+  InventorySendQueue,
+  isInventorySendWakeup,
+} from "./inventory-delivery-send.ts";
+import { InventoryLotwDispatch } from "./inventory-lotw-dispatch.ts";
 import { InventoryRunner } from "./inventory-runner.ts";
 import { InventoryRuns } from "./inventory-runs.ts";
 import {
@@ -48,9 +49,20 @@ import { runScheduledTick } from "./scheduler-history.ts";
 import { keyring } from "./security.ts";
 import { Store } from "./store.ts";
 
+const hostedMode = {
+  read_only: "inventory_read_only",
+  selected_qrz: "inventory_selected_qrz",
+  selected_lotw: "inventory_selected_lotw",
+} as const;
+
 function configuredMode(env: Env) {
   const value = env.INVENTORY_RUNTIME_MODE ?? "off";
-  if (value !== "off" && value !== "read_only" && value !== "selected_qrz")
+  if (
+    value !== "off" &&
+    value !== "read_only" &&
+    value !== "selected_qrz" &&
+    value !== "selected_lotw"
+  )
     throw new Error("invalid_inventory_runtime_mode");
   return value;
 }
@@ -123,21 +135,28 @@ export async function runHostedScheduled(
     "lotw",
     env.INVENTORY_QUEUE,
   );
-  let qrzSendQueued = 0;
-  let qrzSendFailed = 0;
-  try {
-    qrzSendQueued = await new InventoryQrzSendQueue(
-      env,
-      new InventoryQrzDispatch(store),
-    ).schedule();
-  } catch {
-    qrzSendFailed = 1;
+  const sends = {
+    qrz: { queued: 0, failed: 0 },
+    lotw: { queued: 0, failed: 0 },
+  };
+  for (const provider of inventoryShadowProviders) {
+    if (mode !== `selected_${provider}`) continue;
+    try {
+      const dispatch =
+        provider === "qrz"
+          ? new InventoryQrzDispatch(store)
+          : new InventoryLotwDispatch(store);
+      sends[provider].queued = await new InventorySendQueue(
+        env,
+        provider,
+        dispatch,
+      ).schedule();
+    } catch {
+      sends[provider].failed = 1;
+    }
   }
   return {
-    mode:
-      mode === "selected_qrz"
-        ? ("inventory_selected_qrz" as const)
-        : ("inventory_read_only" as const),
+    mode: hostedMode[mode],
     registration,
     calendarRegistration,
     overflowRegistration,
@@ -148,14 +167,17 @@ export async function runHostedScheduled(
       sourceProofQueued +
       qrzRecoveryQueued +
       lotwRecoveryQueued +
-      qrzSendQueued,
+      sends.qrz.queued +
+      sends.lotw.queued,
     inventoryQueued,
     comparisonQueued,
     sourceProofQueued,
     qrzRecoveryQueued,
     lotwRecoveryQueued,
-    qrzSendQueued,
-    qrzSendFailed,
+    qrzSendQueued: sends.qrz.queued,
+    qrzSendFailed: sends.qrz.failed,
+    lotwSendQueued: sends.lotw.queued,
+    lotwSendFailed: sends.lotw.failed,
     qrzShadow: shadows.qrz,
     lotwShadow: shadows.lotw,
   };
@@ -190,7 +212,8 @@ export async function runHostedInventoryQueue(
       !isSourceProofWakeup(message.body) &&
       !isInventoryRecoveryWakeup("qrz", message.body) &&
       !isInventoryRecoveryWakeup("lotw", message.body) &&
-      !isQrzSendWakeup(message.body),
+      !isInventorySendWakeup("qrz", message.body) &&
+      !isInventorySendWakeup("lotw", message.body),
   );
   const proofMessages = batch.messages.filter((message) =>
     isSourceProofWakeup(message.body),
@@ -201,11 +224,15 @@ export async function runHostedInventoryQueue(
   const lotwRecoveryMessages = batch.messages.filter((message) =>
     isInventoryRecoveryWakeup("lotw", message.body),
   );
-  const sendMessages = batch.messages.filter((message) =>
-    isQrzSendWakeup(message.body),
-  );
   const dispatch = new InventoryQrzDispatch(store, fetcher);
-  const sender = new InventoryQrzSendQueue(env, dispatch);
+  const senders = {
+    qrz: new InventorySendQueue(env, "qrz", dispatch),
+    lotw: new InventorySendQueue(
+      env,
+      "lotw",
+      new InventoryLotwDispatch(store, fetcher),
+    ),
+  };
   let comparisonAfterInventory = 0,
     inventoryAfterComparison = 0,
     inventoryAfterProof = 0,
@@ -250,7 +277,7 @@ export async function runHostedInventoryQueue(
         return { provider, selection: config.selection };
       })
     : [];
-  let qrzSendAfterProof = 0;
+  const sendAfterProof = { qrz: 0, lotw: 0 };
   const proof = await consumeSourceProofWakeups(
     proofJobs,
     proofMessages,
@@ -277,7 +304,7 @@ export async function runHostedInventoryQueue(
           provider,
         ).stage(wakeup.id);
         shadows[provider] = staged.kind;
-        if (provider === "qrz") qrzSendAfterProof += await sender.schedule();
+        sendAfterProof[provider] += await senders[provider].schedule();
         if (staged.kind === "quiet" || staged.kind === "deferred")
           retryAt = Math.min(retryAt ?? staged.retryAt, staged.retryAt);
       }
@@ -294,34 +321,44 @@ export async function runHostedInventoryQueue(
     "lotw",
     lotwRecoveryMessages,
   );
-  const send = await sender.consume(sendMessages);
+  const qrzSend = await senders.qrz.consume(
+    batch.messages.filter((message) =>
+      isInventorySendWakeup("qrz", message.body),
+    ),
+  );
+  const lotwSend = await senders.lotw.consume(
+    batch.messages.filter((message) =>
+      isInventorySendWakeup("lotw", message.body),
+    ),
+  );
   const reports = [
     inventory,
     comparison,
     proof,
     qrzRecovery,
     lotwRecovery,
-    send,
+    qrzSend,
+    lotwSend,
   ];
   const total = (field: keyof typeof proof) =>
     reports.reduce((sum, report) => sum + report[field], 0);
-  const qrzSendQueued = qrzSendAfterProof + send.queued;
+  const qrzSendQueued = sendAfterProof.qrz + qrzSend.queued;
+  const lotwSendQueued = sendAfterProof.lotw + lotwSend.queued;
   const inventoryQueued =
     inventory.queued + inventoryAfterComparison + inventoryAfterProof;
   const comparisonQueued = comparison.queued + comparisonAfterInventory;
   return {
-    mode:
-      mode === "selected_qrz"
-        ? ("inventory_selected_qrz" as const)
-        : ("inventory_read_only" as const),
+    mode: hostedMode[mode],
     processed: total("processed"),
     inventoryProcessed: inventory.processed,
     comparisonProcessed: comparison.processed,
     sourceProofProcessed: proof.processed,
     qrzRecoveryProcessed: qrzRecovery.processed,
     lotwRecoveryProcessed: lotwRecovery.processed,
-    qrzSendProcessed: send.processed,
-    qrzSendOutcome: send.outcome,
+    qrzSendProcessed: qrzSend.processed,
+    qrzSendOutcome: qrzSend.outcome,
+    lotwSendProcessed: lotwSend.processed,
+    lotwSendOutcome: lotwSend.outcome,
     qrzShadow: shadows.qrz,
     lotwShadow: shadows.lotw,
     acknowledged: total("acknowledged"),
@@ -329,10 +366,15 @@ export async function runHostedInventoryQueue(
     invalid: total("invalid"),
     failed: total("failed"),
     queued:
-      inventoryQueued + comparisonQueued + sourceProofQueued + qrzSendQueued,
+      inventoryQueued +
+      comparisonQueued +
+      sourceProofQueued +
+      qrzSendQueued +
+      lotwSendQueued,
     inventoryQueued,
     comparisonQueued,
     sourceProofQueued,
     qrzSendQueued,
+    lotwSendQueued,
   };
 }

@@ -27,7 +27,7 @@ import {
   InventoryQrzNeighborhood,
 } from "../src/inventory-qrz-neighborhood.ts";
 import { InventoryQrzPreparation } from "../src/inventory-qrz-preparation.ts";
-import { isQrzSendWakeup } from "../src/inventory-qrz-send.ts";
+import { isInventorySendWakeup } from "../src/inventory-delivery-send.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
 import { registerInventorySelection } from "../src/inventory-scheduler.ts";
@@ -1040,7 +1040,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       ...shadowEnv.INVENTORY_QUEUE,
       async sendBatch(messages: Iterable<MessageSendRequest<unknown>>) {
         const batch = Array.from(messages);
-        if (!batch.every(({ body }) => isQrzSendWakeup(body)))
+        if (!batch.every(({ body }) => isInventorySendWakeup("qrz", body)))
           return shadowEnv.INVENTORY_QUEUE.sendBatch(batch);
         if (failPublication) throw new Error("fixture send queue unavailable");
         deliveries.push(...batch);
@@ -1833,13 +1833,99 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   assert.deepEqual(lotwSendActions.splice(0), ["certificate", "history"]);
   assert.equal(await lotwClaims(), 0);
   await db.prepare("DROP TRIGGER fixture_lotw_dispatch_rebind").run();
-  assert.deepEqual(await sendLotw(), { kind: "uncertain" });
+  const lotwSendMessages: MessageSendRequest<unknown>[] = [];
+  const lotwSendEnv = {
+    ...lotwEnv,
+    INVENTORY_RUNTIME_MODE: "selected_lotw",
+    LOTW_FRESH_INSERT_EXPIRES_AT: String(Date.now() + 300_000),
+    EXPORTS_ENABLED: "true",
+    ROLLOUT_CHECKS_PASSED: "true",
+    LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
+    SOURCE_BOUNDARY_VERIFIED: "false",
+    LOTW_FRESH_INSERTS_ENABLED: "true",
+    ROLLOUT_QSO_IDS_JSON: JSON.stringify(lotwKeys),
+    ROLLOUT_DESTINATION_IDS_JSON: JSON.stringify(["lotw"]),
+    INVENTORY_QUEUE: {
+      ...lotwEnv.INVENTORY_QUEUE,
+      async sendBatch(messages: Iterable<MessageSendRequest<unknown>>) {
+        const batch = Array.from(messages);
+        if (!batch.every(({ body }) => isInventorySendWakeup("lotw", body)))
+          return lotwEnv.INVENTORY_QUEUE.sendBatch(batch);
+        lotwSendMessages.push(...batch);
+        return {
+          metadata: {
+            metrics: { backlogCount: lotwSendMessages.length, backlogBytes: 0 },
+          },
+        };
+      },
+    },
+  };
+  const partialLotwEnv = {
+    ...lotwSendEnv,
+    ROLLOUT_QSO_IDS_JSON: JSON.stringify(["q2"]),
+  };
+  const lotwSendJob = () =>
+    store
+      .statement(
+        "SELECT version,turns,published_version FROM inventory_lotw_send_jobs WHERE tenant='a' AND batch_id=?",
+        replacement.batchId,
+      )
+      .first();
+  const partialTick = await runHostedScheduled(partialLotwEnv);
+  if (partialTick.mode !== "inventory_selected_lotw")
+    assert.fail(partialTick.mode);
+  assert.equal(partialTick.lotwSendQueued, 0);
+  assert.equal(await lotwSendJob(), null);
+  const closedTick = await runHostedScheduled({
+    ...lotwSendEnv,
+    LOTW_FRESH_INSERT_EXPIRES_AT: "",
+  });
+  if (closedTick.mode !== "inventory_selected_lotw")
+    assert.fail(closedTick.mode);
+  assert.equal(closedTick.lotwSendQueued, 0);
+  const sendTick = await runHostedScheduled(lotwSendEnv);
+  if (sendTick.mode !== "inventory_selected_lotw") assert.fail(sendTick.mode);
+  assert.equal(sendTick.lotwSendQueued, 1);
+  assert.equal(lotwSendMessages.length, 1);
+  const lotwWakeup = lotwSendMessages[0].body;
+  const consumeLotwSend = async (env = lotwSendEnv) => {
+    const delivery = singleDelivery(lotwWakeup);
+    const result = await runHostedInventoryQueue(
+      env,
+      delivery.batch,
+      lotwTransport,
+    );
+    delivery.assertAcknowledged();
+    if (
+      result.mode !== "inventory_selected_lotw" &&
+      result.mode !== "inventory_read_only"
+    )
+      assert.fail(result.mode);
+    return result.lotwSendOutcome;
+  };
+  assert.equal(await consumeLotwSend(partialLotwEnv), "stale");
+  assert.equal(
+    await consumeLotwSend({
+      ...lotwSendEnv,
+      INVENTORY_RUNTIME_MODE: "read_only",
+    }),
+    "stale",
+  );
+  assert.deepEqual(await lotwSendJob(), {
+    version: 1,
+    turns: 0,
+    published_version: 1,
+  });
+  assert.deepEqual(lotwSendActions, []);
+  await db.prepare("DELETE FROM vendor_requests WHERE vendor='lotw'").run();
+  assert.equal(await consumeLotwSend(), "uncertain");
   assert.deepEqual(lotwSendActions.splice(0), [
     "certificate",
     "history",
     "upload",
   ]);
-  assert.deepEqual(await sendLotw(), { kind: "uncertain" });
+  assert.equal(await lotwSendJob(), null);
+  assert.equal(await consumeLotwSend(), "stale");
   assert.deepEqual(lotwSendActions, []);
   assert.equal(await lotwClaims(), 1);
   assert.equal(await reopenedLotw.cancelStale("a", replacement.batchId), false);

@@ -374,5 +374,20 @@ and restore quarantine fences its queued versions.
 The Worker fixture verified a failed publication, an obsolete queue
 message and three readback turns with exports disabled. An exact
 receipt for one member survived through the second turn. Settlement
-of the remaining member retired the recovery job atomically. Hosted
-send scheduling remains open.
+of the remaining member retired the recovery job atomically.
+
+## Hosted LoTW submission
+
+[Migration 0104](../migrations/0104_inventory_lotw_send_jobs.sql) gives
+an explicitly authorized complete TQ8 a versioned send job. A narrower
+rollout or a missing write window keeps the batch out of the send
+queue. The hosted fixture staged and queued two members, closed the
+gate on a queued message, then sent the authorized file exactly once
+with a simulated lost response. Replaying the message made no
+requests. The claim retired send work and left durable readback work.
+
+A separate read-only station report contained 102 real records. Every
+record had a valid receive timestamp, second-precision QSO time, and
+station DXCC. The report header's receive timestamp matched the first
+record. The validation used one request and 61,264 response bytes.
+It checked the fields needed for readback without sending a file.

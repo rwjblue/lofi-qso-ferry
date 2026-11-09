@@ -49,13 +49,27 @@ const identity = (tenant: string, keyId: string) => ({
 export class InventoryComparisonGenerations {
   constructor(readonly store: Store) {}
 
+  private keyStatement(tenant: string) {
+    return this.store.statement(
+      "SELECT key_id,envelope FROM inventory_comparison_keys WHERE tenant=?",
+      tenant,
+    );
+  }
+
   private row(tenant: string) {
-    return this.store
-      .statement(
-        "SELECT key_id,envelope FROM inventory_comparison_keys WHERE tenant=?",
-        tenant,
-      )
-      .first<KeyRow>();
+    return this.keyStatement(tenant).first<KeyRow>();
+  }
+
+  async keyWith(tenant: string, inputs: readonly D1PreparedStatement[]) {
+    const [keys, ...results] = await this.store.db.batch([
+      this.keyStatement(tenant),
+      ...inputs,
+    ]);
+    const row = keys.results[0] as KeyRow | undefined;
+    return {
+      results,
+      openKey: () => (row ? this.decode(tenant, row) : this.key(tenant)),
+    };
   }
 
   private async decode(tenant: string, row: KeyRow) {

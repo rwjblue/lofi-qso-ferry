@@ -141,10 +141,20 @@ export async function inventoryOwnershipTokens(
 
 export class InventoryOwnership {
   constructor(readonly store: Store) {}
-  private scopeKey(tenant: string, provider: HistoricalVendor) {
-    if (!identifier(tenant) || !["qrz", "lotw"].includes(provider))
+  private scopeKey(
+    tenant: string,
+    provider: HistoricalVendor,
+    captured?: InventoryComparisonKey,
+  ) {
+    if (
+      !identifier(tenant) ||
+      !["qrz", "lotw"].includes(provider) ||
+      (captured && captured.tenant !== tenant)
+    )
       throw new Error("invalid_inventory_ownership_scope");
-    return new InventoryComparisonGenerations(this.store).key(tenant);
+    return (
+      captured ?? new InventoryComparisonGenerations(this.store).key(tenant)
+    );
   }
   private domainStatement(
     tenant: string,
@@ -200,11 +210,14 @@ export class InventoryOwnership {
     tenant: string,
     provider: HistoricalVendor,
     queries: readonly InventoryOwnershipQuery[],
-    limits: { maxBytes?: number; maxRecords?: number } = {},
+    options: {
+      maxBytes?: number;
+      maxRecords?: number;
+      key?: InventoryComparisonKey;
+    } = {},
   ) {
     queries = structuredClone(queries);
-    const maxBytes = limits.maxBytes ?? MAX_BYTES,
-      maxRecords = limits.maxRecords ?? 128;
+    const { maxBytes = MAX_BYTES, maxRecords = 128 } = options;
     if (
       queries.length < 1 ||
       queries.length > 20 ||
@@ -223,7 +236,7 @@ export class InventoryOwnership {
       maxRecords > 128
     )
       throw new Error("invalid_inventory_ownership_queries");
-    const key = await this.scopeKey(tenant, provider);
+    const key = await this.scopeKey(tenant, provider, options.key);
     const tokens = await Promise.all(
       queries.map((query) =>
         inventoryOwnershipTokens(

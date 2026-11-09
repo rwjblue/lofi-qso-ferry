@@ -3,6 +3,7 @@ import {
   type HistoricalVendor,
   historicalCandidates,
 } from "./historical-matching.ts";
+import { InventoryComparisonGenerations } from "./inventory-comparison-generations.ts";
 import { inventoryJsonChunks } from "./inventory-ingestion.ts";
 import { InventoryMatchingResults } from "./inventory-matching-results.ts";
 import {
@@ -183,7 +184,10 @@ export class InventoryAssociations {
         });
     }
     if (!matches.length) return finish();
-    const [prior, metadata] = await this.store.db.batch([
+    const {
+      results: [prior, metadata],
+      openKey,
+    } = await new InventoryComparisonGenerations(this.store).keyWith(tenant, [
       this.store.statement(
         "SELECT 1 FROM inventory_prior_delivery_evidence WHERE tenant=? AND provider=? LIMIT 1",
         tenant,
@@ -271,6 +275,7 @@ export class InventoryAssociations {
         record: remote[i],
       })),
       {
+        key: await openKey(),
         maxRecords: 128 - bodies.items.length,
         maxBytes:
           4 * 1024 * 1024 -

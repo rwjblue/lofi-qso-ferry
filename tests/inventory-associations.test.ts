@@ -262,11 +262,18 @@ test("QRZ ownership follows canonical book LOGID even after remote edits and ten
       ).observations[0].state,
       "clear",
     );
+    const { openKey } = await new InventoryComparisonGenerations(
+      f.store,
+    ).keyWith("a", []);
     const rotated = new Store(f.db, { ...keys, active: "2" });
     await new InventoryComparisonGenerations(rotated).rewrapKey("a");
-    const after = await new InventoryOwnership(rotated).lookup("a", "qrz", [
-      query,
-    ]);
+    const captured = await openKey();
+    const after = await new InventoryOwnership(rotated).lookup(
+      "a",
+      "qrz",
+      [query],
+      { key: captured },
+    );
     assert.deepEqual(after.tokens, before.tokens);
     assert.equal(after.version, before.version);
     assert.equal(
@@ -274,6 +281,10 @@ test("QRZ ownership follows canonical book LOGID even after remote edits and ten
       before.observations[0].evidenceId,
     );
     await seed(f.store, "b");
+    await assert.rejects(
+      f.ownership.lookup("b", "qrz", [query], { key: captured }),
+      /invalid_inventory_ownership_scope/,
+    );
     assert.equal(
       (await f.ownership.lookup("b", "qrz", [query])).observations[0].state,
       "clear",

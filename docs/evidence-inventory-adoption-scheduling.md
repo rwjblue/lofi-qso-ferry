@@ -164,6 +164,21 @@ The 1,000-contact matched profile, including one domain initialization,
 used 3,079 D1 calls and 5,637 statements during classification and
 adoption, down from 3,128 and 5,684. All 1,000 matches were verified.
 
+### Adoption key snapshot
+
+Adoption reads the wrapped tenant key with match metadata and opens it
+when the cohort reaches ownership lookup. Ownership lookup still
+verifies the key against the provider domain. Publication retains its
+domain version and lease checks.
+
+Two private copies of the same captured QRZ log adopted 2,917 contacts
+in 211 turns through migration 0123. The key snapshot reduced D1 calls
+from 2,533 to 2,322. Both copies used 4,432 SQL statements, read
+1,072,700 rows and wrote 65,651. All 2,957 historical mappings and
+normalized ownership records agreed. The credential, checkpoint and
+current classification audits passed. Both copies recorded zero
+provider requests, attempts and dispatches.
+
 ### Warm matching and adoption together
 
 A native fixture through migration 0123 published coverage and
@@ -176,15 +191,15 @@ guarded publication.
 | Worker turn | D1 calls | SQL statements | Rows read | Rows written |
 | --- | ---: | ---: | ---: | ---: |
 | Matching | 9 | 25 | 13,661 | 1,807 |
-| Historical adoption | 12 | 21 | 5,791 | 448 |
-| Total | 21 | 46 | 19,452 | 2,255 |
+| Historical adoption | 12 → 11 | 21 | 5,791 | 448 |
+| Total | 21 → 20 | 46 | 19,452 | 2,255 |
 
 All 20 results were current matches, with 20 durable associations and
 20 ownership records. Both work queues drained. The fixture made zero
-provider requests and created zero attempts or dispatches. These 21
+provider requests and created zero attempts or dispatches. These 20
 calls exclude enrollment, coordinator turns, Queue transport and the
 final audit. They exceed the proposed six-call full-cohort target by
-15, with adoption accounting for more than half of the calls.
+14, with adoption accounting for more than half of the calls.
 
 ### Coalesced idle coordinator phases
 

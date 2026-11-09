@@ -3,10 +3,8 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
 import { InventoryComparisonPages } from "../src/inventory-comparison-pages.ts";
 import {
   InventoryIngestion,
@@ -17,10 +15,6 @@ import {
   planInventoryRun,
 } from "../src/inventory-run-plans.ts";
 import type { InventoryRunDefinition } from "../src/inventory-run-publication.ts";
-import {
-  InventoryRunner,
-  type InventoryRunWakeup,
-} from "../src/inventory-runner.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import { activateInventoryRuntime } from "../src/inventory-runtime.ts";
 import {
@@ -37,6 +31,10 @@ import {
   inventoryTrialAccess,
   openInventoryTrial,
 } from "./inventory-run-trial.ts";
+import {
+  driveInventoryTrial,
+  inventoryTrialBounds,
+} from "./inventory-trial-drive.ts";
 import { createInventoryTrialTransport } from "./inventory-trial-transport.ts";
 
 type Access = Awaited<ReturnType<typeof inventoryTrialAccess>>;
@@ -73,7 +71,11 @@ interface Dependencies {
   progress?: (value: unknown) => void;
 }
 type Runtime = Awaited<ReturnType<typeof openInventoryTrial>>;
-async function privateJson(directory: string, name: string, value: unknown) {
+export async function privateJson(
+  directory: string,
+  name: string,
+  value: unknown,
+) {
   const temporary = join(directory, `${name}.next`);
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, {
     mode: 0o600,
@@ -368,18 +370,7 @@ export async function inventoryManagedTrial(
     !options.verifyHeld || options.resume,
     "verification needs --resume",
   );
-  const maxRequests = options.maxRequests ?? 120,
-    maxDurationMs = options.maxDurationMs ?? 20 * 60000;
-  assert.ok(
-    Number.isSafeInteger(maxRequests) &&
-      maxRequests >= 1 &&
-      maxRequests <= 5000,
-  );
-  assert.ok(
-    Number.isSafeInteger(maxDurationMs) &&
-      maxDurationMs >= 1 &&
-      maxDurationMs <= 60 * 60000,
-  );
+  const bounds = inventoryTrialBounds(options);
   const load = dependencies.access ?? inventoryTrialAccess;
   const previousMask = process.umask(0o077);
   let f: Runtime | undefined;
@@ -430,110 +421,27 @@ export async function inventoryManagedTrial(
     if (options.verifyHeld) await verifyHeld(directory, m, runs);
     const transport = createInventoryTrialTransport(
       dependencies.fetcher ?? fetch,
-      { maxRequests, minLoFiIntervalMs: dependencies.fetcher ? 0 : 20000 },
+      {
+        maxRequests: bounds.maxRequests,
+        minLoFiIntervalMs: dependencies.fetcher ? 0 : 20000,
+      },
     );
-    const reader = new InventoryRunner(runs, transport.fetch, {
-      scheduled: true,
+    const driven = await driveInventoryTrial(runs, transport, {
+      ...bounds,
+      tenant: "trial",
+      async progress(counts) {
+        const value = {
+          event: "inventory_managed_progress",
+          elapsedMs: Date.now() - started,
+          ...counts,
+          requests: transport.metrics,
+          database: { ...meter.totals },
+        };
+        await privateJson(directory, "progress.json", value);
+        dependencies.progress?.(value);
+      },
     });
-    const coordinator = new InventoryComparisonCoordinator(store);
-    let readTurns = 0,
-      comparisonTurns = 0,
-      lastProgress = 0,
-      stopReason = "time_limit";
-    const deadline = Date.now() + maxDurationMs;
-    const progress = async () => {
-      lastProgress = Date.now();
-      const value = {
-        event: "inventory_managed_progress",
-        elapsedMs: Date.now() - started,
-        readTurns,
-        comparisonTurns,
-        requests: transport.metrics,
-        remainingMs: Math.max(0, deadline - Date.now()),
-        database: { ...meter.totals },
-      };
-      await privateJson(directory, "progress.json", value);
-      dependencies.progress?.(value);
-    };
-    await progress();
-    while (Date.now() < deadline) {
-      const next = await store
-        .statement(
-          "SELECT j.scope_id AS scope,j.stream_id AS stream,j.active_run_id AS run,j.work_version AS workVersion,j.next_due_at AS due,r.phase FROM inventory_stream_jobs j JOIN inventory_runs r ON r.tenant=j.tenant AND r.run_id=j.active_run_id WHERE j.tenant='trial' AND j.state='ready' AND j.active_run_id IS NOT NULL ORDER BY j.next_due_at,j.scope_id,j.stream_id LIMIT 1",
-        )
-        .first<
-          Omit<InventoryRunWakeup, "tenant" | "version"> & {
-            due: number;
-            phase: string;
-          }
-        >();
-      const wake = await store
-        .statement(
-          "SELECT not_before FROM inventory_comparison_wakeups WHERE tenant='trial'",
-        )
-        .first<{ not_before: number | null }>();
-      if (Date.now() >= deadline) break;
-      const requestLimited = transport.metrics.requests >= maxRequests;
-      if (
-        next &&
-        next.due <= Date.now() &&
-        (!requestLimited || ["quarantining", "publishing"].includes(next.phase))
-      ) {
-        try {
-          await reader.step(
-            {
-              version: 1,
-              tenant: "trial",
-              scope: next.scope,
-              stream: next.stream,
-              run: next.run,
-              workVersion: next.workVersion,
-            },
-            {
-              signal: AbortSignal.timeout(
-                Math.max(1, Math.min(90000, deadline - Date.now())),
-              ),
-            },
-          );
-          readTurns++;
-        } catch {
-          stopReason = transport.lofiAuthorizationRequired
-            ? "source_authentication_required"
-            : "read_turn_failed";
-          break;
-        }
-        if (transport.lofiAuthorizationRequired) {
-          stopReason = "source_authentication_required";
-          break;
-        }
-      } else if (
-        wake?.not_before !== null &&
-        wake?.not_before !== undefined &&
-        wake.not_before <= Date.now()
-      ) {
-        try {
-          await coordinator.step("trial");
-          comparisonTurns++;
-        } catch {
-          stopReason = "comparison_turn_failed";
-          break;
-        }
-      } else if (next && next.due <= Date.now() && requestLimited) {
-        stopReason = "request_limit";
-        break;
-      } else if (!next) {
-        stopReason = wake?.not_before ? "comparison_parked" : "quiescent";
-        break;
-      } else
-        await delay(
-          Math.max(
-            1,
-            Math.min(1000, next.due - Date.now(), deadline - Date.now()),
-          ),
-        );
-      if (Date.now() - lastProgress >= 30000) await progress();
-    }
-    await progress(); // Retain final continuation costs even if the audit fails.
+    let { stopReason } = driven;
     const state = await audit(f, m);
     if (
       ["quiescent", "comparison_parked"].includes(stopReason) &&
@@ -558,8 +466,8 @@ export async function inventoryManagedTrial(
       ...state,
       originalAccessUnchanged: true,
       requestsInInvocation: transport.metrics,
-      readTurns,
-      comparisonTurns,
+      readTurns: driven.readTurns,
+      comparisonTurns: driven.comparisonTurns,
       database: meter.totals,
       elapsedMs: Date.now() - started,
       sourceAndQrzComplete: state.runs
@@ -580,7 +488,6 @@ export async function inventoryManagedTrial(
     };
     await privateJson(directory, `report-${m.invocations}.json`, report);
     await privateJson(directory, "report.json", report);
-    await progress();
     return report;
   } finally {
     await f?.mf.dispose();

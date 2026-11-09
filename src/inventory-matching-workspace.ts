@@ -280,9 +280,8 @@ export class InventoryMatchingWorkspace {
       encryptedInputBytes: 0,
       plaintextBytes: 0,
     };
-    const header = await this.store
-      .statement(
-        `SELECT c.id AS connection,c.kind,c.status AS connectionState,c.remote_identity AS logicalIdentity,c.config,
+    const scopeStatement = this.store.statement(
+      `SELECT c.id AS connection,c.kind,c.status AS connectionState,c.remote_identity AS logicalIdentity,c.config,
        s.scope_id AS scope,s.provider,s.logical_identity AS scopeIdentity,s.config_version AS configVersion,s.state,
        b.config_version AS buildConfigVersion,b.complete AS buildComplete,(c.kind='lofi' OR s.provider='lofi') AS source,
        ${this.trackCoverageClocks ? "CASE WHEN s.scope_id IS NULL THEN NULL ELSE coalesce(cv.version,0) END" : "NULL"} AS coverageClock,
@@ -292,18 +291,38 @@ export class InventoryMatchingWorkspace {
        LEFT JOIN comparison_builds b ON b.tenant=s.tenant AND b.scope_id=s.scope_id AND b.generation_id=?3
        ${this.trackCoverageClocks ? "LEFT JOIN inventory_matching_coverage_clocks cv ON cv.tenant=s.tenant AND cv.scope_id=s.scope_id AND cv.facet=CASE s.provider WHEN 'lofi' THEN 'source' ELSE 'receipt' END" : ""}
        WHERE d.tenant=?1 AND d.version=?2 AND (c.kind='lofi' OR s.provider='lofi' OR s.scope_id=?4) ORDER BY c.id,s.scope_id LIMIT 22`,
-        tenant,
-        session.domainVersion,
-        session.generation,
-        destination,
-      )
-      .all<ScopeRow>();
-    stats.metadataQueries++;
-    stats.rowsRead += header.meta.rows_read;
-    if (header.results.length > 21)
+      tenant,
+      session.domainVersion,
+      session.generation,
+      destination,
+    );
+    const selectedStatement = this.store.statement(
+      `SELECT CAST(j.key AS INTEGER) AS ordinal,i.record_key AS key,i.key_class AS keyClass,i.bucket_hash AS hash,
+       i.semantic_version AS semanticVersion,f.semantic_version AS currentSemanticVersion,i.config_version AS configVersion,i.parent_key AS parent,
+       i.topology_version AS topologyVersion,coalesce(pd.topology_version,0) AS currentTopologyVersion,i.projection_version AS projectionVersion,coalesce(mv.version,0) AS membershipVersion,
+       (SELECT json_object('version',p.version,'state',p.state,'reason',p.reason,'payload',p.payload_id) FROM comparison_projections_current p WHERE p.tenant=i.tenant AND p.generation_id=i.generation_id AND p.scope_id=i.scope_id AND p.record_key=i.record_key AND p.facet=i.facet) AS projection
+       FROM json_each(?1) j CROSS JOIN comparison_domains d
+       LEFT JOIN comparison_index i ON i.tenant=d.tenant AND i.generation_id=?4 AND i.scope_id=json_extract(j.value,'$.scope') AND i.record_key=json_extract(j.value,'$.key') AND i.facet='source' AND i.state!='retired'
+       LEFT JOIN inventory_record_facets f ON f.tenant=i.tenant AND f.scope_id=i.scope_id AND f.entity_family='qso' AND f.record_key=i.record_key AND f.facet=i.facet
+       LEFT JOIN projection_domains pd ON pd.tenant=i.tenant AND pd.scope_id=i.scope_id AND pd.operation_key=i.parent_key
+       LEFT JOIN inventory_membership_versions mv ON mv.tenant=i.tenant AND mv.scope_id=i.scope_id AND mv.entity_family='qso' AND mv.record_key=i.record_key AND mv.facet=i.facet
+       WHERE d.tenant=?2 AND d.version=?3 ORDER BY ordinal`,
+      canonical(selected),
+      tenant,
+      session.domainVersion,
+      session.generation,
+    );
+    const [header, selection] = await this.store.db.batch([
+      scopeStatement,
+      selectedStatement,
+    ]);
+    stats.metadataQueries += 2;
+    stats.rowsRead += header.meta.rows_read + selection.meta.rows_read;
+    const scopeRows = header.results as ScopeRow[];
+    if (scopeRows.length > 21)
       throw new Error("inventory_matching_scope_split_required");
     const scopes = await Promise.all(
-      header.results.map(async ({ config, coverageClock, ...row }) => ({
+      scopeRows.map(async ({ config, coverageClock, ...row }) => ({
         ...row,
         configHash: await sha256(config),
         ...(coverageClock !== null ? { coverageClock } : {}),
@@ -316,27 +335,8 @@ export class InventoryMatchingWorkspace {
     const byScope = new Map(
       scopes.filter((row) => row.scope).map((row) => [row.scope, row]),
     );
-    const selectedRows = await this.store
-      .statement(
-        `SELECT CAST(j.key AS INTEGER) AS ordinal,i.record_key AS key,i.key_class AS keyClass,i.bucket_hash AS hash,
-       i.semantic_version AS semanticVersion,f.semantic_version AS currentSemanticVersion,i.config_version AS configVersion,i.parent_key AS parent,
-       i.topology_version AS topologyVersion,coalesce(pd.topology_version,0) AS currentTopologyVersion,i.projection_version AS projectionVersion,coalesce(mv.version,0) AS membershipVersion,
-       (SELECT json_object('version',p.version,'state',p.state,'reason',p.reason,'payload',p.payload_id) FROM comparison_projections_current p WHERE p.tenant=i.tenant AND p.generation_id=i.generation_id AND p.scope_id=i.scope_id AND p.record_key=i.record_key AND p.facet=i.facet) AS projection
-       FROM json_each(?1) j CROSS JOIN comparison_domains d
-       LEFT JOIN comparison_index i ON i.tenant=d.tenant AND i.generation_id=?4 AND i.scope_id=json_extract(j.value,'$.scope') AND i.record_key=json_extract(j.value,'$.key') AND i.facet='source' AND i.state!='retired'
-       LEFT JOIN inventory_record_facets f ON f.tenant=i.tenant AND f.scope_id=i.scope_id AND f.entity_family='qso' AND f.record_key=i.record_key AND f.facet=i.facet
-       LEFT JOIN projection_domains pd ON pd.tenant=i.tenant AND pd.scope_id=i.scope_id AND pd.operation_key=i.parent_key
-       LEFT JOIN inventory_membership_versions mv ON mv.tenant=i.tenant AND mv.scope_id=i.scope_id AND mv.entity_family='qso' AND mv.record_key=i.record_key AND mv.facet=i.facet
-       WHERE d.tenant=?2 AND d.version=?3 ORDER BY ordinal`,
-        canonical(selected),
-        tenant,
-        session.domainVersion,
-        session.generation,
-      )
-      .all<SelectedRow>();
-    stats.metadataQueries++;
-    stats.rowsRead += selectedRows.meta.rows_read;
-    if (selectedRows.results.length !== selected.length)
+    const selectedRows = selection.results as SelectedRow[];
+    if (selectedRows.length !== selected.length)
       throw new Error("inventory_matching_snapshot_changed");
     const records = new Map<string, InventoryMatchingRecordSnapshot>();
     const add = (
@@ -357,7 +357,7 @@ export class InventoryMatchingWorkspace {
       key: row.key,
       facet: "source" as const,
     }));
-    for (const row of selectedRows.results) {
+    for (const row of selectedRows) {
       const { ordinal, projection, key, ...metadata } = row;
       const current = projection
         ? (JSON.parse(projection) as {

@@ -504,6 +504,47 @@ after source coverage.
 The byte-bound fixture recorded zero ciphertext rows for an oversized
 cohort and one for a smaller eligible cohort.
 
+### Matching metadata snapshot
+
+Matching preparation now batches the bounded scope and selected-record
+reads against the same comparison domain version. The native publication
+guards still check the prepared dependencies.
+
+A paired replay prepared 80 LoTW and 80 QRZ decisions from a write-locked
+copy of the personal log, split evenly between matches and absences
+for each provider. Both readers produced identical decisions, proof
+dependencies and input statistics. The replay preserved the account
+bindings, credential envelopes, checkpoints and coverage. It made zero
+database writes during preparation and zero provider requests.
+
+| Captured inputs | Records | D1 calls before → after | SQL statements | Rows read |
+| --- | ---: | ---: | ---: | ---: |
+| LoTW | 80 | 32 → 28 | 32 | 8,881 |
+| QRZ | 80 | 35 → 31 | 35 | 8,118 |
+
+The native 1,000-contact profiles retained all classifications and
+their delivery counts. The figures cover classification after source
+coverage.
+
+| Destination | D1 calls before → after | SQL statements | Queue deliveries |
+| --- | ---: | ---: | ---: |
+| Empty, up to four steps per delivery | 2,497 → 2,447 | 4,290 | 39 |
+| Matched, one step per delivery | 3,528 → 3,478 | 5,834 | 152 |
+
+### 20,000-contact local pipeline
+
+The build before matching metadata batching ran 20,000 normalized
+contacts against an empty destination with comparison deferred until
+source coverage. Source backfill and verification used 193 D1 calls,
+1,073 statements and 11.8 seconds. Classification then used 49,281 D1
+calls, 85,036 statements and 507.1 seconds. It took 3,003 steps across
+751 deliveries. The largest delivery used 86 D1 calls.
+
+The final paged audit checked 20,000 current absence classifications.
+SQLite allocated 322,732,032 bytes. The benchmark made zero provider
+requests or uploads. The timing describes the local fixture under
+concurrent workloads and excludes vendor pacing and hosted latency.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

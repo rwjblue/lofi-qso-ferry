@@ -641,6 +641,9 @@ export class InventoryRunner {
             ? { resume: context.stream.resume as QrzInventoryResume }
             : {}),
           pageSize: query.pageSize,
+          ...(this.options.scheduled && {
+            credentialVersion: context.stream.credentialVersion,
+          }),
           ...(context.run.mode === "delta" || context.run.phase === "catchup"
             ? { verifyAmbiguousModifiedSelection: true }
             : {}),

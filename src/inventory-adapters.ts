@@ -158,6 +158,8 @@ export interface QrzInventoryResume {
   coveringDateSelection?: true;
   /** Full pages accepted at a reduced size since the last size change. */
   coveringStablePages?: number;
+  /** The preceding full page verified the book using this linked key. */
+  bookVerification?: { credentialVersion: string; checkedFrom: number };
   previousFullPage?: {
     afterLogId: number;
     pageSize: number;
@@ -169,6 +171,8 @@ export interface QrzInventoryRequest {
   selection: QrzInventorySelection;
   resume?: QrzInventoryResume;
   pageSize?: number;
+  /** Allow one page to reuse recent STATUS evidence from this linked key. */
+  credentialVersion?: string;
   /** Allow a covering date read to verify an ambiguous modified selection. */
   verifyAmbiguousModifiedSelection?: true;
 }
@@ -828,7 +832,8 @@ function validateQrzResume(
       resume.pageSize === undefined &&
         resume.previousFullPage === undefined &&
         resume.coveringDateSelection === undefined &&
-        resume.coveringStablePages === undefined,
+        resume.coveringStablePages === undefined &&
+        resume.bookVerification === undefined,
     );
     return;
   }
@@ -860,9 +865,21 @@ function validateQrzResume(
         previous.pageSize === resume.pageSize &&
         previous.nextAfterLogId === resume.afterLogId,
     );
+  const verified = resume.bookVerification;
+  if (verified !== undefined)
+    requireValue(
+      verified !== null &&
+        previous !== undefined &&
+        typeof verified.credentialVersion === "string" &&
+        verified.credentialVersion.length > 0 &&
+        verified.credentialVersion.length <= 128 &&
+        Number.isSafeInteger(verified.checkedFrom) &&
+        verified.checkedFrom > 0,
+    );
 }
 
 const MIN_QRZ_COVERING_PAGE_SIZE = 32;
+const QRZ_BOOK_VERIFICATION_MS = 30_000;
 
 export function createQrzInventoryAdapter(
   apiKey: string,
@@ -903,7 +920,25 @@ export function createQrzInventoryAdapter(
         let covering = input.resume?.coveringDateSelection === true;
         let retried = false;
         const client = new QrzClient(apiKey, { fetch: budget.fetch });
-        await client.verifyBook(book);
+        const credentialVersion =
+          typeof input.credentialVersion === "string" &&
+          input.credentialVersion.length > 0 &&
+          input.credentialVersion.length <= 128
+            ? input.credentialVersion
+            : undefined;
+        const preceding = input.resume?.bookVerification;
+        const reuse =
+          preceding !== undefined &&
+          preceding.credentialVersion === credentialVersion &&
+          preceding.checkedFrom <= startedAt &&
+          startedAt - preceding.checkedFrom < QRZ_BOOK_VERIFICATION_MS;
+        let verified = false;
+        const verifyBook = async () => {
+          if (verified) return;
+          await client.verifyBook(book);
+          verified = true;
+        };
+        if (!reuse) await verifyBook();
         const fetchPage = () =>
           client.fetchPage({
             afterLogId,
@@ -923,6 +958,7 @@ export function createQrzInventoryAdapter(
           ) {
             // The rejected page cannot witness a tail. A full smaller page
             // can advance the same cursor, with the new MAX saved on commit.
+            await verifyBook();
             limit = probing
               ? savedLimit
               : Math.max(MIN_QRZ_COVERING_PAGE_SIZE, Math.floor(limit / 2));
@@ -947,6 +983,7 @@ export function createQrzInventoryAdapter(
               throw error;
             // Re-query a proven full-page boundary with smaller MAX. An
             // explicitly empty replay cannot establish a positive witness.
+            await verifyBook();
             afterLogId = previous.afterLogId;
             limit = previous.pageSize - 1;
             retried = true;
@@ -985,6 +1022,12 @@ export function createQrzInventoryAdapter(
             code: "scope_mismatch",
             recovery: "verify",
           };
+        if (
+          reuse &&
+          (page.nextAfterLogId === null ||
+            budget.now() - preceding.checkedFrom >= QRZ_BOOK_VERIFICATION_MS)
+        )
+          await verifyBook();
         const observations = await qrzInventoryObservations(page.records);
         const acceptedAtReducedSize =
           covering &&
@@ -1002,6 +1045,16 @@ export function createQrzInventoryAdapter(
           ...(acceptedAtReducedSize
             ? { coveringStablePages: Math.min(stablePages + 1, 2) }
             : {}),
+          // Only a clean turn that started with STATUS issues another ticket.
+          ...(!reuse &&
+            credentialVersion &&
+            budget.usage.requests === 2 &&
+            page.nextAfterLogId !== null && {
+              bookVerification: {
+                credentialVersion,
+                checkedFrom: startedAt,
+              },
+            }),
           ...(page.nextAfterLogId === null
             ? {}
             : {

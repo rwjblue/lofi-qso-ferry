@@ -438,6 +438,101 @@ test("QRZ STATUS mismatch and contradictory result scope block the entire select
   }
 });
 
+test("QRZ reuses STATUS once for a full page and checks fresh identity before a tail or replay", async () => {
+  const adapter = createQrzInventoryAdapter("synthetic-key", book);
+  let clock = now;
+  let bookMismatch = false;
+  let tail: "empty" | "ambiguous" = "empty";
+  let responseDelay = 0;
+  const actions: string[] = [];
+  const records = Array.from({ length: 6 }, (_, i) => ({
+    ...adif,
+    APP_QRZLOG_LOGID: String(i + 1),
+  }));
+  const transport: typeof fetch = async (input, init) => {
+    const form = new URLSearchParams(await new Request(input, init).text());
+    const action = form.get("ACTION") ?? "";
+    actions.push(action);
+    if (action === "STATUS")
+      return new Response(
+        statusBody(bookMismatch ? { ...book, bookId: "8" } : book),
+      );
+    const options = form.get("OPTION") ?? "";
+    const after = Number(/AFTERLOGID:(\d+)/.exec(options)?.[1]);
+    const max = Number(/MAX:(\d+)/.exec(options)?.[1]);
+    clock += responseDelay;
+    const selected = records.slice(
+      Math.max(0, after - 1),
+      Math.max(0, after - 1) + max,
+    );
+    return new Response(
+      selected.length || tail === "empty"
+        ? fetchBody(selected)
+        : "RESULT=FAIL&COUNT=0",
+    );
+  };
+  const read = async (changes: Partial<QrzInventoryRequest> = {}) => {
+    actions.length = 0;
+    return adapter.readStep(
+      {
+        ...context(transport, { maxRequests: 3, deadlineAt: clock + 45_000 }),
+        now: () => clock,
+      },
+      qrzRequest({ pageSize: 2, credentialVersion: "v1", ...changes }),
+    );
+  };
+  const resume = (result: Awaited<ReturnType<typeof read>>) => {
+    assert.ok(result.kind === "page" && result.progress.kind === "continue");
+    return result.progress.resume as QrzInventoryResume;
+  };
+
+  const first = resume(await read());
+  assert.deepEqual(actions, ["STATUS", "FETCH"]);
+  assert.deepEqual(first.bookVerification, {
+    credentialVersion: "v1",
+    checkedFrom: now,
+  });
+
+  clock = now + 1000;
+  const second = resume(await read({ resume: first }));
+  assert.deepEqual(actions, ["FETCH"]);
+  assert.equal(second.afterLogId, 5);
+  assert.equal(second.bookVerification, undefined);
+
+  const third = resume(await read({ resume: second }));
+  assert.deepEqual(actions, ["STATUS", "FETCH"]);
+  assert.equal(third.afterLogId, 7);
+
+  bookMismatch = true;
+  const refused = await read({ resume: third });
+  assert.deepEqual(actions, ["FETCH", "STATUS"]);
+  assert.equal(refused.kind, "blocked");
+  assert.equal("observations" in refused, false);
+
+  bookMismatch = false;
+  const complete = await read({ resume: third });
+  assert.deepEqual(actions, ["FETCH", "STATUS"]);
+  assert.ok(
+    complete.kind === "page" && complete.progress.kind === "observed_complete",
+  );
+
+  tail = "ambiguous";
+  const replay = resume(await read({ resume: third }));
+  assert.deepEqual(actions, ["FETCH", "STATUS", "FETCH"]);
+  assert.equal(replay.bookVerification, undefined);
+  assert.equal(replay.afterLogId, 6);
+
+  await read({ resume: first, credentialVersion: "v2" });
+  assert.deepEqual(actions, ["STATUS", "FETCH"]);
+  clock = now + 30_000;
+  await read({ resume: first });
+  assert.deepEqual(actions, ["STATUS", "FETCH"]);
+  clock = now + 29_000;
+  responseDelay = 1000;
+  await read({ resume: first });
+  assert.deepEqual(actions, ["FETCH", "STATUS"]);
+});
+
 test("QRZ reads apply the ADIF operator fallback without replacing explicit station evidence", async () => {
   for (const [station, operator, accepted] of [
     [undefined, book.stationCallsign, true],

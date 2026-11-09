@@ -78,7 +78,8 @@ const eligible = (provider: Provider) => `b.proof_not_before<=?1
 const idleSource = `NOT EXISTS(SELECT 1 FROM inventory_restore_locks l WHERE l.tenant=s.tenant)
  AND NOT EXISTS(SELECT 1 FROM inventory_fresh_start_lock WHERE id=1)
  AND NOT EXISTS(SELECT 1 FROM inventory_upload_planner w WHERE (w.tenant,w.source_scope)=(s.tenant,s.scope_id) AND w.proof_id IS NOT NULL)
- AND NOT EXISTS(SELECT 1 FROM inventory_source_proof_jobs j WHERE (j.tenant,j.scope_id)=(s.tenant,s.scope_id) AND j.phase IN('collecting','draining'))
+ AND NOT EXISTS(SELECT 1 FROM inventory_source_proof_jobs j WHERE (j.tenant,j.scope_id)=(s.tenant,s.scope_id)
+  AND (j.phase IN('collecting','draining') OR (j.phase='complete' AND j.grid_pending=1 AND j.expires_at>?1)))
  AND NOT EXISTS(
   SELECT 1 FROM inventory_qrz_preparations h JOIN inventory_qrz_attempts a USING(tenant,stage_id)
   JOIN inventory_source_proofs pr ON (pr.tenant,pr.proof_id)=(h.tenant,h.proof_id)

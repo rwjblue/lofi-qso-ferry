@@ -18,7 +18,12 @@ current Worker.
   before activating the new writer.
 - Apply the read-only migration and deployment procedure only after
   approval. The deploy-readonly task requires the read-only runtime and
-  every closed export control before its remote commands.
+  every closed export control. If the configured D1 binding differs from
+  the serving binding, the task compares active accounts, non-revoked
+  passkeys, and linked connection identities with unexpired, non-revoked
+  credential envelope metadata before migrations or deployment. It reports
+  category counts on a mismatch. Verify passkey login and provider credential
+  decryption in the separate restore and rollout checks.
 
 ## Verify
 

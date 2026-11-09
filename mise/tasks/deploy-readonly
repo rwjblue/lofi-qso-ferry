@@ -3,27 +3,8 @@
 #MISE depends=["build"]
 set -euo pipefail
 node --input-type=module <<'JS'
-import { readFileSync } from 'node:fs';
-const config = JSON.parse(readFileSync('wrangler.jsonc', 'utf8'));
-const production = config.env.production;
-const expected = {
-  INVENTORY_RUNTIME_MODE: 'read_only',
-  EXPORTS_ENABLED: 'false',
-  ROLLOUT_CHECKS_PASSED: 'false',
-  QRZ_FRESH_INSERTS_ENABLED: 'false',
-  LOTW_FRESH_INSERTS_ENABLED: 'false',
-  LIVE_WRITE_AUTHORIZATION: '',
-  ROLLOUT_QSO_IDS_JSON: '[]',
-  ROLLOUT_DESTINATION_IDS_JSON: '[]',
-};
-for (const [key, value] of Object.entries(expected)) {
-  if (production.vars[key] !== value) throw new Error(`Refusing read-only deployment: ${key} must equal ${JSON.stringify(value)}`);
-}
-const origin = new URL(production.vars.ORIGIN);
-if (origin.protocol !== 'https:' || origin.hostname !== production.vars.RP_ID || origin.hostname.endsWith('.invalid')) throw new Error('Production passkey origin is not configured');
-if (production.workers_dev !== false || production.preview_urls !== false) throw new Error('Production must use its permanent custom hostname only');
-if (!production.d1_databases?.some(binding => binding.binding === 'DB' && !binding.database_id.startsWith('00000000-'))) throw new Error('Production D1 is not configured');
-console.log('Read-only production gates verified');
+import { runReadonlyDeployPreflight } from './scripts/check-readonly-deploy.ts';
+runReadonlyDeployPreflight();
 JS
-npx wrangler d1 migrations apply ferry-production --env production --remote
+npx wrangler d1 migrations apply DB --env production --remote
 npx wrangler deploy --env production

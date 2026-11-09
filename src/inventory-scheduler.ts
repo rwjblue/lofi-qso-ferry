@@ -221,7 +221,7 @@ async function registerForwardInventoryDestinations(
   const last = results.length === limit ? results.at(-1) : undefined;
   await store
     .statement(
-      "UPDATE inventory_forward_registration_progress SET last_tenant=?,last_connection=? WHERE id=1 AND (last_tenant,last_connection)=(?,?)",
+      "UPDATE inventory_forward_registration_progress SET last_tenant=?1,last_connection=?2 WHERE id=1 AND (last_tenant,last_connection)=(?3,?4) AND (last_tenant,last_connection) IS NOT (?1,?2)",
       last?.tenant ?? "",
       last?.id ?? "",
       cursor.last_tenant,
@@ -304,9 +304,11 @@ export async function registerInventorySources(
   const last = connections.at(-1);
   await store
     .statement(
-      "UPDATE inventory_registration_progress SET last_tenant=?,last_connection=? WHERE id=1",
+      "UPDATE inventory_registration_progress SET last_tenant=?1,last_connection=?2 WHERE id=1 AND (last_tenant,last_connection)=(?3,?4) AND (last_tenant,last_connection) IS NOT (?1,?2)",
       last?.tenant ?? "",
       last?.id ?? "",
+      progress.last_tenant,
+      progress.last_connection,
     )
     .run();
   return report;
@@ -329,14 +331,17 @@ export async function registerSourceCalendarSelections(
   if (!remaining) return report;
   const progress = await store
     .statement(
-      "SELECT last_tenant,last_connection,last_month FROM inventory_calendar_registration_progress WHERE id=1",
+      "SELECT last_tenant,last_connection,last_month,generation,checked_generation FROM inventory_calendar_registration_progress WHERE id=1",
     )
     .first<{
       last_tenant: string;
       last_connection: string;
       last_month: string;
+      generation: number;
+      checked_generation: number;
     }>();
   if (!progress) throw new Error("inventory_calendar_registration_unavailable");
+  if (progress.generation === progress.checked_generation) return report;
   const candidates = (
     await store
       .statement(
@@ -428,10 +433,21 @@ export async function registerSourceCalendarSelections(
       report.failed++;
     }
   }
+  // A pass can skip an earlier changed month, or enroll just one of several
+  // gaps in the same month. Settle only on an empty scan from the beginning.
+  if (!candidates.length && !progress.last_tenant) {
+    await store
+      .statement(
+        "UPDATE inventory_calendar_registration_progress SET checked_generation=?1 WHERE id=1 AND generation=?1 AND checked_generation!=?1 AND (last_tenant,last_connection,last_month)=('','','')",
+        progress.generation,
+      )
+      .run();
+    return report;
+  }
   const last = candidates.length === remaining ? candidates.at(-1) : undefined;
   await store
     .statement(
-      "UPDATE inventory_calendar_registration_progress SET last_tenant=?,last_connection=?,last_month=? WHERE id=1 AND (last_tenant,last_connection,last_month)=(?,?,?)",
+      "UPDATE inventory_calendar_registration_progress SET last_tenant=?1,last_connection=?2,last_month=?3 WHERE id=1 AND (last_tenant,last_connection,last_month)=(?4,?5,?6) AND (last_tenant,last_connection,last_month) IS NOT (?1,?2,?3)",
       last?.tenant ?? "",
       last?.id ?? "",
       last?.month_start ?? "",
@@ -535,7 +551,7 @@ export async function registerLotwAccountFeeds(
   const last = candidates.length === limit ? candidates.at(-1) : undefined;
   await store
     .statement(
-      "UPDATE inventory_lotw_account_registration_progress SET last_tenant=?,last_connection=? WHERE id=1 AND (last_tenant,last_connection)=(?,?)",
+      "UPDATE inventory_lotw_account_registration_progress SET last_tenant=?1,last_connection=?2 WHERE id=1 AND (last_tenant,last_connection)=(?3,?4) AND (last_tenant,last_connection) IS NOT (?1,?2)",
       last?.tenant ?? "",
       last?.id ?? "",
       progress.last_tenant,

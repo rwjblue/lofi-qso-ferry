@@ -80,11 +80,11 @@ function deliveries(tenant: string | undefined) {
     WHERE h.committed_at IS NOT NULL ${lotwFilter}`;
 }
 
-/** Account and operator summaries share the same native tables and labels. */
-export async function inventoryDashboardSummary(
+async function loadInventoryDashboard(
   db: D1Database,
-  tenant?: string,
-): Promise<InventoryProviderDashboard[]> {
+  tenant: string | undefined,
+  includeActivity = false,
+) {
   const args = tenant === undefined ? [] : [tenant];
   const filter = (alias: string) =>
     tenant === undefined ? "" : `AND ${alias}.tenant=?1`;
@@ -117,6 +117,11 @@ export async function inventoryDashboardSummary(
          JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.destination
          LEFT JOIN inventory_sync_scopes p ON (p.tenant,p.destination)=(s.tenant,s.connection_id)
          WHERE (r.tenant,r.set_id)=(v.tenant,v.set_id)
+       ), review_basis AS MATERIALIZED (
+         SELECT b.tenant,b.destination,b.source_scope,b.record_key,b.result_set,b.result_version,
+           b.decision,b.ownership_version,b.current_ownership_version,b.source_credential,b.current_source_credential,
+           b.destination_credential,b.current_destination_credential,b.blocker,b.due_at
+         FROM inventory_delivery_review_basis b WHERE 1 ${filter("b")}
        ), review AS (
          SELECT c.provider,CASE
            WHEN b.decision IS NOT NULL AND b.decision!='comparison_changed'
@@ -127,7 +132,7 @@ export async function inventoryDashboardSummary(
            THEN b.decision ELSE 'awaiting_review' END AS state,
            c.derived_at,c.next_eligible_at,b.due_at
          FROM compared c
-         LEFT JOIN inventory_delivery_review_basis b ON
+         LEFT JOIN review_basis b ON
            (b.tenant,b.destination,b.source_scope,b.record_key,b.result_set,b.result_version)=
            (c.tenant,c.destination,c.source_scope,c.record_key,c.set_id,c.version)
          WHERE c.state IN('absent_at_inventory','forward_check')
@@ -157,7 +162,7 @@ export async function inventoryDashboardSummary(
          WHERE j.state!='idle' AND s.state='observing' ${filter("s")}
          AND (NOT EXISTS(SELECT 1 FROM inventory_sync_scopes p WHERE (p.tenant,p.destination)=(s.tenant,s.connection_id) AND p.mode!='all')
            OR EXISTS(SELECT 1 FROM inventory_scoped_schedule p WHERE (p.tenant,p.scope_id,p.stream_id)=(j.tenant,j.scope_id,j.stream_id)))
-       ), delivery AS (${deliveries(tenant)})
+       ), delivery AS ${includeActivity ? "MATERIALIZED " : ""}(${deliveries(tenant)}), summary AS (
        SELECT provider,'coverage' AS section,state,NULL AS reason,count(*) AS count,max(completed_at) AS since,NULL AS dueAt
          FROM coverage GROUP BY provider,state
        UNION ALL SELECT provider,'scans',state,reason,count(*),min(since),min(dueAt)
@@ -177,6 +182,24 @@ export async function inventoryDashboardSummary(
          min(CASE WHEN u.state IN('uncertain','submitted','deferred') THEN u.due_at END)
          FROM inventory_lotw_grid_updates u WHERE 1 ${filter("u")}
          GROUP BY u.state,u.reason
+       )
+       SELECT *,NULL AS activity FROM summary
+       ${
+         includeActivity
+           ? `UNION ALL SELECT NULL,'recent',NULL,NULL,NULL,NULL,NULL,
+         json_group_array(json_object('provider',provider,'qso',qso,'destination',destination,
+           'state',state,'reason',reason,'confirmed',confirmed,'updated_at',updated_at))
+       FROM (
+         SELECT provider,qso,destination,state,reason,confirmed,updated_at FROM delivery
+           WHERE provider!='lotw' OR state!='observed'
+         UNION ALL SELECT 'qrz',h.record_key,c.id,'adopted_existing',NULL,0,h.created_at
+           FROM inventory_historical_associations h
+           JOIN connections c ON c.tenant=h.tenant AND c.kind='qrz' AND c.remote_identity=h.book_identity
+           WHERE h.tenant=?1 AND h.provider='qrz'
+         ORDER BY updated_at DESC,provider,destination,qso LIMIT 50
+       )`
+           : ""
+       }
        ORDER BY provider,section,state,reason`,
       )
       .bind(...args),
@@ -191,18 +214,27 @@ export async function inventoryDashboardSummary(
     InventoryProviderDashboard,
     "contacts" | "lastProgressAt" | "provider"
   >[];
-  const rows = [...comparison.results, ...queues.results] as SummaryRow[];
+  const queueRows = queues.results as (
+    | SummaryRow
+    | { section: "recent"; activity: string }
+  )[];
+  const recent = queueRows.find((row) => row.section === "recent");
+  const rows = [
+    ...(comparison.results as SummaryRow[]),
+    ...queueRows.filter((row) => row.section !== "recent"),
+  ];
   const adoption = adopted.results as {
     provider: InventoryDashboardProvider;
     count: number;
   }[];
-  return inventoryDashboardProviders.map((provider) => {
+  const providers = inventoryDashboardProviders.map((provider) => {
     const source = counts.find((row) => row.provider === provider);
     const select = (name: SummarySection) =>
-      rows.flatMap(({ provider: from, section, reason, ...row }) =>
-        from === provider && section === name
-          ? [{ ...row, reason: reasonCode(reason) }]
-          : [],
+      rows.flatMap(
+        ({ provider: from, section, reason, state, count, since, dueAt }) =>
+          from === provider && section === name
+            ? [{ state, count, since, dueAt, reason: reasonCode(reason) }]
+            : [],
       );
     const coverage = select("coverage");
     return {
@@ -222,6 +254,20 @@ export async function inventoryDashboardSummary(
       adopted: adoption.find((row) => row.provider === provider)?.count ?? 0,
     };
   });
+  return {
+    providers,
+    nativeActivity: recent
+      ? (JSON.parse(recent.activity) as InventoryDashboardActivity[])
+      : [],
+  };
+}
+
+/** Account and operator summaries share the same native tables and labels. */
+export async function inventoryDashboardSummary(
+  db: D1Database,
+  tenant?: string,
+): Promise<InventoryProviderDashboard[]> {
+  return (await loadInventoryDashboard(db, tenant)).providers;
 }
 
 export async function inventoryDashboardWindows(
@@ -260,25 +306,13 @@ export async function inventoryDashboardWindows(
   }));
 }
 
-export async function inventoryDashboardActivity(store: Store, tenant: string) {
-  const [native, lotw] = await Promise.all([
-    store
-      .statement(
-        `WITH delivery AS (${deliveries(tenant)})
-       SELECT provider,qso,destination,state,reason,confirmed,updated_at FROM delivery
-         WHERE provider!='lotw' OR state!='observed'
-       UNION ALL SELECT 'qrz',h.record_key,c.id,'adopted_existing',NULL,0,h.created_at
-         FROM inventory_historical_associations h
-         JOIN connections c ON c.tenant=h.tenant AND c.kind='qrz' AND c.remote_identity=h.book_identity
-         WHERE h.tenant=?1 AND h.provider='qrz'
-       ORDER BY updated_at DESC,provider,destination,qso LIMIT 50`,
-        tenant,
-      )
-      .all<InventoryDashboardActivity>(),
+export async function inventoryAccountDashboard(store: Store, tenant: string) {
+  const [{ providers, nativeActivity }, lotw] = await Promise.all([
+    loadInventoryDashboard(store.db, tenant, true),
     inventoryLotwActivity(store, tenant),
   ]);
-  return [
-    ...native.results.map((row) => ({
+  const activity = [
+    ...nativeActivity.map((row) => ({
       ...row,
       reason: reasonCode(row.reason),
     })),
@@ -286,4 +320,5 @@ export async function inventoryDashboardActivity(store: Store, tenant: string) {
   ]
     .sort((a, b) => b.updated_at - a.updated_at)
     .slice(0, 50);
+  return { providers, activity };
 }

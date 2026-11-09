@@ -128,7 +128,7 @@ export async function runHostedScheduled(
     store,
     env.INVENTORY_QUEUE,
   );
-  const proofJobs = new InventorySourceProofJobs(runs);
+  const proofJobs = new InventorySourceProofJobs(runs, options.inventoryFetch);
   const lotwGridUpdates = await new InventoryLotwGridUpdates(
     store,
     proofJobs,
@@ -205,6 +205,7 @@ export async function runHostedScheduled(
       sends[provider].failed = 1;
     }
   }
+  const inventoryWakeupsPruned = await runs.pruneWakeups().catch(() => null);
   let matchProofsCollected = 0;
   let matchProofCollectionFailed = 0;
   try {
@@ -260,6 +261,7 @@ export async function runHostedScheduled(
       sends.qrz.queued +
       sends.lotw.queued,
     inventoryQueued,
+    inventoryWakeupsPruned,
     comparisonQueued,
     sourceProofQueued,
     qrzRecoveryQueued,
@@ -388,6 +390,15 @@ export async function runHostedInventoryQueue(
     proofJobs,
     proofMessages,
     async (wakeup, result) => {
+      if (result.kind === "complete" && result.gridPending)
+        return (
+          await new InventoryLotwGridUpdates(store, proofJobs, fetcher).resume(
+            env,
+            wakeup.tenant,
+            wakeup.scope,
+            wakeup.id,
+          )
+        ).retryAt;
       inventoryAfterProof += await publishInventoryWakeups(
         runner.runs,
         env.INVENTORY_QUEUE,

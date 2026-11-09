@@ -240,9 +240,10 @@ export class InventorySendQueue {
       .statement(
         `WITH expired AS MATERIALIZED(
         SELECT a.tenant,a.${column} AS id
-        FROM inventory_source_proofs p INDEXED BY inventory_source_proofs_expiry
-        CROSS JOIN ${header} h ON (h.tenant,h.proof_id)=(p.tenant,p.proof_id)
-        CROSS JOIN ${table} a ON (a.tenant,${identity})=(h.tenant,h.${headerKey})
+        FROM inventory_${provider}_retirement_candidates q
+        CROSS JOIN ${table} a ON (a.tenant,a.${column})=(q.tenant,q.${column})
+        CROSS JOIN ${header} h ON (h.tenant,h.${headerKey})=(a.tenant,${identity})
+        CROSS JOIN inventory_source_proofs p ON (p.tenant,p.proof_id)=(h.tenant,h.proof_id)
         WHERE p.expires_at<=unixepoch('subsec')*1000 AND a.cancelled_at IS NULL
         AND h.committed_at IS NOT NULL
         AND (?2 IS NULL OR h.destination_connection IN(SELECT value FROM json_each(?2)))

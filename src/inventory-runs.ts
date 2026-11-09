@@ -530,22 +530,40 @@ export class InventoryRuns {
     limit = 100,
     recoverBefore?: number,
     scopePolicies = false,
+    now = Date.now(),
   ) {
     requireValue(
-      time(before) &&
+      time(now) &&
+        time(before) &&
         Number.isSafeInteger(limit) &&
         limit > 0 &&
         limit <= 100 &&
         (recoverBefore === undefined || time(recoverBefore)),
       "invalid_inventory_wakeup_limit",
     );
+    const current = `(j.tenant,j.scope_id,j.stream_id,j.work_version)=(w.tenant,w.scope_id,w.stream_id,w.work_version)
+      AND j.state IN ('idle','ready') AND j.next_due_at<=?1
+      ${scopePolicies ? "AND EXISTS(SELECT 1 FROM inventory_scoped_schedule p WHERE (p.tenant,p.scope_id,p.stream_id)=(j.tenant,j.scope_id,j.stream_id))" : ""}`;
     return (
       await this.inventory.store
         .statement(
-          `SELECT w.* FROM inventory_stream_jobs j CROSS JOIN inventory_wakeups w WHERE j.state IN ('idle','ready') AND j.next_due_at<=? AND w.tenant=j.tenant AND w.scope_id=j.scope_id AND w.stream_id=j.stream_id AND w.work_version=j.work_version AND (w.published_at IS NULL OR (w.published_at<=? AND j.next_due_at<=?)) ${scopePolicies ? "AND EXISTS(SELECT 1 FROM inventory_scoped_schedule p WHERE (p.tenant,p.scope_id,p.stream_id)=(j.tenant,j.scope_id,j.stream_id))" : ""} ORDER BY j.next_due_at,j.tenant,j.scope_id,j.stream_id LIMIT ?`,
+          `WITH fresh AS MATERIALIZED (
+             SELECT w.* FROM inventory_wakeups w INDEXED BY inventory_wakeup_pending
+             CROSS JOIN inventory_stream_jobs j
+             WHERE w.publishable=1 AND w.published_at IS NULL AND w.not_before<=?1 AND ${current}
+             ORDER BY w.not_before,w.tenant,w.scope_id,w.stream_id LIMIT ?4
+           ), recoverable AS MATERIALIZED (
+             SELECT w.* FROM inventory_wakeups w INDEXED BY inventory_wakeup_recovery
+             CROSS JOIN inventory_stream_jobs j
+             WHERE ?2>=0 AND w.publishable=1 AND w.published_at IS NOT NULL
+             AND w.published_at<=?2 AND w.not_before<=min(?1,?3) AND j.next_due_at<=?3 AND ${current}
+             ORDER BY w.not_before,w.tenant,w.scope_id,w.stream_id LIMIT ?4
+           )
+           SELECT * FROM fresh UNION ALL SELECT * FROM recoverable
+           ORDER BY not_before,tenant,scope_id,stream_id LIMIT ?4`,
           before,
           recoverBefore ?? -1,
-          Date.now(),
+          now,
           limit,
         )
         .all<{
@@ -558,6 +576,28 @@ export class InventoryRuns {
           not_before: number;
         }>()
     ).results;
+  }
+
+  /** Keep the current wakeup and the preceding fences used to prove a source drain. */
+  async pruneWakeups(now = Date.now()) {
+    const result = await this.inventory.store
+      .statement(
+        `DELETE FROM inventory_wakeups WHERE rowid IN (
+           SELECT w.rowid FROM inventory_wakeups w INDEXED BY inventory_wakeup_retirement
+           CROSS JOIN inventory_stream_jobs j
+           WHERE w.publishable=0 AND w.not_before<=?1
+           AND (j.tenant,j.scope_id,j.stream_id)=(w.tenant,w.scope_id,w.stream_id)
+           AND w.work_version<j.work_version
+           AND NOT EXISTS(
+             SELECT 1 FROM inventory_wakeup_proof_pins p
+             WHERE (p.tenant,p.scope_id,p.stream_id,p.work_version)=(w.tenant,w.scope_id,w.stream_id,w.work_version)
+           )
+           ORDER BY w.not_before,w.tenant,w.wakeup_id LIMIT 256
+         )`,
+        now - 86_400_000,
+      )
+      .run();
+    return result.meta.changes;
   }
 
   /** One bulk acknowledgement after Queue durably accepts an outbox cohort. */

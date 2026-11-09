@@ -333,16 +333,14 @@ export default {
     }
   },
   async scheduled(
-    controller: ScheduledController,
+    _controller: ScheduledController,
     env: Env,
     context: ExecutionContext,
   ) {
     context.waitUntil(
-      runHostedScheduled(env, { scheduledTime: controller.scheduledTime }).then(
-        (result) => {
-          console.log(JSON.stringify({ event: "ferry_tick", ...result }));
-        },
-      ),
+      runHostedScheduled(env).then((result) => {
+        console.log(JSON.stringify({ event: "ferry_tick", ...result }));
+      }),
     );
   },
   async queue(batch: MessageBatch<unknown>, env: Env) {

@@ -186,30 +186,22 @@ function lofi() {
   });
 }
 
-test("off selects the old scheduler only while the database is still legacy", async (t) => {
+test("off pauses cron before and after the inventory database handoff", async (t) => {
   const f = await fixture(t);
-  let calls = 0;
-  const legacy = async () => {
-    calls++;
-    throw new Error("legacy selected");
-  };
-  await assert.rejects(
-    runHostedScheduled({ ...f.env, INVENTORY_RUNTIME_MODE: "off" }, { legacy }),
-    /legacy selected/,
-  );
-  assert.equal(calls, 1);
-  await activateInventoryRuntime(f.store);
-  assert.deepEqual(
-    await runHostedScheduled(
-      { ...f.env, INVENTORY_RUNTIME_MODE: "off" },
-      { legacy },
-    ),
-    { mode: "inventory_paused", queued: 0 },
-  );
+  const env = { ...f.env, INVENTORY_RUNTIME_MODE: "off" };
+  const paused = { mode: "inventory_paused", queued: 0 };
+  assert.deepEqual(await runHostedScheduled(env), paused);
   assert.equal(
-    calls,
-    1,
-    "an environment rollback cannot resume the retired sender",
+    await f.db
+      .prepare("SELECT version FROM inventory_runtime")
+      .first("version"),
+    0,
+  );
+  await activateInventoryRuntime(f.store);
+  assert.deepEqual(await runHostedScheduled(env), paused);
+  assert.equal(
+    await f.db.prepare("SELECT count(*) AS n FROM inventory_scopes").first("n"),
+    0,
   );
 });
 

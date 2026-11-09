@@ -51,7 +51,6 @@ import {
   isSourceProofWakeup,
   publishSourceProofWakeups,
 } from "./inventory-source-proof-wakeups.ts";
-import { runScheduledTick } from "./scheduler-history.ts";
 import { keyring } from "./security.ts";
 import { Store } from "./store.ts";
 
@@ -73,29 +72,18 @@ function configuredMode(env: Env) {
   return value;
 }
 
-/** Environment off pauses a handed-off database; it cannot restore its sender. */
 export async function runHostedScheduled(
   env: InventoryDeliveryEnvironment & {
     INVENTORY_LOTW_ACCOUNT_FEEDS?: string;
     INVENTORY_LOTW_CONFIRMATIONS?: string;
   },
   options: {
-    scheduledTime?: number;
-    legacy?: typeof runScheduledTick;
     lotwConfirmationFetch?: typeof fetch;
   } = {},
 ) {
   const mode = configuredMode(env);
-  const store = new Store(env.DB, keyring(env));
-  const current = await inventoryRuntime(store);
-  if (current.mode === "legacy" && mode === "off")
-    return {
-      mode: "legacy" as const,
-      ...(await (options.legacy ?? runScheduledTick)(env, {
-        scheduledTime: options.scheduledTime,
-      })),
-    };
   if (mode === "off") return { mode: "inventory_paused" as const, queued: 0 };
+  const store = new Store(env.DB, keyring(env));
   const runtime = await activateInventoryRuntime(store);
   const registration = await registerKnownInventoryConnections(store, runtime);
   const calendarRegistration = await registerSourceCalendarSelections(

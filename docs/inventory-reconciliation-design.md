@@ -804,7 +804,9 @@ creates this boundary on a private local copy. It preserves passkeys,
 linked credential ciphertext and template bindings, starts with empty
 contact state, and durably blocks writes before the previous sender
 has been audited. Real QRZ and LoTW selections completed on the copy.
-The LoFi continuation retained its cursor after a rejected bearer. A
+The LoFi continuation retained its cursor after a rejected bearer. The
+[cursor recovery rehearsal](evidence-inventory-fresh-start.md#restart-a-refused-lofi-cursor)
+also verified that a refused cursor can restart just the source scan. A
 [complete offline replay](evidence-inventory-fresh-start.md#complete-account-only-offline-replay)
 rebuilt all 17 selections from the captured bodies and recovered the
 same per-contact classifications and historical associations.

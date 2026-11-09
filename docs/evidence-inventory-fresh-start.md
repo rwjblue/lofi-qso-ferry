@@ -87,6 +87,36 @@ and write lock. The current resume command stopped at
 and zero provider requests. The original rehearsal retained the same
 saved state.
 
+### Restart a refused LoFi cursor
+
+Restore the same-client bearer and resume the saved run first. If
+LoFi explicitly refuses the cursor, the runner holds that source run
+with reason `cursor_refused`. Use its run ID to restart the full
+source scan on the same linked selection.
+
+```sh
+mise run inventory-fresh-start-rebuild -- \
+  --rehearsal /path/to/closed-rehearsal --restart-lofi-source RUN_ID
+```
+
+The restart requires the durable write lock and an available bearer.
+It keeps the previously ingested observations and committed
+checkpoint. The replacement starts with fresh read windows and
+publishes coverage after collection and catch-up. The old wakeup
+becomes stale, and repeating the command for the same held run
+continues the same replacement.
+
+A private copy of the 1,949-contact rehearsal received a simulated
+refusal at its exact saved cursor, then finished the replacement
+from six responses built from the encrypted LoFi capture. Ready
+coverage contained 223 operations and 4,398 QSOs and events. The
+canonical inventory held 4,341 active contacts. It kept 90 newer
+contacts and two deleted events absent from the capture, plus one
+operation with a newer revision. Their coverage membership remained
+unresolved. Account bindings, destination credentials and destination
+inventory matched the original. The trial made zero external requests
+and created zero dispatches.
+
 ## Run or continue a locked rebuild
 
 ```sh

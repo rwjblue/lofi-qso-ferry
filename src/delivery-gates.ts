@@ -1,22 +1,16 @@
-import type { SourceExportAuthorizationMode } from "./source-export-proofs.ts";
 import type { Connection } from "./store.ts";
 
 export interface DeliveryGates {
   exportsEnabled: boolean;
   liveWriteAuthorized: boolean;
-  sourceBoundaryVerified: boolean;
   qrzFreshInsertsEnabled?: boolean;
   lotwFreshInsertsEnabled?: boolean;
   allowedQsoIds?: string[] | null;
   allowedDestinationIds?: string[] | null;
 }
 /** Each fresh capability is vendor-specific and grants no source-wide authority. */
-export function deliveryMode(
-  gates: DeliveryGates,
-  kind: "qrz" | "lotw",
-): SourceExportAuthorizationMode | null {
+function deliveryMode(gates: DeliveryGates, kind: "qrz" | "lotw") {
   if (!gates.exportsEnabled || !gates.liveWriteAuthorized) return null;
-  if (gates.sourceBoundaryVerified) return "source_boundary";
   if (kind === "qrz" && gates.qrzFreshInsertsEnabled === true)
     return "qrz_fresh_insert";
   return kind === "lotw" && gates.lotwFreshInsertsEnabled === true
@@ -65,18 +59,16 @@ export function deliveryGates(
       String(env.ROLLOUT_CHECKS_PASSED) === "true",
     liveWriteAuthorized:
       String(env.LIVE_WRITE_AUTHORIZATION) === "I_AUTHORIZE_LIVE_VENDOR_WRITES",
-    sourceBoundaryVerified: String(env.SOURCE_BOUNDARY_VERIFIED) === "true",
     qrzFreshInsertsEnabled: String(env.QRZ_FRESH_INSERTS_ENABLED) === "true",
     lotwFreshInsertsEnabled: String(env.LOTW_FRESH_INSERTS_ENABLED) === "true",
   };
 }
-export function qrzWindowOpen(gates: ScheduledDeliveryGates, now = Date.now()) {
+function qrzWindowOpen(gates: ScheduledDeliveryGates, now = Date.now()) {
   const expiresAt = gates.qrzFreshInsertExpiresAt;
   return (
     expiresAt === undefined ||
     (Number.isSafeInteger(expiresAt) &&
       expiresAt > Math.max(now, Date.now()) &&
-      gates.sourceBoundaryVerified === false &&
       gates.lotwFreshInsertsEnabled !== true &&
       gates.qrzFreshInsertsEnabled === true &&
       gates.allowedDestinationIds?.length === 1)
@@ -96,32 +88,13 @@ export function qrzWindowProofAllowed(
         expiresAt <= gates.qrzFreshInsertExpiresAt))
   );
 }
-export function exportsEffective(gates: ScheduledDeliveryGates): boolean {
-  return (
-    qrzWindowOpen(gates) &&
-    (deliveryMode(gates, "qrz") !== null ||
-      deliveryMode(gates, "lotw") !== null) &&
-    (gates.allowedQsoIds === null || (gates.allowedQsoIds?.length ?? 0) > 0) &&
-    (gates.allowedDestinationIds === null ||
-      (gates.allowedDestinationIds?.length ?? 0) > 0)
-  );
-}
-/** Public status reports the enabled mode without claiming source completeness. */
-export function exportAuthorizationMode(gates: ScheduledDeliveryGates) {
-  if (!exportsEffective(gates)) return null;
-  const qrz = deliveryMode(gates, "qrz");
-  const lotw = deliveryMode(gates, "lotw");
-  if (qrz === "source_boundary") return qrz;
-  if (qrz && lotw) return "fresh_inserts";
-  return qrz ?? lotw;
-}
 export function routeDeliveryMode(
   gates: ScheduledDeliveryGates,
   qso: string,
   destination: Pick<Connection, "id" | "kind">,
 ) {
   if (
-    !exportsEffective(gates) ||
+    !qrzWindowOpen(gates) ||
     (destination.kind !== "qrz" && destination.kind !== "lotw") ||
     (gates.allowedQsoIds !== null && !gates.allowedQsoIds?.includes(qso)) ||
     (gates.allowedDestinationIds !== null &&

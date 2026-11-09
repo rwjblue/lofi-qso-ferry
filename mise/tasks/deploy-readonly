@@ -7,9 +7,9 @@ import { readFileSync } from 'node:fs';
 const config = JSON.parse(readFileSync('wrangler.jsonc', 'utf8'));
 const production = config.env.production;
 const expected = {
+  INVENTORY_RUNTIME_MODE: 'read_only',
   EXPORTS_ENABLED: 'false',
   ROLLOUT_CHECKS_PASSED: 'false',
-  SOURCE_BOUNDARY_VERIFIED: 'false',
   QRZ_FRESH_INSERTS_ENABLED: 'false',
   LOTW_FRESH_INSERTS_ENABLED: 'false',
   LIVE_WRITE_AUTHORIZATION: '',

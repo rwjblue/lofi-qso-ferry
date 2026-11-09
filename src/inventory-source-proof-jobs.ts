@@ -301,7 +301,6 @@ export class InventorySourceProofJobs {
       },
       {
         fetcher,
-        inventory: true,
         currentScope: async () =>
           (await this.boundSource(source, lease)) ? presence : null,
       },

@@ -85,14 +85,13 @@ async function restoredFixture() {
     "observed",
   ].entries()) {
     const qso = `qso-${index}`;
-    await store.observe(
-      { tenant: "a", source: "source", qso, destination: "destination" },
-      "generation",
-      `source-${index}`,
-      30,
-      false,
-      0,
-    );
+    await store
+      .statement(
+        "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,due_at,updated_at) VALUES('a','source',?,'destination','generation',?,0,0)",
+        qso,
+        `source-${index}`,
+      )
+      .run();
     await store
       .statement(
         "UPDATE ledger SET state=?,remote_id=?,provenance='ferry_created',narrative='template_bound',template_version=? WHERE tenant='a' AND qso=?",
@@ -263,13 +262,6 @@ test("restored D1 is locked without reviving revoked access, replaying attempts 
   assert.equal(mapped?.provenance, "ferry_created");
   assert.equal(mapped?.narrative, "template_bound");
   assert.ok(mapped?.template_version);
-  const lease = await store.claim("a", "delivery:destination");
-  assert.ok(lease);
-  assert.equal(
-    await store.claimAttempt("a", "attempt-0", lease!),
-    false,
-    "even a fresh lease cannot replay restored work",
-  );
   assert.equal(
     (
       await store

@@ -20,7 +20,6 @@ test("native LoTW cleanup cannot stall or replace a failed response outcome", as
     stdin: {
       contents: `
 import { LotwClient, LotwLoginError, boundedResponse } from './src/lotw.ts';
-import { createFailureDiagnostics } from './src/failure-diagnostics.ts';
 export default { async fetch(request) {
   const { operation, status, cancellation } = await request.json();
   let cancelCalls = 0, requests = 0, unhandled = 0;
@@ -59,12 +58,13 @@ export default { async fetch(request) {
     } catch (error) {
       if (operation === 'utf8' && error instanceof TypeError)
         return { outcome: 'invalid_utf8' };
-      const diagnostics = createFailureDiagnostics();
-      diagnostics.record(error, 'history_read', 'lotw');
-      return {
-        outcome: Object.keys(diagnostics.counts)[0].split(':')[2],
-        loginError: error instanceof LotwLoginError
-      };
+      if (error instanceof LotwLoginError)
+        return { outcome: 'lotw_credentials', loginError: error.reason === 'credentials' };
+      if (error instanceof Error && error.message === 'LoTW query unavailable; coverage remains incomplete')
+        return { outcome: 'lotw_unavailable' };
+      if (error instanceof Error && error.message === 'Vendor response exceeds bounded partition; split the date range')
+        return { outcome: 'vendor_response_bound' };
+      return { outcome: 'unexpected_error' };
     }
   };
   let timer;

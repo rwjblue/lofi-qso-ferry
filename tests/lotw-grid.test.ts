@@ -1,11 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { historicalOperatingDetails } from "../src/historical-operating-details.ts";
 import { type LotwReport, observeLotwContact } from "../src/lotw.ts";
 import { normalizeLotwStationGrid } from "../src/lotw-grid.ts";
-import {
-  classifyHistory,
-  type ReconciliationEvidence,
-} from "../src/reconcile.ts";
 import type { LotwContact, LotwStation } from "../src/signing.ts";
 
 test("LoTW station grids preserve exact four, six and eight character precision", () => {
@@ -60,16 +57,6 @@ const source = Object.freeze({
   MY_DXCC: String(station.dxcc),
   MY_GRIDSQUARE: station.grid!,
 });
-const evidence: ReconciliationEvidence = {
-  destination: "lotw",
-  capturedGeneration: "1",
-  currentGeneration: "1",
-  readAccess: true,
-  inventoryComplete: true,
-  catchupComplete: true,
-  freshCheckComplete: true,
-};
-
 test("eight-character LoTW readback requires all eight characters even after confirmation", () => {
   for (const grid of ["FN31", "FN31PR", "FN31PR13", "", "FN31PR12AA"])
     for (const confirmation of ["Y", "N"]) {
@@ -94,9 +81,9 @@ test("eight-character LoTW readback requires all eight characters even after con
 test("historical nested grids associate while eight-character upload verification stays exact", () => {
   for (const grid of ["FN31", "FN31PR"]) {
     const remote = Object.freeze({ ...source, MY_GRIDSQUARE: grid });
-    const result = classifyHistory(source, [remote], evidence);
+    const result = historicalOperatingDetails("lotw", source, remote);
     assert.equal(result.state, "adopted_existing");
-    assert.equal(result.remote, remote);
+    assert.equal("record" in result && result.record, remote);
     assert.equal(remote.MY_GRIDSQUARE, grid);
     assert.equal(
       observeLotwContact(station, contact, {
@@ -108,19 +95,17 @@ test("historical nested grids associate while eight-character upload verificatio
     );
   }
   assert.equal(
-    classifyHistory(
-      source,
-      [{ ...source, MY_GRIDSQUARE: "FN31PR12" }],
-      evidence,
-    ).state,
+    historicalOperatingDetails("lotw", source, {
+      ...source,
+      MY_GRIDSQUARE: "FN31PR12",
+    }).state,
     "adopted_existing",
   );
   assert.equal(
-    classifyHistory(
-      source,
-      [{ ...source, MY_GRIDSQUARE: "FN31PR13" }],
-      evidence,
-    ).state,
+    historicalOperatingDetails("lotw", source, {
+      ...source,
+      MY_GRIDSQUARE: "FN31PR13",
+    }).state,
     "history_mismatch",
   );
   assert.equal(source.MY_GRIDSQUARE, "fn31pr12");

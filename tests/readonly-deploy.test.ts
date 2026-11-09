@@ -4,9 +4,9 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 const controls = {
+  INVENTORY_RUNTIME_MODE: "read_only",
   EXPORTS_ENABLED: "false",
   ROLLOUT_CHECKS_PASSED: "false",
-  SOURCE_BOUNDARY_VERIFIED: "false",
   QRZ_FRESH_INSERTS_ENABLED: "false",
   LOTW_FRESH_INSERTS_ENABLED: "false",
   LIVE_WRITE_AUTHORIZATION: "",

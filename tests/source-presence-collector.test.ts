@@ -976,8 +976,8 @@ test("a clock moving backwards during a read cannot produce a future-dated posit
 test("input bounds and impossible seek windows fail without a transport call", async () => {
   const fixture = await input();
   const cases: Partial<SourcePresenceInput>[] = [
-    { targets: Array.from({ length: 65 }, () => fixture.targets[0]) },
-    { selectedContacts: Array.from({ length: 21 }, () => "q") },
+    { targets: Array.from({ length: 257 }, () => fixture.targets[0]) },
+    { selectedContacts: Array.from({ length: 101 }, () => "q") },
     {
       targets: [
         ...fixture.targets,

@@ -2,14 +2,9 @@ import assert from "node:assert/strict";
 import { readdir } from "node:fs/promises";
 import test from "node:test";
 import {
-  bindLegacyQrzIdentity,
   destinationIdentityClaim,
-} from "../src/identity-claims.ts";
-import {
-  adoptHistory,
-  classifyHistory,
   lotwRemoteIdentity,
-} from "../src/reconcile.ts";
+} from "../src/destination-receipts.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
 
 const migration = "0024_identity_mapping_overlap.sql";
@@ -41,12 +36,6 @@ async function setup(vendor: "qrz" | "lotw") {
     await h.store
       .statement("UPDATE connections SET kind=? WHERE id='destination'", vendor)
       .run();
-    const key = (qso: string) => ({
-      tenant: "a",
-      source: "source",
-      qso,
-      destination: "destination",
-    });
     const add = async (qso: string, remoteId: string | null = null) => {
       await h.store
         .statement(
@@ -57,8 +46,14 @@ async function setup(vendor: "qrz" | "lotw") {
           now,
         )
         .run();
-      return key(qso);
     };
+    const ledger = (qso: string) =>
+      h.store
+        .statement(
+          "SELECT remote_id,reason FROM ledger WHERE (tenant,source,destination,qso)=('a','source','destination',?)",
+          qso,
+        )
+        .first<{ remote_id: string | null; reason: string | null }>();
     const claims = async () =>
       (
         await h.store
@@ -77,9 +72,9 @@ async function setup(vendor: "qrz" | "lotw") {
       ).results;
     return {
       ...h,
-      key,
       add,
       claims,
+      ledger,
       reservations,
       migrate: () => applyMigration(h.db, migration),
     };
@@ -130,14 +125,14 @@ test("overlap migration backfills old-job LoTW adoption and protects later mappi
       ]),
       /outbound identity claim conflict/,
     );
-    const contender = await h.store.ledger(h.key("contender"));
+    const contender = await h.ledger("contender");
     assert.equal(contender?.remote_id, null);
     assert.equal(contender?.reason, null);
     await assert.rejects(
       h.add("insert-contender", first),
       /outbound identity claim conflict/,
     );
-    assert.equal(await h.store.ledger(h.key("insert-contender")), null);
+    assert.equal(await h.ledger("insert-contender"), null);
     assert.equal((await h.claims()).length, 4);
   } finally {
     await h.mf.dispose();
@@ -166,10 +161,10 @@ test("overlap backfill fails closed when an old-job mapping conflicts with an ex
   }
 });
 
-test("old QRZ mappings reserve exact LOGIDs despite prior owner claims and never overwrite an unresolved reservation", async () => {
+test("the overlap migration reserves exact QRZ LOGIDs despite an older outbound claim", async () => {
   const h = await setup("qrz");
   try {
-    const key = await h.add("overlap", "41");
+    await h.add("overlap", "41");
     const prior = await destinationIdentityClaim("qrz", {
       ...record,
       CALL: "K1PRIOR",
@@ -185,200 +180,15 @@ test("old QRZ mappings reserve exact LOGIDs despite prior owner claims and never
     assert.deepEqual(await h.reservations(), [
       { qso: "overlap", remote_id: "41" },
     ]);
-    assert.equal(
-      await bindLegacyQrzIdentity(
-        h.store,
-        key,
-        { ...record, APP_QRZLOG_LOGID: "41" },
-        "g1",
-        "v1",
-        now,
-      ),
-      true,
-    );
-    assert.deepEqual(await h.reservations(), []);
-    await h.store
-      .statement("UPDATE ledger SET remote_id='42' WHERE qso='overlap'")
-      .run();
+    assert.equal((await h.ledger("overlap"))?.remote_id, "41");
     await assert.rejects(
       h.store
-        .statement("UPDATE ledger SET remote_id='43' WHERE qso='overlap'")
+        .statement("UPDATE ledger SET remote_id='42' WHERE qso='overlap'")
         .run(),
       /legacy QRZ identity reservation conflict/,
     );
-    assert.equal((await h.store.ledger(key))?.remote_id, "42");
     assert.deepEqual(await h.reservations(), [
-      { qso: "overlap", remote_id: "42" },
-    ]);
-    await h.store
-      .statement("UPDATE ledger SET remote_id=NULL WHERE qso='overlap'")
-      .run();
-    assert.deepEqual(await h.reservations(), [
-      { qso: "overlap", remote_id: "42" },
-    ]);
-    await h.add("insert", "50");
-    assert.deepEqual(await h.reservations(), [
-      { qso: "insert", remote_id: "50" },
-      { qso: "overlap", remote_id: "42" },
-    ]);
-  } finally {
-    await h.mf.dispose();
-  }
-});
-
-test("current QRZ history adoption atomically clears only its exact reservation, including an already-owned identity", async () => {
-  const h = await setup("qrz");
-  try {
-    await h.migrate();
-    // Current reconciliation reads the complete ledger/ownership schema. The
-    // other cases deliberately retain the historical 0024 old-worker contract.
-    for (const name of (
-      await readdir(new URL("../migrations/", import.meta.url))
-    )
-      .filter((name) => name.endsWith(".sql") && name > migration)
-      .sort())
-      await applyMigration(h.db, name);
-    const key = await h.add("current");
-    const outcome = classifyHistory(
-      record,
-      [{ ...record, APP_QRZLOG_LOGID: "71" }],
-      {
-        destination: "qrz",
-        capturedGeneration: "g1",
-        currentGeneration: "g1",
-        readAccess: true,
-        inventoryComplete: true,
-        catchupComplete: true,
-        freshCheckComplete: true,
-      },
-    );
-    assert.equal(outcome.state, "adopted_existing");
-    assert.equal(
-      (await adoptHistory(h.store, key, "g1", outcome, now)).applied,
-      true,
-    );
-    assert.deepEqual(await h.reservations(), []);
-    assert.equal((await h.claims()).length, 1);
-    await h.store
-      .statement(
-        "UPDATE ledger SET remote_id=NULL,state='inventory_pending' WHERE qso='current'",
-      )
-      .run();
-    assert.equal(
-      (await adoptHistory(h.store, key, "g1", outcome, now + 1)).applied,
-      true,
-    );
-    assert.deepEqual(await h.reservations(), []);
-    assert.equal((await h.claims()).length, 1);
-    const other = await h.add("competing");
-    const competing = classifyHistory(
-      record,
-      [{ ...record, APP_QRZLOG_LOGID: "72" }],
-      outcome.evidence,
-    );
-    assert.equal(
-      (await adoptHistory(h.store, other, "g1", competing, now + 2)).applied,
-      false,
-    );
-    assert.equal((await h.store.ledger(other))?.state, "history_ambiguous");
-    assert.deepEqual(await h.reservations(), []);
-  } finally {
-    await h.mf.dispose();
-  }
-});
-
-test("current QRZ delivered and observed receipt mappings do not create legacy holds", async (t) => {
-  for (const path of ["delivered", "observed"] as const)
-    await t.test(path, async () => {
-      const h = await setup("qrz");
-      try {
-        await h.migrate();
-        const key = await h.add("current");
-        const claim = await destinationIdentityClaim("qrz", record);
-        const attempt = await h.store.stage(
-          key,
-          "g1",
-          { kind: "qrz", record },
-          "v1",
-          null,
-          now,
-          undefined,
-          undefined,
-          "live",
-          { claim },
-        );
-        const lease = await h.store.claim(
-          "a",
-          "delivery:destination",
-          now,
-          60000,
-        );
-        assert(lease);
-        assert(await h.store.claimAttempt("a", attempt, lease, now));
-        if (path === "delivered")
-          await h.store.resolve(
-            "a",
-            attempt,
-            lease,
-            "delivered",
-            "81",
-            now + 1,
-          );
-        else {
-          await h.store.resolve(
-            "a",
-            attempt,
-            lease,
-            "uncertain",
-            null,
-            now + 1,
-          );
-          assert(
-            await h.store.resolveReconciled("a", attempt, lease, "81", now + 2),
-          );
-        }
-        assert.equal((await h.store.ledger(key))?.remote_id, "81");
-        assert.deepEqual(await h.reservations(), []);
-        await h.store
-          .statement(
-            "UPDATE ledger SET remote_id='82',source_hash='edited' WHERE qso='current'",
-          )
-          .run();
-        assert.deepEqual(await h.reservations(), [
-          { qso: "current", remote_id: "82" },
-        ]);
-      } finally {
-        await h.mf.dispose();
-      }
-    });
-});
-
-test("a receipt without an immutable claim link cannot suppress a QRZ mapping reservation", async () => {
-  const h = await setup("qrz");
-  try {
-    await h.migrate();
-    const key = await h.add("old-job");
-    const attempt = await h.store.stage(
-      key,
-      "g1",
-      { kind: "qrz", record },
-      "v1",
-      null,
-      now,
-    );
-    await h.store
-      .statement(
-        "UPDATE attempt_state SET state='delivered',remote_id='91' WHERE attempt=?",
-        attempt,
-      )
-      .run();
-    await h.store
-      .statement(
-        "UPDATE ledger SET remote_id='91',state='delivered' WHERE qso='old-job'",
-      )
-      .run();
-    assert.deepEqual(await h.reservations(), [
-      { qso: "old-job", remote_id: "91" },
+      { qso: "overlap", remote_id: "41" },
     ]);
   } finally {
     await h.mf.dispose();

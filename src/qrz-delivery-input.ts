@@ -10,7 +10,6 @@ export interface QrzConfig {
   stationCallsign: string;
   startDate: string;
   endDate: string;
-  replacementContractVerified?: boolean;
 }
 
 export function templateContext(

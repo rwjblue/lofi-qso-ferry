@@ -48,7 +48,6 @@ async function setup() {
     MAIL_FROM: "LoFi QSO Ferry <ferry@example.invalid>",
     EXPORTS_ENABLED: "false",
     ROLLOUT_CHECKS_PASSED: "false",
-    SOURCE_BOUNDARY_VERIFIED: "false",
     QRZ_FRESH_INSERTS_ENABLED: "false",
     LOTW_FRESH_INSERTS_ENABLED: "false",
     ROLLOUT_QSO_IDS_JSON: "[]",

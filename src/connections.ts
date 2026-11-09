@@ -518,7 +518,7 @@ export async function connectionRoute(
               ? text(input.label, "label", 100)
               : `QRZ ${expected.stationCallsign}`,
           credential: { apiKey },
-          config: { ...expected, replacementContractVerified: false },
+          config: { ...expected },
         },
         identity,
         {},

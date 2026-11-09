@@ -259,12 +259,12 @@ test("verified connection renewals retain logical destination and ledger, creden
   };
   const first = await saveVerifiedConnection(store, "a", input, identity);
   const secondTenant = await saveVerifiedConnection(store, "b", input);
-  await store.observe(
-    { tenant: "a", source: "source", qso: "qso-1", destination: first.id },
-    "generation",
-    "baseline",
-    30,
-  );
+  await store
+    .statement(
+      "INSERT INTO ledger(tenant,source,qso,destination,generation,source_hash,due_at,updated_at) VALUES('a','source','qso-1',?,'generation','baseline',0,0)",
+      first.id,
+    )
+    .run();
   const renewed = await saveVerifiedConnection(
     store,
     "a",
@@ -276,12 +276,12 @@ test("verified connection renewals retain logical destination and ledger, creden
   assert.notEqual(secondTenant.id, first.id);
   assert.equal(
     (
-      await store.ledger({
-        tenant: "a",
-        source: "source",
-        qso: "qso-1",
-        destination: first.id,
-      })
+      await store
+        .statement(
+          "SELECT source_hash FROM ledger WHERE (tenant,source,qso,destination)=('a','source','qso-1',?)",
+          first.id,
+        )
+        .first<{ source_hash: string }>()
     )?.source_hash,
     "baseline",
   );
@@ -305,106 +305,6 @@ test("verified connection renewals retain logical destination and ledger, creden
       !dump.includes("renewed-secret"),
   );
 });
-test("credential renewal atomically retires only unsent artifacts using superseded credentials", async (t) => {
-  const { store, mf, identity } = await setup(true);
-  t.after(() => mf.dispose());
-  const cases = [
-    { tenant: "a", id: "old-prepared", state: "prepared", version: "v1" },
-    { tenant: "a", id: "old-dispatching", state: "dispatching", version: "v1" },
-    { tenant: "a", id: "old-submitted", state: "submitted", version: "v1" },
-    { tenant: "a", id: "old-uncertain", state: "uncertain", version: "v1" },
-    { tenant: "a", id: "current-prepared", state: "prepared", version: "v2" },
-    { tenant: "b", id: "other-tenant", state: "prepared", version: "v1" },
-  ];
-  for (const entry of cases) {
-    await store.observe(
-      {
-        tenant: entry.tenant,
-        source: "source",
-        qso: entry.id,
-        destination: "destination",
-      },
-      "g1",
-      "h1",
-      30,
-    );
-    await store
-      .statement(
-        "INSERT INTO attempts(tenant,id,source,qso,destination,generation,payload_id,payload_hash,credential_version,created_at,source_hash) VALUES(?,?,'source',?,'destination','g1',?,'h1',?,0,'h1')",
-        entry.tenant,
-        entry.id,
-        entry.id,
-        entry.id,
-        entry.version,
-      )
-      .run();
-    await store
-      .statement(
-        "INSERT INTO attempt_state(tenant,attempt,state,due_at,updated_at) VALUES(?,?,?,0,0)",
-        entry.tenant,
-        entry.id,
-        entry.state,
-      )
-      .run();
-    await (
-      await store.putPrivate(entry.tenant, "destination", entry.id, "outbox", {
-        artifact: entry.id,
-      })
-    ).run();
-  }
-  await applyMigration(store.db, "0030_source_export_guards.sql");
-  const renewal = {
-    kind: "qrz" as const,
-    remoteIdentity: "destination",
-    label: "Renewed QRZ",
-    credential: { apiKey: "renewed-synthetic" },
-    credentialVersion: "v2",
-    config: {},
-  };
-  await saveVerifiedConnection(store, "a", renewal, identity);
-  for (const entry of cases) {
-    const state = await store
-      .statement(
-        "SELECT state,reason FROM attempt_state WHERE tenant=? AND attempt=?",
-        entry.tenant,
-        entry.id,
-      )
-      .first<{ state: string; reason: string | null }>();
-    if (entry.id === "old-prepared") {
-      assert.equal(state?.state, "cancelled");
-      assert.equal(state?.reason, "credential changed before dispatch");
-      assert.equal(
-        await store.private(entry.tenant, "destination", entry.id, "outbox"),
-        null,
-      );
-    } else {
-      assert.equal(state?.state, entry.state);
-      assert.deepEqual(
-        await store.private(entry.tenant, "destination", entry.id, "outbox"),
-        { artifact: entry.id },
-      );
-    }
-  }
-  const events = (
-    await store
-      .statement("SELECT tenant,attempt,state,reason FROM attempt_events")
-      .all()
-  ).results;
-  assert.deepEqual(events, [
-    {
-      tenant: "a",
-      attempt: "old-prepared",
-      state: "cancelled",
-      reason: "credential changed before dispatch",
-    },
-  ]);
-  assert.equal(
-    (await store.connection("a", "destination"))?.credential_version,
-    "v2",
-  );
-  assert(await store.private("a", "destination", "v1", "credential"));
-});
-
 test("connection routes enforce passkey freshness, CSRF, tenant ownership and redacted listing", async (t) => {
   const { env, store, mf, identity } = await setup();
   t.after(() => mf.dispose());
@@ -1574,89 +1474,6 @@ test("new QRZ connection atomically gets the refs-and-notes default and renewal 
         .first<{ n: number }>()
     )?.n,
     0,
-  );
-});
-
-test("new logical destinations request atomic source rescans; renewal and template edits never rescan history", async (t) => {
-  const { store, mf, identity } = await setup();
-  t.after(() => mf.dispose());
-  await store
-    .statement(
-      "UPDATE connections SET config='{\"accountId\":\"verified-account\"}' WHERE tenant='a' AND id='source'",
-    )
-    .run();
-  const input = {
-    kind: "qrz" as const,
-    remoteIdentity: "new-history-book",
-    label: "Later destination",
-    credential: { apiKey: "fixture" },
-    config: {},
-  };
-  const saved = await saveVerifiedConnection(store, "a", input, identity);
-  const cursor = await store
-    .statement(
-      "SELECT cursor,generation FROM cursors WHERE tenant=? AND connection=? AND stream=?",
-      "a",
-      "source",
-      `rescan:${saved.id}`,
-    )
-    .first<{ cursor: string; generation: number }>();
-  assert.ok(cursor);
-  assert.deepEqual(JSON.parse(cursor.cursor), {
-    mode: "backfill",
-    operations: {},
-    qsos: {},
-    accountId: "verified-account",
-    requested: true,
-  });
-  assert.equal(cursor.generation, 0);
-  assert.equal(
-    await store
-      .statement(
-        "SELECT cursor FROM cursors WHERE tenant=? AND stream=?",
-        "b",
-        `rescan:${saved.id}`,
-      )
-      .first(),
-    null,
-  );
-  await store
-    .statement(
-      "UPDATE cursors SET cursor=?,generation=9 WHERE tenant=? AND stream=?",
-      '{"rescanComplete":true}',
-      "a",
-      `rescan:${saved.id}`,
-    )
-    .run();
-  await saveVerifiedConnection(
-    store,
-    "a",
-    { ...input, credential: { apiKey: "renewal" } },
-    identity,
-  );
-  await store.saveTemplate("a", saved.id, {
-    id: "future",
-    profile: "ferry-liquid-v1",
-    fields: { NOTES: "New future text" },
-    fallbackNotes: false,
-  });
-  const retained = await store
-    .statement(
-      "SELECT cursor,generation FROM cursors WHERE tenant=? AND stream=?",
-      "a",
-      `rescan:${saved.id}`,
-    )
-    .first<{ cursor: string; generation: number }>();
-  assert.equal(retained?.generation, 9);
-  assert.equal(retained?.cursor, '{"rescanComplete":true}');
-  assert.equal(
-    await store
-      .statement(
-        "SELECT cursor FROM cursors WHERE tenant='a' AND stream='sync'",
-      )
-      .first(),
-    null,
-    "forward source cursor is untouched",
   );
 });
 

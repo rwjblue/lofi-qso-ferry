@@ -79,21 +79,10 @@ function harness(
   };
 }
 
-test("planning coverage cannot establish absence outside its complete range", async () => {
+test("a covering request cannot establish absence outside its complete range", async () => {
   const cover: [string, string] = ["2026-10-01", "2026-10-02"];
   const h = harness([ambiguous, status], {
     selectCover: async () => cover,
-    planningCoverage: {
-      load: () => ({
-        target: cover,
-        cover,
-        records: [row(1, { QSO_DATE: "20261001" })],
-        pages: 1,
-        startedAt: 1000,
-        completedAt: 1000,
-      }),
-      save: () => assert.fail("Invalid coverage was published"),
-    },
   });
   await assert.rejects(
     h.client.findNeighborhood(contact),

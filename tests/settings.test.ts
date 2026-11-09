@@ -14,7 +14,6 @@ import {
   applyAdditionalMigrations,
   fixtureEnvironment,
 } from "./runtime-fixtures.ts";
-import { mintFixtureSourceProofs } from "./source-proof-fixtures.ts";
 
 async function setup() {
   const state = await database();
@@ -187,7 +186,7 @@ for (const service of [null, "lofi", "qrz", "lotw"] as const)
     );
   });
 
-test("new QRZ books inherit account defaults while saved versions and staged bindings remain pinned", async (context) => {
+test("new QRZ books inherit account defaults while prior template versions stay immutable", async (context) => {
   const { store, mf, request } = await setup();
   context.after(() => mf.dispose());
   const preference = (comment: string): TemplateVersion => ({
@@ -215,73 +214,11 @@ test("new QRZ books inherit account defaults while saved versions and staged bin
   const initial = await selected(first.id);
   assert.ok(initial);
   assert.equal(JSON.parse(initial.config).fields.COMMENT, "First default");
-  await store
-    .statement(
-      "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,created_at) VALUES('a','source','lofi','source','Source','active',0)",
-    )
-    .run();
-  const key = {
-    tenant: "a",
-    source: "source",
-    qso: "qso-1",
-    destination: first.id,
-  };
-  await (
-    await store.putPrivate("a", "source", "fixture-source", "credential", {
-      key: "browser:fixture",
-      secret: "fixture",
-      token: "fixture",
-    })
-  ).run();
-  await store
-    .statement(
-      "UPDATE connections SET credential_version='fixture-source',config=? WHERE tenant='a' AND id='source'",
-      JSON.stringify({ accountId: "source" }),
-    )
-    .run();
-  const source = (await store.connection("a", "source"))!;
-  const destination = (await store.connection("a", first.id))!;
-  const proof = await mintFixtureSourceProofs(store, {
-    source,
-    destinations: [destination],
-    operations: [],
-    qsos: [
-      {
-        uuid: "qso-1",
-        syncedAtMillis: 100,
-        startAtMillis: 1792670401000,
-        band: "20m",
-        mode: "FT8",
-        their: { call: "K1ABC" },
-        our: { stationCall: "W1AW" },
-      },
-    ],
-  });
-  await store
-    .statement("UPDATE ledger SET state='live_new',due_at=0 WHERE tenant='a'")
-    .run();
-  const attempt = await store.stage(
-    key,
-    proof.snapshots[0].contact.generation,
-    { immutable: "First default" },
-    first.version,
-    initial.id,
-    Date.now(),
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    proof.authorizations[0],
-  );
   const cursorsBefore = await store
     .statement("SELECT count(*) n FROM cursors")
     .first<{ n: number }>();
   await saveDefaultTemplate(store, "a", preference("Second default"));
   assert.deepEqual(await selected(first.id), initial);
-  assert.equal((await store.ledger(key))?.template_version, initial.id);
-  assert.deepEqual(await store.private("a", first.id, attempt, "outbox"), {
-    immutable: "First default",
-  });
   assert.deepEqual(
     await store.statement("SELECT count(*) n FROM cursors").first(),
     cursorsBefore,
@@ -310,7 +247,16 @@ test("new QRZ books inherit account defaults while saved versions and staged bin
   });
   assert.equal(perBook.status, 200);
   assert.notEqual(perBook.body.id, initial.id);
-  assert.equal((await store.ledger(key))?.template_version, initial.id);
+  assert.deepEqual(
+    await store
+      .statement(
+        "SELECT id,config FROM templates WHERE tenant='a' AND destination=? AND id=?",
+        first.id,
+        initial.id,
+      )
+      .first(),
+    initial,
+  );
   assert.equal(
     (await defaultTemplate(store, "a")).fields.COMMENT,
     "Second default",

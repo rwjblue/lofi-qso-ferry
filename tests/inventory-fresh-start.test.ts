@@ -139,7 +139,6 @@ test("a fresh account copy retains credential bindings and quarantines prior uns
         exportsEnabled: true,
         liveWriteAuthorized: true,
         qrzFreshInsertsEnabled: true,
-        sourceBoundaryVerified: false,
         allowedQsoIds: null,
         allowedDestinationIds: null,
       })),

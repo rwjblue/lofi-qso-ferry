@@ -48,7 +48,6 @@ async function runtime(environment = "local", emailFixture = false) {
         MAIL_FROM: "fixture@example.invalid",
         EXPORTS_ENABLED: "false",
         ROLLOUT_CHECKS_PASSED: "false",
-        SOURCE_BOUNDARY_VERIFIED: "false",
         LIVE_WRITE_AUTHORIZATION: "",
         ...(emailFixture
           ? {

@@ -28,7 +28,7 @@ test("real Worker assets serve the admin page without a canonical redirect loop"
         EXPORTS_ENABLED: "true",
         ROLLOUT_CHECKS_PASSED: "true",
         LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
-        SOURCE_BOUNDARY_VERIFIED: "false",
+        INVENTORY_RUNTIME_MODE: "managed",
         QRZ_FRESH_INSERTS_ENABLED: "true",
         ROLLOUT_QSO_IDS_JSON: '["qso"]',
         ROLLOUT_DESTINATION_IDS_JSON: '["destination"]',
@@ -58,7 +58,6 @@ test("real Worker assets serve the admin page without a canonical redirect loop"
     status: "ok",
     exportsEnabled: true,
     exportMode: "qrz_fresh_insert",
-    sourceBoundaryVerified: false,
   });
   const responses = [page, health];
   for (const path of ["/admin.html", "/admin/"]) {

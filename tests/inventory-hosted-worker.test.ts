@@ -1084,7 +1084,6 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   const writeGates = () => ({
     exportsEnabled: true,
     liveWriteAuthorized: true,
-    sourceBoundaryVerified: false,
     qrzFreshInsertsEnabled: true,
     allowedQsoIds: ["q2"],
     allowedDestinationIds: ["destination"],
@@ -1707,7 +1706,6 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     EXPORTS_ENABLED: "true",
     ROLLOUT_CHECKS_PASSED: "true",
     LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
-    SOURCE_BOUNDARY_VERIFIED: "false",
     LOTW_FRESH_INSERTS_ENABLED: "true",
     ROLLOUT_QSO_IDS_JSON: JSON.stringify(lotwKeys),
     ROLLOUT_DESTINATION_IDS_JSON: JSON.stringify(["lotw"]),

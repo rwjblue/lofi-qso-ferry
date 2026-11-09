@@ -54,7 +54,6 @@ export function managedInventoryAuthorization(
     expiresAt,
     gates: {
       ...gates,
-      sourceBoundaryVerified: false,
       qrzFreshInsertExpiresAt: undefined,
       qrzFreshInsertsEnabled: provider === "qrz",
       lotwFreshInsertsEnabled: provider === "lotw",

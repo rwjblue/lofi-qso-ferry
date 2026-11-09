@@ -73,7 +73,6 @@ export interface SourcePresenceOptions {
   /** Caller supplies its normal budgeted transport; the collector adds no quota. */
   fetcher: typeof fetch;
   currentScope: () => Promise<SourcePresenceScope | null>;
-  inventory?: boolean;
   now?: () => number;
 }
 
@@ -235,13 +234,8 @@ export async function collectSourcePresence(
   input: SourcePresenceInput,
   options: SourcePresenceOptions,
 ): Promise<SourcePresenceResult> {
-  const maxTargets = options.inventory
-    ? INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT
-    : 64;
-  const maxContacts = options.inventory ? INVENTORY_LOTW_BATCH_LIMIT : 20;
   const pageSize =
-    options.inventory &&
-    (input.selectedContacts.length > 20 || input.targets.length > 64)
+    input.selectedContacts.length > 20 || input.targets.length > 64
       ? INVENTORY_LOTW_BATCH_LIMIT
       : SOURCE_PRESENCE_REQUEST_PAGE_SIZE;
   const maxPageRecords =
@@ -249,10 +243,12 @@ export async function collectSourcePresence(
     SOURCE_PRESENCE_MAX_PAGE_RECORDS;
   // Reject oversized inputs before cloning; snapshot before asynchronous work.
   const oversized =
-    input.targets.length > maxTargets ||
-    input.selectedContacts.length > maxContacts ||
-    (input.observedAnchors?.length ?? 0) > Math.max(128, maxTargets) ||
-    (input.cachedWitnesses?.length ?? 0) > maxTargets;
+    input.targets.length > INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT ||
+    input.selectedContacts.length > INVENTORY_LOTW_BATCH_LIMIT ||
+    (input.observedAnchors?.length ?? 0) >
+      INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT ||
+    (input.cachedWitnesses?.length ?? 0) >
+      INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT;
   const scope = { ...input.scope };
   const credentials = { ...input.credentials };
   const startedAt = input.collectionStartedAt;

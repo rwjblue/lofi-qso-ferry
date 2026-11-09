@@ -180,7 +180,6 @@ export interface QrzOptions {
   fetch?: typeof fetch;
   version?: string;
   writesEnabled?: boolean;
-  replacementContractVerified?: boolean;
   beforeWrite?: () => Promise<boolean>;
   /** Only current, caller-fenced book scope may recover ambiguous FETCH results. */
   neighborhoodFallback?: {
@@ -191,12 +190,6 @@ export interface QrzOptions {
     ) => Promise<[string, string] | null>;
     isCurrent: () => Promise<boolean>;
     now?: () => number;
-    /** Planning only: complete coverage retained by one bounded source turn.
-     * Dispatch clients never receive this capability. */
-    planningCoverage?: {
-      load: (cover: [string, string]) => QrzCoveringRead | undefined;
-      save: (read: QrzCoveringRead) => void;
-    };
   };
 }
 export interface QrzFetchOptions {
@@ -240,11 +233,11 @@ export class QrzClient {
     this.transport = options.fetch ?? fetch;
   }
   private async request(
-    action: string,
+    action: "STATUS" | "FETCH" | "INSERT",
     values: Record<string, string> = {},
     signal?: AbortSignal,
   ): Promise<QrzResponse> {
-    const mutating = action === "INSERT" || action === "DELETE";
+    const mutating = action === "INSERT";
     if (mutating && !this.options.writesEnabled)
       throw new QrzError("blocked", "QRZ writes are disabled");
     if (
@@ -682,11 +675,6 @@ export class QrzClient {
         "blocked",
         "QRZ neighborhood covering range unavailable",
       );
-    const reused = fallback.planningCoverage?.load(cover);
-    if (reused && cover[0] <= target[0] && cover[1] >= target[1]) {
-      await check();
-      return reused.records.filter(matching);
-    }
     await this.verifyBook(book, deadline);
     await check();
     const observed = await this.readCoveringRange({
@@ -698,21 +686,11 @@ export class QrzClient {
       shouldContinue: () => !deadline.aborted,
     });
     await check();
-    fallback.planningCoverage?.save(observed);
     return observed.records.filter(matching);
   }
-  async insert(
-    record: AdifRecord,
-  ): Promise<{ logId: string; replaced: boolean }> {
-    return this.writeRecord(record, false);
-  }
-  private async writeRecord(
-    record: AdifRecord,
-    replace: boolean,
-  ): Promise<{ logId: string; replaced: boolean }> {
+  async insert(record: AdifRecord): Promise<{ logId: string }> {
     const result = await this.request("INSERT", {
       ADIF: serializeAdifRecord(record),
-      ...(replace ? { OPTION: "REPLACE" } : {}),
     });
     if (result.RESULT !== "OK" && result.RESULT !== "REPLACE")
       throw new QrzError(
@@ -720,7 +698,7 @@ export class QrzClient {
         "QRZ rejected the record; reconcile duplicate responses before any retry",
       );
     if (
-      (!replace && result.RESULT === "REPLACE") ||
+      result.RESULT !== "OK" ||
       result.COUNT !== "1" ||
       !/^\d+$/.test(result.LOGID ?? "")
     )
@@ -728,59 +706,10 @@ export class QrzClient {
         "uncertain",
         "QRZ mutation receipt is inconsistent; reconcile before retry",
       );
-    return { logId: result.LOGID, replaced: result.RESULT === "REPLACE" };
-  }
-  /** Recheck remote-owned fields while preserving the exact durably prepared payload. */
-  async replacePrepared(
-    logId: string,
-    record: AdifRecord,
-    policy: "remote_preserved" | "template_bound",
-  ): Promise<{ logId: string; replaced: boolean }> {
-    if (!this.options.replacementContractVerified)
-      throw new QrzError(
-        "blocked",
-        "QRZ replacement contract requires scoped live verification",
-      );
-    const remote = await this.fetchLogId(logId);
-    if (!remote || !sameQrzIdentity(remote, record))
-      throw new QrzError("blocked", "QRZ replacement mapping changed");
-    const neighbors = await this.findNeighborhood(record);
-    if (neighbors.length !== 1 || neighbors[0].APP_QRZLOG_LOGID !== logId)
-      throw new QrzError("blocked", "QRZ duplicate neighborhood is ambiguous");
-    const merged = mergeQrzCorrection(remote, record, policy);
-    const canonicalRecord = (value: AdifRecord) =>
-      JSON.stringify(
-        Object.entries(value).sort(([a], [b]) => a.localeCompare(b)),
-      );
-    if (canonicalRecord(merged) !== canonicalRecord(record))
-      throw new QrzError(
-        "blocked",
-        "QRZ remote-owned fields changed after preparation; prepare a new attempt",
-      );
-    return this.writeRecord(record, true);
-  }
-  async replaceSafely(
-    logId: string,
-    current: AdifRecord,
-    policy: "remote_preserved" | "template_bound",
-  ): Promise<{ logId: string; replaced: boolean }> {
-    if (!this.options.replacementContractVerified)
-      throw new QrzError(
-        "blocked",
-        "QRZ replacement contract requires scoped live verification",
-      );
-    const remote = await this.fetchLogId(logId);
-    if (!remote || !sameQrzIdentity(remote, current))
-      throw new QrzError(
-        "blocked",
-        "QRZ replacement identity differs from mapping",
-      );
-    const candidates = await this.findNeighborhood(current);
-    if (candidates.length !== 1 || candidates[0].APP_QRZLOG_LOGID !== logId)
-      throw new QrzError("blocked", "QRZ duplicate neighborhood is ambiguous");
-    return this.writeRecord(mergeQrzCorrection(remote, current, policy), true);
+    return { logId: result.LOGID };
   }
 }
+
 function validDate(value: string): string {
   if (
     !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
@@ -819,65 +748,6 @@ export function sameQrzIdentity(left: AdifRecord, right: AdifRecord): boolean {
     (field) =>
       (left[field] ?? "").toUpperCase() === (right[field] ?? "").toUpperCase(),
   );
-}
-const NARRATIVE = new Set(["COMMENT", "NOTES", "QSLMSG"]);
-const SOURCE_FIELDS = new Set([
-  "STATION_CALLSIGN",
-  "CALL",
-  "QSO_DATE",
-  "TIME_ON",
-  "TIME_OFF",
-  "BAND",
-  "FREQ",
-  "MODE",
-  "SUBMODE",
-  "RST_SENT",
-  "RST_RCVD",
-  "MY_GRIDSQUARE",
-  "MY_STATE",
-  "MY_CNTY",
-  "MY_DXCC",
-  "MY_CQ_ZONE",
-  "MY_ITU_ZONE",
-  "MY_COUNTRY",
-  "MY_LAT",
-  "MY_LON",
-  "MY_CITY",
-  "TX_PWR",
-  "MY_POTA_REF",
-  "MY_SOTA_REF",
-  "PROP_MODE",
-  "SAT_NAME",
-  "OPERATOR",
-]);
-export function mergeQrzCorrection(
-  remote: AdifRecord,
-  current: AdifRecord,
-  policy: "remote_preserved" | "template_bound",
-): AdifRecord {
-  const merged: AdifRecord = Object.create(null);
-  for (const [field, value] of Object.entries(remote)) {
-    // Never re-submit IDs, confirmations, award credits, or server extension state.
-    if (
-      field.startsWith("QRZCOM_") ||
-      field.startsWith("APP_QRZLOG_") ||
-      field.startsWith("APP_LOTW_") ||
-      (/(?:QSL|LOTW|EQSL|CREDIT|AWARD)/.test(field) && field !== "QSLMSG")
-    )
-      continue;
-    if (
-      !SOURCE_FIELDS.has(field) &&
-      (!NARRATIVE.has(field) || policy === "remote_preserved")
-    )
-      merged[field] = value;
-  }
-  for (const [field, value] of Object.entries(current))
-    if (
-      SOURCE_FIELDS.has(field) ||
-      (NARRATIVE.has(field) && policy === "template_bound")
-    )
-      merged[field] = value;
-  return merged;
 }
 export type QrzMatch =
   | { state: "missing_current_identity" }
@@ -1029,19 +899,4 @@ function operatingEvidenceMismatch(
       };
   }
   return null;
-}
-/** Cleanup is deliberately unavailable until the duplicate/deletion contract is live-proven. */
-export function mayCleanOldQrzIdentity(evidence: {
-  oldProvenance: string;
-  newAcknowledged: boolean;
-  oldLogId: string;
-  newLogId: string;
-  freshOldIdentityMatches: boolean;
-}): boolean {
-  return (
-    evidence.oldProvenance === "ferry_created" &&
-    evidence.newAcknowledged &&
-    evidence.oldLogId !== evidence.newLogId &&
-    evidence.freshOldIdentityMatches
-  );
 }

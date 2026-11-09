@@ -1,11 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseAdif, serializeAdifRecord } from "../src/adif.ts";
-import { createFailureDiagnostics } from "../src/failure-diagnostics.ts";
 import {
   matchQrzHistory,
-  mayCleanOldQrzIdentity,
-  mergeQrzCorrection,
   parseQrzResponse,
   QrzClient,
   QrzError,
@@ -122,24 +119,21 @@ test("QRZ responses decode narrative form values exactly once", () => {
 });
 test("read responses preserve only fixed validation diagnostics while writes stay uncertain", async (t) => {
   const secret = "private-record-and-credential";
-  const cases: [string, () => Response, string, string][] = [
+  const cases: [string, () => Response, string][] = [
     [
       "html",
       () => new Response(`<html>${secret}</html>`),
       "Invalid QRZ response framing",
-      "qrz_response_framing",
     ],
     [
       "duplicate parameter",
       () => new Response(`RESULT=OK&result=FAIL&TOKEN=${secret}`),
       "Duplicate QRZ response parameter",
-      "qrz_duplicate_parameter",
     ],
     [
       "missing result",
       () => new Response(`COUNT=0&REASON=${secret}`),
       "Missing QRZ result",
-      "qrz_missing_result",
     ],
     [
       "entity encoding",
@@ -148,7 +142,6 @@ test("read responses preserve only fixed validation diagnostics while writes sta
           `RESULT=OK&COUNT=1&ADIF=&lt;CALL:7&gt;&#x110000;${secret}&lt;EOR&gt;`,
         ),
       "Invalid QRZ ADIF entity encoding",
-      "qrz_entity_encoding",
     ],
     [
       "form encoding",
@@ -157,7 +150,6 @@ test("read responses preserve only fixed validation diagnostics while writes sta
           `RESULT=OK&COUNT=1&ADIF=%3CCALL%3A7%3E${secret}%3CEOR%3E%ZZ`,
         ),
       "Invalid QRZ form encoding",
-      "qrz_form_encoding",
     ],
     [
       "body limit",
@@ -166,13 +158,11 @@ test("read responses preserve only fixed validation diagnostics while writes sta
           secret.repeat(Math.ceil((2 * 1024 * 1024 + 1) / secret.length)),
         ),
       "QRZ response exceeds 2 MiB",
-      "qrz_response_bound",
     ],
     [
       "utf8",
       () => new Response(new Uint8Array([0xff])),
       "Invalid QRZ response UTF-8",
-      "qrz_response_utf8",
     ],
     [
       "stream failure",
@@ -185,23 +175,21 @@ test("read responses preserve only fixed validation diagnostics while writes sta
           }),
         ),
       "QRZ response body could not be read",
-      "qrz_response_body_unreadable",
     ],
   ];
-  for (const [name, response, message, code] of cases)
+  for (const [name, response, message] of cases)
     await t.test(name, async () => {
       const client = new QrzClient(secret, {
         writesEnabled: true,
         fetch: async () => response(),
       });
-      const diagnostics = createFailureDiagnostics();
       for (const read of [() => client.fetchPage(), () => client.status()])
         await assert.rejects(read, (error: unknown) => {
           assert(error instanceof QrzError);
           assert.equal(error.kind, "protocol");
           assert.equal(error.message, message);
           assert.equal(error.cause, undefined);
-          diagnostics.record(error, "history_read", "qrz");
+          assert.doesNotMatch(String(error), /private|credential|record-and/);
           return true;
         });
       await assert.rejects(client.insert(contact), (error: unknown) => {
@@ -212,21 +200,9 @@ test("read responses preserve only fixed validation diagnostics while writes sta
           "Invalid QRZ response; mutation outcome must be reconciled",
         );
         assert.equal(error.cause, undefined);
-        diagnostics.record(error, "preparation", "qrz");
+        assert.doesNotMatch(String(error), /private|credential|record-and/);
         return true;
       });
-      assert.deepEqual(diagnostics.counts[`history_read:qrz:${code}`], {
-        events: 2,
-        affected: 2,
-      });
-      assert.deepEqual(diagnostics.counts["preparation:qrz:qrz_uncertain"], {
-        events: 1,
-        affected: 1,
-      });
-      assert.doesNotMatch(
-        JSON.stringify(diagnostics.counts),
-        /private|credential|record-and/,
-      );
     });
 });
 test("unrecognized QRZ body failures and rejected FETCH never expose vendor reasons or imply empty history", async () => {
@@ -282,12 +258,7 @@ test("only the observed ambiguous empty FETCH framing receives a fixed detail an
       assert(error instanceof QrzError);
       assert.equal(error.kind, "rejected");
       assert.equal(error.detail, expected);
-      const diagnostics = createFailureDiagnostics();
-      diagnostics.record(error, "history_read", "qrz");
-      assert.deepEqual(Object.keys(diagnostics.counts), [
-        `history_read:qrz:${expected ? "qrz_ambiguous_empty_selection" : "qrz_rejected"}`,
-      ]);
-      assert.doesNotMatch(JSON.stringify(diagnostics.counts), /private/);
+      assert.doesNotMatch(String(error), /private/);
       return true;
     });
   }
@@ -397,55 +368,6 @@ test("time precision review does not hide competing, invalid or otherwise confli
     );
   }
 });
-test("minute-only history cannot authorize either QRZ replacement path", async () => {
-  const actions: (string | null)[] = [];
-  const client = new QrzClient("synthetic", {
-    writesEnabled: true,
-    replacementContractVerified: true,
-    fetch: async (_, init) => {
-      const action = new URLSearchParams(String(init?.body)).get("ACTION");
-      actions.push(action);
-      assert.equal(action, "FETCH");
-      return encode({
-        RESULT: "OK",
-        COUNT: "1",
-        ADIF: serializeAdifRecord({ ...remote, TIME_ON: "1200" }),
-      });
-    },
-  });
-  await assert.rejects(
-    client.replaceSafely("40", contact, "remote_preserved"),
-    /identity differs/,
-  );
-  await assert.rejects(
-    client.replacePrepared("40", contact, "remote_preserved"),
-    /mapping changed/,
-  );
-  assert.deepEqual(actions, ["FETCH", "FETCH"]);
-});
-test("structured correction preserves adopted narrative and remote-owned fields", () => {
-  const merged = mergeQrzCorrection(
-    remote,
-    { ...contact, COMMENT: "new template", MY_GRIDSQUARE: "FN32" },
-    "remote_preserved",
-  );
-  assert.equal(merged.COMMENT, remote.COMMENT);
-  assert.equal(merged.QSLMSG, remote.QSLMSG);
-  assert.equal(merged.NOTES, remote.NOTES);
-  assert.equal(merged.NAME, "Operator");
-  assert.equal(merged.APP_OTHER_NARRATIVE, "retain application data");
-  assert.equal(merged.MY_GRIDSQUARE, "FN32");
-  assert.equal(merged.APP_QRZLOG_LOGID, undefined);
-  assert.equal(merged.QSL_RCVD, undefined);
-  assert.equal(
-    mergeQrzCorrection(
-      remote,
-      { ...contact, COMMENT: "pinned template" },
-      "template_bound",
-    ).COMMENT,
-    "pinned template",
-  );
-});
 test("plain INSERT never escalates duplicate responses to REPLACE", async () => {
   let calls = 0;
   const client = new QrzClient("secret", {
@@ -459,17 +381,13 @@ test("plain INSERT never escalates duplicate responses to REPLACE", async () => 
   await assert.rejects(client.insert(contact), /rejected/);
   assert.equal(calls, 1);
 });
-test("writes default disabled and replacement requires verified contract", async () => {
+test("writes default disabled", async () => {
   const client = new QrzClient("secret", {
     fetch: async () => {
       throw new Error("Should not request");
     },
   });
   await assert.rejects(client.insert(contact), /disabled/);
-  await assert.rejects(
-    client.replaceSafely("40", contact, "remote_preserved"),
-    /scoped live/,
-  );
 });
 test("lost or malformed mutation response stays uncertain", async () => {
   for (const transport of [
@@ -488,23 +406,6 @@ test("lost or malformed mutation response stays uncertain", async () => {
         error instanceof QrzError && error.kind === "uncertain",
     );
   }
-});
-test("cleanup requires Ferry creation, durable new receipt, changed ID and fresh evidence", () => {
-  const evidence = {
-    oldProvenance: "ferry_created",
-    newAcknowledged: true,
-    oldLogId: "1",
-    newLogId: "2",
-    freshOldIdentityMatches: true,
-  };
-  assert.equal(mayCleanOldQrzIdentity(evidence), true);
-  for (const altered of [
-    { oldProvenance: "adopted" },
-    { newAcknowledged: false },
-    { newLogId: "1" },
-    { freshOldIdentityMatches: false },
-  ])
-    assert.equal(mayCleanOldQrzIdentity({ ...evidence, ...altered }), false);
 });
 test("book linking requires station, book and full date-range evidence", async () => {
   const expected = {
@@ -529,35 +430,6 @@ test("book linking requires station, book and full date-range evidence", async (
     fetch: async () => encode({ RESULT: "OK", DATA: "BOOKID=7" }),
   });
   await assert.rejects(incomplete.verifyBook(expected), /identity/);
-});
-test("verified replacement fetches and merges a unique current mapped record", async () => {
-  const bodies: URLSearchParams[] = [];
-  const client = new QrzClient("secret", {
-    writesEnabled: true,
-    replacementContractVerified: true,
-    fetch: async (_, init) => {
-      const body = new URLSearchParams(String(init?.body));
-      bodies.push(body);
-      if (body.get("ACTION") === "FETCH")
-        return encode({
-          RESULT: "OK",
-          COUNT: "1",
-          ADIF: serializeAdifRecord(remote),
-        });
-      assert.equal(body.get("OPTION"), "REPLACE");
-      assert.match(body.get("ADIF")!, /Original private narrative/);
-      assert.doesNotMatch(body.get("ADIF")!, /QSL_RCVD|APP_QRZLOG/);
-      return encode({ RESULT: "REPLACE", COUNT: "1", LOGID: "41" });
-    },
-  });
-  const result = await client.replaceSafely(
-    "40",
-    { ...contact, MY_GRIDSQUARE: "FN32" },
-    "remote_preserved",
-  );
-  assert.equal(result.logId, "41");
-  assert.equal(result.replaced, true);
-  assert.equal(bodies.length, 3);
 });
 test("verified live STATUS field spellings link book dates without changing endpoint behavior", async () => {
   const book = {
@@ -707,13 +579,7 @@ test("QRZ rejects declared lengths that split a supplementary character instead 
     );
   }
 });
-test("QRZ structured corrections exclude QRZCOM server metadata and adoption normalizes decimal frequencies", () => {
-  const merged = mergeQrzCorrection(
-    { ...remote, QRZCOM_QSO_UPLOAD_DATE: "server-managed" },
-    contact,
-    "remote_preserved",
-  );
-  assert.equal(merged.QRZCOM_QSO_UPLOAD_DATE, undefined);
+test("QRZ adoption normalizes equivalent decimal frequencies", () => {
   assert.equal(
     matchQrzHistory({ ...contact, FREQ: "14.074" }, [
       { ...remote, FREQ: "14.07400" },

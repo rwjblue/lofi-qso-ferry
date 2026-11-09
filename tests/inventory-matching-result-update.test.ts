@@ -30,7 +30,7 @@ test("a result update cannot borrow the guard of another admitted preparation", 
         get(target, property) {
           if (property === "batch")
             return async (plan: D1PreparedStatement[]) => {
-              // Persist only admission to model a separate, interrupted publisher.
+              // Leave a prepared receipt and its guard without committing results.
               await f.db.batch(plan.slice(0, -2));
               throw new Error("admitted preparation only");
             };
@@ -42,7 +42,7 @@ test("a result update cannot borrow the guard of another admitted preparation", 
     );
     await assert.rejects(
       new InventoryMatchingResults(store).publish(pending, lease, "pending"),
-      /admitted preparation only/,
+      /inventory_match_receipt_conflict/,
     );
     assert.equal(
       (

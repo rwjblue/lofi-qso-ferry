@@ -153,10 +153,11 @@ complete-cohort RPC target remain open. The later
 [automatic replay](evidence-inventory-adoption-scheduling.md) measures the
 remaining 2,917 matches under the new coordinator.
 
-Base `match_results` continue to describe comparison facts. The automatic planner
-still needs an ownership-aware selection layer and durable claimed-work completion.
-Ownership changes must invalidate that planning authority without making an adoption
-invalidate its own captured comparison facts. Delivery must consume historical
-write blocks and publish new Ferry ownership/uncertainty directly in the fresh model.
-New-format source proofs, QRZ submission, LoTW batch membership/recovery, retained
-payload collection, restore quarantine and account-preserving cutover remain open.
+Base `match_results` continue to describe comparison facts.
+[Delivery review](evidence-inventory-delivery-review.md) now selects current
+absences under exact comparison and ownership guards. Ownership changes
+invalidate the separate review while the comparison facts remain intact.
+Delivery must consume historical write blocks and publish new Ferry
+ownership and uncertainty directly in the fresh model. New-format source
+proofs, QRZ submission, LoTW batch membership and recovery, retained payload
+collection, restore quarantine and account-preserving cutover remain open.

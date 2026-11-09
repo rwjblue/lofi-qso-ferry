@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "kind": "personal-log-delivery-review-qualification",
+  "replays": [
+    {
+      "kind": "native-personal-log-delivery-review",
+      "schemaThrough": 83,
+      "seeded": 1112,
+      "turns": 369,
+      "reviewed": 1112,
+      "stop": "idle",
+      "decisions": [
+        {
+          "provider": "lotw",
+          "decision": "source_proof_required",
+          "records": 746
+        },
+        {
+          "provider": "qrz",
+          "decision": "source_proof_required",
+          "records": 366
+        }
+      ],
+      "database": {
+        "calls": 2811,
+        "statements": 3005,
+        "metadataStatements": 3005,
+        "rowsRead": 15274084,
+        "rowsWritten": 4072,
+        "sqlMs": 7396
+      },
+      "elapsedMs": 24537,
+      "reopened": true,
+      "originalAccessUnchanged": true,
+      "credentialEnvelopesUnchanged": true,
+      "matchResultsAndAssociationsUnchanged": true,
+      "requests": 0,
+      "uploads": 0
+    },
+    {
+      "kind": "native-personal-log-delivery-review",
+      "schemaThrough": 84,
+      "seeded": 1112,
+      "turns": 369,
+      "reviewed": 1112,
+      "stop": "idle",
+      "decisions": [
+        {
+          "provider": "lotw",
+          "decision": "source_proof_required",
+          "records": 746
+        },
+        {
+          "provider": "qrz",
+          "decision": "source_proof_required",
+          "records": 366
+        }
+      ],
+      "database": {
+        "calls": 2811,
+        "statements": 3005,
+        "metadataStatements": 3005,
+        "rowsRead": 768658,
+        "rowsWritten": 4072,
+        "sqlMs": 3516
+      },
+      "elapsedMs": 23046,
+      "reopened": true,
+      "originalAccessUnchanged": true,
+      "credentialEnvelopesUnchanged": true,
+      "matchResultsAndAssociationsUnchanged": true,
+      "requests": 0,
+      "uploads": 0
+    },
+    {
+      "kind": "coordinated-personal-log-delivery-review",
+      "schemaThrough": 85,
+      "seeded": 1112,
+      "turns": 4059,
+      "reviewed": 1112,
+      "stop": "idle",
+      "decisions": [
+        {
+          "provider": "lotw",
+          "decision": "source_proof_required",
+          "records": 746
+        },
+        {
+          "provider": "qrz",
+          "decision": "source_proof_required",
+          "records": 366
+        }
+      ],
+      "database": {
+        "calls": 35654,
+        "statements": 35848,
+        "metadataStatements": 35848,
+        "rowsRead": 1056701,
+        "rowsWritten": 33573,
+        "sqlMs": 6539
+      },
+      "elapsedMs": 192947,
+      "reopened": true,
+      "originalAccessUnchanged": true,
+      "credentialEnvelopesUnchanged": true,
+      "matchResultsAndAssociationsUnchanged": true,
+      "requests": 0,
+      "uploads": 0
+    }
+  ],
+  "sourceClosureCensus": {
+    "distinctContacts": 747,
+    "contactsSharedByBothProviders": 365,
+    "historicalContacts": 747,
+    "operations": 30,
+    "activeEvents": 14,
+    "largestOperationEvents": 6,
+    "contactsWithoutOperation": 14
+  }
+}

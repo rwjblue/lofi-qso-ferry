@@ -405,6 +405,29 @@ bodies, published a new ready coverage epoch, and scheduled the next poll
 one day later. The replay used 74 local responses with simulated vendor
 windows and made zero provider requests or uploads.
 
+### QRZ STATUS reuse
+
+The scheduled reader saves one book verification with an accepted full
+page. One following full page can reuse it within 30 seconds, for the
+same credential version and selection. Terminal pages, recovery and a
+response that outlasts the evidence window require fresh verification.
+The rule uses QRZ's documented book-specific key routing. [QRZ API guide](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html)
+
+A live read on a private write-locked copy collected 44 receipts in
+three pages. It issued five requests, with one STATUS check shared by
+the first two pages. Reopening after the first page verified that the
+evidence survived in the accepted cursor. The normal covering catch-up
+then completed in seven reads and published ready coverage. The
+terminal catch-up page rechecked STATUS after its FETCH. The trial
+preserved the other checkpoints and credential envelopes and made
+zero uploads.
+
+A separate replay used all 4,252 captured QRZ receipts and compared
+the same 18 date-selection pages. Both passes produced identical
+ordered observations. STATUS calls dropped from 18 to 10, so total
+requests fell from 36 to 28. This replay used local responses and
+excluded quota delays and catch-up.
+
 ## LoTW account receipt deltas
 
 ARRL's receipt report accepts an explicit `qso_qsorxsince` with optional

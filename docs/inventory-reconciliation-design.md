@@ -525,6 +525,13 @@ assumes single-page reads, a stable roster and available service.
 
 Baseline each relevant book using bounded date ranges and `AFTERLOGID` paging. Query all accepted records, including unconfirmed contacts. Incremental runs use a fixed `MODSINCE` lower date with overlap for date precision and restart paging at the beginning of that modification selection. Scanning only increasing LOGIDs would miss edits to older IDs.
 
+QRZ binds the API key to its logbook. A scheduled scan can reuse a
+successful STATUS check for one following full page, within 30 seconds
+and under the same linked credential version and selection. The
+accepted cursor carries the evidence across a restart. A terminal page,
+recovery read or report that outlasts the evidence window gets a fresh
+STATUS check. [QRZ API guide](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html)
+
 Checkpoint a modification run only after every required page succeeds. Preserve the current ambiguous-empty handling: a generic failed empty selection does not complete a delta or prove absence. Retain the successful full/covering-read fallback and its scope checks. Query rejection, changing framing or incomplete catch-up leaves affected coverage unresolved.
 
 Use periodic bounded inventory verification for changes not established by the delta contract, including disappearance. See the [QRZ API](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html) and [adapter evidence](evidence-qrz.md).
@@ -827,13 +834,17 @@ For the legacy inventory comparison, assume N relevant contacts at each destinat
 | LoFi QSO baseline data pages         |                   40 |               2,000 | Excludes operation/events, completion/drain and authentication             |
 | LoFi background rate equivalent      |           50 minutes | 41 hours 40 minutes | Four global requests/five minutes                                          |
 | QRZ baseline data pages              |                   16 |                 800 | Excludes completion, catch-up and verification                             |
-| QRZ STATUS + FETCH baseline requests |                   32 |               1,600 | Current adapter verifies book identity before each page; excludes catch-up |
-| QRZ background rate equivalent       | 6 minutes 40 seconds |  5 hours 33 minutes | 24 global requests/five minutes, including STATUS + FETCH                  |
+| QRZ requests without STATUS reuse    |                   32 |               1,600 | One STATUS and one FETCH per data page                                     |
+| QRZ requests with full-page reuse    |                   24 |               1,200 | One STATUS and two FETCHes per eligible pair                               |
+| QRZ background rate with reuse       |            5 minutes |  4 hours 10 minutes | 24 global requests/five minutes, before terminal and catch-up checks       |
 | Current warm matching RPCs           |               23,600 |           1,180,000 | `118 * ceil(N / 20)` for both destinations                                 |
 | Proposed matching target RPCs        |                2,400 |             120,000 | `2 * 6 * ceil(N / 20)` for both destinations                               |
 | Added durable storage sensitivity    |             16–66 MB |        0.82–3.28 GB | Assumed 4–16 KiB/contact for new payload/index/dependency state            |
 
-QRZ baseline request capacity includes STATUS verification before each FETCH. This was observed in the cross-provider Worker test; the two baseline/catch-up FETCHes also require two STATUS calls. Safe verification reuse remains unimplemented. These quota equivalents do not measure elapsed initial-sync time.
+The reuse estimate assumes each pair of full data pages fits within the
+30-second evidence window. Terminal checks, budget delays and recovery
+can add requests. These figures express consumed quota. See the
+[captured and live QRZ trials](evidence-inventory-fresh-start.md#qrz-status-reuse).
 
 The target implies about 90% fewer matching-phase binding calls if full guarded adoption and ownership work fit the proposed boundary. It does not imply the same complete-scheduler reduction. In the isolated queue workload, substituting six planning calls for the current 120 would give `(66 + 6) / 20 = 3.6` RPCs/contact, still excluding source-proof setup, ingestion and maintenance. That is a design bound for that one-destination workload.
 

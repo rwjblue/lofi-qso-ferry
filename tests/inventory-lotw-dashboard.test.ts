@@ -100,7 +100,20 @@ test("the authenticated dashboard shows unambiguous native LoTW confirmations wi
       "UPDATE connections SET kind='lotw' WHERE tenant='b' AND id='destination'",
     )
     .run();
-  const env = fixtureEnvironment(f.db);
+  let comparisonSummary: string | undefined;
+  const dashboardDb = new Proxy(f.db, {
+    get(target, key) {
+      if (key === "prepare")
+        return (sql: string) => {
+          if (sql.includes("WITH valid AS MATERIALIZED"))
+            comparisonSummary = sql;
+          return target.prepare(sql);
+        };
+      const value = Reflect.get(target, key, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const env = fixtureEnvironment(dashboardDb);
   for (const tenant of ["a", "b"]) {
     await f.db.batch([
       f.db
@@ -160,6 +173,20 @@ test("the authenticated dashboard shows unambiguous native LoTW confirmations wi
     ],
   );
   assert.deepEqual((await dashboard("b")).activity, []);
+  assert.ok(comparisonSummary);
+  const plan = await f.db
+    .prepare(`EXPLAIN QUERY PLAN ${comparisonSummary}`)
+    .bind("b")
+    .all<{ detail: string }>();
+  const steps = plan.results.map(({ detail }) => detail);
+  assert.ok(
+    steps.some((detail) => /SEARCH w .*\(tenant=\?/.test(detail)),
+    steps.join("\n"),
+  );
+  assert.ok(
+    !steps.some((detail) => /^SCAN r(?: |$)/.test(detail)),
+    steps.join("\n"),
+  );
   assert.equal(
     await f.db.prepare("SELECT count(*) AS n FROM ledger").first("n"),
     0,

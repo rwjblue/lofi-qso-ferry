@@ -3,8 +3,7 @@ import { isAdmin } from "./admin-access.ts";
 import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
 import { connectionRoute } from "./connections.ts";
 import {
-  inventoryDashboardActivity,
-  inventoryDashboardSummary,
+  inventoryAccountDashboard,
   inventoryDashboardWindows,
 } from "./inventory-dashboard.ts";
 import { inventoryWriteStatus } from "./inventory-delivery-send.ts";
@@ -126,10 +125,9 @@ export default {
               : {}),
           };
         });
-        const [providers, windows, activity] = await Promise.all([
-          inventoryDashboardSummary(env.DB, identity.tenant),
+        const [{ providers, activity }, windows] = await Promise.all([
+          inventoryAccountDashboard(store, identity.tenant),
           inventoryDashboardWindows(env.DB, identity.tenant),
-          inventoryDashboardActivity(store, identity.tenant),
         ]);
         const passkeys = (
           await store

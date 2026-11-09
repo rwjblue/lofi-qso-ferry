@@ -6,7 +6,7 @@ import { serializeAdifRecord } from "../src/adif.ts";
 import { deliveryGates } from "../src/delivery-gates.ts";
 import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
 import { InventoryComparisonPages } from "../src/inventory-comparison-pages.ts";
-import { inventoryDashboardSummary } from "../src/inventory-dashboard.ts";
+import { inventoryAccountDashboard } from "../src/inventory-dashboard.ts";
 import {
   InventorySendQueue,
   isInventorySendWakeup,
@@ -581,12 +581,29 @@ test("managed delivery sends 100 LoTW members, recovers partial receipts, and ad
   }).send("a", pending, () => deliveryGates(env));
   assert.equal(narrowed.kind, "held");
   assert.equal(narrowedRequests, 0);
+  const dashboard = await inventoryAccountDashboard(store, "a");
   assert.equal(
-    (await inventoryDashboardSummary(db, "a"))
+    dashboard.providers
       .find(({ provider }) => provider === "qrz")
       ?.deliveries.find(({ reason }) => reason === "sync_scope_changed")?.count,
     19,
   );
+  assert.equal(dashboard.activity.length, 50);
+  const qrzActivity = dashboard.activity.filter(
+    ({ provider }) => provider === "qrz",
+  );
+  assert.equal(qrzActivity[0]?.state, "delivered");
+  assert.ok(
+    qrzActivity.slice(1).every(({ reason }) => reason === "sync_scope_changed"),
+  );
+  const lotwActivity = dashboard.activity.filter(
+    ({ provider }) => provider === "lotw",
+  );
+  assert.equal(
+    new Set(lotwActivity.map(({ qso }) => qso)).size,
+    lotwActivity.length,
+  );
+  assert.ok(lotwActivity.every(({ state }) => state === "observed"));
   assert.equal(
     await store
       .statement(

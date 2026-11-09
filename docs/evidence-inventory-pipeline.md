@@ -677,6 +677,20 @@ empty destination read 607,609 rows, down from 620,066. Both runs
 verified 1,000 current absences in 153 steps across 39 Queue deliveries,
 with 2,095 D1 calls, 4,190 statements and 77,150 writes.
 
+### Candidate membership admission
+
+[Migration 0125](../migrations/0125_inventory_match_candidate_probe_order.sql)
+seeks the admitted set, loads each probe once, then checks its tokens
+against the comparison index. Candidate membership remains exact for
+every probe. The guard checks both directions of set equality.
+
+The captured comparison replay reproduced the same 160 decisions
+and 1,657 reverse dependencies. D1 row reads fell from 123,166 to
+121,684 across the same 300 calls, 540 statements and 14,046 writes.
+The 1,000-contact empty-destination profile read 601,900 rows, down
+from 607,609, and verified all 1,000 current absences. It used the
+same 2,095 D1 calls, 4,190 statements and 39 Queue deliveries.
+
 ### Selected source projection snapshot
 
 The selected-record snapshot also admits its source projection bodies.

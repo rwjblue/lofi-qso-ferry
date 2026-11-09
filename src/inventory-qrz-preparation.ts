@@ -1,15 +1,15 @@
 import { parseAdif, serializeAdifRecord } from "./adif.ts";
 import { structuredContactAdif } from "./contact-adif.ts";
+import { destinationIdentityClaim } from "./identity-claims.ts";
+import { INVENTORY_QRZ_BATCH_LIMIT } from "./inventory-delivery-limits.ts";
+import { InventoryDeliveryWorkspace } from "./inventory-delivery-workspace.ts";
+import { inventoryJsonChunks } from "./inventory-ingestion.ts";
 import {
   decodeTemplate,
   type QrzConfig,
   routedQrz,
   templateContext,
-} from "./delivery.ts";
-import { destinationIdentityClaim } from "./identity-claims.ts";
-import { INVENTORY_QRZ_BATCH_LIMIT } from "./inventory-delivery-limits.ts";
-import { InventoryDeliveryWorkspace } from "./inventory-delivery-workspace.ts";
-import { inventoryJsonChunks } from "./inventory-ingestion.ts";
+} from "./qrz-delivery-input.ts";
 import { canonical, type Envelope, open, seal, sha256 } from "./security.ts";
 import type { Store } from "./store.ts";
 import { renderNarrative } from "./templates.ts";

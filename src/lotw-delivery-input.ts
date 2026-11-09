@@ -1,6 +1,9 @@
 import { countyAdif } from "./contact-adif.ts";
+import {
+  canonicalLotwIdentity,
+  lotwRemoteIdentity,
+} from "./destination-receipts.ts";
 import type { Contact } from "./projection.ts";
-import { canonicalLotwIdentity, lotwRemoteIdentity } from "./reconcile.ts";
 import { canonical, sha256 } from "./security.ts";
 import type { LotwContact, LotwStation, SigningCredential } from "./signing.ts";
 import type { LotwIdentityEvidence } from "./store.ts";

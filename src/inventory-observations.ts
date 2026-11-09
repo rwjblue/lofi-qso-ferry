@@ -1,13 +1,13 @@
 import type { AdifRecord } from "./adif.ts";
-import { historicalCandidates } from "./historical-matching.ts";
-import type { InventoryObservation } from "./inventory-ingestion.ts";
-import type { SourceRecord } from "./lofi.ts";
-import { isEventRecord, isSourceDeleted } from "./projection.ts";
 import {
   canonicalLotwIdentity,
   comparableRemote,
   lotwRemoteIdentity,
-} from "./reconcile.ts";
+} from "./destination-receipts.ts";
+import { historicalCandidates } from "./historical-matching.ts";
+import type { InventoryObservation } from "./inventory-ingestion.ts";
+import type { SourceRecord } from "./lofi.ts";
+import { isEventRecord, isSourceDeleted } from "./projection.ts";
 import { canonical, sha256 } from "./security.ts";
 
 export class InventoryObservationError extends Error {

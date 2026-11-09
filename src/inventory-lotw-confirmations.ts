@@ -1,4 +1,5 @@
 import type { AdifRecord } from "./adif.ts";
+import { canonicalLotwIdentity } from "./destination-receipts.ts";
 import {
   InventoryIngestion,
   type InventoryStream,
@@ -12,7 +13,6 @@ import {
   lotwConfirmationFilters,
   validLotwReceiveTime,
 } from "./lotw.ts";
-import { canonicalLotwIdentity } from "./reconcile.ts";
 import { canonical, open, seal, sha256 } from "./security.ts";
 import type { Store } from "./store.ts";
 import { vendorFetch } from "./vendor-requests.ts";

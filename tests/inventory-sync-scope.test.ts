@@ -330,6 +330,17 @@ test("forward scope skips remote history and distinguishes an old edit from a ne
       { record_key: "original", state: "excluded" },
     ],
   );
+  assert.deepEqual(
+    (
+      await db
+        .prepare(
+          "SELECT record_key FROM inventory_delivery_preparation_review WHERE tenant='a' AND destination=? ORDER BY record_key",
+        )
+        .bind(destination)
+        .all()
+    ).results,
+    [{ record_key: "new-backdated" }],
+  );
 
   // Month hints remain coarse, but the dated plan is clipped and a later
   // widening only schedules the newly eligible gap.

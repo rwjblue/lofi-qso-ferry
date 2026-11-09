@@ -531,10 +531,20 @@ cutoff on their first full scan. Older baselines keep their ordinary
 cadence until a full scan overlaps. The setting controls enrollment and
 rebinding. Enrolled streams retain their durable schedules.
 
+Account feeds and overlapping dated verifications use stable
+per-stream phases. With the default two-hour recurrence, an account's
+next poll is scheduled one to three hours after completion, then
+returns to the same phase when reads stay on cadence. Dated
+verification may run early to spread out work and honors the
+deadline set by the last full scan. Ordinary dated polling and
+stale-feed fallback keep their own cadence.
+
 At 100 opted-in accounts, the default two-hour recurrence would use
 1,200 reports/day. Weekly verification of fourteen months per account
 brings the estimate to 1,400 reports/day once all ranges overlap, before
-splits and recovery. Sustained capacity during enrollment and catch-up
+splits and recovery. A [100-account LoTW schedule check](evidence-inventory-fresh-start.md#lotw-recurrence-scale-check)
+exercises concentrated verification and a provider cooldown with the
+native quota SQL. Full hosted throughput during enrollment and catch-up
 remains unmeasured.
 
 The hosted scheduler enrolls unfiltered UTC month ranges from committed

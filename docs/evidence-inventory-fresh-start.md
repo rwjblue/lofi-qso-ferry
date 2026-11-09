@@ -542,3 +542,41 @@ final audit. The [backfill lookup profile](evidence-inventory-comparison.md#back
 isolates the preparation fix discovered during the replay. The live
 LoFi account-only resume still requires a current bearer for the same
 client.
+
+## LoTW recurrence scale check
+
+Completion-relative scheduling let cohorts remain concentrated in the
+same quota windows. Recurring account feeds and overlapping weekly
+verification now use a stable phase derived from each stream's identity.
+This keeps the scheduled account gap below one and a half poll periods.
+For dated coverage, the next full scan can be earlier than its existing
+deadline. An already-due deadline schedules verification immediately.
+
+A seven-day simulation modeled 100 account feeds and 1,400 dated
+streams. Prior completions were clustered in groups of eight per
+five-minute window, and one simulated HTTP 429 triggered a one-hour
+cooldown. Both arms used the production LoTW quota SQL, the same
+eight-request background cap, and oldest-due dispatch.
+
+| Seven-day result | Completion-relative | Stable phases |
+| --- | ---: | ---: |
+| Completed account reports | 7,976 | 8,381 |
+| Completed dated verifications | 1,400 | 1,400 |
+| Deferred attempts before transport | 45,944 | 646 |
+| Account gaps over four hours | 86 | 1 |
+| Longest account gap | 22 h 10 min | 4 h 38 s |
+| Busiest five-minute window, including denied attempts | 370 | 64 |
+
+The one long gap in the phase-aligned run occurred after the cooldown
+and would make the account feed stale. The simulation measured schedule
+and quota behavior. It excluded hosted Queue latency, the extra dated
+polls from stale-feed fallback, report bytes, range splits, and the
+source and delivery workloads.
+
+A separate native D1 fixture registered and ran 100 account selections
+through the inventory runner with empty LoTW reports. It used 13
+simulated quota windows and verified that the first attempted read after
+each full window deferred before transport. All 100 completed runs
+published positive-only coverage and a durable next wakeup. Their next
+wakeups spanned 24 five-minute buckets, with scheduled delays between
+about 62 and 180 minutes. The fixture made zero external requests.

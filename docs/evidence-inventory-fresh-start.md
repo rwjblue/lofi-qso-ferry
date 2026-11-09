@@ -216,6 +216,16 @@ the same cursor with half the page size, down to 32 records. Only a full,
 valid smaller page can save the new size and cursor. An incomplete
 smaller result supplies no evidence for finishing the selection.
 
+In a subsequent live full-book delta, invalid LOGIDs caused successful
+reductions from 250 to 125, 62 and 32 records. The write-locked copy
+accepted 1,094 observations in seven pages. After 22 requests, the run
+deferred at the next vendor window. We stopped that invocation there
+because a 32-record page would exceed its remaining request allowance
+before the end of the book. Reopening found the same cursor ready at 32,
+the previous committed checkpoint and full selection retained, unchanged
+source and credential envelopes, and zero delivery attempts. The live
+run still requires a successful terminal page.
+
 ### Full QRZ catch-up verification
 
 A full run can use the same covering scan when its `MODSINCE` catch-up

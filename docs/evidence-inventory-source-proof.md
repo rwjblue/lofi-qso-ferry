@@ -133,7 +133,39 @@ queue send and ignored an older work version. The focused suites
 passed 44 tests, and TypeScript, lint, formatting and the Worker
 dry-run build passed.
 
-The next stage binds this proof to destination preparation, exact
-routing and a current ownership review. Automatic cohort enrollment
-from delivery work, signed batches, upload recovery and expired proof
-collection remain open.
+## Destination preparation
+
+[Migration 0092](../migrations/0092_inventory_delivery_preparation_review.sql)
+binds a current review to the proof's exact projection and logical
+destination. The workspace reopens at most 64 accepted source bodies
+and checks the reconstructed contact against the approved projection
+and provider fingerprint. It shares the 4 MiB input budget between
+raw bodies and projections. A replacement destination review can
+settle while the source proof still has time left.
+
+[Migration 0093](../migrations/0093_inventory_qrz_preparation.sql)
+stages up to 20 individual QRZ INSERT artifacts in one transaction.
+It binds the current credential version, verified book identity, route,
+active template, ownership clock and exact review for each member.
+The artifact contains the serialized ADIF and its digest, with no API
+key. A committed preparation receipt recovers the original attempt IDs
+and bytes. Pending attempts reserve each source contact and outbound
+seconds identity within the logical book. Cancelling a stale unsent
+attempt releases the reservation and preserves the artifact.
+
+The native Worker fixture exercised a template change during commit,
+atomic rollback, restart-style receipt recovery, overlapping staging,
+and source, route, template and ownership invalidation. The live
+personal-log copy reopened one source contact against both provider
+reviews without another provider request. Each route opened 3,490
+encrypted bytes and 2,284 plaintext bytes. The review and body queries
+read 1,328 rows for QRZ and 1,405 for LoTW, excluding the initial proof
+lookup. The older copy used a credential-derived QRZ book alias. The
+canonical book guard held staging before any attempt was written.
+New managed trials seed the verified book ID. The original access and
+credential envelopes were unchanged.
+
+The next stage qualifies positive staging on a canonically linked
+personal-log copy and adds the fresh QRZ neighborhood check, durable
+dispatch admission and uncertain-attempt recovery. Automatic enrollment,
+LoTW signing and expired-proof collection remain open.

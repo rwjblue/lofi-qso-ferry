@@ -611,8 +611,11 @@ replay costs and native invalidation behavior.
 The [LoFi source proof trial](evidence-inventory-source-proof.md)
 qualifies durable witness collection, a canonical forward drain, and
 an expiring source proof shared by both destinations. The hosted worker
-resumes explicitly queued proof jobs. Destination preparation still
-needs to bind the current review and exact artifact to that proof.
+resumes explicitly queued proof jobs. The destination workspace binds
+the current review to the proof and reprojects its bounded source
+closure. Local QRZ preparation now reserves exact outbound identities
+and saves immutable INSERT artifacts with a native commit receipt.
+Hosted delivery enrollment and dispatch are separate work.
 
 Load source data, routing, credentials, templates, ownership and match results for a bounded cohort. Reuse the source-proof coordinator's shared collection and final canonical drain while retaining each member's original generation, proof identity and expiry. Stage immutable per-QSO attempts with the existing individually guarded cohort transaction.
 

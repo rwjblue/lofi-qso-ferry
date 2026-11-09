@@ -74,6 +74,36 @@ zero attempts, and decrypted a retained ownership sample. Another reopen
 verified the 8,502 current comparison results. Both performed zero
 provider requests.
 
+### Bounded adoption reads
+
+A statement profile replayed the same 2,917 pending QRZ adoptions on
+two private clones. The first drove only the adoption worker through
+migration 0105. The selected metadata query started at the destination
+match index and scanned unrelated results, reading 11,121,488 rows.
+The ownership-evidence admission trigger and adoption completion count
+also scanned retained rows for the tenant.
+
+The [metadata lookup](../src/inventory-associations.ts) now starts from
+the selected keys and checks the exact match version and proof. The
+[two guard indexes](../migrations/0106_inventory_adoption_guard_indexes.sql)
+support point reads for new evidence IDs and the current adoption page.
+Both replays used 211 positive adoption turns and produced identical
+logical mappings. Credential envelopes, checkpoints and current
+classification counts matched. Provider requests and upload attempts
+were zero.
+
+| Native adoption worker only | D1 calls | Statements |  Rows read | Rows written | Elapsed |
+| --------------------------- | -------: | ---------: | ---------: | -----------: | ------: |
+| Through 0105                |    3,799 |      5,276 | 14,816,048 |       56,900 |  36.8 s |
+| Through 0106                |    3,799 |      5,276 |  1,198,622 |       62,734 |  22.3 s |
+
+The selected metadata query read 14,585 rows after the change.
+The two indexes occupy 339,968 bytes with 2,957 retained mappings.
+They account for 5,834 additional index writes, two per new adoption.
+Both timings exclude enrollment, the coordinator's idle phases,
+and final audit. The profile leaves shared proof validation as the
+largest remaining read cost within each adoption turn.
+
 ## Storage census
 
 The replay increased D1's reported size from 275,439,616 to **285,364,224

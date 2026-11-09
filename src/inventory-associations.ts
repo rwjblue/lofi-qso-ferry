@@ -206,10 +206,13 @@ export class InventoryAssociations {
       .statement(
         `SELECT r.source_scope AS scope,r.record_key AS key,s.logical_identity AS source_identity,r.set_id AS match_set,r.version AS match_version,r.remote_key AS remote_record_key,
    src.current_projection_version AS source_projection_version,src.payload_id AS source_payload,remote.current_projection_version AS remote_projection_version,remote.payload_id AS remote_payload
-   FROM json_each(?1) j JOIN match_results r ON r.tenant=?2 AND r.destination=?3 AND r.source_scope=json_extract(j.value,'$.source_scope') AND r.record_key=json_extract(j.value,'$.record_key') AND r.version=json_extract(j.value,'$.version') AND r.set_id=json_extract(j.value,'$.set_id') AND r.state='matched_existing'
-   JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.source_scope AND s.provider='lofi'
-   JOIN inventory_match_records src ON src.tenant=r.tenant AND src.set_id=r.set_id AND src.scope_id=r.source_scope AND src.record_key=r.record_key AND src.facet='source'
-   JOIN inventory_match_records remote ON remote.tenant=r.tenant AND remote.set_id=r.set_id AND remote.scope_id=r.destination AND remote.record_key=r.remote_key AND remote.facet='receipt'`,
+   FROM json_each(?1) j CROSS JOIN match_results r CROSS JOIN inventory_scopes s
+   CROSS JOIN inventory_match_records src CROSS JOIN inventory_match_records remote
+   WHERE (r.tenant,r.destination,r.source_scope,r.record_key)=(?2,?3,json_extract(j.value,'$.source_scope'),json_extract(j.value,'$.record_key'))
+   AND (r.version,r.set_id,r.state)=(json_extract(j.value,'$.version'),json_extract(j.value,'$.set_id'),'matched_existing')
+   AND (s.tenant,s.scope_id,s.provider)=(r.tenant,r.source_scope,'lofi')
+   AND (src.tenant,src.set_id,src.scope_id,src.record_key,src.facet)=(r.tenant,r.set_id,r.source_scope,r.record_key,'source')
+   AND (remote.tenant,remote.set_id,remote.scope_id,remote.record_key,remote.facet)=(r.tenant,r.set_id,r.destination,r.remote_key,'receipt')`,
         canonical(matches),
         tenant,
         destination,

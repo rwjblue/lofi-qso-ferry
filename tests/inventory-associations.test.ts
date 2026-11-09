@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { measureD1 } from "../scripts/inventory-benchmark-metrics.ts";
 import type { AdifRecord } from "../src/adif.ts";
 import {
   InventoryAssociations,
@@ -10,13 +11,14 @@ import { InventoryMatchingResults } from "../src/inventory-matching-results.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
 import { canonical, sha256 } from "../src/security.ts";
 import { Store } from "../src/store.ts";
-import { keys, seed } from "./helpers.ts";
+import { database, keys, seed } from "./helpers.ts";
 import { observation } from "./inventory-context-fixtures.ts";
 import {
   matchingFixture,
   receipt,
   sourceContact,
 } from "./inventory-matching-fixtures.ts";
+import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
 async function ready(options: Parameters<typeof matchingFixture>[0] = {}) {
   const f = await matchingFixture(options);
@@ -33,6 +35,65 @@ async function ready(options: Parameters<typeof matchingFixture>[0] = {}) {
     ownership: new InventoryOwnership(f.store),
   };
 }
+
+test("adoption reads stay bounded as unrelated matches and publication history accumulate", async (t) => {
+  const runtime = await database();
+  try {
+    await applyAdditionalMigrations(runtime.db);
+    const f = await matchingFixture(
+      {
+        sources: Array.from({ length: 123 }, (_, i) =>
+          sourceContact(`q${i}`, "13:00:00", `W${i}AW`),
+        ),
+        receipts: Array.from({ length: 123 }, (_, i) =>
+          receipt(String(i + 1), "130000", `W${i}AW`),
+        ),
+      },
+      runtime,
+      "current",
+    );
+    const matching = new InventoryMatchingResults(f.store);
+    const associations = new InventoryAssociations(f.store);
+    const selected = f.sources.map(({ key }) => ({ scope: "source", key }));
+    for (const row of selected.slice(0, 3))
+      await matching.match("a", "destination", [row]);
+    assert.equal(
+      (await associations.adopt("a", "destination", selected.slice(0, 1)))
+        .records,
+      1,
+    );
+    const readCost = async (index: number) => {
+      const reads: number[] = [];
+      const meter = measureD1(f.db, (row) => reads.push(row.meta.rows_read));
+      const publisher = new InventoryAssociations(
+        new Store(meter.database, f.store.keys),
+      );
+      const result = await publisher.adopt(
+        "a",
+        "destination",
+        selected.slice(index, index + 1),
+      );
+      assert.equal(result.records, 1);
+      return { total: meter.totals.rowsRead, reads };
+    };
+    const early = await readCost(1);
+    for (let offset = 3; offset < selected.length; offset += 20) {
+      const cohort = selected.slice(offset, offset + 20);
+      await matching.match("a", "destination", cohort);
+      assert.equal(
+        (await associations.adopt("a", "destination", cohort)).records,
+        20,
+      );
+    }
+    const late = await readCost(2);
+    assert.ok(late.total <= early.total + 40, JSON.stringify({ early, late }));
+    t.diagnostic(
+      `native adoption reads before/after 120 unrelated matches and associations: ${early.total}/${late.total}`,
+    );
+  } finally {
+    await runtime.mf.dispose();
+  }
+});
 
 test("twenty matched records become immutable historical associations in one native cohort", async (t) => {
   const f = await ready({

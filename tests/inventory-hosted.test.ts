@@ -8,6 +8,10 @@ import {
   runHostedScheduled,
 } from "../src/inventory-hosted.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
+import {
+  lofiPollSlot,
+  lofiRecurringDueAt,
+} from "../src/inventory-lofi-schedule.ts";
 import { lotwRecurringDueAt } from "../src/inventory-lotw-schedule.ts";
 import {
   inventoryRunQuery,
@@ -103,23 +107,25 @@ async function fixture(t: TestContext) {
     INVENTORY_RUNTIME_MODE: "read_only",
     INVENTORY_QUEUE: queue,
   };
-  async function due(runId: string) {
+  async function due(runId: string, tenant = "a") {
     const runs = new InventoryRuns(new InventoryIngestion(f.store));
-    const run = await runs.load("a", runId);
+    const run = await runs.load(tenant, runId);
     assert.ok(run);
     await f.store
       .statement(
-        "UPDATE inventory_stream_jobs SET work_version=work_version+1,next_due_at=? WHERE tenant='a' AND scope_id=? AND stream_id=?",
+        "UPDATE inventory_stream_jobs SET work_version=work_version+1,next_due_at=? WHERE tenant=? AND scope_id=? AND stream_id=?",
         Date.now() - 1,
+        tenant,
         run.scope,
         run.streamId,
       )
       .run();
-    const current = await runs.load("a", runId);
+    const current = await runs.load(tenant, runId);
     assert.ok(current);
     await f.store
       .statement(
-        "INSERT INTO inventory_wakeups(tenant,wakeup_id,scope_id,stream_id,run_id,work_version,not_before) VALUES('a',?,?,?,?,?,?)",
+        "INSERT INTO inventory_wakeups(tenant,wakeup_id,scope_id,stream_id,run_id,work_version,not_before) VALUES(?,?,?,?,?,?,?)",
+        tenant,
         crypto.randomUUID(),
         current.scope,
         current.streamId,
@@ -130,7 +136,7 @@ async function fixture(t: TestContext) {
       .run();
     return {
       version: 1 as const,
-      tenant: "a",
+      tenant,
       scope: current.scope,
       stream: current.streamId,
       run: runId,
@@ -468,6 +474,121 @@ test("a malformed first account cannot starve the bounded registration roster", 
   assert.deepEqual(
     await registerKnownInventoryConnections(f.store, runtime, 1),
     { registered: 1, failed: 0 },
+  );
+});
+
+test("LoFi recurrence slots only established links and respects server check periods", async (t) => {
+  const slots = Array.from({ length: 100 }, (_, position) =>
+    lofiPollSlot(0, 100, position),
+  );
+  assert.equal(new Set(slots).size, 100);
+  const windows = new Map<number, number>();
+  for (const slot of slots) {
+    const window = Math.floor(slot / 300_000);
+    windows.set(window, (windows.get(window) ?? 0) + 1);
+  }
+  assert.equal(windows.size, 34);
+  assert.equal(Math.max(...windows.values()), 3);
+
+  const f = await fixture(t);
+  for (const tenant of ["b", "c", "d"]) {
+    await f.db.batch([
+      f.store.statement(
+        "INSERT INTO accounts(id,email,user_handle,verified_at) VALUES(?,?,?,1)",
+        tenant,
+        `${tenant}@example.test`,
+        tenant,
+      ),
+      f.store.statement(
+        `INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at,config)
+         VALUES(?,'source','lofi',?,'Fixture','active','v1',1,?)`,
+        tenant,
+        tenant,
+        JSON.stringify({ accountId: tenant }),
+      ),
+      await f.store.putPrivate(tenant, "source", "v1", "credential", {
+        key: `browser:${tenant}`,
+        secret: "fixture-secret",
+        token: "fixture-token",
+      }),
+    ]);
+  }
+  await runHostedScheduled(f.env);
+  const sources = (
+    await f.db
+      .prepare(
+        `SELECT j.tenant,j.scope_id AS scope,j.stream_id AS streamId,j.active_run_id AS runId,s.logical_identity
+         FROM inventory_stream_jobs j JOIN inventory_scopes s USING(tenant,scope_id)
+         WHERE s.provider='lofi' ORDER BY j.tenant`,
+      )
+      .all<{
+        tenant: string;
+        scope: string;
+        streamId: string;
+        runId: string;
+        logical_identity: string;
+      }>()
+  ).results;
+  assert.equal(sources.length, 4);
+  const runs = new InventoryRuns(new InventoryIngestion(f.store));
+  for (const [position, source] of sources.entries()) {
+    const checkPeriod = position === 3 ? 900_000 : 300_000;
+    const runner = new InventoryRunner(
+      runs,
+      async () =>
+        Response.json({
+          account: { uuid: source.logical_identity },
+          operations: [],
+          qsos: [],
+          meta: {
+            operations: { records_left: 0 },
+            qsos: { records_left: 0 },
+            suggestedSyncCheckPeriod: checkPeriod,
+          },
+        }),
+      { scheduled: true },
+    );
+    for (let turn = 0; turn < 6; turn++) {
+      const run = await runs.load(source.tenant, source.runId);
+      assert.ok(run);
+      if (run.phase === "complete") break;
+      if (run.phase === "collecting" || run.phase === "catchup") {
+        // Advance the pacer only in this synthetic native fixture.
+        await f.store
+          .statement(
+            "DELETE FROM inventory_read_pacing WHERE tenant='' OR tenant=?",
+            source.tenant,
+          )
+          .run();
+      }
+      await runner.step(await f.due(source.runId, source.tenant));
+    }
+    const completed = await f.store
+      .statement(
+        `SELECT r.completed_at,j.next_due_at FROM inventory_runs r
+         JOIN inventory_stream_jobs j USING(tenant,scope_id,stream_id)
+         WHERE (r.tenant,r.run_id)=(?,?) AND r.phase='complete'`,
+        source.tenant,
+        source.runId,
+      )
+      .first<{ completed_at: number; next_due_at: number }>();
+    assert.ok(completed);
+    const delay = completed.next_due_at - completed.completed_at;
+    assert.ok(delay >= checkPeriod - 1000);
+    if (position < 3) assert.ok(delay <= checkPeriod);
+    else {
+      assert.equal(completed.next_due_at % 600_000, lofiPollSlot(0, 4, 3));
+      assert.ok(delay < checkPeriod + 600_000);
+    }
+  }
+
+  await f.db
+    .prepare("UPDATE connections SET status='disabled' WHERE tenant='b'")
+    .run();
+  const earliest = Date.now() + 300_000;
+  assert.equal(
+    await lofiRecurringDueAt(f.store, sources[0], earliest),
+    earliest,
   );
 });
 

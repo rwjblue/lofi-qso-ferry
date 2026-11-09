@@ -12,6 +12,7 @@ import {
   InventoryIngestionError,
   type InventoryReceipt,
 } from "./inventory-ingestion.ts";
+import { lofiRecurringDueAt } from "./inventory-lofi-schedule.ts";
 import { lotwRecurringDueAt } from "./inventory-lotw-schedule.ts";
 import {
   inventoryReadAdmission,
@@ -220,7 +221,9 @@ export class InventoryRunner {
             pacing?.checkPeriodMs ?? 0,
             qrzCoveredMultiplePages ? QRZ_COVERING_POLL_MS : 0,
           );
-        if (
+        if (query.provider === "lofi" && schedule) {
+          next = await lofiRecurringDueAt(store, context.run, next);
+        } else if (
           query.provider === "lotw" &&
           schedule &&
           ("kind" in query.query || schedule.verify_only)

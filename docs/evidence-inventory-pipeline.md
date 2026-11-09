@@ -227,14 +227,21 @@ all runs published 1,000 current absence classifications and retained
 50 match sets. These counters cover classification after source
 coverage.
 
-| Coordinator lease use            | Queue deliveries | D1 calls | SQL statements | Rows read | Rows written |
+| Classification path              | Queue deliveries | D1 calls | SQL statements | Rows read | Rows written |
 | -------------------------------- | ---------------: | -------: | -------------: | --------: | -----------: |
 | Separate idle and matching turns |              254 |    5,317 |          6,467 |   664,022 |       78,010 |
 | Matching after an idle sweep     |              153 |    4,408 |          5,558 |   658,862 |       77,606 |
 | Shared lease and control read    |              153 |    4,102 |          5,252 |   659,578 |       77,606 |
+| Combined projection selection    |              153 |    4,052 |          5,202 |   659,146 |       77,606 |
 
 The runs had different concurrent local workloads. The measurements
 compare database and Queue work.
+
+The projection selector now chooses the due scope and its page in
+one query. An SQLite plan from the large benchmark used the ordered
+pending-work index for the 20-contact page. The sort covered one
+head per eligible scope. Native tests also verified that retained
+retired and disabled work did not increase selector reads.
 
 ## Recovery and boundedness
 

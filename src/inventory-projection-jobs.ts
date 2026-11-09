@@ -244,32 +244,30 @@ SELECT j.* FROM heads h CROSS JOIN inventory_projection_jobs j WHERE j.rowid=h.h
   async projectNext(tenant: string) {
     if (!identifier(tenant))
       throw new Error("invalid_inventory_projection_tenant");
-    const first = await this.store
+    // The scope tuple lets the outer query stop at the ordered index limit.
+    const rows = await this.store
       .statement(
         `WITH live AS MATERIALIZED(SELECT * FROM inventory_comparison_ready_builds WHERE tenant=?1),
 heads AS MATERIALIZED(SELECT s.*,(SELECT w.rowid FROM comparison_work w INDEXED BY comparison_work_pending_scope WHERE w.tenant=s.tenant AND w.generation_id=s.generation_id AND w.scope_id=s.scope_id AND w.facet=CASE s.provider WHEN 'lofi' THEN 'source' ELSE 'receipt' END AND w.completed_version<w.work_version AND w.due_at<=?2 ORDER BY w.due_at,w.record_key,w.facet LIMIT 1) AS head FROM live s)
-SELECT w.generation_id,w.scope_id,w.facet FROM heads h CROSS JOIN comparison_work w WHERE w.rowid=h.head ORDER BY w.due_at,w.generation_id,w.scope_id,w.record_key,w.facet LIMIT 1`,
+SELECT w.generation_id,w.scope_id,w.record_key
+FROM comparison_work w INDEXED BY comparison_work_pending_scope
+WHERE (w.tenant,w.generation_id,w.scope_id,w.facet)=(
+  SELECT h.tenant,p.generation_id,p.scope_id,p.facet FROM heads h CROSS JOIN comparison_work p WHERE p.rowid=h.head
+  ORDER BY p.due_at,p.generation_id,p.scope_id,p.record_key,p.facet LIMIT 1
+) AND w.completed_version<w.work_version AND w.due_at<=?2
+ORDER BY w.due_at,w.record_key,w.facet LIMIT 20`,
         tenant,
         Date.now(),
       )
-      .first<{
+      .all<{
         generation_id: string;
         scope_id: string;
-        facet: "source" | "receipt";
+        record_key: string;
       }>();
+    const first = rows.results[0];
     if (!first) return { kind: "idle" as const };
-    const rows = await this.store
-      .statement(
-        "SELECT record_key FROM comparison_work INDEXED BY comparison_work_pending_scope WHERE tenant=? AND generation_id=? AND scope_id=? AND facet=? AND completed_version<work_version AND due_at<=? ORDER BY due_at,record_key,facet LIMIT 20",
-        tenant,
-        first.generation_id,
-        first.scope_id,
-        first.facet,
-        Date.now(),
-      )
-      .all<{ record_key: string }>();
     let selected = rows.results.map((row) => row.record_key);
-    while (selected.length) {
+    for (;;) {
       try {
         const result = await new InventoryProjections(this.store).project(
           tenant,
@@ -290,6 +288,5 @@ SELECT w.generation_id,w.scope_id,w.facet FROM heads h CROSS JOIN comparison_wor
         selected = selected.slice(0, Math.ceil(selected.length / 2));
       }
     }
-    return { kind: "idle" as const };
   }
 }

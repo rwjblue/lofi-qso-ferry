@@ -12,11 +12,11 @@ function meteredStore(f: Awaited<ReturnType<typeof activationFixture>>) {
   store.statement = (sql, ...parameters) =>
     new Proxy(statement(sql, ...parameters), {
       get(target, property) {
-        if (property === "first")
+        if (property === "first" || property === "all")
           return async () => {
             const result = await target.all();
             read += result.meta.rows_read;
-            return result.results[0] ?? null;
+            return property === "first" ? (result.results[0] ?? null) : result;
           };
         const value = Reflect.get(target, property);
         return typeof value === "function" ? value.bind(target) : value;

@@ -303,14 +303,15 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
         pageId = "setId" in result ? result.setId : undefined;
         break;
       }
-      const retry = await this.store
-        .statement(
-          `WITH routes AS MATERIALIZED(SELECT * FROM inventory_matching_coverage_live_routes WHERE tenant=?1),heads AS MATERIALIZED(SELECT (SELECT w.due_at FROM matching_work w INDEXED BY matching_work_scope_pending WHERE w.tenant=r.tenant AND w.generation_id=r.generation_id AND w.destination=r.destination AND w.source_scope=r.source_scope AND w.source_config_version=r.source_config_version AND w.destination_config_version=r.destination_config_version AND w.completed_version<w.work_version ORDER BY w.due_at,w.record_key LIMIT 1) AS due_at${adoption ? ",(SELECT w.due_at FROM inventory_adoption_work w INDEXED BY inventory_adoption_work_due WHERE w.tenant=r.tenant AND w.generation_id=r.generation_id AND w.destination=r.destination AND w.source_scope=r.source_scope AND w.source_config_version=r.source_config_version AND w.destination_config_version=r.destination_config_version ORDER BY w.due_at,w.record_key LIMIT 1) AS adoption_due" : ""} FROM routes r) SELECT coalesce(min(due_at),0) AS due_at FROM (SELECT due_at FROM heads${adoption ? " UNION ALL SELECT adoption_due FROM heads" : ""})`,
-          tenant,
-        )
-        .first<{ due_at: number }>();
-      nextDueAt = retry?.due_at ?? 0;
-      const reviewDueAt = review ? await review.nextDueAt(tenant) : 0;
+      const retry = this.store.statement(
+        `WITH routes AS MATERIALIZED(SELECT * FROM inventory_matching_coverage_live_routes WHERE tenant=?1),heads AS MATERIALIZED(SELECT (SELECT w.due_at FROM matching_work w INDEXED BY matching_work_scope_pending WHERE w.tenant=r.tenant AND w.generation_id=r.generation_id AND w.destination=r.destination AND w.source_scope=r.source_scope AND w.source_config_version=r.source_config_version AND w.destination_config_version=r.destination_config_version AND w.completed_version<w.work_version ORDER BY w.due_at,w.record_key LIMIT 1) AS due_at${adoption ? ",(SELECT w.due_at FROM inventory_adoption_work w INDEXED BY inventory_adoption_work_due WHERE w.tenant=r.tenant AND w.generation_id=r.generation_id AND w.destination=r.destination AND w.source_scope=r.source_scope AND w.source_config_version=r.source_config_version AND w.destination_config_version=r.destination_config_version ORDER BY w.due_at,w.record_key LIMIT 1) AS adoption_due" : ""} FROM routes r) SELECT coalesce(min(due_at),0) AS due_at FROM (SELECT due_at FROM heads${adoption ? " UNION ALL SELECT adoption_due FROM heads" : ""})`,
+        tenant,
+      );
+      const [matchRetry, reviewRetry] = await this.store.db.batch<{
+        due_at: number | null;
+      }>([retry, ...(review ? [review.dueStatement(tenant)] : [])]);
+      nextDueAt = matchRetry.results[0]?.due_at ?? 0;
+      const reviewDueAt = reviewRetry?.results[0]?.due_at ?? 0;
       if (reviewDueAt)
         nextDueAt = Math.min(nextDueAt || reviewDueAt, reviewDueAt);
     } else if (

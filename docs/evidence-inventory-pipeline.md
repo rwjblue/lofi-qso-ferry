@@ -677,6 +677,19 @@ down from 2,347. The matched profile used 3,328, down from 3,378.
 Both retained their classifications, statement counts and Queue delivery
 counts.
 
+### Comparison retry deadlines
+
+The coordinator reads the matching and adoption deadline and the
+delivery review deadline in one D1 batch. The earliest live deadline
+still determines the next wakeup.
+
+On private copies of the captured personal log through migration 0123,
+both versions recomputed the same 160 QRZ and LoTW decisions in 17
+matching turns. Binding calls fell from 333 to 316. Both runs executed
+548 SQL statements, read 126,370 rows and wrote 14,046. The selected
+remote receipts, historical associations, coverage and credentials
+agreed. The copies made zero vendor requests and uploads.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

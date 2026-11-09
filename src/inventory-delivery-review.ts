@@ -73,17 +73,14 @@ const reviewHeads = `WITH routes AS MATERIALIZED(
 export class InventoryDeliveryReview {
   constructor(readonly store: Store) {}
 
-  async nextDueAt(tenant: string) {
-    const row = await this.store
-      .statement(
-        `${reviewHeads}
+  dueStatement(tenant: string) {
+    return this.store.statement(
+      `${reviewHeads}
          SELECT min(CASE WHEN h.changed IS NOT NULL THEN min(coalesce(w.due_at,?2),?2) ELSE w.due_at END) AS due_at
          FROM heads h LEFT JOIN inventory_delivery_review w ON w.rowid=h.scheduled`,
-        tenant,
-        Date.now(),
-      )
-      .first<{ due_at: number | null }>();
-    return row?.due_at ?? 0;
+      tenant,
+      Date.now(),
+    );
   }
 
   async step(tenant: string) {

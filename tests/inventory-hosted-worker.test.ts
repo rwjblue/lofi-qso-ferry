@@ -7,6 +7,7 @@ import { serializeAdifRecord } from "../src/adif.ts";
 import { InventoryDeliveryWorkspace } from "../src/inventory-delivery-workspace.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
+import { InventoryQrzNeighborhood } from "../src/inventory-qrz-neighborhood.ts";
 import { InventoryQrzPreparation } from "../src/inventory-qrz-preparation.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
@@ -677,6 +678,91 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   );
   await db.prepare("DROP TRIGGER fixture_qrz_source_check").run();
   assert.equal(await qrz.current("a", attempt.attempt_id), true);
+  let freshReads = 0;
+  let neighborhoodMode: "race" | "empty" | "candidate" = "race";
+  const neighborhood = new InventoryQrzNeighborhood(
+    store,
+    async (input, init) => {
+      assert.equal(String(input), "https://logbook.qrz.com/api");
+      assert.equal(init?.method, "POST");
+      const form = init?.body;
+      assert.ok(form instanceof URLSearchParams);
+      assert.equal(form.get("ACTION"), "FETCH");
+      assert.match(form.get("OPTION") ?? "", /CALL:W2AW/);
+      freshReads++;
+      if (neighborhoodMode === "race")
+        await db.prepare("UPDATE active_templates SET version='changed'").run();
+      if (neighborhoodMode === "candidate")
+        return new Response(
+          `RESULT=OK&COUNT=1&ADIF=${serializeAdifRecord({
+            ...artifact.record,
+            APP_QRZLOG_LOGID: "2",
+          })}`,
+        );
+      return new Response("RESULT=OK&COUNT=0&ADIF=");
+    },
+  );
+  const deliveryLease = await neighborhood.acquire("a", attempt.attempt_id);
+  assert.ok(deliveryLease);
+  assert.equal(await neighborhood.acquire("a", attempt.attempt_id), null);
+  assert.deepEqual(
+    await neighborhood.observe(attempt.attempt_id, deliveryLease),
+    {
+      kind: "held",
+      reason: "attempt_stale",
+    },
+  );
+  assert.equal(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_qrz_neighborhood_observations",
+      )
+      .first("n"),
+    0,
+  );
+  await db.prepare("UPDATE active_templates SET version='original'").run();
+  neighborhoodMode = "candidate";
+  const duplicate = await neighborhood.observe(
+    attempt.attempt_id,
+    deliveryLease,
+  );
+  if (duplicate.kind !== "observed") assert.fail(JSON.stringify(duplicate));
+  assert.equal(duplicate.candidateCount, 1);
+  neighborhoodMode = "empty";
+  const empty = await neighborhood.observe(attempt.attempt_id, deliveryLease);
+  if (empty.kind !== "observed") assert.fail(JSON.stringify(empty));
+  assert.equal(empty.candidateCount, 0);
+  assert.equal(
+    await db
+      .prepare(
+        "SELECT candidate_count FROM inventory_qrz_neighborhood_current WHERE observation_id=?",
+      )
+      .bind(empty.id)
+      .first("candidate_count"),
+    0,
+  );
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM inventory_qrz_neighborhood_current")
+      .first("n"),
+    1,
+  );
+  assert.equal(freshReads, 3);
+  await store.release(deliveryLease);
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM inventory_qrz_neighborhood_current")
+      .first("n"),
+    0,
+  );
+  assert.deepEqual(
+    await neighborhood.observe(attempt.attempt_id, deliveryLease),
+    {
+      kind: "held",
+      reason: "attempt_stale",
+    },
+  );
+  assert.equal(freshReads, 3);
   assert.deepEqual(
     await db
       .prepare(

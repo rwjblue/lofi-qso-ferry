@@ -1,0 +1,512 @@
+{
+  "version": 1,
+  "kind": "inventory-automatic-adoption-qualification",
+  "adoptionReplay": {
+    "version": 1,
+    "schemaThrough": 79,
+    "kind": "offline-managed-historical-adoption-replay",
+    "original": {
+      "associations": 40,
+      "evidence": 40,
+      "attempts": 0,
+      "matched": 2957
+    },
+    "final": {
+      "associations": 2957,
+      "evidence": 2957,
+      "attempts": 0,
+      "matched": 2957
+    },
+    "pending": [],
+    "enrollment": {
+      "pages": 15,
+      "records": 2917,
+      "database": {
+        "calls": 31,
+        "statements": 46,
+        "metadataStatements": 46,
+        "rowsRead": 79133,
+        "rowsWritten": 11728,
+        "sqlMs": 14629
+      },
+      "elapsedMs": 14954
+    },
+    "coordination": {
+      "turns": 2332,
+      "positive": 211,
+      "adopted": 2917,
+      "sizes": {
+        "7": 1,
+        "8": 2,
+        "9": 5,
+        "10": 3,
+        "11": 19,
+        "12": 25,
+        "13": 34,
+        "14": 34,
+        "15": 38,
+        "16": 33,
+        "17": 13,
+        "18": 3,
+        "19": 1
+      },
+      "database": {
+        "calls": 22350,
+        "statements": 23827,
+        "metadataStatements": 23827,
+        "rowsRead": 41550790,
+        "rowsWritten": 67366,
+        "sqlMs": 26208
+      },
+      "positiveTurnDatabase": {
+        "calls": 5592,
+        "statements": 7069,
+        "metadataStatements": 7069,
+        "rowsRead": 41422583,
+        "rowsWritten": 52542,
+        "sqlMs": 25679
+      },
+      "elapsedMs": 119196,
+      "stop": "quiescent"
+    },
+    "bytesBefore": 275439616,
+    "bytesAfter": 285364224,
+    "canonicalUnchanged": true,
+    "originalCaptureUnchanged": true,
+    "credentialEnvelopesUnchanged": true,
+    "originalAccessUnchanged": true,
+    "previousAssociationsUnchanged": true,
+    "currentClassificationsUnchanged": true,
+    "sampleDecrypted": true,
+    "requests": 0,
+    "uploads": 0,
+    "hostedQueueExcluded": true,
+    "execution": "node_with_native_d1"
+  },
+  "freshReopen": {
+    "state": "reopened",
+    "associations": 2957,
+    "evidence": 2957,
+    "pending": 0,
+    "attempts": 0,
+    "ownershipSampleDecrypted": true,
+    "calendar": {
+      "readySourceContacts": 4243,
+      "sourceContactMonths": 14,
+      "monthsIncludingTolerance": 14,
+      "monthsInContiguousRange": 14,
+      "largestContactMonth": 691,
+      "contactsInTopThreeMonths": 1821
+    },
+    "originalAccessUnchanged": true,
+    "requests": 0,
+    "uploads": 0
+  },
+  "storageCensus": {
+    "sqliteAllocatedBytes": 285364224,
+    "freeBytes": 0,
+    "usedBytes": 285364224,
+    "largest": [
+      {
+        "name": "inventory_matching_bucket_dependents",
+        "bytes": 49098752,
+        "indexBytes": 33140736
+      },
+      {
+        "name": "inventory_match_tokens",
+        "bytes": 41889792,
+        "indexBytes": 22261760
+      },
+      {
+        "name": "inventory_payloads",
+        "bytes": 21098496,
+        "indexBytes": 1032192
+      },
+      {
+        "name": "inventory_matching_coverage_dependents",
+        "bytes": 18300928,
+        "indexBytes": 12754944
+      },
+      {
+        "name": "inventory_match_recovery",
+        "bytes": 17256448,
+        "indexBytes": 2412544
+      },
+      {
+        "name": "inventory_match_records",
+        "bytes": 12271616,
+        "indexBytes": 4358144
+      },
+      {
+        "name": "comparison_projection_payloads",
+        "bytes": 11317248,
+        "indexBytes": 1183744
+      },
+      {
+        "name": "inventory_match_probes",
+        "bytes": 10608640,
+        "indexBytes": 6254592
+      },
+      {
+        "name": "inventory_matching_selected_dependents",
+        "bytes": 9940992,
+        "indexBytes": 7585792
+      },
+      {
+        "name": "comparison_index",
+        "bytes": 8810496,
+        "indexBytes": 6496256
+      },
+      {
+        "name": "inventory_match_work_rows",
+        "bytes": 7483392,
+        "indexBytes": 3117056
+      },
+      {
+        "name": "inventory_match_rows",
+        "bytes": 7356416,
+        "indexBytes": 3117056
+      }
+    ],
+    "groups": [
+      {
+        "category": "comparison_work_indexes_results",
+        "bytes": 110702592
+      },
+      {
+        "category": "match_proofs",
+        "bytes": 103096320
+      },
+      {
+        "category": "inventory_projection_payloads",
+        "bytes": 32415744
+      },
+      {
+        "category": "other",
+        "bytes": 29032448
+      },
+      {
+        "category": "historical_associations",
+        "bytes": 10117120
+      }
+    ],
+    "proofCounts": {
+      "retainedSets": 974,
+      "setsWithCurrentWorkOrAssociationPins": 437,
+      "outsideMeasuredPinsAndPastSevenDays": 0
+    },
+    "privateEntries": 19,
+    "groupOrWorldAccessible": 0
+  },
+  "wideLoTwDiagnostic": {
+    "kind": "bounded-wide-lotw-diagnostic",
+    "complete": false,
+    "reason": "body_unavailable",
+    "status": 200,
+    "records": null,
+    "bytesCaptured": 0,
+    "byteLimit": 2097152,
+    "years": null,
+    "reportDatesInScope": null,
+    "receiveHeaderMatchesFirst": null,
+    "requests": 1,
+    "responseBytes": 557042,
+    "elapsedMs": 30612,
+    "coveragePublished": false,
+    "uploads": 0
+  },
+  "nativeLoTwMonth": {
+    "version": 1,
+    "kind": "native-lotw-calendar-selection-trial",
+    "days": 31,
+    "scope": "one_month_unfiltered_station_and_worked",
+    "phase": "complete",
+    "coverage": {
+      "state": "ready",
+      "published": 1
+    },
+    "acceptedMembership": 9,
+    "enrollment": {
+      "calls": 20,
+      "statements": 39,
+      "metadataStatements": 39,
+      "rowsRead": 183,
+      "rowsWritten": 40,
+      "sqlMs": 209
+    },
+    "read": {
+      "turns": 4,
+      "elapsedMs": 1647,
+      "database": {
+        "calls": 50,
+        "statements": 136,
+        "metadataStatements": 136,
+        "rowsRead": 1541,
+        "rowsWritten": 413,
+        "sqlMs": 136
+      },
+      "requests": {
+        "requests": 1,
+        "byProvider": {
+          "lofi": 0,
+          "qrz": 0,
+          "lotw": 1
+        },
+        "responseBytes": 5304
+      }
+    },
+    "before": {
+      "records": 2,
+      "qrzHistorical": 2957,
+      "lotwHistorical": 0,
+      "attempts": 0
+    },
+    "afterRead": {
+      "records": 9,
+      "qrzHistorical": 2957,
+      "lotwHistorical": 0,
+      "attempts": 0
+    },
+    "accountWideCoverage": false,
+    "uploads": 0,
+    "final": {
+      "records": 9,
+      "qrzHistorical": 2957,
+      "lotwHistorical": 0,
+      "attempts": 0
+    },
+    "results": [
+      {
+        "provider": "lotw",
+        "state": "excluded",
+        "reason": null,
+        "records": 5
+      },
+      {
+        "provider": "lotw",
+        "state": "incomplete",
+        "reason": "forward_incomplete",
+        "records": 4243
+      },
+      {
+        "provider": "lotw",
+        "state": "incomplete",
+        "reason": "source_unavailable",
+        "records": 3
+      }
+    ],
+    "comparison": {
+      "turns": 20,
+      "stop": "quiescent",
+      "elapsedMs": 4988,
+      "database": {
+        "calls": 176,
+        "statements": 187,
+        "metadataStatements": 187,
+        "rowsRead": 2596,
+        "rowsWritten": 233,
+        "sqlMs": 134
+      }
+    },
+    "credentialEnvelopesUnchanged": true,
+    "originalAccessUnchanged": true,
+    "databaseBytes": 285433856,
+    "hostedQueueExcluded": true
+  },
+  "sourceCalendarTrial": {
+    "kind": "native-source-calendar-lotw-trial",
+    "sourceContacts": 4243,
+    "months": 14,
+    "previousReadsReserved": 2,
+    "read": {
+      "stop": "settled",
+      "turns": 78,
+      "elapsedMs": 237095,
+      "phases": [
+        {
+          "phase": "complete",
+          "reason": null,
+          "coverage": "ready",
+          "published": 1,
+          "selections": 14
+        }
+      ],
+      "database": {
+        "calls": 1054,
+        "statements": 2676,
+        "metadataStatements": 2676,
+        "rowsRead": 474960,
+        "rowsWritten": 167532,
+        "sqlMs": 2417
+      },
+      "requests": {
+        "requests": 14,
+        "byProvider": {
+          "lofi": 0,
+          "qrz": 0,
+          "lotw": 14
+        },
+        "responseBytes": 2429746
+      }
+    },
+    "final": {
+      "lotwRecords": 4082,
+      "qrzHistorical": 2957,
+      "lotwHistorical": 3303,
+      "pendingAdoption": 0,
+      "attempts": 0
+    },
+    "results": [
+      {
+        "provider": "lotw",
+        "state": "absent_at_inventory",
+        "reason": null,
+        "records": 746
+      },
+      {
+        "provider": "lotw",
+        "state": "ambiguous",
+        "reason": "multiple_remote_candidates",
+        "records": 19
+      },
+      {
+        "provider": "lotw",
+        "state": "excluded",
+        "reason": null,
+        "records": 5
+      },
+      {
+        "provider": "lotw",
+        "state": "incomplete",
+        "reason": "candidate_unavailable",
+        "records": 10
+      },
+      {
+        "provider": "lotw",
+        "state": "incomplete",
+        "reason": "operating_details_unavailable",
+        "records": 6
+      },
+      {
+        "provider": "lotw",
+        "state": "incomplete",
+        "reason": "source_unavailable",
+        "records": 3
+      },
+      {
+        "provider": "lotw",
+        "state": "matched_existing",
+        "reason": null,
+        "records": 3303
+      },
+      {
+        "provider": "lotw",
+        "state": "projection_mismatch",
+        "reason": "operating_details_differ",
+        "records": 159
+      }
+    ],
+    "comparison": {
+      "stop": "quiescent",
+      "turns": 6798,
+      "elapsedMs": 422392,
+      "database": {
+        "calls": 70788,
+        "statements": 82897,
+        "metadataStatements": 82897,
+        "rowsRead": 73382835,
+        "rowsWritten": 960712,
+        "sqlMs": 64687
+      }
+    },
+    "credentialEnvelopesUnchanged": true,
+    "originalAccessUnchanged": true,
+    "databaseBytes": 392892416,
+    "accountWideCoverage": false,
+    "uploads": 0,
+    "hostedQueueExcluded": true
+  },
+  "sourceCalendarReopen": {
+    "state": "reopened",
+    "readySelections": 14,
+    "calendarMembership": 4080,
+    "lotwHistorical": 3303,
+    "qrzHistorical": 2957,
+    "pending": 0,
+    "attempts": 0,
+    "ownershipSampleDecrypted": true,
+    "qrzClassificationsUnchanged": true,
+    "credentialEnvelopesUnchanged": true,
+    "originalAccessUnchanged": true,
+    "requests": 0,
+    "uploads": 0
+  },
+  "sourceCalendarStorageCensus": {
+    "sqliteAllocatedBytes": 392994816,
+    "freeBytes": 102400,
+    "usedBytes": 392892416,
+    "groups": [
+      {
+        "category": "match_proofs",
+        "bytes": 148721664
+      },
+      {
+        "category": "comparison_work_indexes_results",
+        "bytes": 135245824
+      },
+      {
+        "category": "other",
+        "bytes": 45891584
+      },
+      {
+        "category": "inventory_projection_payloads",
+        "bytes": 41119744
+      },
+      {
+        "category": "historical_associations",
+        "bytes": 21913600
+      }
+    ],
+    "proofCounts": {
+      "retainedSets": 1292,
+      "setsWithCurrentWorkOrAssociationPins": 495,
+      "outsideMeasuredPinsAndPastSevenDays": 0
+    },
+    "privateEntries": 22,
+    "groupOrWorldAccessible": 0
+  },
+  "sourceCalendarEnrollment": {
+    "months": 14,
+    "sourceContacts": 4243,
+    "database": {
+      "calls": 317,
+      "statements": 583,
+      "metadataStatements": 583,
+      "rowsRead": 138112,
+      "rowsWritten": 561,
+      "sqlMs": 357
+    },
+    "requests": 0
+  },
+  "sourceCalendarPublication": {
+    "kind": "native-source-calendar-publication",
+    "results": [
+      {
+        "calendar": false,
+        "records": 1000,
+        "months": 0,
+        "statements": 13,
+        "rowsRead": 21035,
+        "rowsWritten": 14010
+      },
+      {
+        "calendar": true,
+        "records": 1000,
+        "months": 14,
+        "statements": 13,
+        "rowsRead": 22080,
+        "rowsWritten": 14038
+      }
+    ]
+  }
+}

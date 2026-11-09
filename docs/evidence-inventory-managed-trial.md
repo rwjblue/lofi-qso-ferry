@@ -196,8 +196,9 @@ and 327 writes**. Diagnostic queries and the preservation retry are
 outside those counters. The first cohort's publication counters were
 not retained. The final allocation after forty associations was
 275,439,616 bytes. These real-log reads are materially higher than the
-small synthetic adoption fixture and need investigation; automatic
-adoption scheduling is still unfinished.
+small synthetic adoption fixture and need investigation. The later
+[automatic replay](evidence-inventory-adoption-scheduling.md) qualifies
+all 2,957 verified matches and measures the complete adoption pass.
 
 Focused adapter/ADIF/native projection checks passed 41 tests. Managed
 trial tests cover native baseline completion, request-limited resume,
@@ -209,7 +210,7 @@ new shared-set audit test and the subsequently affected completion and
 deadline cases. A separate projection regression passed 27 tests. TypeScript,
 lint, formatting, task validation/help and the Worker dry-run build passed.
 
-Automatic LoTW date-universe discovery and overflow splitting, adoption scheduling,
+Automatic LoTW date-universe discovery and overflow splitting,
 ownership-aware planning, fresh source proofs, delivery/batch integration,
 collection, restore quarantine and account-preserving cutover remain
 required before replacement activation. These local trials do not establish

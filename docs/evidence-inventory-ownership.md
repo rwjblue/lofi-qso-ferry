@@ -1,8 +1,9 @@
 # Historical inventory ownership evidence
 
 Status: local permanent ownership and guarded historical association publication,
-2026-11-08. Automatic adoption scheduling, delivery ownership integration and
-deployment remain unfinished. No production data was reset and no upload was
+2026-11-08. [Automatic adoption](evidence-inventory-adoption-scheduling.md) is
+implemented in the later coordinator milestone. Delivery ownership integration
+and deployment remain unfinished. No production data was reset and no upload was
 performed.
 
 ## Identity and retained evidence
@@ -148,8 +149,9 @@ measured cohort preserved its twenty mappings. Its native publication
 cost was 197,429 reads and 325 writes in six statements; complete
 preparation/publication/lease work was 15 calls and 367,276 reads. These
 real-log counts exceed the small fixture above. Investigation and the
-complete-cohort RPC target remain open; the trial does not establish
-automatic full-log adoption throughput.
+complete-cohort RPC target remain open. The later
+[automatic replay](evidence-inventory-adoption-scheduling.md) measures the
+remaining 2,917 matches under the new coordinator.
 
 Base `match_results` continue to describe comparison facts. The automatic planner
 still needs an ownership-aware selection layer and durable claimed-work completion.

@@ -141,8 +141,8 @@ elimination of its empty pages still needs a comparable replay.
 
 Durable hosted wakeups, bounded Queue turns and periodic retry/lost-message
 recovery are implemented; see [hosted comparison evidence](evidence-inventory-hosted-comparison.md).
-Automatic adoption scheduling,
-ownership-aware planning, fresh source proofs and delivery integration remain
-unfinished. Full real-source coverage, initial-sync timing, large-log storage,
+[Automatic adoption scheduling](evidence-inventory-adoption-scheduling.md)
+is implemented. Ownership-aware planning, fresh source proofs and delivery
+integration remain unfinished. Full real-source coverage, initial-sync timing, large-log storage,
 garbage collection, restore quarantine and deployment cutover need their own
 qualification. This change does not authorize a vendor write.

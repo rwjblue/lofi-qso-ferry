@@ -656,6 +656,27 @@ matched profile also benefits when adoption rechecks the proof.
 | Empty, up to four steps per delivery | 656,787 → 638,628 |
 | Matched, one step per delivery | 1,232,740 → 1,172,080 |
 
+### Bucket dependency publication
+
+[Migration 0124](../migrations/0124_inventory_match_dependency_probe_order.sql)
+loads each probe once when registering reverse bucket dependencies
+and when checking their completeness at commit. Registration groups
+the dependency keys before reading their invalidation clocks. It
+retains the same representative probe and clock for each key.
+
+Two private copies of the captured log published the same 160
+classifications and registered the same 1,657 dependencies, including
+their representative probes and clocks. The full comparison replay
+read 123,166 rows, down from 126,130. Both runs used 300 D1 calls,
+540 SQL statements and 14,046 writes. The per-contact results, review
+decisions, associations, coverage and credentials agreed. Both
+copies recorded zero provider requests and uploads.
+
+The paired 1,000-contact synthetic classification stage against an
+empty destination read 607,609 rows, down from 620,066. Both runs
+verified 1,000 current absences in 153 steps across 39 Queue deliveries,
+with 2,095 D1 calls, 4,190 statements and 77,150 writes.
+
 ### Selected source projection snapshot
 
 The selected-record snapshot also admits its source projection bodies.

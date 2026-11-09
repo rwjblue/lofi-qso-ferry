@@ -10,6 +10,10 @@ export async function invalidationFixture(
   try {
     await applyMigration(f.db, "0059_inventory_live_bucket_dependencies.sql");
     await applyMigration(f.db, "0060_inventory_matching_bucket_pages.sql");
+    await applyMigration(
+      f.db,
+      "0124_inventory_match_dependency_probe_order.sql",
+    );
     return { ...f, invalidations: new InventoryMatchingInvalidations(f.store) };
   } catch (error) {
     await f.mf.dispose();

@@ -283,9 +283,6 @@ clone found the same 4,252 active receipt IDs. For 4,240 receipts, only
 `QRZCOM_QSO_DOWNLOAD_DATE` differed. The other 12 differed in additional
 fields. This compares the two closed copies. The live publication count
 above measures changes against the state immediately before that run.
-Removing the download date from change detection is a candidate for
-reducing receipt and projection churn. Measure coverage-driven matching
-separately because it can queue work when receipt content is unchanged.
 
 Wire inspection found that the numeric LOGID tag was present in the
 malformed response. A preceding `X_HAM2K_SOLAR` field's declared length
@@ -299,6 +296,36 @@ The one-, two- and four-minute retries retained the prior checkpoint. A
 valid response at the same cursor resumed the scan, and all 4,252 receipts
 completed across 18 pages. The replay used 46 local responses and
 simulated both the retry delays and vendor window.
+
+### QRZ receipt change detection
+
+QRZ now excludes `QRZCOM_QSO_DOWNLOAD_DATE` from its semantic hash while
+retaining the exact raw receipt and its revision. The first observation
+of a receipt stored under the old hash can queue one reprojection. A
+replay of all 4,252 unchanged bodies verified this transition without
+rewriting any of the raw payloads.
+
+Two isolated copies of the completed live book replayed the same earlier
+captured bodies through the native covering reader. The two arms first
+settled their respective hash formats, then each accepted 4,252 receipts
+in 18 pages. Both published ready coverage on the same retained full
+selection, and all 4,251 current QRZ comparison outcomes, reasons and
+remote keys agreed per contact. The source cursor and credential
+envelopes stayed intact, with zero provider calls or uploads.
+
+| Work for the changed refresh | Full-body semantic hash | Download date excluded |
+| --- | ---: | ---: |
+| Receipts queued for projection | 4,252 | 12 |
+| Ingestion SQL statements | 1,110 | 1,000 |
+| Comparison SQL statements | 50,877 | 12,944 |
+| Comparison rows read | 8,339,345 | 2,130,047 |
+| Comparison rows written | 831,361 | 180,983 |
+
+The unchanged-body control still used 1,066 comparison statements for
+coverage recovery with no receipt projections. The changed refresh added
+4,252 encrypted raw envelopes in each arm, totaling 7,360,855 bytes
+before database overhead. Superseded raw receipt retention is a separate
+storage task.
 
 ### Full QRZ catch-up verification
 

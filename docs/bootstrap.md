@@ -3,11 +3,11 @@
 A destination's scope describes which LoFi contacts Ferry should
 reconcile. It stays independent of opaque upstream cursors.
 
-| Scope | Eligibility |
-| --- | --- |
-| All LoFi history | Contacts present in the linked source log |
-| Since a date | Contacts on or after the selected UTC QSO date |
-| From now on | New source contacts after the verified setup boundary |
+| Scope            | Eligibility                                           |
+| ---------------- | ----------------------------------------------------- |
+| All LoFi history | Contacts present in the linked source log             |
+| Since a date     | Contacts on or after the selected UTC QSO date        |
+| From now on      | New source contacts after the verified setup boundary |
 
 Full history uses the contact dates in LoFi to plan remote windows. A
 remote book with older unrelated records does not need a complete scan.

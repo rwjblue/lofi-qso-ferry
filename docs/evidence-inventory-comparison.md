@@ -53,10 +53,10 @@ The same first 180 coordinator turns on two private copies of the
 personal log each built 60 pages. The replay compared their index
 record identities, key classes, semantic versions and states.
 
-| D1 reads | Original join | Page IDs first |
-| --- | ---: | ---: |
-| Payload lookup statements | 51,463,812 | 23,732 |
-| All 180 turns | 52,129,982 | 689,779 |
+| D1 reads                  | Original join | Page IDs first |
+| ------------------------- | ------------: | -------------: |
+| Payload lookup statements |    51,463,812 |         23,732 |
+| All 180 turns             |    52,129,982 |        689,779 |
 
 Both passes used 2,879 calls and 3,540 SQL statements, reported 208,463
 rows written, and produced the same inspected index rows. This is a

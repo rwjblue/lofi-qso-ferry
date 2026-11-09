@@ -126,13 +126,13 @@ six reader turns and 2,933 comparison turns. It used 45,229 D1 calls,
 80,461 SQL statements and 216.7 MB of allocated database space. The
 initial account verification was a separate read.
 
-| Current result | LoTW | QRZ |
-| --- | ---: | ---: |
-| Matched existing | 561 | 73 |
-| Absent within ready inventory | 465 | 54 |
-| Incomplete | 3,306 | 4,209 |
-| Ambiguous | 4 | 0 |
-| Excluded | 5 | 5 |
+| Current result                |  LoTW |   QRZ |
+| ----------------------------- | ----: | ----: |
+| Matched existing              |   561 |    73 |
+| Absent within ready inventory |   465 |    54 |
+| Incomplete                    | 3,306 | 4,209 |
+| Ambiguous                     |     4 |     0 |
+| Excluded                      |     5 |     5 |
 
 A read-only reopen checked all 8,682 current decisions and 634
 historical associations. The matching and adoption queues drained,
@@ -486,13 +486,13 @@ selection, and all 4,251 current QRZ comparison outcomes, reasons and
 remote keys agreed per contact. The source cursor and credential
 envelopes stayed intact, with zero provider calls or uploads.
 
-| Work for the changed refresh | Full-body semantic hash | Download date excluded |
-| --- | ---: | ---: |
-| Receipts queued for projection | 4,252 | 12 |
-| Ingestion SQL statements | 1,110 | 1,000 |
-| Comparison SQL statements | 50,877 | 12,944 |
-| Comparison rows read | 8,339,345 | 2,130,047 |
-| Comparison rows written | 831,361 | 180,983 |
+| Work for the changed refresh   | Full-body semantic hash | Download date excluded |
+| ------------------------------ | ----------------------: | ---------------------: |
+| Receipts queued for projection |                   4,252 |                     12 |
+| Ingestion SQL statements       |                   1,110 |                  1,000 |
+| Comparison SQL statements      |                  50,877 |                 12,944 |
+| Comparison rows read           |               8,339,345 |              2,130,047 |
+| Comparison rows written        |                 831,361 |                180,983 |
 
 The unchanged-body control still used 1,066 comparison statements for
 coverage recovery with no receipt projections. The changed refresh added
@@ -537,14 +537,14 @@ eligible prefix, up to 16 proofs and 20,000 dependency rows per tick, and
 uses the same native pin checks and atomic deletion as the single-proof
 collector. The largest proof in this capture had 698 dependencies.
 
-| Captured backlog | Single proof | Batched proofs |
-| --- | ---: | ---: |
-| Productive ticks | 945 | 60 |
-| D1 statements including the empty check | 946 | 61 |
-| Total rows read | 1,086,569 | 1,095,139 |
-| Total rows written | 270,104 | 270,104 |
-| Peak rows written in one tick | 699 | 7,084 |
-| SQLite bytes made reusable | 72,470,528 | 72,462,336 |
+| Captured backlog                        | Single proof | Batched proofs |
+| --------------------------------------- | -----------: | -------------: |
+| Productive ticks                        |          945 |             60 |
+| D1 statements including the empty check |          946 |             61 |
+| Total rows read                         |    1,086,569 |      1,095,139 |
+| Total rows written                      |      270,104 |        270,104 |
+| Peak rows written in one tick           |          699 |          7,084 |
+| SQLite bytes made reusable              |   72,470,528 |     72,462,336 |
 
 At the configured five-minute cadence, 60 productive ticks represent
 about five hours of scheduled cleanup after eligibility. Both runs
@@ -790,10 +790,10 @@ Review marked 1,112 absences as requiring source proof. There were zero
 dispatch claims, zero pending historical adoptions, and no foreign-key
 violations.
 
-| Local phase | D1 calls | SQL statements | Rows read | Rows written | Elapsed |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Inventory read and publication | 1,887 | 5,385 | 1,109,900 | 318,817 | 48.4 s |
-| Comparison, adoption and review before lookup fix | 97,020 | 113,998 | 68,805,488 | 1,540,524 | 493.6 s |
+| Local phase                                       | D1 calls | SQL statements |  Rows read | Rows written | Elapsed |
+| ------------------------------------------------- | -------: | -------------: | ---------: | -----------: | ------: |
+| Inventory read and publication                    |    1,887 |          5,385 |  1,109,900 |      318,817 |  48.4 s |
+| Comparison, adoption and review before lookup fix |   97,020 |        113,998 | 68,805,488 |    1,540,524 | 493.6 s |
 
 The reader used 59 local responses and transferred 12,615,336 bytes.
 The quiescent copy reported 281,378,816 allocated bytes. These times
@@ -812,10 +812,10 @@ selections published ready coverage. The comparison Queue consumer ran
 with up to four steps per delivery and drained all work. It used 3,061
 steps across 766 deliveries, with at most 100 D1 calls per delivery.
 
-| Local phase | D1 calls | SQL statements | Rows read | Rows written | Elapsed |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Inventory read and publication | 1,613 | 4,367 | 873,576 | 304,191 | 45.9 s |
-| Comparison, adoption and review | 54,996 | 85,804 | 13,514,221 | 1,539,090 | 438.3 s |
+| Local phase                     | D1 calls | SQL statements |  Rows read | Rows written | Elapsed |
+| ------------------------------- | -------: | -------------: | ---------: | -----------: | ------: |
+| Inventory read and publication  |    1,613 |          4,367 |    873,576 |      304,191 |  45.9 s |
+| Comparison, adoption and review |   54,996 |         85,804 | 13,514,221 |    1,539,090 | 438.3 s |
 
 A read-only reopen matched all 12,956 saved body hashes and record
 statuses, 8,502 current decisions and selected receipts, and 6,260
@@ -863,14 +863,14 @@ five-minute window, and one simulated HTTP 429 triggered a one-hour
 cooldown. Both arms used the production LoTW quota SQL, the same
 eight-request background cap, and oldest-due dispatch.
 
-| Seven-day result | Completion-relative | Stable phases |
-| --- | ---: | ---: |
-| Completed account reports | 7,976 | 8,381 |
-| Completed dated verifications | 1,400 | 1,400 |
-| Deferred attempts before transport | 45,944 | 646 |
-| Account gaps over four hours | 86 | 1 |
-| Longest account gap | 22 h 10 min | 4 h 38 s |
-| Busiest five-minute window, including denied attempts | 370 | 64 |
+| Seven-day result                                      | Completion-relative | Stable phases |
+| ----------------------------------------------------- | ------------------: | ------------: |
+| Completed account reports                             |               7,976 |         8,381 |
+| Completed dated verifications                         |               1,400 |         1,400 |
+| Deferred attempts before transport                    |              45,944 |           646 |
+| Account gaps over four hours                          |                  86 |             1 |
+| Longest account gap                                   |         22 h 10 min |      4 h 38 s |
+| Busiest five-minute window, including denied attempts |                 370 |            64 |
 
 The one long gap in the phase-aligned run occurred after the cooldown
 and would make the account feed stale. The simulation measured schedule
@@ -903,13 +903,13 @@ cooldown. The completion-relative arm started with all links due.
 The model dispatched the oldest deadline first and used account
 order for ties. A simulated proof expired if its window ended.
 
-| 24-hour result | Five-minute polling | Ordered slots |
-| --- | ---: | ---: |
-| Links with at least one poll | 4 | 100 |
-| Completed polls | 1,104 | 844 |
-| Polls per link | 0–276 | 7–9 |
-| Completed modeled proof requests | 0 of 288 | 250 of 288 |
-| Deferrals before transport | 106,383 | 2,156 |
+| 24-hour result                   | Five-minute polling | Ordered slots |
+| -------------------------------- | ------------------: | ------------: |
+| Links with at least one poll     |                   4 |           100 |
+| Completed polls                  |               1,104 |           844 |
+| Polls per link                   |               0–276 |           7–9 |
+| Completed modeled proof requests |            0 of 288 |    250 of 288 |
+| Deferrals before transport       |             106,383 |         2,156 |
 
 The ordered schedule's longest gap was about 5 h 49 min during
 recovery. The simulation measured one deterministic dispatch
@@ -948,12 +948,12 @@ ordinary proof request alongside scheduled polls. Both arms used the
 native quota and pacing SQL, with bootstrap first when deadlines tied.
 
 | Completed work in two cycles | Prior admission | Ordinary capacity reserved |
-| --- | ---: | ---: |
-| Established links reached | 34 | 100 |
-| Scheduled polls | 67 | 200 |
-| Modeled proof requests | 0 | 68 |
-| Bootstrap reads | 1,293 | 1,088 |
-| Deferrals before transport | 76,977 | 748 |
+| ---------------------------- | --------------: | -------------------------: |
+| Established links reached    |              34 |                        100 |
+| Scheduled polls              |              67 |                        200 |
+| Modeled proof requests       |               0 |                         68 |
+| Bootstrap reads              |           1,293 |                      1,088 |
+| Deferrals before transport   |          76,977 |                        748 |
 
 Both arms reached the same 20-request nonforeground ceiling. This
 model measured scheduling and admission with synthetic responses.

@@ -3,7 +3,6 @@
 The hosted Worker uses the native inventory scheduler. The checked-in
 settings allow read-only reconciliation. Production activation is a
 separate rollout.
-
 - Verify all-history, since-date and forward-only scope through the
   scheduler, matching, preparation and final send guards. Exercise a
   scope change with work already queued.

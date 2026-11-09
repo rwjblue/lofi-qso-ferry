@@ -32,13 +32,13 @@ activity per provider.
 
 ## Reproducible focused flows
 
-~~~sh
+```sh
 mise exec -- npx tsx --test tests/worker-e2e.test.ts
 mise exec -- npx tsx --test tests/inventory-hosted-worker.test.ts
 mise exec -- npx tsx --test tests/inventory-lotw-batch.test.ts
 mise run benchmark-inventory-ingestion
 mise run benchmark-inventory-pipeline
-~~~
+```
 
 The Worker tests exercise the bundled handler, native D1 and local
 Queue delivery. Signing and readback tests use synthetic certificates

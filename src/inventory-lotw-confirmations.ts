@@ -34,10 +34,15 @@ function supportedIdentity(record: AdifRecord) {
 /** Poll one explicit selection under the same native lease as receipt reads. */
 export async function pollInventoryLotwConfirmations(
   store: Store,
-  target: { tenant: string; scope: string; selection: LotwConfirmationQuery },
+  target: {
+    tenant: string;
+    scope: string;
+    selection: LotwConfirmationQuery;
+    expected?: { scopeVersion: number; credentialVersion: string };
+  },
   fetcher: typeof fetch = fetch,
 ) {
-  const { tenant, scope, selection } = structuredClone(target);
+  const { tenant, scope, selection, expected } = structuredClone(target);
   const filters = lotwConfirmationFilters(selection);
   const lease = await store.claim(tenant, `inventory:${scope}`);
   if (!lease) return { state: "busy" as const };
@@ -52,7 +57,10 @@ export async function pollInventoryLotwConfirmations(
         scope,
       )
       .first<{ config_version: number }>();
-    if (!authority)
+    if (
+      !authority ||
+      (expected && authority.config_version !== expected.scopeVersion)
+    )
       throw new Error("inventory_lotw_confirmation_scope_unavailable");
     const scopeVersion = authority.config_version;
     const streamId = `lotw-confirmation-v1:${await sha256(canonical([scopeVersion, filters]))}`;
@@ -76,6 +84,7 @@ export async function pollInventoryLotwConfirmations(
     if (
       !stream ||
       stream.configVersion !== scopeVersion ||
+      (expected && stream.credentialVersion !== expected.credentialVersion) ||
       stream.provider !== "lotw" ||
       stream.queryBinding !== streamId
     )

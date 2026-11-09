@@ -598,8 +598,17 @@ LoTW receipt variants and exposes the latest confirmation separately when
 the exact identity selects one variant and its newest confirmation is
 unambiguous. Unresolved observations stay available for a later receipt
 read. Receipt reports continue to establish destination coverage.
-Automatic enrollment, polling and use of this evidence in delivery or
-status views remain open. [LoTW query API](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
+With `INVENTORY_LOTW_CONFIRMATIONS=true`, cron enrolls up to 16 current
+dated selections per tick, including selections still collecting receipts.
+Each starts one hour before its receipt selection was registered. Cron
+reserves at most one scheduled QSL poll per five-minute slot across
+invocations. The poll uses the shared LoTW background quota and cooldown.
+Successful streams settle into weekly phases. A rejected credential holds
+the affected selections until relinking. An oversized report holds the
+selection at its saved watermark.
+
+Status integration and splitting QSL-only overflows remain open.
+[LoTW query API](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
 [Native confirmation rehearsal](evidence-inventory-fresh-start.md#lotw-confirmation-read)
 
 ### Commit and recovery

@@ -12,6 +12,7 @@ import {
   lofiPollSlot,
   lofiRecurringDueAt,
 } from "../src/inventory-lofi-schedule.ts";
+import { runLotwConfirmationSchedule } from "../src/inventory-lotw-confirmation-schedule.ts";
 import { lotwRecurringDueAt } from "../src/inventory-lotw-schedule.ts";
 import {
   inventoryRunQuery,
@@ -1037,6 +1038,214 @@ test("calendar enrollment resumes by month and binds current unfiltered LoTW sel
       .bind(feed.stream_id)
       .first(),
     { state: "partial", kind: "positive_only", epoch: 0 },
+  );
+});
+
+test("hosted QSL polling is opt-in, paced and independent of receipt coverage", async (t) => {
+  const f = await fixture(t);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  await f.db
+    .prepare(
+      `INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at,config)
+     VALUES('a','lotw','lotw','fixture','LoTW','active','v1',1,'{"readAccess":true}')`,
+    )
+    .run();
+  const query = { username: "fixture", password: "fixture" };
+  await (
+    await f.store.putPrivate("a", "lotw", "v1", "credential", { query })
+  ).run();
+  const connection = await f.store.connection("a", "lotw");
+  assert.ok(connection);
+  const runtime = await activateInventoryRuntime(f.store);
+  for (const month of ["02", "03"]) {
+    await registerInventorySelection(f.store, runtime, connection, {
+      provider: "lotw",
+      selection: { startDate: `2024-${month}-01`, endDate: `2024-${month}-05` },
+    });
+  }
+  await registerInventorySelection(f.store, runtime, connection, {
+    provider: "lotw",
+    selection: {
+      kind: "account_received",
+      initialReceivedSince: "2026-01-01 00:00:00",
+    },
+  });
+  const stamp = new Date().toISOString().slice(0, 19).replace("T", " ");
+  const calls: URLSearchParams[] = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(url.origin, "https://lotw.arrl.org");
+    assert.equal(url.pathname, "/lotwuser/lotwreport.adi");
+    assert.equal(init?.method ?? "GET", "GET");
+    const query = url.searchParams;
+    calls.push(query);
+    assert.equal(query.get("qso_qsl"), "yes");
+    assert.equal(query.has("qso_qsorxsince"), false);
+    const start = query.get("qso_startdate");
+    assert.ok(start === "2024-02-01" || start === "2024-03-01");
+    assert.equal(query.get("qso_enddate"), `${start.slice(0, -2)}05`);
+    const record = serializeAdifRecord({
+      CALL: "W1AW",
+      STATION_CALLSIGN: "N1RWJ",
+      QSO_DATE: start.replaceAll("-", ""),
+      TIME_ON: "120000",
+      MODE: "CW",
+      BAND: "20M",
+      QSL_RCVD: "Y",
+      APP_LOTW_RXQSL: stamp,
+    });
+    return new Response(
+      `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>1<APP_LOTW_LASTQSL:19>${stamp}<EOH>${record}<APP_LOTW_EOF>`,
+    );
+  };
+  const off = await runHostedScheduled(f.env, {
+    lotwConfirmationFetch: fetcher,
+  });
+  assert.equal(off.mode, "inventory_read_only");
+  assert.equal(off.lotwConfirmations, null);
+  assert.equal(calls.length, 0);
+  const coverage = () =>
+    f.db
+      .prepare("SELECT * FROM inventory_coverage ORDER BY scope_id,stream_id")
+      .all();
+  const before = (await coverage()).results;
+  const report = await runHostedScheduled(
+    { ...f.env, INVENTORY_LOTW_CONFIRMATIONS: "true" },
+    { lotwConfirmationFetch: fetcher },
+  );
+  assert.equal(report.mode, "inventory_read_only");
+  assert.deepEqual(report.lotwConfirmations, {
+    registered: 2,
+    polled: 1,
+    added: 1,
+    deferred: 0,
+    held: 0,
+    failed: 0,
+  });
+  const scheduled = await f.db
+    .prepare(
+      "SELECT initial_confirmed_since,next_due_at FROM inventory_lotw_confirmation_schedule WHERE version=1",
+    )
+    .first<{ initial_confirmed_since: string; next_due_at: number }>();
+  assert.ok(scheduled);
+  assert.equal(calls[0].get("qso_qslsince"), scheduled.initial_confirmed_since);
+  const days = (scheduled.next_due_at - Date.now()) / 86_400_000;
+  assert.ok(days > 3.49 && days < 10.51);
+  assert.deepEqual((await coverage()).results, before);
+  assert.equal(
+    await f.db
+      .prepare("SELECT count(*) AS n FROM inventory_record_facets")
+      .first("n"),
+    0,
+  );
+
+  const repeated = await runLotwConfirmationSchedule(f.store, fetcher);
+  assert.equal(repeated.polled, 0);
+  assert.equal(calls.length, 1);
+  const nextSlot = () =>
+    f.db
+      .prepare("UPDATE inventory_lotw_confirmation_slot SET last_slot=-1")
+      .run();
+  await nextSlot();
+  await f.db
+    .prepare(
+      "UPDATE inventory_lotw_confirmation_schedule SET next_due_at=0 WHERE version=1",
+    )
+    .run();
+  const [retryA, retryB] = await Promise.all([
+    runLotwConfirmationSchedule(f.store, fetcher),
+    runLotwConfirmationSchedule(f.store, fetcher),
+  ]);
+  assert.equal(retryA.polled + retryB.polled, 1);
+  assert.equal(retryA.added + retryB.added, 0);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].get("qso_qslsince"), stamp);
+  assert.equal(
+    await f.db
+      .prepare(
+        "SELECT background_requests FROM vendor_requests WHERE vendor='lotw'",
+      )
+      .first("background_requests"),
+    2,
+  );
+
+  await nextSlot();
+  const rejected = await runLotwConfirmationSchedule(
+    f.store,
+    async () => new Response(null, { status: 403 }),
+  );
+  assert.equal(rejected.held, 1);
+  assert.equal(
+    await f.db
+      .prepare(
+        "SELECT rejected_credential_version FROM inventory_lotw_confirmation_schedule WHERE rejected_credential_version IS NOT NULL",
+      )
+      .first("rejected_credential_version"),
+    "v1",
+  );
+  await nextSlot();
+  await f.db
+    .prepare("UPDATE inventory_lotw_confirmation_schedule SET next_due_at=0")
+    .run();
+  assert.equal((await runLotwConfirmationSchedule(f.store, fetcher)).polled, 0);
+  assert.equal(calls.length, 2);
+  await f.db
+    .prepare(
+      "UPDATE inventory_lotw_confirmation_schedule SET next_due_at=? WHERE rejected_credential_version IS NULL",
+    )
+    .bind(Date.now() + 7 * 86_400_000)
+    .run();
+  await (
+    await f.store.putPrivate("a", "lotw", "v2", "credential", { query })
+  ).run();
+  await f.db
+    .prepare("UPDATE connections SET credential_version='v2' WHERE id='lotw'")
+    .run();
+  await f.db
+    .prepare("UPDATE vendor_requests SET cooldown_until=? WHERE vendor='lotw'")
+    .bind(Date.now() + 300_000)
+    .run();
+  assert.equal(
+    (await runLotwConfirmationSchedule(f.store, fetcher)).deferred,
+    1,
+  );
+  assert.equal(calls.length, 2);
+  await f.db
+    .prepare("UPDATE vendor_requests SET cooldown_until=0 WHERE vendor='lotw'")
+    .run();
+  const resumed = await runLotwConfirmationSchedule(f.store, fetcher);
+  assert.equal(resumed.polled, 1);
+  assert.equal(resumed.added, 1);
+  assert.equal(calls.length, 3);
+  assert.deepEqual((await coverage()).results, before);
+  const confirmations = await f.db
+    .prepare("SELECT * FROM inventory_lotw_confirmations ORDER BY stream_id")
+    .all();
+  await nextSlot();
+  await f.db
+    .prepare(
+      "UPDATE inventory_lotw_confirmation_schedule SET next_due_at=0 WHERE version=2",
+    )
+    .run();
+  const oversized = await runLotwConfirmationSchedule(
+    f.store,
+    async () => new Response(new Uint8Array(2 * 1024 * 1024 + 1)),
+  );
+  assert.equal(oversized.held, 1);
+  assert.equal(
+    await f.db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_lotw_confirmation_schedule WHERE overflow=1",
+      )
+      .first("n"),
+    1,
+  );
+  assert.deepEqual(
+    await f.db
+      .prepare("SELECT * FROM inventory_lotw_confirmations ORDER BY stream_id")
+      .all()
+      .then((rows) => rows.results),
+    confirmations.results,
   );
 });
 

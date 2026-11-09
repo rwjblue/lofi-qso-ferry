@@ -527,10 +527,25 @@ receipt correlation and checkpoint and passed the foreign-key check.
 Receipt coverage, checkpoints, facets and credentials were unchanged.
 The native poll made zero uploads.
 
-Fixtures verify inclusive replay, separate selection cursors, empty
-reports, ambiguous receipts and confirmations, and rollback when a
-credential rotates or checkpoint publication fails. Scheduled enrollment
-and status-view integration remain open. [ARRL report documentation](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
+With migration 0119, a private scheduling rehearsal made one scoped live
+read from the archived timestamp in 1.63 seconds. It stored one encrypted
+confirmation and its cursor, set the next weekly due time and suppressed
+a second due invocation in the same slot. The confirmation still
+correlated after reopening. Receipt coverage, checkpoints, facets and
+credentials stayed unchanged, and the trial made zero uploads.
+
+The hosted fixture verifies opt-in enrollment, polling during receipt
+collection, concurrent slot claims, cooldown, relinking and a bounded
+overflow hold. The storage fixtures cover inclusive replay, independent
+cursors, empty reports, ambiguity and atomic rollback.
+
+A schedule simulation used 100 accounts with 14 weekly selections each
+and one poll every five minutes. The initial 1,400 due selections drained
+in 116.6 hours, and the final week made 1,400 polls. A six-hour pause in
+the fourth week led to 56 due selections and a maximum delay of 6.21
+hours. The model assumes every available slot can make a successful
+poll. It excludes shared-budget contention and vendor latency.
+[ARRL report documentation](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
 
 ## LoTW account receipt deltas
 

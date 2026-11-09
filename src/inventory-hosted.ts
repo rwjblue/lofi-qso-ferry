@@ -20,6 +20,7 @@ import {
   isInventorySendWakeup,
 } from "./inventory-delivery-send.ts";
 import { InventoryIngestion } from "./inventory-ingestion.ts";
+import { runLotwConfirmationSchedule } from "./inventory-lotw-confirmation-schedule.ts";
 import { InventoryLotwDispatch } from "./inventory-lotw-dispatch.ts";
 import { InventoryLotwReadback } from "./inventory-lotw-readback.ts";
 import { collectInventoryMatchProofs } from "./inventory-match-retention.ts";
@@ -74,8 +75,15 @@ function configuredMode(env: Env) {
 
 /** Environment off pauses a handed-off database; it cannot restore its sender. */
 export async function runHostedScheduled(
-  env: InventoryDeliveryEnvironment & { INVENTORY_LOTW_ACCOUNT_FEEDS?: string },
-  options: { scheduledTime?: number; legacy?: typeof runScheduledTick } = {},
+  env: InventoryDeliveryEnvironment & {
+    INVENTORY_LOTW_ACCOUNT_FEEDS?: string;
+    INVENTORY_LOTW_CONFIRMATIONS?: string;
+  },
+  options: {
+    scheduledTime?: number;
+    legacy?: typeof runScheduledTick;
+    lotwConfirmationFetch?: typeof fetch;
+  } = {},
 ) {
   const mode = configuredMode(env);
   const store = new Store(env.DB, keyring(env));
@@ -188,11 +196,19 @@ export async function runHostedScheduled(
   } catch {
     rawPayloadCollectionFailed = 1;
   }
+  const lotwConfirmations =
+    env.INVENTORY_LOTW_CONFIRMATIONS === "true"
+      ? await runLotwConfirmationSchedule(
+          store,
+          options.lotwConfirmationFetch,
+        ).catch(() => ({ failed: 1 }))
+      : null;
   return {
     mode: hostedMode[mode],
     registration,
     calendarRegistration,
     lotwAccountRegistration,
+    lotwConfirmations,
     overflowRegistration,
     lotwDatedPollsRestored,
     starts,

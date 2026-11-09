@@ -60,7 +60,11 @@ test("a fresh account copy retains credential bindings and quarantines prior uns
   }
   const report = await inventoryFreshStart(directory, root);
   assert.deepEqual(report.decrypted, { lofi: 1, qrz: 1, lotw: 1 });
-  assert.deepEqual(report.priorUnsettled, { legacy: 1, qrz: 0 });
+  assert.deepEqual(report.priorUnsettled, {
+    legacy: 1,
+    qrz: 0,
+    lotwBatches: 0,
+  });
   assert.equal(report.passkeys, 1);
   assert.equal(report.contactStateEmpty, true);
   assert.equal((await stat(report.directory)).mode & 0o077, 0);

@@ -61,6 +61,10 @@ const emptyTables = [
   "match_results",
   "inventory_qrz_attempts",
   "inventory_qrz_dispatches",
+  "inventory_lotw_batches",
+  "inventory_lotw_batch_members",
+  "inventory_lotw_dispatches",
+  "inventory_lotw_member_receipts",
 ];
 type Row = Record<string, string | number | null>;
 type Trial = Awaited<ReturnType<typeof openInventoryTrial>>;
@@ -74,31 +78,32 @@ const accountCopy = (store: Store) =>
   );
 
 async function priorWork(store: Store) {
-  const native = await store
+  const { results } = await store
     .statement(
-      "SELECT 1 FROM sqlite_master WHERE name='inventory_qrz_attempts'",
+      `SELECT name FROM sqlite_master WHERE type='table' AND name IN(
+     'inventory_qrz_attempts','inventory_qrz_dispatch_receipts','inventory_lotw_batches','inventory_lotw_member_receipts')`,
     )
-    .first();
-  const dispatched =
-    native &&
-    (await store
-      .statement(
-        "SELECT 1 FROM sqlite_master WHERE name='inventory_qrz_dispatch_receipts'",
-      )
-      .first());
-  const [legacy, qrz] = await store.db.batch<{ n: number }>([
+    .all<{ name: string }>();
+  const names = new Set(results.map(({ name }) => name));
+  const [legacy, qrz, lotw] = await store.db.batch<{ n: number }>([
     store.statement(
       "SELECT count(*) AS n FROM attempts a LEFT JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE s.state IS NULL OR s.state NOT IN('observed','delivered','rejected','cancelled')",
     ),
     store.statement(
-      native
-        ? `SELECT count(*) AS n FROM inventory_qrz_attempts a WHERE a.cancelled_at IS NULL${dispatched ? " AND NOT EXISTS(SELECT 1 FROM inventory_qrz_dispatch_receipts r WHERE r.tenant=a.tenant AND r.attempt_id=a.attempt_id)" : ""}`
+      names.has("inventory_qrz_attempts")
+        ? `SELECT count(*) AS n FROM inventory_qrz_attempts a WHERE a.cancelled_at IS NULL${names.has("inventory_qrz_dispatch_receipts") ? " AND NOT EXISTS(SELECT 1 FROM inventory_qrz_dispatch_receipts r WHERE r.tenant=a.tenant AND r.attempt_id=a.attempt_id)" : ""}`
+        : "SELECT 0 AS n",
+    ),
+    store.statement(
+      names.has("inventory_lotw_batches")
+        ? `SELECT count(*) AS n FROM inventory_lotw_batches h WHERE h.committed_at IS NOT NULL AND h.cancelled_at IS NULL${names.has("inventory_lotw_member_receipts") ? " AND NOT EXISTS(SELECT 1 FROM inventory_lotw_dispatches d WHERE (d.tenant,d.batch_id)=(h.tenant,h.batch_id) AND d.settled_at IS NOT NULL)" : ""}`
         : "SELECT 0 AS n",
     ),
   ]);
   return {
     legacy: Number(legacy.results[0].n),
     qrz: Number(qrz.results[0].n),
+    lotwBatches: Number(lotw.results[0].n),
   };
 }
 
@@ -162,10 +167,11 @@ export async function inventoryFreshStart(
     await activateInventoryRuntime(store);
     await store.db.batch([
       store.statement(
-        "INSERT INTO inventory_fresh_start_lock(id,locked_at,prior_legacy_unsettled,prior_qrz_unsettled) VALUES(1,?,?,?)",
+        "INSERT INTO inventory_fresh_start_lock(id,locked_at,prior_legacy_unsettled,prior_qrz_unsettled,prior_lotw_unsettled) VALUES(1,?,?,?,?)",
         Date.now(),
         prior.legacy,
         prior.qrz,
+        prior.lotwBatches,
       ),
       ...tables.flatMap(([table, columns], index) => {
         const names = columns.split(" ");

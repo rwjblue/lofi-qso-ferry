@@ -1,5 +1,8 @@
 import { historicalCandidates } from "./historical-matching.ts";
-import { inventoryLotwReportGroups } from "./inventory-lotw-neighborhood.ts";
+import {
+  inventoryLotwReadFetch,
+  inventoryLotwReportGroups,
+} from "./inventory-lotw-neighborhood.ts";
 import { InventoryLotwPreparation } from "./inventory-lotw-preparation.ts";
 import { LotwClient } from "./lotw.ts";
 import {
@@ -23,10 +26,11 @@ const LOTW_ORIGIN = "https://lotw.arrl.org";
 const UPLOAD_URL = `${LOTW_ORIGIN}/lotw/upload`;
 export const INVENTORY_LOTW_DELIVERY_LEASE = "inventory:lotw-delivery";
 const held = (reason: string) => ({ kind: "held" as const, reason });
+type Outcome = { kind: "submitted" | "rejected" | "uncertain" | "observed" };
 type SendResult =
   | ReturnType<typeof held>
   | { kind: "deferred"; retryAt: number }
-  | { kind: "submitted" | "rejected" | "uncertain" };
+  | Outcome;
 interface Authority {
   destination_connection: string;
   credential_version: string;
@@ -45,16 +49,28 @@ export class InventoryLotwDispatch {
     readonly fetcher: typeof fetch = fetch,
   ) {}
 
-  private async outcome(tenant: string, batch: string) {
+  private async outcome(
+    tenant: string,
+    batch: string,
+  ): Promise<Outcome | null> {
     const row = await this.store
       .statement(
-        `SELECT r.state FROM inventory_lotw_dispatches d LEFT JOIN inventory_lotw_upload_receipts r USING(tenant,batch_id)
+        `SELECT r.state,d.settled_at FROM inventory_lotw_dispatches d LEFT JOIN inventory_lotw_upload_receipts r USING(tenant,batch_id)
        WHERE (d.tenant,d.batch_id)=(?,?)`,
         tenant,
         batch,
       )
-      .first<{ state: "submitted" | "rejected" | null }>();
-    return row ? { kind: row.state ?? ("uncertain" as const) } : null;
+      .first<{
+        state: "submitted" | "rejected" | null;
+        settled_at: number | null;
+      }>();
+    if (!row) return null;
+    return {
+      kind:
+        row.settled_at !== null
+          ? ("observed" as const)
+          : (row.state ?? "uncertain"),
+    };
   }
 
   async send(
@@ -191,14 +207,12 @@ export class InventoryLotwDispatch {
       certificateCurrentlyValid(certificate, Date.now());
     if (!current()) return stale;
     const client = new LotwClient(credential.query, {
-      fetcher: this.neighborhoodFetch(
-        batch,
-        lease,
-        certificate.serial,
+      fetcher: inventoryLotwReadFetch(this.store, batch, lease, this.fetcher, {
+        priority,
         expiresAt,
         current,
-        priority,
-      ),
+        authority: { kind: "send", serial: certificate.serial },
+      }),
     });
     try {
       const status = await client.certificateStatus(certificate.serial);
@@ -250,66 +264,6 @@ export class InventoryLotwDispatch {
       current,
       priority,
     );
-  }
-
-  private neighborhoodFetch(
-    batch: string,
-    lease: Lease,
-    serial: string,
-    expiresAt: number,
-    current: () => boolean,
-    priority: VendorPriority,
-  ): typeof fetch {
-    const admitted = vendorFetch(this.store, "lotw", this.fetcher, {
-      priority,
-      admit: async (reservation) => {
-        if (!current())
-          throw new Error("inventory LoTW send authority changed");
-        const guard = crypto.randomUUID();
-        const results = await this.store.db.batch<{
-          window_start: number;
-          cooldown_until: number;
-        }>([
-          this.store.statement(
-            "INSERT INTO inventory_lotw_read_guards VALUES(?,?,?,?,?)",
-            guard,
-            lease.tenant,
-            batch,
-            lease.token,
-            lease.fence,
-          ),
-          reservation,
-          this.store.statement(
-            "DELETE FROM inventory_lotw_read_guards WHERE id=?",
-            guard,
-          ),
-        ]);
-        return results[1].results[0] ?? null;
-      },
-    });
-    return (input, init) => {
-      const url = new URL(String(input));
-      if (
-        url.origin !== LOTW_ORIGIN ||
-        url.username ||
-        url.password ||
-        url.hash ||
-        (init?.method ?? "GET") !== "GET" ||
-        init?.body != null ||
-        init?.redirect !== "manual" ||
-        (url.pathname !== "/lotwuser/lotwreport.adi" &&
-          url.href !== `${LOTW_ORIGIN}/lotw/crl?serial=${serial}`) ||
-        !current()
-      )
-        throw new Error("inventory LoTW send authority changed");
-      const deadline = AbortSignal.timeout(Math.max(1, expiresAt - Date.now()));
-      return admitted(input, {
-        ...init,
-        signal: init?.signal
-          ? AbortSignal.any([init.signal, deadline])
-          : deadline,
-      });
-    };
   }
 
   private async submit(

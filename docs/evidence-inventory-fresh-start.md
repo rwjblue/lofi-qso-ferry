@@ -15,6 +15,8 @@ credential decryption. It compares the source rows again before returning.
 [Migration 0098](../migrations/0098_inventory_fresh_start_lock.sql) puts
 a durable send lock on the rehearsal. The lock records counts of
 unsettled legacy and native QRZ work without copying its contact data.
+[Migration 0102](../migrations/0102_inventory_lotw_readback.sql) also
+records the unresolved LoTW batch count.
 The same lock blocks a QRZ dispatch claim even when the environment's
 export flags are open. A production cutover will need separate evidence
 that the previous sender stopped and its unresolved work was settled

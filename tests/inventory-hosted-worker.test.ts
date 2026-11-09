@@ -15,6 +15,7 @@ import {
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { InventoryLotwDispatch } from "../src/inventory-lotw-dispatch.ts";
 import { InventoryLotwPreparation } from "../src/inventory-lotw-preparation.ts";
+import { InventoryLotwReadback } from "../src/inventory-lotw-readback.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
 import { InventoryQrzDispatch } from "../src/inventory-qrz-dispatch.ts";
 import {
@@ -1828,6 +1829,137 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   assert.equal(await lotwClaims(), 1);
   assert.equal(await reopenedLotw.cancelStale("a", replacement.batchId), false);
 
+  const claimedAt = await db
+    .prepare(
+      "SELECT claimed_at FROM inventory_lotw_dispatches WHERE batch_id=?",
+    )
+    .bind(replacement.batchId)
+    .first<number>("claimed_at");
+  assert.ok(claimedAt);
+  const stamp = new Date(claimedAt)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
+  const oldStamp = new Date(claimedAt - 120_000)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
+  const first = archivedLotw.members[0].qso;
+  const second = archivedLotw.members[1].qso;
+  const readbackRecord = (
+    qso: typeof first,
+    options: { minute?: boolean; prior?: boolean; confirmed?: boolean } = {},
+  ) => {
+    const time = qso.time.replaceAll(":", "").replace("Z", "");
+    return serializeAdifRecord({
+      STATION_CALLSIGN: archivedLotw.station.callsign,
+      CALL: qso.call,
+      BAND: qso.band,
+      MODE: qso.mode,
+      QSO_DATE: qso.date.replaceAll("-", ""),
+      TIME_ON: options.minute ? time.slice(0, 4) : time,
+      MY_DXCC: String(archivedLotw.station.dxcc),
+      MY_GRIDSQUARE: archivedLotw.station.grid ?? "",
+      APP_LOTW_RXQSO: options.prior ? oldStamp : stamp,
+      QSL_RCVD: options.confirmed ? "Y" : "N",
+    });
+  };
+  let readbackPhase: "partial" | "old" | "complete" = "partial";
+  let readbackRequests = 0;
+  const readback = new InventoryLotwReadback(
+    new Store(db, keys),
+    async (input, init) => {
+      const url = new URL(String(input));
+      assert.equal(
+        url.origin + url.pathname,
+        "https://lotw.arrl.org/lotwuser/lotwreport.adi",
+      );
+      assert.equal(init?.method ?? "GET", "GET");
+      assert.equal(init?.body, undefined);
+      assert.equal(url.searchParams.get("qso_qsorxsince"), stamp);
+      assert.equal(
+        url.searchParams.get("qso_owncall"),
+        archivedLotw.station.callsign,
+      );
+      assert.equal(url.searchParams.get("qso_callsign"), null);
+      readbackRequests++;
+      const rows = [
+        readbackRecord(first, { confirmed: true }),
+        readbackRecord(second, {
+          minute: readbackPhase === "partial",
+          prior: readbackPhase === "old",
+        }),
+      ];
+      return new Response(
+        `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>2<EOH>${rows.join("")}<APP_LOTW_EOF>`,
+      );
+    },
+  );
+  const reconcileLotw = () =>
+    readback.reconcile("a", replacement.batchId, "live");
+  await db.prepare("UPDATE accounts SET quiet_minutes=31 WHERE id='a'").run();
+  assert.equal(await jobs.current("a", lotwProof.id), null);
+  assert.deepEqual(await reconcileLotw(), {
+    kind: "partial",
+    observed: 1,
+    members: 2,
+  });
+  assert.equal(await lotwClaims(), 1);
+  assert.equal(await reopenedLotw.cancelStale("a", replacement.batchId), false);
+  readbackPhase = "old";
+  assert.deepEqual(await reconcileLotw(), {
+    kind: "partial",
+    observed: 1,
+    members: 2,
+  });
+  readbackPhase = "complete";
+  assert.deepEqual(await reconcileLotw(), {
+    kind: "observed",
+    observed: 2,
+    members: 2,
+  });
+  assert.equal(await lotwClaims(), 0);
+  assert.deepEqual(await reconcileLotw(), {
+    kind: "observed",
+    observed: 2,
+    members: 2,
+  });
+  assert.deepEqual(await sendLotw(), { kind: "observed" });
+  assert.equal(readbackRequests, 3);
+  assert.deepEqual(lotwSendActions, []);
+  assert.deepEqual(
+    (
+      await db
+        .prepare(
+          `SELECT m.record_key,r.confirmed FROM inventory_lotw_member_receipts r JOIN inventory_lotw_batch_members m USING(tenant,attempt_id) ORDER BY m.record_key`,
+        )
+        .all()
+    ).results,
+    [
+      { record_key: "q2", confirmed: 1 },
+      { record_key: "q3", confirmed: 0 },
+    ],
+  );
+  const otherOwner = await new InventoryOwnership(store).lookup("a", "lotw", [
+    {
+      id: "conflict",
+      sourceIdentity: "other-source",
+      key: "other-key",
+      book: "another-book",
+      remoteKey: "other",
+      record: {
+        STATION_CALLSIGN: archivedLotw.station.callsign,
+        CALL: first.call,
+        BAND: first.band,
+        MODE: first.mode,
+        QSO_DATE: first.date.replaceAll("-", ""),
+        TIME_ON: first.time.replaceAll(":", "").replace("Z", ""),
+      },
+    },
+  ]);
+  assert.equal(otherOwner.observations[0]?.state, "conflict");
+  await db.prepare("UPDATE accounts SET quiet_minutes=30 WHERE id='a'").run();
+
   const scopeVersions = async () =>
     (
       await store
@@ -1854,8 +1986,13 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       )
       .bind(replacement.batchId)
       .first("prior_state"),
-    "possibly_sent",
+    null,
   );
+  assert.deepEqual(await readback.outcome("a", replacement.batchId), {
+    kind: "observed",
+    observed: 2,
+    members: 2,
+  });
   assert.equal(await reopenedLotw.current("a", replacement.batchId), false);
   assert.equal(await reopenedLotw.cancelStale("a", replacement.batchId), false);
   assert.deepEqual(

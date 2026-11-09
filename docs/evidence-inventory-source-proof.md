@@ -331,8 +331,7 @@ prior history for one member, even on another band. It also verified
 that a denied vendor slot and a station rebind during admission create
 no claim. The simulated vendor received the exact TQ8 once. A lost
 response left the claim and file intact. Replaying made no requests,
-and restore quarantine retained the batch as possibly sent. Hosted send
-scheduling and member-level readback remain open.
+and restore quarantine retained the batch as possibly sent.
 
 A separate real read-only trial compared a shared station report with
 two worked-call reports. The shared report contained 244 records. Its
@@ -341,3 +340,24 @@ the corresponding direct report. The three validation requests took
 10.5 seconds and transferred 148,488 response bytes. This establishes
 predicate equivalence for the sampled contacts. The trial made zero
 upload requests. [ARRL query contract](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
+
+## LoTW member readback
+
+[Migration 0102](../migrations/0102_inventory_lotw_readback.sql) records
+one receipt and a permanent ownership entry for each observed member.
+Readback reopens the archived file and uses the current query link to
+the same logical account. Each receipt requires exact seconds and
+supported projection fields plus a LoTW receive timestamp at or after
+the claim's second. Partial results retain the batch hold. The last
+receipt settles it in the same transaction. The ownership index can
+reject conflicts across aliases, and a delivery receipt cannot become
+a historical adoption. Hosted send and readback wakeups remain open.
+
+The native fixture resolved one of two contacts after the source proof
+became stale. A minute-only match and an exact record received before
+the claim left the second contact unresolved. A later exact receipt
+settled the batch. Reopening the completed batch made no new reads or
+uploads. A fresh account copy records the old unresolved batch count
+while leaving the contact state behind. The real account-only replay
+on the new schema retained four credential envelopes, recorded zero
+prior LoTW batches, and made zero requests.

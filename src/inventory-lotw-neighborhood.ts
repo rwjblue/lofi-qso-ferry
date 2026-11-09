@@ -1,8 +1,87 @@
 import { lotwFirstInsertSelection } from "./lotw-first-insert.ts";
 import type { LotwContact, LotwStation } from "./signing.ts";
+import type { Lease, Store } from "./store.ts";
+import { type VendorPriority, vendorFetch } from "./vendor-requests.ts";
 
 const DAY_MS = 86_400_000;
 const MAX_REPORTS = 3;
+const ORIGIN = "https://lotw.arrl.org";
+
+export function inventoryLotwReadFetch(
+  store: Store,
+  batch: string,
+  lease: Lease,
+  fetcher: typeof fetch,
+  options: {
+    priority: VendorPriority;
+    expiresAt: number;
+    current: () => boolean;
+    authority: { kind: "send"; serial: string } | { kind: "readback" };
+  },
+): typeof fetch {
+  const { priority, expiresAt, current, authority } = options;
+  const changed = () => new Error("inventory LoTW read authority changed");
+  const admitted = vendorFetch(
+    store,
+    "lotw",
+    (input, init) => {
+      if (!current()) throw changed();
+      return fetcher(input, init);
+    },
+    {
+      priority,
+      admit: async (reservation) => {
+        if (!current()) throw changed();
+        const guard = crypto.randomUUID();
+        const results = await store.db.batch<{
+          window_start: number;
+          cooldown_until: number;
+        }>([
+          store.statement(
+            "INSERT INTO inventory_lotw_read_guards(id,tenant,batch_id,lease_token,lease_fence,readback) VALUES(?,?,?,?,?,?)",
+            guard,
+            lease.tenant,
+            batch,
+            lease.token,
+            lease.fence,
+            authority.kind === "readback" ? 1 : 0,
+          ),
+          reservation,
+          store.statement(
+            "DELETE FROM inventory_lotw_read_guards WHERE id=?",
+            guard,
+          ),
+        ]);
+        return results[1].results[0] ?? null;
+      },
+    },
+  );
+  return (input, init) => {
+    const url = new URL(String(input));
+    const crl =
+      authority.kind === "send" &&
+      url.href === `${ORIGIN}/lotw/crl?serial=${authority.serial}`;
+    if (
+      url.origin !== ORIGIN ||
+      url.username ||
+      url.password ||
+      url.hash ||
+      (init?.method ?? "GET") !== "GET" ||
+      init?.body != null ||
+      init?.redirect !== "manual" ||
+      (url.pathname !== "/lotwuser/lotwreport.adi" && !crl) ||
+      !current()
+    )
+      throw changed();
+    const deadline = AbortSignal.timeout(Math.max(1, expiresAt - Date.now()));
+    return admitted(input, {
+      ...init,
+      signal: init?.signal
+        ? AbortSignal.any([init.signal, deadline])
+        : deadline,
+    });
+  };
+}
 
 /** Every member keeps its exact three-day, worked-call predicate. A complete
  * station report over the union can satisfy several of those predicates. */

@@ -475,3 +475,12 @@ completed the same held run in one real read at its saved receive
 timestamp. The report returned one unchanged receipt, retained
 positive-only coverage, and left the dated checkpoints, dated coverage
 and credential envelopes intact. The live trial made zero uploads.
+
+An offline capacity replay assembled the 4,082 captured calendar
+receipts into one 2,163,423-byte report with a synthetic common receive
+timestamp and ADIF field whitespace. The comparison-enabled reader
+accepted all 4,082 observations and committed 4,082 changed raw bodies
+in 42 D1 page-publication statements. That batch reported 337,034 rows
+read and 157,145 rows written. The local read and terminal publication
+took 2.4 seconds, excluding fixture assembly and the separate
+comparison queue. The replay made zero external requests and uploads.

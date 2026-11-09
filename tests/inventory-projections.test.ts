@@ -221,7 +221,7 @@ test("bulk body loading shares repeated forward/reverse inputs and stays bounded
     ]);
     assert.equal(before.items.length, 20);
     assert.equal(before.missing.length, 0);
-    assert.equal(before.stats.queries, 2);
+    assert.equal(before.stats.queries, 1);
     assert.equal(before.stats.decryptedBodies, 20);
     assert.ok(before.items.every((row) => row.body.record.CALL === "W1AW"));
     const unrelated = JSON.stringify(
@@ -288,8 +288,26 @@ test("bulk body admission rejects a dense union before ciphertext loading or dec
     for (const payload of page.payloads) payload.envelope = oversized;
     await resign(page);
     await f.projections.publish(page, f.projectionLease);
+    const measured = new Store(f.db, f.store.keys);
+    const statement = measured.statement.bind(measured);
+    measured.statement = (sql, ...parameters) =>
+      new Proxy(statement(sql, ...parameters), {
+        get(target, property) {
+          if (property !== "all") return Reflect.get(target, property);
+          return async () => {
+            const result = await target.all<{ envelope: string | null }>();
+            assert.equal(result.results.length, page.rows.length);
+            assert.ok(result.results.every((row) => row.envelope === null));
+            return result;
+          };
+        },
+      });
     await assert.rejects(
-      f.projections.bodies("a", f.generation, readReferences(page)),
+      new InventoryProjections(measured).bodies(
+        "a",
+        f.generation,
+        readReferences(page),
+      ),
       /inventory_projection_read_byte_bound/,
     );
     await assert.rejects(

@@ -123,7 +123,7 @@ export default { async fetch(request,env) {
   assert.equal(result.storedMatches, true);
   assert.equal(result.bulk.match, true);
   assert.equal(result.bulk.missing, 0);
-  assert.equal(result.bulk.stats.queries, 2);
+  assert.equal(result.bulk.stats.queries, 1);
   assert.equal(result.bulk.stats.decryptedBodies, 20);
   assert.equal(outbound, 0);
   assert.deepEqual(await f.inventory.snapshot("a", "source", "sync"), before);

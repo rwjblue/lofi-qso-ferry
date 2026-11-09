@@ -308,63 +308,55 @@ export class InventoryProjections {
       body: InventoryProjectionBody;
     })[] = [];
     if (!references.length) return { items, missing: [], stats };
-    // The request relation drives indexed point reads through the current view.
-    // Read only sizes first; a dense union must not load arbitrary ciphertext.
-    const metadata = await this.store
+    // Materialize only metadata before admitting ciphertext in the same read.
+    const payloads = await this.store
       .statement(
-        `SELECT CAST(j.key AS INTEGER) AS ordinal,p.connection_id,p.encrypted_bytes,p.state
-         FROM json_each(?1) j CROSS JOIN comparison_projections_current p
-         WHERE p.tenant=?2 AND p.generation_id=?3 AND p.scope_id=json_extract(j.value,'$.scope') AND p.record_key=json_extract(j.value,'$.key') AND p.facet=json_extract(j.value,'$.facet') AND p.version=json_extract(j.value,'$.version') AND p.payload_id=json_extract(j.value,'$.payload')`,
+        `WITH requested AS MATERIALIZED (
+           SELECT CAST(j.key AS INTEGER) AS ordinal,p.scope_id,p.payload_id,p.connection_id,p.encrypted_bytes,p.state
+           FROM json_each(?1) j CROSS JOIN comparison_projections_current p
+           WHERE p.tenant=?2 AND p.generation_id=?3 AND p.scope_id=json_extract(j.value,'$.scope') AND p.record_key=json_extract(j.value,'$.key') AND p.facet=json_extract(j.value,'$.facet') AND p.version=json_extract(j.value,'$.version') AND p.payload_id=json_extract(j.value,'$.payload')
+         ), budget AS MATERIALIZED (
+           SELECT sum(encrypted_bytes) AS bytes FROM requested
+         )
+         SELECT r.ordinal,r.connection_id,r.encrypted_bytes,r.state,p.envelope
+         FROM budget b CROSS JOIN requested r
+         LEFT JOIN comparison_projection_payloads p ON b.bytes<=?4 AND (p.tenant,p.scope_id,p.payload_id)=(?2,r.scope_id,r.payload_id)
+         ORDER BY r.ordinal`,
         canonical(references),
         tenant,
         generation,
+        maxBytes,
       )
-      .all<ProjectionReadMetadata>();
+      .all<ProjectionReadMetadata & { envelope: string | null }>();
     stats.queries++;
-    stats.rowsRead += metadata.meta.rows_read;
-    stats.encryptedInputBytes = metadata.results.reduce(
+    stats.rowsRead += payloads.meta.rows_read;
+    stats.encryptedInputBytes = payloads.results.reduce(
       (sum, row) => sum + row.encrypted_bytes,
       0,
     );
     if (stats.encryptedInputBytes > maxBytes)
       throw new Error("inventory_projection_read_byte_bound");
-    const admitted = metadata.results.map((row) => ({
-      ...references[row.ordinal],
-      ...row,
-    }));
-    if (admitted.length) {
-      const payloads = await this.store
-        .statement(
-          `SELECT CAST(json_extract(j.value,'$.ordinal') AS INTEGER) AS ordinal,p.envelope,p.encrypted_bytes,p.connection_id,json_extract(j.value,'$.state') AS state
-           FROM json_each(?1) j CROSS JOIN comparison_projection_payloads p
-           WHERE p.tenant=?2 AND p.scope_id=json_extract(j.value,'$.scope') AND p.payload_id=json_extract(j.value,'$.payload') AND p.connection_id=json_extract(j.value,'$.connection_id') AND p.encrypted_bytes=json_extract(j.value,'$.encrypted_bytes')`,
-          canonical(admitted),
+    for (const row of payloads.results) {
+      if (row.envelope === null) continue;
+      const reference = references[row.ordinal];
+      if (encoder.encode(row.envelope).byteLength !== row.encrypted_bytes)
+        throw new Error("inventory_projection_read_size_mismatch");
+      const body = await open<InventoryProjectionBody>(
+        JSON.parse(row.envelope) as Envelope,
+        inventoryProjectionIdentity(
           tenant,
-        )
-        .all<ProjectionReadMetadata & { envelope: string }>();
-      stats.queries++;
-      stats.rowsRead += payloads.meta.rows_read;
-      for (const row of payloads.results) {
-        const reference = references[row.ordinal];
-        if (encoder.encode(row.envelope).byteLength !== row.encrypted_bytes)
-          throw new Error("inventory_projection_read_size_mismatch");
-        const body = await open<InventoryProjectionBody>(
-          JSON.parse(row.envelope) as Envelope,
-          inventoryProjectionIdentity(
-            tenant,
-            row.connection_id,
-            reference.payload,
-          ),
-          this.store.keys,
-        );
-        stats.plaintextBytes += encoder.encode(canonical(body)).byteLength;
-        if (stats.plaintextBytes > maxBytes)
-          throw new Error("inventory_projection_read_byte_bound");
-        if (body.version !== 1 || body.state !== row.state)
-          throw new Error("inventory_projection_body_changed");
-        stats.decryptedBodies++;
-        items.push({ ...reference, body });
-      }
+          row.connection_id,
+          reference.payload,
+        ),
+        this.store.keys,
+      );
+      stats.plaintextBytes += encoder.encode(canonical(body)).byteLength;
+      if (stats.plaintextBytes > maxBytes)
+        throw new Error("inventory_projection_read_byte_bound");
+      if (body.version !== 1 || body.state !== row.state)
+        throw new Error("inventory_projection_body_changed");
+      stats.decryptedBodies++;
+      items.push({ ...reference, body });
     }
     const loaded = new Set(items.map(readKey));
     return {

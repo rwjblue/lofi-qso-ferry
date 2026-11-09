@@ -306,6 +306,32 @@ and 1,209,786 rows respectively. Both runs published all 1,000
 matches using 4,738 D1 calls and 6,288 statements. The figures
 measure local database work.
 
+### Bounded projection body reads
+
+Matching preparation now reads current projection metadata and the
+admitted ciphertext in one D1 call. The native query materializes
+only metadata to compute the aggregate byte limit. A dense request
+returns no ciphertext. The same read snapshot supplies projection
+versions, payload identities and envelopes, and the caller still
+validates envelope and plaintext sizes.
+
+The two readers prepared the same ten cohorts per provider on a
+private copy of the captured log. Each provider contributed 100
+matches and 100 absences. The complete matching evidence and selected
+remote records agreed for all 400 classifications. Credential and
+coverage audits passed with zero external requests or writes.
+
+| Captured preparation | Body queries before → after | Total D1 calls before → after | Rows read before → after |
+| -------------------- | -------------------------: | ----------------------------: | -----------------------: |
+| LoTW                 |                    36 → 18 |                       94 → 76 |          21,227 → 21,861 |
+| QRZ                  |                    40 → 20 |                       99 → 79 |          19,109 → 19,753 |
+
+In the 1,000-contact synthetic matched fixture, the source classification
+stage used 4,738 D1 calls before the change and 4,588 after. Rows read
+increased from 1,210,564 to 1,219,430. Both runs wrote 131,195 rows,
+took 152 Queue turns, and published all 1,000 matches. These are local
+counts for the classification stage after source coverage.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

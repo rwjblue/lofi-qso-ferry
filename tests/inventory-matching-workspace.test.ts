@@ -35,7 +35,7 @@ test("twenty source/receipt pairs share one bounded snapshot without plaintext o
     const original = f.store.statement.bind(f.store);
     let queries = 0;
     f.store.statement = (sql, ...params) => {
-      assert.ok(sql.startsWith("SELECT"), sql);
+      assert.match(sql, /^(?:SELECT|WITH requested AS MATERIALIZED)\b/);
       queries++;
       return original(sql, ...params);
     };
@@ -48,7 +48,7 @@ test("twenty source/receipt pairs share one bounded snapshot without plaintext o
     assert.ok(page.graph.results.every((row) => row.state === "unique"));
     assert.equal(page.records.length, 40);
     assert.equal(page.stats.decryptedBodies, 40);
-    assert.equal(page.stats.bodyQueries, 4);
+    assert.equal(page.stats.bodyQueries, 2);
     assert.equal(page.stats.lookupQueries, 2);
     assert.equal(page.graph.stats.predicateCalls, 20);
     const serialized = canonical(page);
@@ -298,11 +298,20 @@ test("source and receipt loads consume one shared byte budget before later ciphe
       }
     }
     const original = f.store.statement.bind(f.store);
-    let bodyReads = 0;
+    const loaded: number[] = [];
     f.store.statement = (sql, ...params) => {
-      if (sql.includes("CROSS JOIN comparison_projection_payloads p"))
-        bodyReads++;
-      return original(sql, ...params);
+      const statement = original(sql, ...params);
+      if (!sql.includes("comparison_projection_payloads p")) return statement;
+      return new Proxy(statement, {
+        get(target, property) {
+          if (property !== "all") return Reflect.get(target, property);
+          return async () => {
+            const result = await target.all<{ envelope: string | null }>();
+            loaded.push(result.results.filter((row) => row.envelope).length);
+            return result;
+          };
+        },
+      });
     };
     await assert.rejects(
       f.workspace.prepare(
@@ -312,9 +321,9 @@ test("source and receipt loads consume one shared byte budget before later ciphe
       ),
       /inventory_projection_read_byte_bound/,
     );
-    assert.equal(
-      bodyReads,
-      1,
+    assert.deepEqual(
+      loaded,
+      [f.sources.length, 0],
       "only source ciphertext can be loaded before the remaining receipt budget is rejected",
     );
   } finally {

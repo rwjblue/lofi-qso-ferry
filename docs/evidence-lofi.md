@@ -710,3 +710,26 @@ test, event-bearing closure sample or global retention guarantee. The protected
 08:14:29 backup preserves the new proof and its retention row and passed isolated
 restore plus repeated quarantine. The later unsigned LoTW snapshot check is
 recorded separately in [LoTW evidence](evidence-lotw.md).
+
+## Live UUID-selective read check
+
+On November 9, a private rehearsal copy supplied the existing linked
+bearer and a known QSO UUID. An account GET verified the same logical
+account. The server returned HTTP 404 for `GET /v1/qsos/{uuid}` and
+for the general `/v1/qsos` listing with no UUID, the known UUID, and
+a randomly generated UUID.
+
+The documented operation-QSO listing was a positive control. A bounded
+two-row page returned HTTP 200. Adding `uuid` for either a known record
+from later in that operation or a randomly generated UUID returned the
+same two rows in the same order. These eight GETs used the same bearer,
+separate request windows, and no production checkpoint updates. No
+registration, renewal, or source mutation was attempted.
+
+The tested general routes do not establish an arbitrary UUID lookup.
+When the operation is known, page its QSO listing and compare UUIDs
+locally. A separate metadata-only source replay found a general-log
+sample on its first page. Another replay found an older operation
+contact on page five and recovered its base operation. That replay
+completed after five requests and 4,490 QSO-stream rows. Both kept
+their cursors in memory and left the routine checkpoint intact.

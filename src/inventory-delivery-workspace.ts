@@ -1,4 +1,8 @@
 import { contactReconciliationAdif } from "./contact-adif.ts";
+import {
+  INVENTORY_LOTW_BATCH_LIMIT,
+  INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT,
+} from "./inventory-delivery-limits.ts";
 import { InventoryProjections } from "./inventory-projections.ts";
 import type {
   InventorySourceProofDependency,
@@ -50,7 +54,7 @@ export class InventoryDeliveryWorkspace {
     if (
       ![tenant, proofId, destination, ...keys].every(identifier) ||
       keys.length < 1 ||
-      keys.length > 20 ||
+      keys.length > INVENTORY_LOTW_BATCH_LIMIT ||
       new Set(keys).size !== keys.length
     )
       throw new Error("invalid_inventory_delivery_selection");
@@ -211,7 +215,11 @@ export class InventoryDeliveryWorkspace {
     connection: string,
     dependencies: InventorySourceProofDependency[],
   ) {
-    if (!dependencies.length || dependencies.length > 64) return null;
+    if (
+      !dependencies.length ||
+      dependencies.length > INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT
+    )
+      return null;
     const result = await this.store
       .statement(
         `WITH refs AS MATERIALIZED(

@@ -4,7 +4,7 @@ CREATE TABLE inventory_source_proof_jobs (
  version INTEGER NOT NULL DEFAULT 1 CHECK(version>0),
  phase TEXT NOT NULL DEFAULT 'collecting' CHECK(phase IN('collecting','draining','held','complete')),
  snapshot TEXT NOT NULL CHECK(json_valid(snapshot) AND length(snapshot)<=262144),
- witnesses TEXT NOT NULL CHECK(json_valid(witnesses) AND json_type(witnesses)='array' AND json_array_length(witnesses)<=64),
+ witnesses TEXT NOT NULL CHECK(json_valid(witnesses) AND json_type(witnesses)='array' AND json_array_length(witnesses)<=256),
  continuation TEXT CHECK(continuation IS NULL OR (json_valid(continuation) AND length(continuation)<=65536)),
  started_at INTEGER NOT NULL CHECK(started_at>0),collection_deadline INTEGER NOT NULL,
  due_at INTEGER NOT NULL CHECK(due_at>0),attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 4),

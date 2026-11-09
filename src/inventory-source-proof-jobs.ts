@@ -1,9 +1,9 @@
 import type { InventoryRuns } from "./inventory-runs.ts";
 import { InventorySourceProofDrain } from "./inventory-source-proof-drain.ts";
 import {
+  type InventorySourceProofRoute,
   type InventorySourceProofScope,
   type InventorySourceProofSnapshot,
-  type InventorySourceProofRoute,
   InventorySourceProofWorkspace,
 } from "./inventory-source-proof-workspace.ts";
 import {
@@ -301,6 +301,7 @@ export class InventorySourceProofJobs {
       },
       {
         fetcher,
+        inventory: true,
         currentScope: async () =>
           (await this.boundSource(source, lease)) ? presence : null,
       },

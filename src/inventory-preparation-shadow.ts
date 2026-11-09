@@ -1,3 +1,7 @@
+import {
+  INVENTORY_LOTW_BATCH_LIMIT,
+  INVENTORY_QRZ_BATCH_LIMIT,
+} from "./inventory-delivery-limits.ts";
 import { InventoryLotwPreparation } from "./inventory-lotw-preparation.ts";
 import { InventoryQrzPreparation } from "./inventory-qrz-preparation.ts";
 import type { InventorySourceProofJobs } from "./inventory-source-proof-jobs.ts";
@@ -43,7 +47,10 @@ export function configuredInventoryShadow(
     !identifier(value.destinationScope) ||
     !Array.isArray(value.recordKeys) ||
     value.recordKeys.length < 1 ||
-    value.recordKeys.length > 20 ||
+    value.recordKeys.length >
+      (provider === "lotw"
+        ? INVENTORY_LOTW_BATCH_LIMIT
+        : INVENTORY_QRZ_BATCH_LIMIT) ||
     !value.recordKeys.every(identifier) ||
     new Set(value.recordKeys).size !== value.recordKeys.length
   )

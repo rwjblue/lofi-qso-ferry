@@ -2,7 +2,7 @@
 CREATE TABLE inventory_source_proofs (
  tenant TEXT NOT NULL,proof_id TEXT NOT NULL,scope_id TEXT NOT NULL,
  snapshot TEXT NOT NULL CHECK(json_valid(snapshot) AND length(snapshot)<=262144),
- witnesses TEXT NOT NULL CHECK(json_valid(witnesses) AND json_type(witnesses)='array' AND json_array_length(witnesses) BETWEEN 1 AND 64),
+ witnesses TEXT NOT NULL CHECK(json_valid(witnesses) AND json_type(witnesses)='array' AND json_array_length(witnesses) BETWEEN 1 AND 256),
  drain_run TEXT NOT NULL,drain_page TEXT NOT NULL,
  collection_finished_at INTEGER NOT NULL,drain_started_at INTEGER NOT NULL,
  created_at INTEGER NOT NULL,expires_at INTEGER NOT NULL,
@@ -77,7 +77,7 @@ CREATE TRIGGER inventory_source_proof_insert BEFORE INSERT ON inventory_source_p
   AND l.expires_at>unixepoch('subsec')*1000 AND NEW.expires_at>unixepoch('subsec')*1000
  ) OR EXISTS(SELECT 1 FROM inventory_source_proof_stale x WHERE x.tenant=NEW.tenant AND x.proof_id=NEW.proof_id)
  THEN RAISE(ABORT,'inventory source proof inputs changed') END;
- SELECT CASE WHEN json_type(NEW.snapshot,'$.contacts') IS NOT 'array' OR json_array_length(NEW.snapshot,'$.contacts') NOT BETWEEN 1 AND 20
+ SELECT CASE WHEN json_type(NEW.snapshot,'$.contacts') IS NOT 'array' OR json_array_length(NEW.snapshot,'$.contacts') NOT BETWEEN 1 AND 100
  OR json_type(NEW.snapshot,'$.dependencies') IS NOT 'array' OR json_array_length(NEW.snapshot,'$.dependencies')!=json_array_length(NEW.witnesses)
  OR EXISTS(SELECT 1 FROM json_each(NEW.witnesses) w WHERE json_type(w.value,'$.requestStartedAt') IS NOT 'integer'
   OR json_extract(w.value,'$.requestStartedAt')>NEW.collection_finished_at

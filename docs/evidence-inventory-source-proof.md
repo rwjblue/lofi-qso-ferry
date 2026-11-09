@@ -408,3 +408,17 @@ record had a valid receive timestamp, second-precision QSO time, and
 station DXCC. The report header's receive timestamp matched the first
 record. The validation used one request and 61,264 response bytes.
 It checked the fields needed for readback without sending a file.
+
+## 100-contact LoTW files
+
+A fresh native D1 fixture enrolled 100 compatible contacts, captured
+their LoFi witnesses and completed the canonical drain. It prepared one
+100-member signed file. An authorization covering 99 members left the
+entire file unsent. Authorization for all 100 sent the exact file once
+through a simulated transport. Member readback settled 61 contacts on
+the first report and 39 on a later report. Settlement commits in chunks
+of at most 20 members, so a restart can resume the remaining work.
+
+The new member limits are part of the unpublished inventory schema.
+Earlier private rehearsal databases can still be read and replayed into
+fresh databases with the larger limits.

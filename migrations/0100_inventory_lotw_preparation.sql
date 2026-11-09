@@ -11,7 +11,7 @@ CREATE TABLE inventory_lotw_batches (
  input_digest TEXT NOT NULL CHECK(length(input_digest)=43),manifest_hash TEXT NOT NULL CHECK(length(manifest_hash)=43),
  wire_hash TEXT NOT NULL CHECK(length(wire_hash)=43),wire_bytes INTEGER NOT NULL CHECK(wire_bytes BETWEEN 1 AND 512000),
  envelope TEXT NOT NULL CHECK(json_valid(envelope) AND length(envelope)<=1048576),
- prepared_at INTEGER NOT NULL,member_count INTEGER NOT NULL CHECK(member_count BETWEEN 1 AND 20),committed_at INTEGER,cancelled_at INTEGER,
+ prepared_at INTEGER NOT NULL,member_count INTEGER NOT NULL CHECK(member_count BETWEEN 1 AND 100),committed_at INTEGER,cancelled_at INTEGER,
  PRIMARY KEY(tenant,batch_id),
  FOREIGN KEY(tenant,proof_id) REFERENCES inventory_source_proofs(tenant,proof_id),
  FOREIGN KEY(tenant,source_scope) REFERENCES inventory_scopes(tenant,scope_id),
@@ -23,7 +23,7 @@ CREATE TABLE inventory_lotw_batches (
  CHECK(cancelled_at IS NULL OR (committed_at IS NOT NULL AND cancelled_at>=committed_at))
 );
 CREATE TABLE inventory_lotw_batch_members (
- tenant TEXT NOT NULL,attempt_id TEXT NOT NULL,batch_id TEXT NOT NULL,position INTEGER NOT NULL CHECK(position BETWEEN 1 AND 20),
+ tenant TEXT NOT NULL,attempt_id TEXT NOT NULL,batch_id TEXT NOT NULL,position INTEGER NOT NULL CHECK(position BETWEEN 1 AND 100),
  source_identity TEXT NOT NULL,record_key TEXT NOT NULL,result_set TEXT NOT NULL,result_version INTEGER NOT NULL CHECK(result_version>0),reviewed_at INTEGER NOT NULL,
  source_hash TEXT NOT NULL CHECK(length(source_hash)=64 AND source_hash NOT GLOB '*[^0-9a-f]*'),
  projection_hash TEXT NOT NULL CHECK(length(projection_hash)=43),identity_hash TEXT NOT NULL CHECK(length(identity_hash)=43),cancelled_at INTEGER,

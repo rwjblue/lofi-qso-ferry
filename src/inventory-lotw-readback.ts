@@ -11,8 +11,8 @@ import {
 } from "./inventory-ownership.ts";
 import { LotwClient, type LotwReport, observeLotwContact } from "./lotw.ts";
 import {
-  lotwAttemptIdentity,
   type LotwCredential,
+  lotwAttemptIdentity,
 } from "./lotw-delivery-input.ts";
 import { canonical, seal } from "./security.ts";
 import type { LotwContact, LotwStation } from "./signing.ts";
@@ -211,8 +211,20 @@ export class InventoryLotwReadback {
             ),
           )
         ).flat();
-        if (evidence.length && current())
-          await this.save(batch, lease, binding, startedAt, evidence);
+        // Ownership lookups and native receipt guards remain 20-member
+        // transactions. Each completed prefix is durable across retries.
+        for (
+          let offset = 0;
+          offset < evidence.length && current();
+          offset += 20
+        )
+          await this.save(
+            batch,
+            lease,
+            binding,
+            startedAt,
+            evidence.slice(offset, offset + 20),
+          );
       }
     } catch (error) {
       const outcome = await this.outcome(tenant, batch);

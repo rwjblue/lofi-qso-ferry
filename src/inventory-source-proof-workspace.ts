@@ -1,3 +1,7 @@
+import {
+  INVENTORY_LOTW_BATCH_LIMIT,
+  INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT,
+} from "./inventory-delivery-limits.ts";
 import { canonical } from "./security.ts";
 import {
   SOURCE_PRESENCE_MAX_AGE_MS,
@@ -97,7 +101,7 @@ export class InventorySourceProofWorkspace {
       !identifier(tenant) ||
       !identifier(scope) ||
       keys.length < 1 ||
-      keys.length > 20 ||
+      keys.length > INVENTORY_LOTW_BATCH_LIMIT ||
       keys.some((key) => !identifier(key)) ||
       new Set(keys).size !== keys.length ||
       !stamp(now)
@@ -122,7 +126,7 @@ export class InventorySourceProofWorkspace {
            WHERE b.tenant=?2 AND b.source_scope=?3 AND b.record_key=x.value
              AND b.decision='source_proof_required' AND b.blocker IS NULL AND b.ownership_version=b.current_ownership_version
              AND b.source_credential=b.current_source_credential AND b.destination_credential=b.current_destination_credential
-           LIMIT 65
+           LIMIT ${INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT + 1}
          ), valid AS MATERIALIZED(
            SELECT result_set FROM (SELECT DISTINCT result_set FROM chosen) c
            WHERE NOT EXISTS(SELECT 1 FROM inventory_match_stale_sets stale WHERE stale.tenant=?2 AND stale.set_id=c.result_set)
@@ -142,7 +146,7 @@ export class InventorySourceProofWorkspace {
            UNION ALL SELECT 'operation',parent_key FROM parents
            UNION ALL SELECT 'qso',e.record_key FROM parents p CROSS JOIN inventory_records e INDEXED BY inventory_parent
             WHERE e.tenant=?2 AND e.scope_id=?3 AND e.parent_key=p.parent_key AND e.entity_family='qso' AND e.subtype='event' AND e.status='active'
-           LIMIT 65
+           LIMIT ${INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT + 1}
          )
          SELECT ref.kind,ref.key,e.subtype,e.parent_key AS parent,e.status,f.revision,f.revision_order AS stamp,f.payload_id AS payload,
                 f.semantic_version,coalesce(mv.version,0) AS membership_version,m.state AS membership,
@@ -184,7 +188,10 @@ export class InventorySourceProofWorkspace {
       return { kind: "held" as const, reason: "source_unavailable" as const };
     const reviewed = reviewedRows.results as unknown as ReviewedContact[];
     const rows = dependencyRows.results as unknown as DependencyRow[];
-    if (reviewed.length >= 65 || rows.length >= 65)
+    if (
+      reviewed.length > INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT ||
+      rows.length > INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT
+    )
       return { kind: "held" as const, reason: "dependency_bound" as const };
     if (new Set(reviewed.map((row) => row.record_key)).size !== keys.length)
       return { kind: "held" as const, reason: "review_unavailable" as const };

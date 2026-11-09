@@ -1,13 +1,14 @@
 import { InventoryComparisonGenerations } from "./inventory-comparison-generations.ts";
 import type { InventoryComparisonKey } from "./inventory-comparison-keys.ts";
+import { INVENTORY_LOTW_BATCH_LIMIT } from "./inventory-delivery-limits.ts";
 import { InventoryDeliveryWorkspace } from "./inventory-delivery-workspace.ts";
 import { inventoryOwnershipTokens } from "./inventory-ownership.ts";
 import { LotwClient } from "./lotw.ts";
 import {
   certificateCurrentlyValid,
-  lotwAttemptIdentity,
   type LotwConfig,
   type LotwCredential,
+  lotwAttemptIdentity,
   lotwDeliveryInput,
   lotwProjectionHash,
   lotwSigningCertificate,
@@ -154,7 +155,7 @@ export class InventoryLotwPreparation {
     const keys = [...contactKeys].sort();
     if (
       keys.length < 1 ||
-      keys.length > 20 ||
+      keys.length > INVENTORY_LOTW_BATCH_LIMIT ||
       new Set(keys).size !== keys.length ||
       ![tenant, proofId, destination, batchId, ...keys].every(
         (id) => typeof id === "string" && id.length > 0 && id.length <= 256,

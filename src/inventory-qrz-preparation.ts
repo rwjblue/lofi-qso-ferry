@@ -7,6 +7,7 @@ import {
   templateContext,
 } from "./delivery.ts";
 import { destinationIdentityClaim } from "./identity-claims.ts";
+import { INVENTORY_QRZ_BATCH_LIMIT } from "./inventory-delivery-limits.ts";
 import { InventoryDeliveryWorkspace } from "./inventory-delivery-workspace.ts";
 import { inventoryJsonChunks } from "./inventory-ingestion.ts";
 import { canonical, type Envelope, open, seal, sha256 } from "./security.ts";
@@ -75,7 +76,7 @@ export class InventoryQrzPreparation {
     const keys = [...contactKeys].sort();
     if (
       keys.length < 1 ||
-      keys.length > 20 ||
+      keys.length > INVENTORY_QRZ_BATCH_LIMIT ||
       new Set(keys).size !== keys.length ||
       ![tenant, proofId, destination, stageId, ...keys].every(
         (key) => typeof key === "string" && key.length > 0 && key.length <= 256,

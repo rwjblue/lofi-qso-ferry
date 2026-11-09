@@ -1,4 +1,8 @@
 import {
+  INVENTORY_LOTW_BATCH_LIMIT,
+  INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT,
+} from "./inventory-delivery-limits.ts";
+import {
   LoFiClient,
   type LoFiCredentials,
   type SideProgress,
@@ -69,6 +73,7 @@ export interface SourcePresenceOptions {
   /** Caller supplies its normal budgeted transport; the collector adds no quota. */
   fetcher: typeof fetch;
   currentScope: () => Promise<SourcePresenceScope | null>;
+  inventory?: boolean;
   now?: () => number;
 }
 
@@ -230,12 +235,24 @@ export async function collectSourcePresence(
   input: SourcePresenceInput,
   options: SourcePresenceOptions,
 ): Promise<SourcePresenceResult> {
+  const maxTargets = options.inventory
+    ? INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT
+    : 64;
+  const maxContacts = options.inventory ? INVENTORY_LOTW_BATCH_LIMIT : 20;
+  const pageSize =
+    options.inventory &&
+    (input.selectedContacts.length > 20 || input.targets.length > 64)
+      ? INVENTORY_LOTW_BATCH_LIMIT
+      : SOURCE_PRESENCE_REQUEST_PAGE_SIZE;
+  const maxPageRecords =
+    (pageSize / SOURCE_PRESENCE_REQUEST_PAGE_SIZE) *
+    SOURCE_PRESENCE_MAX_PAGE_RECORDS;
   // Reject oversized inputs before cloning; snapshot before asynchronous work.
   const oversized =
-    input.targets.length > 64 ||
-    input.selectedContacts.length > 20 ||
-    (input.observedAnchors?.length ?? 0) > 128 ||
-    (input.cachedWitnesses?.length ?? 0) > 64;
+    input.targets.length > maxTargets ||
+    input.selectedContacts.length > maxContacts ||
+    (input.observedAnchors?.length ?? 0) > Math.max(128, maxTargets) ||
+    (input.cachedWitnesses?.length ?? 0) > maxTargets;
   const scope = { ...input.scope };
   const credentials = { ...input.credentials };
   const startedAt = input.collectionStartedAt;
@@ -373,11 +390,7 @@ export async function collectSourcePresence(
       allowance < 1 ||
       allowance > 4 ||
       targets.length < 1 ||
-      targets.length > 64 ||
       contacts.length < 1 ||
-      contacts.length > 20 ||
-      cached.length > 64 ||
-      anchors.length > 128 ||
       targets.some((target) => !validTarget(target)) ||
       contacts.some((id) => !text(id)) ||
       anchors.some(
@@ -476,7 +489,7 @@ export async function collectSourcePresence(
       const windowBody = (progress: SideProgress) => ({
         syncedUntilMillis: progress.watermark,
         ...(progress.cursor ? { cursor: progress.cursor } : {}),
-        limit: SOURCE_PRESENCE_REQUEST_PAGE_SIZE,
+        limit: pageSize,
         anyClient: true,
       });
       expectedSyncBody = JSON.stringify({
@@ -490,11 +503,7 @@ export async function collectSourcePresence(
         },
       });
       syncRequestStartedAt = undefined;
-      const page = await client.syncPage(
-        state,
-        checkTime(),
-        SOURCE_PRESENCE_REQUEST_PAGE_SIZE,
-      );
+      const page = await client.syncPage(state, checkTime(), pageSize);
       await checkScope();
       if (syncRequestStartedAt === undefined) throw new Held("invalid_page");
       // Cursorless source pages may expand over a tied edge millisecond. The
@@ -503,8 +512,8 @@ export async function collectSourcePresence(
       // Check BOTH streams and their combined plaintext size before hashing or
       // retaining any witness; LoFiClient separately caps transport at 2 MiB.
       if (
-        page.operations.length > SOURCE_PRESENCE_MAX_PAGE_RECORDS ||
-        page.qsos.length > SOURCE_PRESENCE_MAX_PAGE_RECORDS
+        page.operations.length > maxPageRecords ||
+        page.qsos.length > maxPageRecords
       )
         throw new Held("page_bound");
       const encoder = new TextEncoder();

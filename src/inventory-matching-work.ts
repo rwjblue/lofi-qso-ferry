@@ -18,6 +18,12 @@ const capacityErrors = new Set([
   "inventory_projection_read_split_required",
   "inventory_projection_read_byte_bound",
 ]);
+const receiptProjectionsSettled = (scope: string, now: string) => `NOT EXISTS (
+  SELECT 1 FROM comparison_work p INDEXED BY comparison_work_pending_scope
+  WHERE (p.tenant,p.generation_id,p.scope_id)=(${scope})
+    AND p.facet='receipt' AND p.completed_version<p.work_version AND p.due_at<=${now}
+)`;
+
 interface Head {
   generation_id: string;
   destination: string;
@@ -67,9 +73,21 @@ ON CONFLICT(tenant,generation_id,destination,source_scope,record_key) DO UPDATE 
   async step(tenant: string) {
     if (!identifier(tenant))
       throw new Error("invalid_inventory_matching_work_tenant");
+    // Receipt projection commits wake the coordinator. Let the destination
+    // settle before rebuilding its proofs, while other destinations stay eligible.
     const head = await this.store
       .statement(
-        `WITH pairs AS MATERIALIZED(SELECT dst.tenant,dst.generation_id,dst.scope_id AS destination,src.scope_id AS source_scope,src.config_version AS source_config_version,dst.config_version AS destination_config_version FROM comparison_domains d CROSS JOIN inventory_comparison_ready_builds dst CROSS JOIN inventory_comparison_ready_builds src WHERE d.tenant=?1 AND dst.tenant=d.tenant AND dst.generation_id=d.active_generation AND dst.provider IN('qrz','lotw') AND src.tenant=d.tenant AND src.generation_id=dst.generation_id AND src.provider='lofi'),
+        `WITH destinations AS MATERIALIZED (
+  SELECT dst.* FROM comparison_domains d CROSS JOIN inventory_comparison_ready_builds dst
+  WHERE d.tenant=?1 AND dst.tenant=d.tenant AND dst.generation_id=d.active_generation
+    AND dst.provider IN('qrz','lotw')
+    AND ${receiptProjectionsSettled("dst.tenant,dst.generation_id,dst.scope_id", "?2")}
+), pairs AS MATERIALIZED (
+  SELECT dst.tenant,dst.generation_id,dst.scope_id AS destination,src.scope_id AS source_scope,
+    src.config_version AS source_config_version,dst.config_version AS destination_config_version
+  FROM destinations dst CROSS JOIN inventory_comparison_ready_builds src
+  WHERE src.tenant=dst.tenant AND src.generation_id=dst.generation_id AND src.provider='lofi'
+),
 heads AS MATERIALIZED(SELECT p.*,(SELECT w.rowid FROM matching_work w INDEXED BY matching_work_scope_pending WHERE w.tenant=p.tenant AND w.generation_id=p.generation_id AND w.destination=p.destination AND w.source_scope=p.source_scope AND w.source_config_version=p.source_config_version AND w.destination_config_version=p.destination_config_version AND w.completed_version<w.work_version AND w.due_at<=?2 ORDER BY w.due_at,w.record_key LIMIT 1) AS head FROM pairs p)
 SELECT w.generation_id,w.destination,w.source_scope,w.source_config_version,w.destination_config_version FROM heads h CROSS JOIN matching_work w WHERE w.rowid=h.head ORDER BY w.due_at,w.destination,w.source_scope,w.record_key LIMIT 1`,
         tenant,
@@ -88,6 +106,7 @@ SELECT w.generation_id,w.destination,w.source_scope,w.source_config_version,w.de
          LEFT JOIN match_results r ON (r.tenant,r.destination,r.source_scope,r.record_key)=(w.tenant,w.destination,w.source_scope,w.record_key)
          WHERE l.tenant=?1 AND l.scope=?8 AND l.token=?9 AND l.expires_at>unixepoch('subsec')*1000
          AND w.tenant=l.tenant AND w.generation_id=?2 AND w.destination=?3 AND w.source_scope=?4 AND w.source_config_version=?5 AND w.destination_config_version=?6 AND w.completed_version<w.work_version AND w.due_at<=?7
+         AND ${receiptProjectionsSettled("?1,?2,?3", "?7")}
          ORDER BY w.due_at,w.record_key LIMIT 20`,
         tenant,
         head.generation_id,

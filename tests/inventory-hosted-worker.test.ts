@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
+import { backup, DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { gunzipSync } from "node:zlib";
@@ -11,6 +14,10 @@ import {
   consumeInventoryRecoveryWakeups,
   publishInventoryRecoveryWakeups,
 } from "../src/inventory-delivery-recovery.ts";
+import {
+  InventorySendQueue,
+  isInventorySendWakeup,
+} from "../src/inventory-delivery-send.ts";
 import { InventoryDeliveryWorkspace } from "../src/inventory-delivery-workspace.ts";
 import {
   runHostedInventoryQueue,
@@ -23,14 +30,10 @@ import { InventoryLotwReadback } from "../src/inventory-lotw-readback.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
 import { InventoryQrzDispatch } from "../src/inventory-qrz-dispatch.ts";
 import {
-  inventoryQrzBookLeaseScope,
   InventoryQrzNeighborhood,
+  inventoryQrzBookLeaseScope,
 } from "../src/inventory-qrz-neighborhood.ts";
 import { InventoryQrzPreparation } from "../src/inventory-qrz-preparation.ts";
-import {
-  InventorySendQueue,
-  isInventorySendWakeup,
-} from "../src/inventory-delivery-send.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
 import { registerInventorySelection } from "../src/inventory-scheduler.ts";
@@ -107,7 +110,37 @@ async function setFixtureProofExpiry(
   return original;
 }
 
+async function openRestoredFixture(source: string, target: string) {
+  const paths = (await readdir(join(source, "d1"), { recursive: true })).filter(
+    (path) => path.endsWith(".sqlite") && basename(path) !== "metadata.sqlite",
+  );
+  assert.equal(paths.length, 1);
+  const relative = join("d1", paths[0]);
+  const destination = join(target, relative);
+  await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
+  const database = new DatabaseSync(join(source, relative), { readOnly: true });
+  try {
+    await backup(database, destination);
+  } finally {
+    database.close();
+  }
+  return {
+    path: destination,
+    runtime: new Miniflare(
+      convertV4MiniflareOptions({
+        modules: true,
+        script: "export default {fetch(){throw new Error('offline restore')}}",
+        compatibilityDate: "2026-10-22",
+        d1Databases: ["DB"],
+        resourcePersistencePath: target,
+      }),
+    ),
+  };
+}
+
 test("actual Worker cron drives paced inventory, comparison and historical adoption", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ferry-worker-restore-"));
+  const workerStorage = join(root, "original");
   const bundle = await build({
     entryPoints: ["src/index.ts"],
     bundle: true,
@@ -146,6 +179,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       compatibilityDate: "2026-10-22",
       compatibilityFlags: ["nodejs_compat"],
       d1Databases: ["DB"],
+      resourcePersistencePath: workerStorage,
       bindings: {
         ENVIRONMENT: "local",
         RP_ID: "localhost",
@@ -318,7 +352,10 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       },
     }),
   );
-  t.after(() => runtime.dispose());
+  t.after(async () => {
+    await runtime.dispose();
+    await rm(root, { recursive: true, force: true });
+  });
   const db = await runtime.getD1Database("DB");
   // This entrypoint's foundation is real D1, with the complete ordered schema.
   const { applyMigration } = await import("./helpers.ts");
@@ -2208,6 +2245,145 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     [(await readbackJob())?.version, (await readbackJob())?.turns],
     [2, 1],
   );
+  const ciphertext = async (database = db) =>
+    (
+      await database
+        .prepare(
+          "SELECT connection,id,envelope FROM private_data WHERE kind='credential' ORDER BY connection,id",
+        )
+        .all()
+    ).results;
+  const recoveryVersions = async (database: D1Database) =>
+    (
+      await database
+        .prepare(
+          `SELECT 'lotw' AS provider,version,turns,published_version FROM inventory_lotw_recovery_jobs WHERE tenant='a' AND batch_id=?
+           UNION ALL SELECT 'qrz',version,turns,published_version FROM inventory_qrz_recovery_jobs WHERE tenant='a' AND attempt_id=?
+           ORDER BY provider`,
+        )
+        .bind(replacement.batchId, mayHaveSent.attempt_id)
+        .all<{
+          provider: string;
+          version: number;
+          turns: number;
+          published_version: number;
+        }>()
+    ).results;
+  const snapshotCredentials = await ciphertext();
+  const snapshotVersions = await recoveryVersions(db);
+  assert.equal(snapshotVersions.length, 2);
+  const restored = await openRestoredFixture(
+    workerStorage,
+    join(root, "restored"),
+  );
+  try {
+    const restoredDb = await restored.runtime.getD1Database("DB");
+    const restoredStore = new Store(restoredDb, keys);
+    const offline: typeof fetch = async () =>
+      assert.fail("offline restore made a request");
+    const restoredLotw = new InventoryLotwPreparation(restoredStore, offline);
+    const restoredReadback = new InventoryLotwReadback(restoredStore, offline);
+    const restoredQrz = new InventoryQrzPreparation(restoredStore);
+    assert.deepEqual(await recoveryVersions(restoredDb), snapshotVersions);
+    assert.deepEqual(await ciphertext(restoredDb), snapshotCredentials);
+    for (const id of ["source", "destination", "lotw"]) {
+      const link = await restoredStore.connection("a", id);
+      assert.ok(link?.credential_version);
+      assert.ok(
+        await restoredStore.private(
+          "a",
+          id,
+          link.credential_version,
+          "credential",
+        ),
+      );
+    }
+
+    assert.equal((await lockRestoredDatabase(restoredDb)).lockedAccounts, 1);
+    const fenced = snapshotVersions.map((row) => ({
+      ...row,
+      version: row.version + 1,
+      published_version: 0,
+    }));
+    assert.deepEqual(await recoveryVersions(restoredDb), fenced);
+    assert.equal((await lockRestoredDatabase(restoredDb)).lockedAccounts, 0);
+    assert.deepEqual(await recoveryVersions(restoredDb), fenced);
+    assert.deepEqual(await ciphertext(restoredDb), snapshotCredentials);
+    assert.deepEqual(await restoredReadback.outcome("a", replacement.batchId), {
+      kind: "partial",
+      observed: 1,
+      members: 2,
+    });
+    assert.equal(
+      await restoredDb
+        .prepare(
+          "SELECT prior_state FROM inventory_lotw_restore_pending WHERE batch_id=?",
+        )
+        .bind(replacement.batchId)
+        .first("prior_state"),
+      "possibly_sent",
+    );
+    assert.deepEqual(
+      (
+        await restoredDb
+          .prepare(
+            "SELECT attempt_id,prior_state FROM inventory_qrz_restore_pending ORDER BY prior_state",
+          )
+          .all()
+      ).results,
+      [
+        { attempt_id: mayHaveSent.attempt_id, prior_state: "may_have_sent" },
+        {
+          attempt_id: preparedAtSnapshot.attempt_id,
+          prior_state: "prepared_at_snapshot",
+        },
+      ],
+    );
+    assert.deepEqual(
+      await restoredLotw.artifact("a", replacement.batchId),
+      archivedLotw,
+    );
+    assert.deepEqual(
+      await Promise.all(
+        restoreStage.attempts.map((row) =>
+          restoredQrz.artifact("a", row.attempt_id),
+        ),
+      ),
+      restoreArtifacts,
+    );
+    const offlineQueue = {
+      async sendBatch() {
+        assert.fail("offline restore scheduled recovery");
+      },
+    };
+    assert.equal(
+      await publishInventoryRecoveryWakeups(
+        restoredStore,
+        "lotw",
+        offlineQueue,
+      ),
+      0,
+    );
+    assert.equal(
+      await publishInventoryRecoveryWakeups(restoredStore, "qrz", offlineQueue),
+      0,
+    );
+  } finally {
+    await restored.runtime.dispose();
+  }
+  const restoredFile = new DatabaseSync(restored.path, { readOnly: true });
+  try {
+    assert.equal(
+      restoredFile.prepare("PRAGMA integrity_check").get()?.integrity_check,
+      "ok",
+    );
+    assert.deepEqual(
+      restoredFile.prepare("PRAGMA foreign_key_check").all(),
+      [],
+    );
+  } finally {
+    restoredFile.close();
+  }
   const staleReadback = singleDelivery({
     kind: "inventory-lotw-recovery",
     version: 1,
@@ -2291,14 +2467,6 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         .all<{ scope_id: string; config_version: number; state: string }>()
     ).results;
   const beforeLock = await scopeVersions();
-  const ciphertext = async () =>
-    (
-      await db
-        .prepare(
-          "SELECT connection,id,envelope FROM private_data WHERE kind='credential' ORDER BY connection,id",
-        )
-        .all()
-    ).results;
   const originalCiphertext = await ciphertext();
   assert.equal((await lockRestoredDatabase(db)).lockedAccounts, 1);
   assert.equal(

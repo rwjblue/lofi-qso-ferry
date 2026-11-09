@@ -815,7 +815,7 @@ At deployment cutover, pause the previous sender before allowing the replacement
 
 After the replacement starts submitting, its new durable ownership, immutable attempts/artifacts, template bindings and uncertain outcomes remain authoritative. Rollback must use a release compatible with the fresh schema and any dispatched batches, or pause new writes while its resolver remains available. Do not resume an old sender against independently re-inventoried state.
 
-Both the programmatic path and `ops/lock-restored.sql` now lock native QRZ state. The durable restore marker invalidates inventory and write freshness, clears leases, and preserves ownership and unsettled attempts for reconciliation. A prepared artifact may have been sent after the restored snapshot, so it also retains its reservation. The [restore trial](evidence-inventory-source-proof.md#hosted-qrz-recovery-and-restore) exercises populated QRZ state and repeated quarantine. Extend the same boundary to LoTW batch members when batch submission is implemented.
+Both the programmatic path and `ops/lock-restored.sql` lock native QRZ and LoTW state. The durable restore marker invalidates inventory and write freshness, clears leases, and preserves ownership and unsettled attempts for reconciliation. A prepared artifact may have been sent after the restored snapshot, so it retains its reservation. The [mixed-provider restore rehearsal](evidence-inventory-source-proof.md#mixed-provider-backup-restore) checks that a reopened backup preserves QRZ attempts and a partially observed LoTW batch through repeated quarantine.
 
 ## Cost and throughput model
 

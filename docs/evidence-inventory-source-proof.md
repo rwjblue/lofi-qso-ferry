@@ -362,6 +362,23 @@ while leaving the contact state behind. The real account-only replay
 on the new schema retained four credential envelopes, recorded zero
 prior LoTW batches, and made zero requests.
 
+## Mixed-provider backup restore
+
+The local Worker fixture takes a SQLite backup after one of two LoTW
+members has a receipt. At that point QRZ also has one prepared attempt
+and one possibly sent attempt. An isolated Worker reopens the backup
+with the same keyring and decrypts the three linked credentials before
+quarantine. The original fixture continues its readback separately.
+[SQLite backup API](https://nodejs.org/api/sqlite.html)
+
+Two quarantine passes preserve the credential ciphertext, both QRZ
+artifacts and the exact LoTW TQ8, including its ordered member manifest
+and wire hash. The LoTW batch remains partially observed and both QRZ
+attempts retain their original quarantine classifications. Each recovery
+job is fenced once, and the locked copy publishes no recovery messages.
+The closed copy is checked for SQLite integrity and foreign keys. All
+provider traffic in this fixture is simulated.
+
 ## Hosted LoTW recovery
 
 [Migration 0103](../migrations/0103_inventory_lotw_recovery_jobs.sql)

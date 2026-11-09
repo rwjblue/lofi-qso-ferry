@@ -23,6 +23,7 @@ import {
   registerInventorySelection,
   registerKnownInventoryConnections,
   registerSourceCalendarSelections,
+  restoreLotwDatedPolls,
   startInventorySelections,
 } from "../src/inventory-scheduler.ts";
 import { isSourceProofWakeup } from "../src/inventory-source-proof-wakeups.ts";
@@ -683,7 +684,7 @@ test("scheduled recurrence respects poll policy and switches to full verificatio
   assert.equal((await runs.load("a", verification.run))?.mode, "full");
 });
 
-test("LoTW account deltas recur with an independent positive-only checkpoint", async (t) => {
+test("LoTW account deltas keep their checkpoint and fall back to dated polls on overflow", async (t) => {
   const f = await fixture(t);
   await f.db
     .prepare(`INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at,config)
@@ -697,36 +698,44 @@ test("LoTW account deltas recur with an independent positive-only checkpoint", a
   const link = await f.store.connection("a", "lotw");
   assert.ok(link);
   const runtime = await activateInventoryRuntime(f.store);
-  const dated = await registerInventorySelection(f.store, runtime, link, {
+  const datePlan = {
     provider: "lotw",
     selection: { startDate: "2025-01-01", endDate: "2025-01-31" },
-  });
+  } as const;
+  const dated = await registerInventorySelection(
+    f.store,
+    runtime,
+    link,
+    datePlan,
+    { pollPeriodMs: 600_000 },
+  );
   const runs = new InventoryRuns(new InventoryIngestion(f.store));
   const lower = "2026-11-06 12:00:00";
   const through = "2026-11-07 13:10:00";
   const accountReads: string[] = [];
+  const datedReads: string[] = [];
+  let overflow = false;
+  const receipt = serializeAdifRecord({
+    CALL: "W1AW",
+    STATION_CALLSIGN: "N1RWJ",
+    QSO_DATE: "20250101",
+    TIME_ON: "120000",
+    MODE: "CW",
+    BAND: "20M",
+    QSL_RCVD: "N",
+    APP_LOTW_RXQSO: through,
+  });
   const runner = new InventoryRunner(
     runs,
     async (input) => {
       const params = new URL(String(input)).searchParams;
-      if (params.has("qso_startdate"))
-        return new Response(
-          "<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>0<EOH><APP_LOTW_EOF>",
-        );
-      accountReads.push(params.get("qso_qsorxsince") ?? "");
-      const record =
-        accountReads.length === 1
-          ? serializeAdifRecord({
-              CALL: "W1AW",
-              STATION_CALLSIGN: "N1RWJ",
-              QSO_DATE: "20250101",
-              TIME_ON: "120000",
-              MODE: "CW",
-              BAND: "20M",
-              QSL_RCVD: "N",
-              APP_LOTW_RXQSO: through,
-            })
-          : "";
+      const isDated = params.has("qso_startdate");
+      (isDated ? datedReads : accountReads).push(
+        params.get("qso_qsorxsince") ?? "",
+      );
+      if (!isDated && overflow)
+        return new Response("x".repeat(2 * 1024 * 1024 + 1));
+      const record = isDated || accountReads.length === 1 ? receipt : "";
       return new Response(
         `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>${record ? 1 : 0}<APP_LOTW_LASTQSORX:19>${through}<EOH>${record}<APP_LOTW_EOF>`,
       );
@@ -755,10 +764,34 @@ test("LoTW account deltas recur with an independent positive-only checkpoint", a
     }
     assert.fail("expected terminal publication");
   };
-  assert.equal((await startInventorySelections(f.store)).started, 1);
-  const datedRun = await active(dated.stream);
-  assert.ok(datedRun);
-  await finish(datedRun);
+  const datedStream = await runs.inventory.snapshot(
+    "a",
+    dated.scope,
+    dated.stream,
+  );
+  const datedLease = await f.store.claim(
+    "a",
+    `inventory:${dated.scope}`,
+    Date.now(),
+    90_000,
+  );
+  assert.ok(datedStream && datedLease);
+  // This earlier baseline does not overlap the account feed's lower bound.
+  const startedBeforeFeed = Date.parse("2026-11-06T11:00:00Z");
+  let datedRun: string;
+  try {
+    datedRun = (
+      await runs.begin({
+        stream: datedStream,
+        lease: datedLease,
+        definition: await planInventoryRun(datedStream, datePlan),
+        now: startedBeforeFeed,
+      })
+    ).id;
+  } finally {
+    await f.store.release(datedLease);
+  }
+  assert.ok((await finish(datedRun)).nextDueAt < Date.now() + 601_000);
   const datedCoverage = await coverage(dated.stream);
   assert.deepEqual(datedCoverage, {
     state: "ready",
@@ -833,7 +866,81 @@ test("LoTW account deltas recur with an independent positive-only checkpoint", a
   await finish(next.run);
   assert.deepEqual((await snapshot())?.checkpoint, checkpoint);
   assert.deepEqual(await coverage(dated.stream), datedCoverage);
-  assert.deepEqual(accountReads, [lower, through]);
+
+  const ordinary = await runner.step(await f.due(datedRun));
+  assert.ok(ordinary.kind === "started");
+  assert.equal((await runs.load("a", ordinary.run))?.mode, "delta");
+  assert.ok((await finish(ordinary.run)).nextDueAt < Date.now() + 601_000);
+  await f.db
+    .prepare(
+      "UPDATE inventory_scheduled_selections SET version=version+1,next_full_at=1 WHERE stream_id=?",
+    )
+    .bind(dated.stream)
+    .run();
+  const verify = await runner.step(await f.due(ordinary.run));
+  assert.ok(verify.kind === "started");
+  assert.equal((await runs.load("a", verify.run))?.mode, "full");
+  const verified = await finish(verify.run);
+  assert.ok(verified.nextDueAt > Date.now() + 6 * 86_400_000);
+  const verifiedCoverage = await coverage(dated.stream);
+  assert.equal(await restoreLotwDatedPolls(f.store), 0);
+
+  const attempt = await runner.step(await f.due(next.run));
+  assert.ok(attempt.kind === "started");
+  overflow = true;
+  assert.equal((await runner.step(await f.due(attempt.run))).kind, "held");
+  assert.equal((await runs.load("a", attempt.run))?.reason, "overflow");
+  assert.deepEqual((await snapshot())?.checkpoint, checkpoint);
+  assert.deepEqual(await coverage(dated.stream), verifiedCoverage);
+
+  await f.db
+    .prepare(`CREATE TRIGGER fixture_ignore_fallback BEFORE UPDATE ON inventory_stream_jobs
+    WHEN NEW.next_due_at<OLD.next_due_at AND NEW.state='idle' BEGIN SELECT RAISE(IGNORE); END`)
+    .run();
+  await assert.rejects(
+    restoreLotwDatedPolls(f.store),
+    /LoTW dated poll fallback changed/,
+  );
+  assert.equal(
+    (await runs.load("a", verify.run))?.jobVersion,
+    verified.workVersion,
+  );
+  assert.equal(
+    await f.db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_wakeups WHERE wakeup_id LIKE 'lotw-dated-fallback:%'",
+      )
+      .first("n"),
+    0,
+  );
+  await f.db.prepare("DROP TRIGGER fixture_ignore_fallback").run();
+
+  const cron = await runHostedScheduled(f.env);
+  assert.ok(cron.mode === "inventory_read_only");
+  assert.equal(cron.lotwDatedPollsRestored, 1);
+  assert.equal(await restoreLotwDatedPolls(f.store), 0);
+  const restored = await runs.load("a", verify.run);
+  assert.ok(restored && restored.jobVersion === verified.workVersion + 1);
+  assert.ok(restored.nextDueAt < Date.now() + 601_000);
+  assert.deepEqual(
+    await runner.step({
+      version: 1,
+      tenant: "a",
+      scope: dated.scope,
+      stream: dated.stream,
+      run: verify.run,
+      workVersion: verified.workVersion,
+    }),
+    { kind: "skipped", reason: "stale" },
+  );
+  const fallback = await runner.step(await f.due(verify.run));
+  assert.ok(fallback.kind === "started");
+  assert.equal((await runs.load("a", fallback.run))?.mode, "delta");
+  assert.ok((await finish(fallback.run)).nextDueAt < Date.now() + 601_000);
+  assert.deepEqual(await coverage(dated.stream), verifiedCoverage);
+  assert.deepEqual((await snapshot())?.checkpoint, checkpoint);
+  assert.deepEqual(accountReads, [lower, through, through]);
+  assert.deepEqual(datedReads, ["1900-01-01", through, "1900-01-01", through]);
   assert.equal(
     await f.db
       .prepare("SELECT count(*) AS n FROM inventory_records")

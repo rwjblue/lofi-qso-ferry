@@ -418,3 +418,29 @@ the watermark in place. An oversized account report holds for review
 with its previous watermark. Enrollment uses an explicit initial UTC
 timestamp and allows one account stream per LoTW scope. The default
 recurrence is two hours.
+
+### LoTW dated fallback after account overflow
+
+A successful account feed can move an overlapping dated selection to
+its verification interval. The dated full scan must have started at or
+after the account feed's initial receive cutoff. Until that overlap
+exists, the dated selection keeps its ordinary cadence. If the account
+feed is held or its last completed read ages past two poll periods, cron
+restores the ordinary due time on up to 16 idle dated selections per
+tick. The dated wakeup and new job version commit together. A locked
+rebuild with `--poll-due` applies the same recovery at startup.
+
+On a private copy, the native runner replayed two captured receipts in
+the account feed and the matching dated report. The completed dated
+selection scheduled its next full verification seven days later. A
+simulated account report over the two-MiB bound held the account run
+with its saved watermark and no new observations. The fallback restored
+the dated selection's ten-minute cadence and fenced off the old wakeup.
+A second fallback pass found no remaining work.
+
+The restored dated delta completed in one live read and returned one
+unchanged receipt at its inclusive cursor. It retained the published
+dated coverage, the account watermark, other stream checkpoints and
+credential envelopes. The trial made zero uploads. The native fixture
+also exercises a late reschedule failure and verifies that the job
+and wakeup roll back together.

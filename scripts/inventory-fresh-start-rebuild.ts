@@ -7,6 +7,7 @@ import type { InventoryScanPlan } from "../src/inventory-run-plans.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import {
   registerInventorySelection,
+  restoreLotwDatedPolls,
   startInventorySelections,
 } from "../src/inventory-scheduler.ts";
 import type { QrzBook } from "../src/qrz.ts";
@@ -246,6 +247,9 @@ export async function rebuildFreshStart(
         selectionPlan(link, selection),
       );
     }
+    const lotwDatedPollsRestored = options.pollDue
+      ? await restoreLotwDatedPolls(store, tenant)
+      : 0;
     const start = await startInventorySelections(store, 32);
     if (start.failed)
       throw new Error("inventory_fresh_start_enrollment_failed");
@@ -334,6 +338,7 @@ export async function rebuildFreshStart(
           ? "selection_held"
           : driven.stopReason,
       requests: transport.metrics,
+      lotwDatedPollsRestored,
       coverage: coverage.results,
       records: records.results,
       matches: matches.results,

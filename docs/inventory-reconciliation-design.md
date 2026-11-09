@@ -511,13 +511,18 @@ Baseline bounded station/date ranges, splitting oversized responses. Include acc
 An explicitly enrolled account receipt stream uses an initial UTC receive
 timestamp and its own inclusive watermark. It adds positive receipt
 observations across contact dates. Dated reports continue to establish
-coverage for missing-contact decisions. Empty reports retain the existing
-watermark, and overflow holds the account stream for review. The default
-two-hour recurrence would use 1,200 reports/day for 100 accounts. If each
-account also verified fourteen months weekly, the combined estimate would
-be 1,400 reports/day before splits and recovery. Automatic enrollment,
-overflow recovery and calendar cadence changes need qualification before
-using that model. See the [live delta evidence](evidence-inventory-fresh-start.md#lotw-account-receipt-deltas).
+coverage for missing-contact decisions. A dated range can move to full
+verification at its verification interval once a full scan starts at or
+after the account's lower bound and the account feed has completed a read
+within two polling periods. Empty account reports retain their watermark.
+If the feed is held or becomes stale, cron restores up to 16 idle dated
+polls per tick to their ordinary deadlines. Overflow preserves the held
+account cursor for review. [Live delta and dated fallback evidence](evidence-inventory-fresh-start.md#lotw-account-receipt-deltas)
+
+At 100 opted-in accounts, the default two-hour recurrence would use
+1,200 reports/day. Weekly verification of fourteen months per account
+brings the estimate to 1,400 reports/day before splits and recovery.
+Automatic enrollment and sustained capacity under catch-up remain open.
 
 The hosted scheduler enrolls unfiltered UTC month ranges from committed
 LoFi source month hints, including the comparison tolerance at month

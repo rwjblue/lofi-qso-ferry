@@ -430,6 +430,24 @@ export async function registerOverflowSelections(
   return report;
 }
 
+/** Recover ordinary dated polling when a registered account feed goes stale. */
+export async function restoreLotwDatedPolls(store: Store, tenant?: string) {
+  const restored = await store
+    .statement(
+      `WITH due AS MATERIALIZED (
+        SELECT * FROM inventory_lotw_dated_fallback_due
+        WHERE (?1 IS NULL OR tenant=?1)
+        ORDER BY due_at,tenant,scope_id,stream_id LIMIT 16
+       )
+       INSERT INTO inventory_wakeups(tenant,wakeup_id,scope_id,stream_id,run_id,work_version,not_before)
+       SELECT tenant,'lotw-dated-fallback:'||run_id||':'||(work_version+1),scope_id,stream_id,run_id,work_version+1,due_at
+       FROM due RETURNING 1 AS restored`,
+      tenant ?? null,
+    )
+    .all<{ restored: number }>();
+  return restored.results.length;
+}
+
 /** Start initial/reconfigured selections; normal recurrence belongs to the runner. */
 export async function startInventorySelections(store: Store, limit = 16) {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 32)

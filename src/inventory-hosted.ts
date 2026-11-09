@@ -39,6 +39,7 @@ import {
   registerKnownInventoryConnections,
   registerOverflowSelections,
   registerSourceCalendarSelections,
+  restoreLotwDatedPolls,
   startInventorySelections,
 } from "./inventory-scheduler.ts";
 import { InventorySourceProofJobs } from "./inventory-source-proof-jobs.ts";
@@ -92,6 +93,7 @@ export async function runHostedScheduled(
     runtime,
   );
   const overflowRegistration = await registerOverflowSelections(store, runtime);
+  const lotwDatedPollsRestored = await restoreLotwDatedPolls(store);
   const starts = await startInventorySelections(store);
   const runs = new InventoryRuns(
     new InventoryIngestion(store, new InventoryComparisonPages(store)),
@@ -185,6 +187,7 @@ export async function runHostedScheduled(
     registration,
     calendarRegistration,
     overflowRegistration,
+    lotwDatedPollsRestored,
     starts,
     queued:
       inventoryQueued +

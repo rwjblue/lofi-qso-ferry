@@ -211,6 +211,7 @@ export class InventoryRunner {
           Date.now() +
           Math.max(
             schedule?.poll_period_ms ?? 300_000,
+            schedule?.verify_only ? schedule.verification_period_ms : 0,
             pacing?.checkPeriodMs ?? 0,
             qrzCoveredMultiplePages ? QRZ_COVERING_POLL_MS : 0,
           );
@@ -403,15 +404,15 @@ export class InventoryRunner {
             };
     const checkpoint = resumeObject(stream.checkpoint);
     const schedule = await this.schedulePolicy(previous);
+    const accountDelta = query.provider === "lotw" && "kind" in query.query;
+    const verify =
+      !accountDelta &&
+      (schedule?.verify_only ||
+        Object.keys(checkpoint).length === 0 ||
+        (schedule && schedule.next_full_at <= Date.now()));
     const definition = await planInventoryRun(stream, plan, {
       id: await sha256(canonical(["inventory-next-run-v1", wakeup])),
-      mode:
-        query.provider === "lotw" && "kind" in query.query
-          ? "delta"
-          : Object.keys(checkpoint).length === 0 ||
-              (schedule && schedule.next_full_at <= Date.now())
-            ? "full"
-            : "delta",
+      mode: verify ? "full" : "delta",
       now: previous.nextDueAt,
     });
     const run = await this.runs.begin({
@@ -433,13 +434,31 @@ export class InventoryRunner {
     if (!this.options.scheduled) return null;
     const policy = await this.runs.inventory.store
       .statement(
-        "SELECT p.poll_period_ms,p.next_full_at FROM inventory_scheduled_selections p JOIN inventory_scopes s ON s.tenant=p.tenant AND s.scope_id=p.scope_id WHERE p.tenant=? AND p.scope_id=? AND p.stream_id=? AND p.config_version=? AND s.config_version=p.config_version AND s.state='observing'",
+        `SELECT p.poll_period_ms,p.verification_period_ms,p.next_full_at,
+         CASE WHEN s.provider='lotw' AND json_type(p.plan,'$.selection.startDate')='text' THEN EXISTS(
+          SELECT 1 FROM inventory_lotw_account_feed_status a
+          LEFT JOIN inventory_coverage c ON (c.tenant,c.scope_id,c.stream_id,c.facet,c.partition_id)=(r.tenant,r.scope_id,r.stream_id,r.facet,r.partition_id)
+          LEFT JOIN inventory_runs b ON (b.tenant,b.run_id,b.config_version)=(c.tenant,c.published_run_id,p.config_version)
+           AND (b.scope_id,b.stream_id,b.facet,b.partition_id)=(c.scope_id,c.stream_id,c.facet,c.partition_id) AND b.mode='full' AND b.phase='complete'
+          WHERE (a.tenant,a.scope_id,a.config_version,a.runtime_version)=(p.tenant,p.scope_id,p.config_version,p.runtime_version)
+          AND a.healthy_until>unixepoch('subsec')*1000
+          AND a.initial_received_at<=CASE WHEN r.mode='full' THEN r.started_at ELSE b.started_at END
+         ) ELSE 0 END AS verify_only
+         FROM inventory_scheduled_selections p JOIN inventory_scopes s ON (s.tenant,s.scope_id,s.config_version)=(p.tenant,p.scope_id,p.config_version)
+         JOIN inventory_runs r ON (r.tenant,r.scope_id,r.stream_id,r.run_id)=(p.tenant,p.scope_id,p.stream_id,?5)
+         WHERE (p.tenant,p.scope_id,p.stream_id,p.config_version)=(?1,?2,?3,?4) AND s.state='observing'`,
         run.tenant,
         run.scope,
         run.streamId,
         run.configVersion,
+        run.id,
       )
-      .first<{ poll_period_ms: number; next_full_at: number }>();
+      .first<{
+        poll_period_ms: number;
+        verification_period_ms: number;
+        next_full_at: number;
+        verify_only: number;
+      }>();
     requireValue(policy, "inventory_schedule_changed");
     return policy;
   }

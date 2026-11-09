@@ -229,6 +229,15 @@ and all credential envelopes. A plain resume made zero provider requests
 and zero reader or comparison turns. Both the poll and the diagnostic
 used the write-locked copy and made zero uploads.
 
+A follow-up on a private copy at migration 0116 completed the due QRZ
+delta and three due LoTW polls. The runner made three QRZ and
+three LoTW requests in 21.5 seconds, including local comparison work.
+One QRZ and four LoTW selections had ready coverage at the end, with
+73 and 706 active receipts respectively. The saved LoFi cursor, its
+1,949 active contacts, and all credential envelopes and account
+bindings matched the starting copy. The source remained paused for
+authentication. The trial made zero LoFi requests and zero uploads.
+
 ### QRZ delta recovery
 
 The initial recovery handled the exact ambiguous empty first `MODSINCE`

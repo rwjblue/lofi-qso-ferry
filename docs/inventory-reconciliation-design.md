@@ -615,7 +615,10 @@ resumes explicitly queued proof jobs. The destination workspace binds
 the current review to the proof and reprojects its bounded source
 closure. Local QRZ preparation now reserves exact outbound identities
 and saves immutable INSERT artifacts with a native commit receipt.
-Hosted delivery enrollment and dispatch are separate work.
+The final QRZ neighborhood check now publishes a short-lived observation
+under the book lease. A successful canonical personal-log trial reached
+that boundary with zero uploads. Hosted enrollment, dispatch admission
+and recovery are separate work.
 
 Load source data, routing, credentials, templates, ownership and match results for a bounded cohort. Reuse the source-proof coordinator's shared collection and final canonical drain while retaining each member's original generation, proof identity and expiry. Stage immutable per-QSO attempts with the existing individually guarded cohort transaction.
 

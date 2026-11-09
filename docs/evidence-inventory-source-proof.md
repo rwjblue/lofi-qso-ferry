@@ -165,7 +165,35 @@ canonical book guard held staging before any attempt was written.
 New managed trials seed the verified book ID. The original access and
 credential envelopes were unchanged.
 
-The next stage qualifies positive staging on a canonically linked
-personal-log copy and adds the fresh QRZ neighborhood check, durable
-dispatch admission and uncertain-attempt recovery. Automatic enrollment,
+## Canonical QRZ trial and final observation
+
+An isolated copy registered the verified QRZ book ID and scanned a
+bounded date range around one real LoFi contact. The initial run held
+after four QRZ requests because its modification catch-up did not prove
+completion. An explicit repeat-selection catch-up established coverage
+with a second complete read of the same range. This policy is bounded
+to 35 inclusive days. It preserves the normal overlapping modification
+checkpoint for later incremental reads.
+
+The successful canonical run used four QRZ reads for baseline and
+catch-up and two LoFi reads for the source proof. The copy staged one
+236-byte QRZ ADIF artifact, recovered the exact artifact and preparation
+receipt after closing and reopening the database, and preserved the
+original credential envelopes and capture.
+
+[Migration 0094](../migrations/0094_inventory_qrz_neighborhood.sql)
+binds the final QRZ observation to the saved request digest, the current
+review and source proof, and a fenced book lease. Each read shares
+native QRZ request admission. A rejected, incomplete or stale read
+cannot publish evidence. Only the latest observation for the attempt
+and lease is current. Its lifetime ends no later than 60 seconds from
+the read start and is also limited by the source proof and lease.
+
+The live neighborhood check made three read-only QRZ requests and
+found zero candidates. Its observation was current while the lease
+was held and became unavailable when the lease was released. The
+trial made zero uploads. Native Workerd tests also cover a positive
+candidate, replacement of a prior observation, and a template change
+during the read. The next stage needs a fenced dispatch claim, mutation
+authorization and recovery of a lost response. Automatic enrollment,
 LoTW signing and expired-proof collection remain open.

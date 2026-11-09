@@ -638,6 +638,25 @@ isolates the preparation fix discovered during the replay. The live
 LoFi account-only resume still requires a current bearer for the same
 client.
 
+### Rebuild the captured comparison generation
+
+A second private copy of the completed offline replay was upgraded
+through migration 0116 and started a new comparison generation from
+the accepted observations. The coordinator with shared comparison
+leases activated the new generation and reached quiescence.
+
+The final audit found the same result, reason and selected remote
+record for each of the 8,502 classifications. All 6,260 historical
+association identities also matched. The replay preserved credentials,
+account and template bindings, inventory checkpoints and coverage.
+The foreign-key check passed. It made zero external requests and
+created zero dispatches.
+
+The rebuild and audit took 772.3 seconds in the local environment.
+The coordinator used 2,244 steps, 56,994 D1 calls and 70,777 SQL
+statements. It read 11,553,357 rows and wrote 1,482,230. The trial
+called the coordinator directly on the captured copy.
+
 ## LoTW recurrence scale check
 
 Completion-relative scheduling let cohorts remain concentrated in the

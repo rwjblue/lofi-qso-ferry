@@ -76,6 +76,22 @@ they measure sharing potential before any fresh witness collection.
 The [sanitized benchmark](benchmarks/inventory-delivery-review-2026-11-08.json)
 retains the measured counters.
 
+### Batched review admission
+
+Review now claims the provider lease and selects the bounded cohort in
+one D1 batch. The selection requires the new lease token. Contention
+leaves the current holder and pending review intact, and publication
+still rechecks the result, lease and ownership fences.
+
+A paired run on private copies of the captured personal log republished
+160 classifications and performed eight review turns. It saved eight D1
+calls, from 308 to 300 for the full coordinator replay. Both runs used
+540 SQL statements and wrote 14,046 rows. Reads fell from 126,194 to
+126,130. All 1,112 stored review decisions and their result, ownership
+and credential versions agreed. Coverage, historical associations and
+the preserved credentials also agreed. The runs made zero provider
+requests and uploads.
+
 ## Qualification and remaining work
 
 Native cases cover comparison supersession, omitted-work rollback,

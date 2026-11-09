@@ -39,6 +39,21 @@ async function fixture(t: TestContext, provider: "qrz" | "lotw" = "qrz") {
 test("a matched contact stays out of QRZ review and new comparison supersedes a reviewed absence", async (t) => {
   const f = await fixture(t);
   await f.match();
+  const held = await f.store.claim("a", "inventory-ownership:qrz");
+  assert.ok(held);
+  try {
+    assert.deepEqual(await f.planner.step("a"), { kind: "deferred" });
+    assert.deepEqual(await f.decisions(), []);
+    assert.deepEqual(
+      await f.db
+        .prepare("SELECT * FROM leases WHERE tenant=? AND scope=?")
+        .bind(held.tenant, held.scope)
+        .first(),
+      held,
+    );
+  } finally {
+    await f.store.release(held);
+  }
   assert.deepEqual(await f.planner.step("a"), { kind: "reviewed", records: 1 });
   assert.deepEqual(await f.decisions(), [
     { record_key: "q2", decision: "source_proof_required", result_version: 1 },

@@ -1,6 +1,6 @@
 import { InventoryOwnership } from "./inventory-ownership.ts";
 import { InventoryProjections } from "./inventory-projections.ts";
-import { canonical } from "./security.ts";
+import { canonical, randomToken } from "./security.ts";
 import type { Lease, Store } from "./store.ts";
 
 type Provider = "qrz" | "lotw";
@@ -99,29 +99,30 @@ export class InventoryDeliveryReview {
       )
       .first<ReviewHead>();
     if (!head) return { kind: "idle" as const };
-    const lease = await this.store.claim(
-      tenant,
-      `inventory-ownership:${head.provider}`,
-      Date.now(),
-      60_000,
-    );
+    const scope = `inventory-ownership:${head.provider}`;
+    const now = Date.now();
+    const token = randomToken();
+    const [claimed, selected] = await this.store.db.batch([
+      this.store.claimStatement(tenant, scope, now, 60_000, { token }),
+      this.store.statement(
+        `SELECT b.* FROM leases l CROSS JOIN inventory_delivery_review_basis b
+         WHERE l.tenant=?1 AND l.scope=?6 AND l.token=?7 AND l.expires_at>unixepoch('subsec')*1000
+           AND (b.tenant,b.result_set,b.source_scope,b.destination)=(l.tenant,?2,?3,?4)
+           AND (b.due_at<=?5 OR b.ownership_version>=0 AND b.ownership_version<b.current_ownership_version)
+         ORDER BY b.due_at,b.record_key LIMIT 20`,
+        tenant,
+        head.result_set,
+        head.source_scope,
+        head.destination,
+        now,
+        scope,
+        token,
+      ),
+    ]);
+    const lease = claimed.results[0] as Lease | undefined;
     if (!lease) return { kind: "deferred" as const };
     try {
-      let rows = (
-        await this.store
-          .statement(
-            `SELECT b.* FROM inventory_delivery_review_basis b
-           WHERE (b.tenant,b.result_set,b.source_scope,b.destination)=(?,?,?,?)
-             AND (b.due_at<=? OR b.ownership_version>=0 AND b.ownership_version<b.current_ownership_version)
-           ORDER BY b.due_at,b.record_key LIMIT 20`,
-            tenant,
-            head.result_set,
-            head.source_scope,
-            head.destination,
-            Date.now(),
-          )
-          .all<ReviewRow>()
-      ).results;
+      let rows = selected.results as ReviewRow[];
       if (!rows.length) return { kind: "deferred" as const };
       for (;;) {
         const decisions = new Map<number, Decision>();

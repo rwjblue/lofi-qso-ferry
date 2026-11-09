@@ -580,3 +580,39 @@ each full window deferred before transport. All 100 completed runs
 published positive-only coverage and a durable next wakeup. Their next
 wakeups spanned 24 five-minute buckets, with scheduled delays between
 about 62 and 180 minutes. The fixture made zero external requests.
+
+## LoFi steady polling scale check
+
+At 100 links, independent five-minute polling would offer 28,800
+requests per day to the four-slot ordinary allowance of 1,152.
+Established links now share three starts per five-minute window.
+The stable 100-link roster uses a 170-minute cycle. The fourth slot
+can admit another page or source proof. Smaller rosters of up to
+three links retain their configured polling interval. Each link
+honors longer server check periods.
+
+The 24-hour simulation used production LoFi admission and pacing
+SQL in SQLite. Both arms modeled 100 single-page poll streams,
+one background proof request per window and a one-hour vendor
+cooldown. The completion-relative arm started with all links due.
+The model dispatched the oldest deadline first and used account
+order for ties. A simulated proof expired if its window ended.
+
+| 24-hour result | Five-minute polling | Ordered slots |
+| --- | ---: | ---: |
+| Links with at least one poll | 4 | 100 |
+| Completed polls | 1,104 | 844 |
+| Polls per link | 0–276 | 7–9 |
+| Completed modeled proof requests | 0 of 288 | 250 of 288 |
+| Deferrals before transport | 106,383 | 2,156 |
+
+The ordered schedule's longest gap was about 5 h 49 min during
+recovery. The simulation measured one deterministic dispatch
+order. It excluded hosted Queue latency, competing bootstrap
+traffic, actual proof collection and report pagination.
+
+The native D1 fixture completed all 100 baselines, then published one
+12-contact delta per link. It retained 1,200 new contacts and 100
+durable next wakeups across the 34 five-minute windows in the cycle.
+Three sampled roster lookups each read 801 D1 rows. This fixture used
+simulated quota windows and pacing and made zero external requests.

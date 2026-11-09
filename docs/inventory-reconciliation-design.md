@@ -496,6 +496,24 @@ Move source bootstrap work onto durable delayed continuations in phase C, with c
 
 Measure useful committed records/minute, effective page size, request/empty-page counts, enforced wait reasons, database latency/SQL time, CPU/memory, and remaining work. Acceptance is a representative native 200,000-contact baseline plus catch-up/context within the proposed hours target when upstream conditions permit, with intact cursor/fence/coverage behavior and no starvation of established foreground work. Attribute upstream cooldown/outage and database bottlenecks separately. No credentialed probe or runtime setting changes are authorized by this planning revision.
 
+### LoFi steady polling
+
+For up to three established links, recurring reads keep their configured
+poll period and any longer server check period. Larger rosters place
+starts in three evenly spaced slots per five-minute window. One of
+the four ordinary slots remains available for a continuation or source
+proof. Native quota, pacing and cooldown checks still govern admission.
+An unfinished baseline joins the roster when it publishes its first
+complete source coverage.
+
+At 100 established links, this gives a 170-minute nominal cycle and
+about 847 scheduled source polls per day. Each completion selects the
+next slot at or after its configured and server minimums. Roster
+changes take effect as reads publish new wakeups. The
+[LoFi scale check](evidence-inventory-fresh-start.md#lofi-steady-polling-scale-check)
+measures the schedule with native quota and pacing SQL. The cycle
+assumes single-page reads, a stable roster and available service.
+
 ### QRZ
 
 Baseline each relevant book using bounded date ranges and `AFTERLOGID` paging. Query all accepted records, including unconfirmed contacts. Incremental runs use a fixed `MODSINCE` lower date with overlap for date precision and restart paging at the beginning of that modification selection. Scanning only increasing LOGIDs would miss edits to older IDs.
@@ -831,7 +849,15 @@ Historical uploads also share QRZ's smaller background allowance: 24 requests/fi
 
 Model LoFi demand as discovery polling not already supplied by drains, plus fresh witness collection, canonical drains, baseline/context/verification and authentication. Preserve sharing of source evidence across both destination projections. A 20-contact matcher does not increase the scheduler's existing six-live/two-background preparation turns or its proof request/dependency/lifetime limits.
 
-For illustration, packing 100 contacts/day/account into six-contact proof cohorts gives 1,700 cohorts/day across 100 accounts. At one collection and one drain each, that is 3,400 source requests against 6,912/day. This is neither a guaranteed floor nor an expected measurement: cached witnesses and useful polling/drain overlap reduce demand; sparse groups, dispersed dependencies and failures increase it. Independent 25-minute polling of all 100 accounts already consumes 5,760 requests/day, so these tasks cannot simply be budgeted as unrelated polling plus proof reads.
+For illustration, packing 100 contacts/day/account into six-contact
+proof cohorts gives 1,700 cohorts/day across 100 accounts. At one
+collection and one drain each, that is 3,400 source requests against
+1,152 ordinary background slots per day. Cached witnesses and useful
+polling/drain overlap reduce demand. Sparse groups, dispersed
+dependencies and failures increase it. The 170-minute poll cycle uses
+about 847 of those slots for single-page reports, so the full delivery
+workload still needs substantially more sharing or a different
+admission policy.
 
 For LoTW, count inventory/confirmation reads, preparation/final history reads, certificate checks, upload batches, receipt reads and retries separately. Full 20-member groups would need 500 uploads/day at 10,000 contacts/day. An illustrative six-request cycle with all required reads/checks shared within valid scopes would consume 3,000 requests/day plus scanning. If two history checks remain individual, those checks alone consume 20,000/day and exceed the current 11,520/day total allowance. Batch activation therefore needs proof-fit, read-scope sharing and observed effective batch-size acceptance; sparse accounts cannot assume full batches. Signing still performs one signature per contact.
 

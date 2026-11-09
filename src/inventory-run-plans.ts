@@ -2,7 +2,12 @@ import type { QrzInventorySelection } from "./inventory-adapters.ts";
 import type { InventoryStream } from "./inventory-ingestion.ts";
 import type { InventoryRunDefinition } from "./inventory-run-publication.ts";
 import type { SyncState } from "./lofi.ts";
-import type { LotwQuery } from "./lotw.ts";
+import {
+  type LotwAccountReceiptQuery,
+  type LotwAccountReceiptSelection,
+  type LotwQuery,
+  validLotwReceiveTime,
+} from "./lotw.ts";
 import type { QrzBook } from "./qrz.ts";
 import { canonical, randomToken, sha256 } from "./security.ts";
 
@@ -15,7 +20,10 @@ export type InventoryScanPlan =
       pageSize?: number;
       repeatSelectionCatchup?: true;
     }
-  | { provider: "lotw"; selection: Omit<LotwQuery, "receivedSince"> };
+  | {
+      provider: "lotw";
+      selection: Omit<LotwQuery, "receivedSince"> | LotwAccountReceiptSelection;
+    };
 
 export type InventoryRunQuery =
   | {
@@ -33,7 +41,11 @@ export type InventoryRunQuery =
       pageSize: number;
       repeatSelectionCatchup?: true;
     }
-  | { version: 1; provider: "lotw"; query: LotwQuery };
+  | {
+      version: 1;
+      provider: "lotw";
+      query: LotwQuery | LotwAccountReceiptQuery;
+    };
 
 function requireValue(value: unknown): asserts value {
   if (!value) throw new Error("invalid_inventory_scan_plan");
@@ -117,6 +129,16 @@ export function inventoryRunQuery(value: unknown): InventoryRunQuery {
     }
   } else if (query.provider === "lotw") {
     const selection = object(query.query);
+    if (selection.kind === "account_received") {
+      requireValue(
+        Object.keys(selection).length === 3 &&
+          validLotwReceiveTime(selection.initialReceivedSince) &&
+          validLotwReceiveTime(selection.receivedSince) &&
+          selection.receivedSince >= selection.initialReceivedSince,
+      );
+      return structuredClone(value) as InventoryRunQuery;
+    }
+    requireValue(selection.kind === undefined);
     dates(selection.startDate, selection.endDate);
     // Bigger universes are separate streams, not an unbounded report request.
     requireValue(
@@ -160,11 +182,15 @@ export async function planInventoryRun(
 ): Promise<InventoryRunDefinition> {
   stream = structuredClone(stream);
   plan = structuredClone(plan);
-  const mode = options.mode ?? "full";
+  const accountReceipts = plan.provider === "lotw" && "kind" in plan.selection;
+  const mode = options.mode ?? (accountReceipts ? "delta" : "full");
   const now = options.now ?? Date.now();
   const id = options.id ?? randomToken();
   requireValue(
-    plan.provider === stream.provider && Number.isSafeInteger(now) && now > 0,
+    plan.provider === stream.provider &&
+      Number.isSafeInteger(now) &&
+      now > 0 &&
+      (!accountReceipts || mode === "delta"),
   );
   let query: InventoryRunQuery;
   let initialResume: unknown;
@@ -246,6 +272,31 @@ export async function planInventoryRun(
           }
         : {}),
       pageSize: plan.pageSize ?? 250,
+    };
+    initialResume = {};
+  } else if ("kind" in plan.selection) {
+    const selection = plan.selection;
+    requireValue(
+      Object.keys(selection).length === 2 &&
+        validLotwReceiveTime(selection.initialReceivedSince) &&
+        Date.parse(`${selection.initialReceivedSince.replace(" ", "T")}Z`) <=
+          now,
+    );
+    const checkpoint = priorCheckpoint(stream);
+    let receivedSince = selection.initialReceivedSince;
+    if (Object.keys(checkpoint).length) {
+      requireValue(
+        canonical(checkpoint.selection) === canonical(selection) &&
+          validLotwReceiveTime(checkpoint.receivedThrough) &&
+          checkpoint.receivedThrough >= receivedSince,
+      );
+      receivedSince = checkpoint.receivedThrough;
+    }
+    partitionSelection = ["lotw-account-receipts-v1", selection];
+    query = {
+      version: 1,
+      provider: "lotw",
+      query: { ...selection, receivedSince },
     };
     initialResume = {};
   } else {

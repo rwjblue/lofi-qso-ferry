@@ -406,10 +406,12 @@ export class InventoryRunner {
     const definition = await planInventoryRun(stream, plan, {
       id: await sha256(canonical(["inventory-next-run-v1", wakeup])),
       mode:
-        Object.keys(checkpoint).length === 0 ||
-        (schedule && schedule.next_full_at <= Date.now())
-          ? "full"
-          : "delta",
+        query.provider === "lotw" && "kind" in query.query
+          ? "delta"
+          : Object.keys(checkpoint).length === 0 ||
+              (schedule && schedule.next_full_at <= Date.now())
+            ? "full"
+            : "delta",
       now: previous.nextDueAt,
     });
     const run = await this.runs.begin({

@@ -103,22 +103,23 @@ WHERE e.tenant=? AND e.scope_id=? AND e.stream_id=? AND e.facet=? AND e.partitio
       const query = inventoryRunQuery(JSON.parse(event.query));
       if (query.provider !== event.provider || query.provider === "lofi")
         throw new Error("inventory_matching_coverage_query_changed");
-      if (
-        (query.provider === "qrz" &&
-          query.selection.modifiedSince !== undefined) ||
-        (query.provider === "lotw" && query.query.receivedSince !== undefined)
-      )
-        throw new Error("inventory_matching_coverage_selection_incomplete");
+      let dates: [string, string];
+      if (query.provider === "qrz") {
+        if (query.selection.modifiedSince !== undefined)
+          throw new Error("inventory_matching_coverage_selection_incomplete");
+        dates = query.selection.between;
+      } else {
+        const selection = query.query;
+        if ("kind" in selection || selection.receivedSince !== undefined)
+          throw new Error("inventory_matching_coverage_selection_incomplete");
+        dates = [selection.startDate, selection.endDate];
+      }
       const key = await new InventoryComparisonGenerations(this.store).key(
         tenant,
       );
       if (key.keyId !== event.key_id)
         throw new Error("inventory_matching_coverage_key_changed");
-      const [start, end] =
-        query.provider === "qrz"
-          ? query.selection.between
-          : [query.query.startDate, query.query.endDate];
-      nodes = await inventoryCoverageRange(key, event.scope_id, start, end);
+      nodes = await inventoryCoverageRange(key, event.scope_id, ...dates);
     }
     const input = {
       event,

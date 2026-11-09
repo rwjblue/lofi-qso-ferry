@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { serializeAdifRecord } from "../src/adif.ts";
 import { isComparisonMessage } from "../src/inventory-comparison-continuations.ts";
 import {
   runHostedInventoryQueue,
@@ -680,6 +681,165 @@ test("scheduled recurrence respects poll policy and switches to full verificatio
   assert.equal(verification.kind, "started");
   if (verification.kind !== "started") assert.fail();
   assert.equal((await runs.load("a", verification.run))?.mode, "full");
+});
+
+test("LoTW account deltas recur with an independent positive-only checkpoint", async (t) => {
+  const f = await fixture(t);
+  await f.db
+    .prepare(`INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at,config)
+    VALUES('a','lotw','lotw','fixture','LoTW','active','v1',1,'{"readAccess":true}')`)
+    .run();
+  await (
+    await f.store.putPrivate("a", "lotw", "v1", "credential", {
+      query: { username: "fixture", password: "fixture" },
+    })
+  ).run();
+  const link = await f.store.connection("a", "lotw");
+  assert.ok(link);
+  const runtime = await activateInventoryRuntime(f.store);
+  const dated = await registerInventorySelection(f.store, runtime, link, {
+    provider: "lotw",
+    selection: { startDate: "2025-01-01", endDate: "2025-01-31" },
+  });
+  const runs = new InventoryRuns(new InventoryIngestion(f.store));
+  const lower = "2026-11-06 12:00:00";
+  const through = "2026-11-07 13:10:00";
+  const accountReads: string[] = [];
+  const runner = new InventoryRunner(
+    runs,
+    async (input) => {
+      const params = new URL(String(input)).searchParams;
+      if (params.has("qso_startdate"))
+        return new Response(
+          "<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>0<EOH><APP_LOTW_EOF>",
+        );
+      accountReads.push(params.get("qso_qsorxsince") ?? "");
+      const record =
+        accountReads.length === 1
+          ? serializeAdifRecord({
+              CALL: "W1AW",
+              STATION_CALLSIGN: "N1RWJ",
+              QSO_DATE: "20250101",
+              TIME_ON: "120000",
+              MODE: "CW",
+              BAND: "20M",
+              QSL_RCVD: "N",
+              APP_LOTW_RXQSO: through,
+            })
+          : "";
+      return new Response(
+        `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>${record ? 1 : 0}<APP_LOTW_LASTQSORX:19>${through}<EOH>${record}<APP_LOTW_EOF>`,
+      );
+    },
+    { scheduled: true },
+  );
+  const active = (stream: string) =>
+    f.db
+      .prepare(
+        "SELECT active_run_id FROM inventory_stream_jobs WHERE stream_id=?",
+      )
+      .bind(stream)
+      .first<string>("active_run_id");
+  const coverage = (stream: string) =>
+    f.db
+      .prepare(
+        "SELECT state,kind,epoch,published_run_id FROM inventory_coverage WHERE stream_id=?",
+      )
+      .bind(stream)
+      .first();
+  const finish = async (id: string) => {
+    for (let i = 0; i < 4; i++) {
+      const result = await runner.step(await f.due(id));
+      if (result.kind === "complete") return result;
+      assert.equal(result.kind, "advanced");
+    }
+    assert.fail("expected terminal publication");
+  };
+  assert.equal((await startInventorySelections(f.store)).started, 1);
+  const datedRun = await active(dated.stream);
+  assert.ok(datedRun);
+  await finish(datedRun);
+  const datedCoverage = await coverage(dated.stream);
+  assert.deepEqual(datedCoverage, {
+    state: "ready",
+    kind: "observed_selection",
+    epoch: 1,
+    published_run_id: datedRun,
+  });
+
+  const plan = {
+    provider: "lotw",
+    selection: { kind: "account_received", initialReceivedSince: lower },
+  } as const;
+  const selected = await registerInventorySelection(
+    f.store,
+    runtime,
+    link,
+    plan,
+  );
+  const snapshot = () =>
+    runs.inventory.snapshot("a", selected.scope, selected.stream);
+  await assert.rejects(
+    registerInventorySelection(f.store, runtime, link, {
+      ...plan,
+      selection: {
+        ...plan.selection,
+        initialReceivedSince: "2026-11-06 11:00:00",
+      },
+    }),
+    /inventory_schedule_binding_changed/,
+  );
+  const stream = await snapshot();
+  assert.ok(stream);
+  const definition = await planInventoryRun(stream, plan);
+  const lease = await f.store.claim(
+    "a",
+    `inventory:${selected.scope}`,
+    Date.now(),
+    90_000,
+  );
+  assert.ok(lease);
+  try {
+    await assert.rejects(
+      runs.begin({
+        stream,
+        lease,
+        definition: { ...definition, mode: "full" },
+      }),
+      /require a positive-only stream/,
+    );
+  } finally {
+    await f.store.release(lease);
+  }
+  assert.equal((await startInventorySelections(f.store)).started, 1);
+  const first = await active(selected.stream);
+  assert.ok(first);
+  assert.equal((await runs.load("a", first))?.mode, "delta");
+  assert.equal((await runner.step(await f.due(first))).kind, "advanced");
+  assert.deepEqual((await snapshot())?.checkpoint, {});
+  const done = await finish(first);
+  assert.ok(done.nextDueAt >= Date.now() + 7_190_000);
+  const checkpoint = { selection: plan.selection, receivedThrough: through };
+  assert.deepEqual((await snapshot())?.checkpoint, checkpoint);
+  assert.deepEqual(await coverage(selected.stream), {
+    state: "partial",
+    kind: "positive_only",
+    epoch: 0,
+    published_run_id: null,
+  });
+  const next = await runner.step(await f.due(first));
+  if (next.kind !== "started") assert.fail(JSON.stringify(next));
+  assert.equal((await runs.load("a", next.run))?.mode, "delta");
+  await finish(next.run);
+  assert.deepEqual((await snapshot())?.checkpoint, checkpoint);
+  assert.deepEqual(await coverage(dated.stream), datedCoverage);
+  assert.deepEqual(accountReads, [lower, through]);
+  assert.equal(
+    await f.db
+      .prepare("SELECT count(*) AS n FROM inventory_records")
+      .first("n"),
+    1,
+  );
 });
 
 test("a scheduled run cannot substitute a different receipt selection", async (t) => {

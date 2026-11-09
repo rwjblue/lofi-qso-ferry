@@ -508,6 +508,17 @@ Use periodic bounded inventory verification for changes not established by the d
 
 Baseline bounded station/date ranges, splitting oversized responses. Include accepted unconfirmed QSOs and own-station/location details. Incremental receipt queries use `qso_qsorxsince`, with inclusive overlap and a checkpoint tied to the identical query scope. `APP_LOTW_LASTQSORX` is not an account-wide checkpoint when obtained from a restricted report.
 
+An explicitly enrolled account receipt stream uses an initial UTC receive
+timestamp and its own inclusive watermark. It adds positive receipt
+observations across contact dates. Dated reports continue to establish
+coverage for missing-contact decisions. Empty reports retain the existing
+watermark, and overflow holds the account stream for review. The default
+two-hour recurrence would use 1,200 reports/day for 100 accounts. If each
+account also verified fourteen months weekly, the combined estimate would
+be 1,400 reports/day before splits and recovery. Automatic enrollment,
+overflow recovery and calendar cadence changes need qualification before
+using that model. See the [live delta evidence](evidence-inventory-fresh-start.md#lotw-account-receipt-deltas).
+
 The hosted scheduler enrolls unfiltered UTC month ranges from committed
 LoFi source month hints, including the comparison tolerance at month
 boundaries. Multi-day reports that overflow or run past a body deadline

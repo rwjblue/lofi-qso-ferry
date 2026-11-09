@@ -55,7 +55,12 @@ export async function registerInventorySelection(
               repeatSelectionCatchup: true,
             }),
           }
-        : plan;
+        : "kind" in plan.selection
+          ? {
+              provider: plan.provider,
+              selection: { kind: plan.selection.kind },
+            }
+          : plan;
   const queryBinding = await sha256(
     canonical(["inventory-selection-v1", selection]),
   );
@@ -96,9 +101,11 @@ export async function registerInventorySelection(
       ? 300_000
       : plan.provider === "qrz"
         ? 900_000
-        : Date.parse(plan.selection.endDate) >= Date.now() - 32 * DAY
-          ? 900_000
-          : DAY);
+        : "kind" in plan.selection
+          ? 7_200_000
+          : Date.parse(plan.selection.endDate) >= Date.now() - 32 * DAY
+            ? 900_000
+            : DAY);
   const verificationPeriodMs =
     policy.verificationPeriodMs ??
     (plan.provider === "qrz" ? 30 * DAY : 7 * DAY);
@@ -368,7 +375,8 @@ export async function registerOverflowSelections(
   for (const row of rows) {
     try {
       const query = inventoryRunQuery(JSON.parse(row.fixed_query));
-      if (query.provider !== "lotw") throw new Error("invalid_lotw_split");
+      if (query.provider !== "lotw" || "kind" in query.query)
+        throw new Error("invalid_lotw_split");
       const { receivedSince: _lower, ...selection } = query.query;
       const children = splitLotwQuery(selection);
       if (!children) throw new Error("invalid_lotw_split");
@@ -422,7 +430,7 @@ export async function registerOverflowSelections(
   return report;
 }
 
-/** Start initial/reconfigured full runs; normal recurrence belongs to the runner. */
+/** Start initial/reconfigured selections; normal recurrence belongs to the runner. */
 export async function startInventorySelections(store: Store, limit = 16) {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 32)
     throw new Error("invalid_inventory_schedule_limit");

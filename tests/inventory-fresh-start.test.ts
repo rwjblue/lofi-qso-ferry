@@ -218,6 +218,11 @@ test("a write-locked rebuild can finish and poll destinations while LoFi waits f
     }
     assert.equal(url.hostname, "lotw.arrl.org");
     assert.equal(url.pathname, "/lotwuser/lotwreport.adi");
+    if (!url.searchParams.has("qso_startdate"))
+      assert.equal(
+        url.searchParams.get("qso_qsorxsince"),
+        "2026-11-07 12:00:00",
+      );
     requests.push("lotw");
     return new Response(
       "<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>0<EOH><APP_LOTW_EOF>",
@@ -230,6 +235,7 @@ test("a write-locked rebuild can finish and poll destinations while LoFi waits f
         { connection: "lofi" },
         { connection: "qrz" },
         { connection: "lotw", from: "2026-11-01", through: "2026-11-30" },
+        { connection: "lotw", receivedSince: "2026-11-07 12:00:00" },
       ],
       maxRequests: 10,
       maxDurationMs: 60_000,
@@ -246,7 +252,7 @@ test("a write-locked rebuild can finish and poll destinations while LoFi waits f
       .slice(requests.indexOf("lofi") + 1)
       .some((request) => request !== "lofi"),
   );
-  assert.deepEqual(report.requests.byProvider, { lofi: 1, qrz: 4, lotw: 1 });
+  assert.deepEqual(report.requests.byProvider, { lofi: 1, qrz: 4, lotw: 2 });
   assert.deepEqual(
     report.coverage.map(({ provider, phase, state, published }) => ({
       provider,
@@ -261,6 +267,7 @@ test("a write-locked rebuild can finish and poll destinations while LoFi waits f
         state: "collecting",
         published: 0,
       },
+      { provider: "lotw", phase: "complete", state: "partial", published: 0 },
       { provider: "lotw", phase: "complete", state: "ready", published: 1 },
       { provider: "qrz", phase: "complete", state: "ready", published: 1 },
     ],

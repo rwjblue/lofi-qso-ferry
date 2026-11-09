@@ -87,14 +87,15 @@ mise run inventory-fresh-start-rebuild -- \
 Supply a JSON array of selections to enroll in a single active account.
 Each selection names the copied connection ID. LoFi scans the source
 with 1,000 records per stream. QRZ uses the verified book's date bounds
-unless the selection supplies dates. LoTW requires dates for each
-bounded report.
+unless the selection supplies dates. LoTW accepts a date range for
+coverage or a UTC receive timestamp for its separate receipt delta.
 
 ```json
 [
   { "connection": "lofi-link" },
   { "connection": "verified-qrz-link" },
-  { "connection": "lotw-link", "from": "2026-10-01", "through": "2026-10-31" }
+  { "connection": "lotw-link", "from": "2026-10-01", "through": "2026-10-31" },
+  { "connection": "lotw-link", "receivedSince": "2026-11-07 12:00:00" }
 ]
 ```
 
@@ -392,3 +393,28 @@ catch-up for 4,252 receipts. It accepted 36 pages with no changed receipt
 bodies, published a new ready coverage epoch, and scheduled the next poll
 one day later. The replay used 74 local responses with simulated vendor
 windows and made zero provider requests or uploads.
+
+## LoTW account receipt deltas
+
+ARRL's receipt report accepts an explicit `qso_qsorxsince` with optional
+contact-date filters. A real read without those filters returned two
+receipts. The first receive timestamp matched the header, and both were
+within the requested lower bound and report watermark. A control report
+for their contact date returned identical records. Both receipts were on
+one contact date. A synthetic adapter fixture covers receipts from
+different years in the same report. [ARRL report documentation](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
+
+On a private write-locked copy, the native runner replayed those two
+captured receipts and committed the account stream's own watermark.
+The next scheduled delta used the inclusive saved receive timestamp in
+one live request and returned one unchanged receipt at that boundary. Both runs
+completed with positive-only coverage and preserved other checkpoints,
+dated coverage and linked credential envelopes. The diagnostic and
+native continuation made three real reads in total and zero uploads.
+
+The native fixture rejects full runs for the account stream and verifies
+that the cursor advances only after publication. An empty report leaves
+the watermark in place. An oversized account report holds for review
+with its previous watermark. Enrollment uses an explicit initial UTC
+timestamp and allows one account stream per LoTW scope. The default
+recurrence is two hours.

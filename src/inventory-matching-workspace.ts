@@ -200,6 +200,7 @@ function coveringCoverage(
       });
     } else if (query.provider === "lotw") {
       if (
+        "kind" in query.query ||
         query.query.receivedSince !== undefined ||
         (query.query.stationCallsign !== undefined &&
           query.query.stationCallsign.toUpperCase() !==

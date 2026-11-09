@@ -29,7 +29,12 @@ import {
 } from "./inventory-trial-drive.ts";
 import { createInventoryTrialTransport } from "./inventory-trial-transport.ts";
 
-type Selection = { connection: string; from?: string; through?: string };
+type Selection = {
+  connection: string;
+  from?: string;
+  through?: string;
+  receivedSince?: string;
+};
 type Options = {
   rehearsal: string;
   selections?: readonly Selection[];
@@ -43,8 +48,24 @@ function selectionPlan(
   link: Connection,
   selection: Selection,
 ): InventoryScanPlan {
-  const { from, through } = selection;
+  const { from, through, receivedSince } = selection;
   const config = JSON.parse(link.config);
+  if (receivedSince !== undefined) {
+    if (
+      link.kind !== "lotw" ||
+      config.readAccess !== true ||
+      from !== undefined ||
+      through !== undefined
+    )
+      throw new Error("inventory_fresh_start_invalid_selection");
+    return {
+      provider: "lotw",
+      selection: {
+        kind: "account_received",
+        initialReceivedSince: receivedSince,
+      },
+    };
+  }
   if (
     link.kind === "lofi" &&
     from === undefined &&
@@ -210,7 +231,9 @@ export async function rebuildFreshStart(
         typeof selection.connection !== "string" ||
         (selection.from !== undefined && typeof selection.from !== "string") ||
         (selection.through !== undefined &&
-          typeof selection.through !== "string")
+          typeof selection.through !== "string") ||
+        (selection.receivedSince !== undefined &&
+          typeof selection.receivedSince !== "string")
       )
         throw new Error("inventory_fresh_start_invalid_selection");
       const link = await store.connection(tenant, selection.connection);

@@ -552,6 +552,28 @@ associations passed the audit. The replay made zero provider requests.
 | Empty, up to four steps per delivery | 2,447 → 2,397 | 4,290 | 39 |
 | Matched, one step per delivery | 3,478 → 3,428 | 5,834 | 152 |
 
+### Adoption checks during result publication
+
+Historical adoption triggers now skip inserts and replacements outside
+the matched state. Replacing a matched result still reconciles its
+pending adoption. The native commit guard checks eligible work for the
+current set directly. A missing matched job still rolls back the set.
+
+The 1,000-contact empty-destination profile read 656,787 rows during
+classification, down from 660,166. The result upserts and set commits
+accounted for 3,241 of the saved reads. Both profiles published 1,000
+current absences with 2,397 D1 calls and 4,290 statements. The matched
+profile published 1,000 matches and read 1,232,740 rows, down from
+1,233,861, with the same 3,428 calls and 5,834 statements. Wall-clock
+samples ran with different concurrent local workloads.
+
+The paired captured-log replay republished 160 decisions on private
+write-locked copies. It preserved every state, reason and selected
+receipt, plus credentials, checkpoints, coverage and historical
+associations. Reads fell from 110,633 to 110,241 with the same calls,
+statements and writes. The replay made zero provider requests or
+uploads.
+
 ### 20,000-contact local pipeline
 
 The build before matching metadata batching ran 20,000 normalized

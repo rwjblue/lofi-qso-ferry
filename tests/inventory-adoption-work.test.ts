@@ -27,6 +27,7 @@ async function fixture(
   try {
     await installMatchingCoordinator(f.db, 72);
     await applyMigration(f.db, "0078_inventory_adoption_work.sql");
+    await applyMigration(f.db, "0122_inventory_adoption_result_states.sql");
     return {
       ...f,
       adoption: new InventoryAdoptionWork(f.store),
@@ -162,6 +163,40 @@ test("absence does not enqueue adoption; an omitted matched job rolls back its e
       (await f.matches.current("a", "destination", f.selected)).results.length,
       0,
     );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("replacement results remove and restore pending adoption as a match changes", async () => {
+  const f = await fixture("qrz", 1);
+  try {
+    const expectMatch = async (
+      state: string,
+      version: number,
+      pending: number,
+    ) => {
+      await f.match();
+      const row = (await f.matches.current("a", "destination", f.selected))
+        .results[0];
+      assert.equal(row?.state, state);
+      assert.equal(row?.version, version);
+      assert.equal((await counts(f))?.jobs, pending);
+    };
+    await expectMatch("matched_existing", 1, 1);
+
+    await f.fullReceipt([
+      { ...receipt("0", "130000", "W2AW"), revision: "r2" },
+    ]);
+    await f.project("destination");
+    await expectMatch("absent_at_inventory", 2, 0);
+    await expectMatch("absent_at_inventory", 3, 0);
+
+    await f.fullReceipt([
+      { ...receipt("0", "130000", "W0AW"), revision: "r3" },
+    ]);
+    await f.project("destination");
+    await expectMatch("matched_existing", 4, 1);
   } finally {
     await f.mf.dispose();
   }

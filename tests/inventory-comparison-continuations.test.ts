@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
 import {
+  type ComparisonQueueMessage,
   consumeComparisonWakeups,
   publishComparisonWakeups,
-  type ComparisonQueueMessage,
 } from "../src/inventory-comparison-continuations.ts";
+import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
 import { activateInventoryRuntime } from "../src/inventory-runtime.ts";
 import { Store } from "../src/store.ts";
 import { applyMigration } from "./helpers.ts";
 import { comparisonWakeupsFixture } from "./inventory-comparison-wakeups-fixtures.ts";
+import { sourceContact } from "./inventory-matching-fixtures.ts";
 
 async function fixture(activate = true) {
   const f = await comparisonWakeupsFixture();
@@ -132,6 +133,114 @@ test("Queue-driven comparison drains and repeated parked messages leave current 
       await f.db.prepare("SELECT count(*) AS n FROM attempts").first(),
       { n: 0 },
     );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("checkpoint-only deltas stay parked and coverage restoration wakes held projections", async () => {
+  const f = await fixture(false);
+  try {
+    await applyMigration(f.db, "0107_inventory_delta_comparison_wakeups.sql");
+    const coordinator = new InventoryComparisonCoordinator(f.store);
+    async function drain() {
+      for (let i = 0; ; i++) {
+        assert.ok(i < 30);
+        if (!(await coordinator.step("a")).more) return;
+      }
+    }
+    const controls = () =>
+      f.db.prepare("SELECT * FROM inventory_comparison_coordinators").first();
+    const results = () =>
+      f.db
+        .prepare("SELECT * FROM match_results_current")
+        .all()
+        .then((x) => x.results);
+    const coverage = () =>
+      f.db
+        .prepare(
+          "SELECT state,epoch,published_run_id,delta_run_id FROM inventory_coverage WHERE scope_id='source'",
+        )
+        .first();
+    async function begin() {
+      const stream = await f.inventory.snapshot("a", "source", "sync");
+      assert.ok(stream);
+      return f.runs.begin({
+        stream,
+        lease: f.lease,
+        definition: {
+          id: crypto.randomUUID(),
+          mode: "delta",
+          facet: "source",
+          partition: "all",
+          partitionBinding: "all-v1",
+          collectionBinding: "collect-v1",
+          requiredStreams: ["operations", "qsos"],
+          fixedQuery: {},
+          initialResume: {},
+        },
+      });
+    }
+    await drain();
+    const parked = await controls(),
+      baseline = await coverage(),
+      original = await results(),
+      before = await f.inventory.snapshot("a", "source", "sync");
+    assert.ok(before);
+    assert.equal(original.length, 1);
+    assert.equal(baseline?.state, "ready");
+    const stable = await begin();
+    assert.equal((await coverage())?.state, "collecting");
+    await f.observed(stable.id, f.sources);
+    await f.finish(stable.id);
+    const after = await f.inventory.snapshot("a", "source", "sync");
+    assert.equal(after?.version, before.version + 3);
+    assert.deepEqual(after.checkpoint, { watermark: 1 });
+    assert.deepEqual(await coverage(), {
+      ...baseline,
+      delta_run_id: stable.id,
+    });
+    assert.deepEqual(await results(), original);
+    assert.deepEqual(await controls(), parked);
+    assert.deepEqual(
+      await f.db
+        .prepare("SELECT not_before FROM inventory_comparison_wakeups")
+        .first(),
+      { not_before: null },
+    );
+
+    const changed = await begin();
+    await f.observed(changed.id, [
+      { ...sourceContact("q0", "13:00:00", "N0EDIT"), order: 2, revision: "2" },
+    ]);
+    await drain();
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT state,reason FROM comparison_projections WHERE scope_id='source' AND record_key='q0'",
+        )
+        .first(),
+      { state: "held", reason: "source_coverage_incomplete" },
+    );
+    const waiting = await controls();
+    await f.finish(changed.id);
+    assert.notDeepEqual(await controls(), waiting);
+    await drain();
+    assert.deepEqual(await coverage(), {
+      ...baseline,
+      delta_run_id: changed.id,
+    });
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT state,reason FROM comparison_projections WHERE scope_id='source' AND record_key='q0'",
+        )
+        .first(),
+      { state: "ready", reason: null },
+    );
+    const current = await results();
+    assert.equal(current.length, 1);
+    assert.notDeepEqual(current, original);
   } finally {
     await f.mf.dispose();
   }

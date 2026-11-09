@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   InventoryMatchingCoverageEvents,
-  matchingCoverageEventLeaseScope,
   type MatchingCoverageEventKey,
+  matchingCoverageEventLeaseScope,
   type PreparedMatchingCoverageEvent,
 } from "../src/inventory-matching-coverage-events.ts";
 import { canonical, sha256 } from "../src/security.ts";
 import { Store } from "../src/store.ts";
 import { applyMigration } from "./helpers.ts";
 import { observation } from "./inventory-context-fixtures.ts";
+import { installSelectedCoordinator } from "./inventory-matching-coordinator-fixtures.ts";
 import { sourceContact } from "./inventory-matching-fixtures.ts";
 import { matchingWorkFixture } from "./inventory-matching-work-fixtures.ts";
 
@@ -534,6 +535,17 @@ test("overlapping readiness events coalesce a prefix at the same scope clock", a
 test("delta restoration dispatches the retained full selection rather than its receive filter", async () => {
   const f = await fixture();
   try {
+    await applyMigration(f.db, "0068_inventory_matching_coverage_pages.sql");
+    await applyMigration(f.db, "0069_inventory_matching_coordinator.sql");
+    await installSelectedCoordinator(f.db);
+    await applyMigration(f.db, "0107_inventory_delta_comparison_wakeups.sql");
+    async function workVersion() {
+      return await f.db
+        .prepare(
+          "SELECT work_version FROM inventory_comparison_coordinators WHERE tenant='a'",
+        )
+        .first<number>("work_version");
+    }
     const coverage = await f.db
       .prepare(
         "SELECT partition_id,partition_binding,published_run_id FROM inventory_coverage WHERE scope_id='destination' AND facet='receipt' AND partition_id IN(SELECT partition_id FROM inventory_matching_coverage_events WHERE completed_version<work_version)",
@@ -592,9 +604,12 @@ test("delta restoration dispatches the retained full selection rather than its r
           }),
         );
       else if (context.run.phase === "publishing") {
+        const before = await workVersion();
+        assert.ok(before);
         await f.inventory.publish(
           await f.runs.prepareComplete(context, f.destinationLease),
         );
+        assert.equal(await workVersion(), before + 1);
         break;
       } else throw new Error(`unexpected delta phase ${context.run.phase}`);
       assert.ok(i < 7);

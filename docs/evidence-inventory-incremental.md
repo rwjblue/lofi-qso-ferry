@@ -95,12 +95,9 @@ all retained storage disappear. A bounded collector must preserve current and
 pinned inputs, receipt recovery horizons and future adoption/delivery references.
 These snapshots do not qualify indefinite retention or sustained daily growth.
 
-Empty polling still costs 155 D1 calls and twelve comparison Queue turns even
-with no changed results. At a hypothetical five-minute personal cadence, 8,640
-such normalized runs per thirty days would write about 1.53 million rows before
-other work. This is an inference from the fixture, not observed service traffic;
-provider admission and the 100-account polling budget must be modeled separately.
-Coalescing unnecessary empty-poll wakeups remains a measured optimization target.
+Through 0076, an empty poll cost 155 D1 calls and twelve comparison Queue turns
+even with no changed results. The later [checkpoint-only delta measurements](#checkpoint-only-deltas)
+separate the cost of publishing the reader state from the comparison work.
 
 Seven new native cases cover full/partial cohort replacement, a disappeared old
 bucket, old prepared pages, late rollback, later signals and committed-receipt
@@ -113,6 +110,35 @@ The private encrypted replay through 0076 is
 inventory, checkpoints and credentials unchanged, zero new HTTP requests/uploads
 and a valid retained comparison wakeup. It allocates 17,285,120 bytes. Its source
 and QRZ baselines remain partial, so it does not establish full real-service timing.
+
+## Checkpoint-only deltas
+
+[Migration 0107](../migrations/0107_inventory_delta_comparison_wakeups.sql)
+keeps the comparison queue parked for empty or unchanged deltas that have no
+recovery work. The same transactions publish reader checkpoints, run state and
+coverage. Semantic edits, topology and source membership changes still signal
+comparison. Restored coverage also signals when a matching recovery event or
+projection recovery job is pending.
+
+A 200-contact matched-destination benchmark compared the same coordinator with
+and without the migration. Both runs preserved current results and retained
+payload and match-set counts for empty and stable polls. The later edits,
+retirement and restoration still drained to current results.
+
+| Delta             | D1 calls | SQL statements | Rows written  | Comparison Queue turns |
+| ----------------- | -------- | -------------- | ------------- | ---------------------- |
+| Empty             | 76 → 23  | 126 → 73       | 106 → 72      | 3 → 0                  |
+| Unchanged overlap | 73 → 24  | 134 → 85       | 2,109 → 2,075 | 3 → 0                  |
+
+With 1,000 unchanged records and an empty destination, publication still took
+24 D1 calls, 85 statements and zero comparison turns. Observation and membership
+bookkeeping grew to 10,075 row writes.
+
+The benchmark used synthetic normalized records and made zero provider calls.
+Native tests also interleaved a projection turn with a collecting LoFi delta.
+The projection held while coverage was unavailable and recovered once the
+retained full selection became ready again. A separate LoTW test confirmed that
+an empty delta can wake matching recovery for the retained full selection.
 
 ## Reproduction
 

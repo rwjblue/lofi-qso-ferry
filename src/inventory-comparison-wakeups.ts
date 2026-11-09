@@ -72,9 +72,9 @@ SELECT s.*,(SELECT version FROM runtime) AS runtime_version FROM selected s CROS
     if (!rows.length) return 0;
     const result = await this.store
       .statement(
-        `UPDATE inventory_comparison_wakeups SET published_at=?1 WHERE rowid IN(
-SELECT w.rowid FROM json_each(?2) q CROSS JOIN inventory_comparison_wakeups w WHERE w.tenant=json_extract(q.value,'$.tenant') AND w.version=json_extract(q.value,'$.version') AND w.control_version=json_extract(q.value,'$.control_version') AND w.work_version=json_extract(q.value,'$.work_version') AND w.not_before IS NOT NULL AND EXISTS(SELECT 1 FROM inventory_runtime r WHERE r.id=1 AND r.mode='inventory_read_only' AND r.version=json_extract(q.value,'$.runtime_version')))`,
-        Date.now(),
+        `UPDATE inventory_comparison_wakeups SET published_at=max(published_at,CAST(unixepoch('subsec')*1000 AS INTEGER)) WHERE rowid IN(
+SELECT w.rowid FROM json_each(?1) q CROSS JOIN inventory_comparison_wakeups w WHERE w.tenant=json_extract(q.value,'$.tenant') AND w.version=json_extract(q.value,'$.version') AND w.control_version=json_extract(q.value,'$.control_version') AND w.work_version=json_extract(q.value,'$.work_version') AND w.not_before IS NOT NULL AND EXISTS(SELECT 1 FROM inventory_runtime r WHERE r.id=1 AND r.mode='inventory_read_only' AND r.version=json_extract(q.value,'$.runtime_version'))
+AND EXISTS(SELECT 1 FROM inventory_comparison_wakeup_basis b WHERE (b.tenant,b.control_version,b.work_version)=(w.tenant,w.control_version,w.work_version) AND b.due_at IS NOT NULL))`,
         canonical(rows),
       )
       .run();

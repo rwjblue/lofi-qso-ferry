@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { activateInventoryRuntime } from "../src/inventory-runtime.ts";
 import { InventoryComparisonWakeups } from "../src/inventory-comparison-wakeups.ts";
+import { activateInventoryRuntime } from "../src/inventory-runtime.ts";
 import { Store } from "../src/store.ts";
 import { comparisonWakeupsFixture } from "./inventory-comparison-wakeups-fixtures.ts";
 
@@ -47,6 +47,28 @@ test("a stale publication acknowledgement cannot hide a newer comparison wakeup"
         .first(),
       { n: 1 },
     );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("comparison publication uses the D1 clock when the Worker clock is ahead", async (t) => {
+  const f = await comparisonWakeupsFixture();
+  try {
+    await activateInventoryRuntime(f.store);
+    const rows = await f.wakeups.pending();
+    assert.equal(rows.length, 1);
+    const future = Date.now() + 60_000;
+    const clock = t.mock.method(Date, "now", () => future);
+    try {
+      assert.equal(await f.wakeups.markPublished(rows), 1);
+    } finally {
+      clock.mock.restore();
+    }
+    const result = await f.db
+      .prepare("SELECT published_at FROM inventory_comparison_wakeups")
+      .first<number>("published_at");
+    assert.ok(result && result < future);
   } finally {
     await f.mf.dispose();
   }

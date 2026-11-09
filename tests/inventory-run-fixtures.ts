@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { InventoryComparisonPages } from "../src/inventory-comparison-pages.ts";
 import {
   InventoryIngestion,
   type InventoryObservation,
@@ -6,13 +7,25 @@ import {
 import type { InventoryRunDefinition } from "../src/inventory-run-publication.ts";
 import { type InventoryRunPage, InventoryRuns } from "../src/inventory-runs.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
+import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
-export async function inventoryRunFixture(provider: "lofi" | "qrz" = "lofi") {
+export async function inventoryRunFixture(
+  provider: "lofi" | "qrz" = "lofi",
+  schema: "minimal" | "current" = "minimal",
+) {
   const fixture = await database();
   await seed(fixture.store);
-  await applyMigration(fixture.db, "0039_inventory_ingestion.sql");
-  await applyMigration(fixture.db, "0040_inventory_runs.sql");
-  const inventory = new InventoryIngestion(fixture.store);
+  if (schema === "current") await applyAdditionalMigrations(fixture.db);
+  else {
+    await applyMigration(fixture.db, "0039_inventory_ingestion.sql");
+    await applyMigration(fixture.db, "0040_inventory_runs.sql");
+  }
+  const inventory = new InventoryIngestion(
+    fixture.store,
+    schema === "current"
+      ? new InventoryComparisonPages(fixture.store)
+      : undefined,
+  );
   const runs = new InventoryRuns(inventory);
   const connection = provider === "lofi" ? "source" : "destination";
   const scope = `inventory-${provider}`;

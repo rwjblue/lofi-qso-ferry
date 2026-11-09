@@ -190,6 +190,25 @@ comparison began. This qualifies local source coverage on normalized
 synthetic pages. Classification was still in progress at the sample.
 The timing excludes adapter processing and live provider pacing.
 
+#### Verification when every member is current
+
+[Migration 0116](../migrations/0116_inventory_current_source_quarantine.sql)
+lets a full LoFi run finish verification at the partition's final key
+when every member agrees with both that run's witness and the current
+source facet. The native publication transaction repeats the proof
+before advancing the cursor. A missing member or a newer overlapping
+observation selects the existing bounded membership pass.
+
+The original 202,000-member run committed 1,011 quarantine receipts.
+The interval from catch-up to ready coverage was 137.5 seconds.
+A coverage-only rerun through migration 0116 used one quarantine turn,
+published all 202,000 members at epoch 1 and passed the foreign-key
+check. Catch-up, verification and terminal publication together used
+25 D1 calls, 75 statements, 1,212,459 rows read and 82 rows written in
+3.9 seconds. Collection took 323.4 seconds in that run under different
+concurrent local work. The measured improvement is in the verification
+stage.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

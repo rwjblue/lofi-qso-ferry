@@ -426,7 +426,10 @@ try {
         try {
           await inventory.publish(
             context.run.phase === "quarantining"
-              ? await runs.prepareQuarantine(context, lease, { limit: 200 })
+              ? await runs.prepareQuarantine(context, lease, {
+                  limit: 200,
+                  proveCurrent: values.schema === "current",
+                })
               : await runs.prepareComplete(context, lease),
           );
         } finally {
@@ -464,8 +467,10 @@ try {
     if (sourceComparison === "interleaved") await drain();
   }
   checkpoint();
-  stage = "source-completion-and-classification";
+  stage = "source-verification";
   await finish(sourceRun);
+  checkpoint();
+  stage = "source-classification";
   await drain();
   checkpoint();
   assert.equal(

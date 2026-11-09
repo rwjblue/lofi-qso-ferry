@@ -325,7 +325,7 @@ export class InventoryRuns {
   async prepareQuarantine(
     context: InventoryRunContext,
     lease: Lease,
-    options: { limit?: number; pageId?: string } = {},
+    options: { limit?: number; pageId?: string; proveCurrent?: boolean } = {},
   ): Promise<PreparedInventoryPage> {
     context = structuredClone(context);
     const { run } = context;
@@ -338,22 +338,34 @@ export class InventoryRuns {
       Number.isSafeInteger(limit) && limit > 0 && limit <= 500,
       "invalid_inventory_quarantine_limit",
     );
-    const rows = (
-      await this.inventory.store
-        .statement(
-          `SELECT entity_family AS family,record_key AS key,row_version AS version FROM inventory_partition_membership WHERE tenant=? AND scope_id=? AND stream_id=? AND facet=? AND partition_id=? AND (entity_family,record_key)>(?,?) ORDER BY entity_family,record_key LIMIT ?`,
-          run.tenant,
-          run.scope,
-          run.streamId,
-          run.facet,
-          run.partition,
-          run.cursor?.family ?? "",
-          run.cursor?.key ?? "",
-          limit,
-        )
-        .all<{ family: string; key: string; version: number }>()
-    ).results;
-    const last = rows.at(-1);
+    const currentTail =
+      options.proveCurrent && run.facet === "source" && run.cursor === null
+        ? await this.inventory.store
+            .statement(
+              "SELECT family,record_key AS key FROM inventory_source_quarantine_current WHERE (tenant,run_id)=(?,?)",
+              run.tenant,
+              run.id,
+            )
+            .first<{ family: string; key: string }>()
+        : null;
+    const rows = currentTail
+      ? []
+      : (
+          await this.inventory.store
+            .statement(
+              `SELECT entity_family AS family,record_key AS key,row_version AS version FROM inventory_partition_membership WHERE tenant=? AND scope_id=? AND stream_id=? AND facet=? AND partition_id=? AND (entity_family,record_key)>(?,?) ORDER BY entity_family,record_key LIMIT ?`,
+              run.tenant,
+              run.scope,
+              run.streamId,
+              run.facet,
+              run.partition,
+              run.cursor?.family ?? "",
+              run.cursor?.key ?? "",
+              limit,
+            )
+            .all<{ family: string; key: string; version: number }>()
+        ).results;
+    const last = currentTail ?? rows.at(-1);
     return this.control(
       context,
       lease,

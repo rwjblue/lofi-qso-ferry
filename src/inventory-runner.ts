@@ -199,7 +199,9 @@ export class InventoryRunner {
         return await this.published(
           context,
           await this.runs.inventory.publish(
-            await this.runs.prepareQuarantine(context, lease),
+            await this.runs.prepareQuarantine(context, lease, {
+              proveCurrent: this.options.scheduled,
+            }),
           ),
         );
       if (context.run.phase === "publishing") {

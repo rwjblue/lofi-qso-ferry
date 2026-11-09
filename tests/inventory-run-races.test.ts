@@ -447,6 +447,99 @@ test("selective verification leaves the other partition's membership and coverag
   }
 });
 
+test("clean source quarantine verifies the final key and falls back for newer or missing members", async () => {
+  const f = await inventoryRunFixture("lofi", "current");
+  try {
+    const prepare = async (id: string) =>
+      f.runs.prepareQuarantine(await f.runs.context("a", id), f.lease, {
+        limit: 1,
+        proveCurrent: true,
+      });
+    const first = await f.begin();
+    await f.observed(first.id, [f.qso("a"), f.qso("b")]);
+    await f.observed(first.id);
+    const clean = await prepare(first.id);
+    const proof = clean.input.run;
+    assert.ok(proof?.action === "quarantine" && proof.exhausted);
+    assert.deepEqual(proof.rows, []);
+    assert.deepEqual(proof.nextCursor, { family: "qso", key: "b" });
+    const early = await f.inventory.prepare({
+      ...clean.input,
+      run: { ...proof, nextCursor: { family: "qso", key: "a" } },
+    });
+    await assert.rejects(
+      f.inventory.publish(early),
+      /inventory quarantine cursor changed/,
+    );
+    await f.inventory.publish(clean);
+    assert.equal((await f.inventory.publish(clean)).recovered, true);
+    assert.deepEqual(
+      (await f.runs.load("a", first.id))?.cursor,
+      proof.nextCursor,
+    );
+    await f.finish(first.id);
+
+    const next = await f.begin();
+    await f.observed(next.id, [f.qso("a"), f.qso("b")]);
+    await f.observed(next.id);
+    const prior = await prepare(next.id);
+    assert.ok(
+      prior.input.run?.action === "quarantine" && prior.input.run.exhausted,
+    );
+    const forward = await f.inventory.initialize(f.initial, "forward", "other");
+    await f.inventory.publish(
+      await f.inventory.prepare({
+        pageId: "overlapping-source-observation",
+        stream: forward,
+        lease: f.lease,
+        facet: "source",
+        origin: "forward",
+        requestStartedAt: Date.now(),
+        observations: [f.qso("b", 2)],
+        nextResume: {},
+      }),
+    );
+    // Rebind the stale proof to today's stream version to exercise the
+    // native witness check independently of the ordinary sequence fence.
+    const stale = await f.inventory.prepare({
+      ...prior.input,
+      stream: (await f.runs.context("a", next.id)).stream,
+    });
+    await assert.rejects(
+      f.inventory.publish(stale),
+      /inventory quarantine cursor changed/,
+    );
+    const fallback = (await prepare(next.id)).input.run;
+    assert.ok(fallback?.action === "quarantine" && !fallback.exhausted);
+    assert.equal(fallback.rows.length, 1);
+    await f.finish(next.id);
+    const witness = await f.db
+      .prepare(
+        "SELECT revision FROM inventory_run_membership WHERE run_id=? AND record_key='b'",
+      )
+      .bind(next.id)
+      .first("revision");
+    assert.equal(witness, "r2");
+
+    const missing = await f.begin();
+    await f.observed(missing.id, [f.qso("a")]);
+    await f.observed(missing.id);
+    const omitted = (await prepare(missing.id)).input.run;
+    assert.ok(omitted?.action === "quarantine" && !omitted.exhausted);
+    await f.finish(missing.id);
+    assert.equal(
+      await f.db
+        .prepare(
+          "SELECT state FROM inventory_partition_membership WHERE record_key='b'",
+        )
+        .first("state"),
+      "unresolved",
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
 test("an empty delta is positive-only without baseline and cannot enter quarantine", async () => {
   const f = await inventoryRunFixture("qrz");
   try {

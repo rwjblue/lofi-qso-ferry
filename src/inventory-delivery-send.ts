@@ -3,10 +3,11 @@ import {
   routeDeliveryMode,
   type ScheduledDeliveryGates,
 } from "./delivery-gates.ts";
+import { configuredInventoryShadow } from "./inventory-preparation-shadow.ts";
 import {
-  configuredInventoryShadow,
-  type InventoryShadowEnvironment,
-} from "./inventory-preparation-shadow.ts";
+  type InventoryDeliveryEnvironment,
+  managedInventoryAuthorization,
+} from "./inventory-upload-authorization.ts";
 import { canonical } from "./security.ts";
 import type { Store } from "./store.ts";
 
@@ -26,10 +27,7 @@ type Dispatch = {
   >;
 };
 
-export type InventoryDeliveryEnvironment = InventoryShadowEnvironment & {
-  QRZ_FRESH_INSERT_EXPIRES_AT?: string;
-  LOTW_FRESH_INSERT_EXPIRES_AT?: string;
-};
+export type { InventoryDeliveryEnvironment } from "./inventory-upload-authorization.ts";
 
 function authorization(env: InventoryDeliveryEnvironment, provider: Provider) {
   if (env.INVENTORY_RUNTIME_MODE !== `selected_${provider}`) return null;
@@ -141,6 +139,18 @@ const memberKeys: Record<Provider, string> = {
   lotw: "(SELECT json_group_array(m.record_key) FROM inventory_lotw_batch_members m WHERE (m.tenant,m.batch_id)=(?2,?3))",
 };
 
+type ManagedAuthorization = NonNullable<
+  ReturnType<typeof managedInventoryAuthorization>
+>;
+const allowedManagedMembers = (provider: Provider, keys: string, row: string) =>
+  `(${keys} IS NULL OR ${provider === "lotw" ? allowedLotwMembers(keys, row) : `${row}.record_key IN(SELECT value FROM json_each(${keys}))`})`;
+const managedBindings = (auth: ManagedAuthorization) =>
+  [
+    auth.keys === null ? null : canonical(auth.keys),
+    auth.destinations === null ? null : canonical(auth.destinations),
+    auth.expiresAt,
+  ] as const;
+
 const MAX_TURNS = 3;
 
 /** A scoped outbox for current prepared artifacts. A Queue delivery only
@@ -154,6 +164,8 @@ export class InventorySendQueue {
 
   async retireExpired() {
     const { provider } = this;
+    const managed = managedInventoryAuthorization(this.env, provider);
+    if (managed) return this.retireManaged(managed);
     const auth = authorization(this.env, provider);
     if (!auth) return 0;
     const column = `${itemKey(provider)}_id`;
@@ -191,8 +203,54 @@ export class InventorySendQueue {
     return result.results.length;
   }
 
+  private async retireManaged(auth: ManagedAuthorization) {
+    const { provider } = this;
+    const column = `${itemKey(provider)}_id`;
+    const { table, header, headerKey, historyHold } = expiration[provider];
+    const identity = provider === "qrz" ? "a.stage_id" : "a.batch_id";
+    const lease =
+      provider === "qrz"
+        ? "'inventory:qrz-delivery:'||a.book_identity"
+        : "'inventory:lotw-delivery'";
+    const records =
+      provider === "qrz"
+        ? `SELECT a.record_key`
+        : `SELECT m.record_key FROM inventory_lotw_batch_members m WHERE (m.tenant,m.batch_id)=(a.tenant,a.batch_id)`;
+    const result = await this.dispatch.store
+      .statement(
+        `WITH expired AS MATERIALIZED(
+        SELECT a.tenant,a.${column} AS id
+        FROM inventory_source_proofs p INDEXED BY inventory_source_proofs_expiry
+        CROSS JOIN ${header} h ON (h.tenant,h.proof_id)=(p.tenant,p.proof_id)
+        CROSS JOIN ${table} a ON (a.tenant,${identity})=(h.tenant,h.${headerKey})
+        WHERE p.expires_at<=unixepoch('subsec')*1000 AND a.cancelled_at IS NULL
+        AND h.committed_at IS NOT NULL
+        AND (?2 IS NULL OR h.destination_connection IN(SELECT value FROM json_each(?2)))
+        AND ${allowedManagedMembers(provider, "?1", "a")}
+        AND NOT EXISTS(SELECT 1 FROM inventory_restore_locks l WHERE l.tenant=a.tenant)
+        AND NOT EXISTS(SELECT 1 FROM inventory_fresh_start_lock WHERE id=1)
+        AND NOT EXISTS(SELECT 1 FROM inventory_${provider}_dispatches d WHERE (d.tenant,d.${column})=(a.tenant,a.${column}))
+        AND NOT EXISTS(SELECT 1 FROM leases l WHERE (l.tenant,l.scope)=(a.tenant,${lease}) AND l.expires_at>unixepoch('subsec')*1000)
+        AND (NOT EXISTS(SELECT 1 FROM inventory_${provider}_send_jobs j WHERE (j.tenant,j.${column},j.hold_reason)=(a.tenant,a.${column},?3))
+        OR EXISTS(SELECT 1 FROM match_results_current r WHERE (r.tenant,r.destination,r.source_scope)=(a.tenant,h.destination,h.source_scope)
+         AND r.record_key IN(${records}) AND r.state='matched_existing'))
+        ORDER BY p.expires_at,a.tenant,a.${column} LIMIT 16
+       )
+       UPDATE ${table} SET cancelled_at=CAST(unixepoch('subsec')*1000 AS INTEGER)
+       WHERE (tenant,${column}) IN(SELECT tenant,id FROM expired)
+       RETURNING 1 AS retired`,
+        auth.keys === null ? null : canonical(auth.keys),
+        auth.destinations === null ? null : canonical(auth.destinations),
+        historyHold,
+      )
+      .all();
+    return result.results.length;
+  }
+
   async schedule() {
     const provider = this.provider;
+    const managed = managedInventoryAuthorization(this.env, provider);
+    if (managed) return this.scheduleManaged(managed);
     const auth = authorization(this.env, provider);
     if (!auth) return 0;
     const column = `${itemKey(provider)}_id`;
@@ -241,8 +299,73 @@ export class InventorySendQueue {
         now - 60_000,
       ),
     ]);
-    const [job] = wakeups.results;
+    return this.publish(wakeups.results[0], now);
+  }
+
+  private async scheduleManaged(auth: ManagedAuthorization) {
+    const { provider } = this;
+    const column = `${itemKey(provider)}_id`;
+    const { store } = this.dispatch;
+    const now = Date.now();
+    const artifacts =
+      provider === "qrz"
+        ? `inventory_qrz_preparations h ON (h.tenant,h.proof_id)=(p.tenant,p.proof_id)
+         CROSS JOIN inventory_qrz_attempts a USING(tenant,stage_id)
+         CROSS JOIN inventory_qrz_send_candidates c USING(tenant,attempt_id)`
+        : `inventory_lotw_batches h ON (h.tenant,h.proof_id)=(p.tenant,p.proof_id)
+         CROSS JOIN inventory_lotw_send_candidates c USING(tenant,batch_id)`;
+    const selected = `WITH selected AS MATERIALIZED(
+     SELECT c.tenant,c.${column} AS id,c.expires_at
+     FROM inventory_source_proofs p INDEXED BY inventory_source_proofs_expiry CROSS JOIN ${artifacts}
+     WHERE p.expires_at>?4 AND ${allowedManagedMembers(provider, "?1", "c")}
+     AND (?2 IS NULL OR c.destination_connection IN(SELECT value FROM json_each(?2)))
+     AND p.expires_at<=?3
+     AND NOT EXISTS(SELECT 1 FROM inventory_${provider}_send_jobs j WHERE (j.tenant,j.${column})=(c.tenant,c.${column}))
+     ORDER BY p.expires_at,c.tenant,c.${column} LIMIT 16
+    )`;
+    const lease =
+      provider === "qrz"
+        ? `(SELECT 'inventory:qrz-delivery:'||a.book_identity FROM inventory_qrz_attempts a WHERE (a.tenant,a.attempt_id)=(c.tenant,c.attempt_id))`
+        : "'inventory:lotw-delivery'";
+    const [, wakeups] = await store.db.batch<{
+      tenant: string;
+      id: string;
+      version: number;
+      due_at: number;
+    }>([
+      store.statement(
+        `${selected} INSERT INTO inventory_${provider}_send_jobs(tenant,${column},due_at)
+         SELECT tenant,id,?4 FROM selected WHERE true ON CONFLICT(tenant,${column}) DO NOTHING`,
+        ...managedBindings(auth),
+        now,
+      ),
+      store.statement(
+        `SELECT j.tenant,j.${column} AS id,j.version,j.due_at FROM inventory_${provider}_send_jobs j
+         JOIN inventory_${provider}_send_candidates c USING(tenant,${column})
+         WHERE j.due_at<c.expires_at AND j.turns<${MAX_TURNS} AND c.expires_at<=?3
+         AND ${allowedManagedMembers(provider, "?1", "c")}
+         AND (?2 IS NULL OR c.destination_connection IN(SELECT value FROM json_each(?2)))
+         AND (j.published_version<j.version OR (j.due_at<=?4 AND j.published_at<=?5))
+         AND NOT EXISTS(SELECT 1 FROM leases l WHERE l.tenant=j.tenant AND l.scope=${lease} AND l.expires_at>?4)
+         ORDER BY j.due_at,j.tenant,j.${column} LIMIT 1`,
+        ...managedBindings(auth),
+        now,
+        now - 60_000,
+      ),
+    ]);
+    return this.publish(wakeups.results[0], now);
+  }
+
+  private async publish(
+    job:
+      | { tenant: string; id: string; version: number; due_at: number }
+      | undefined,
+    now: number,
+  ) {
     if (!job) return 0;
+    const { provider } = this;
+    const { store } = this.dispatch;
+    const column = `${itemKey(provider)}_id`;
     await this.env.INVENTORY_QUEUE.sendBatch([
       {
         body: {
@@ -275,6 +398,8 @@ export class InventorySendQueue {
     workVersion: number;
   }) {
     const provider = this.provider;
+    const managed = managedInventoryAuthorization(this.env, provider);
+    if (managed) return this.advanceManaged(message, managed);
     const auth = authorization(this.env, provider);
     if (!auth || auth.tenant !== message.tenant) return "stale";
     const column = `${itemKey(provider)}_id`;
@@ -319,6 +444,68 @@ export class InventorySendQueue {
         ? current.gates
         : { ...auth.gates, exportsEnabled: false };
     });
+    return this.finishTurn(tenant, id, job, result);
+  }
+
+  private async advanceManaged(
+    {
+      tenant,
+      id,
+      workVersion,
+    }: { tenant: string; id: string; workVersion: number },
+    auth: ManagedAuthorization,
+  ) {
+    const { provider } = this;
+    const { store } = this.dispatch;
+    const column = `${itemKey(provider)}_id`;
+    const job = await store
+      .statement(
+        `UPDATE inventory_${provider}_send_jobs AS j SET version=version+1,turns=turns+1,due_at=?1
+       WHERE (j.tenant,j.${column},j.version)=(?2,?3,?4)
+       AND j.due_at<=unixepoch('subsec')*1000 AND j.turns<${MAX_TURNS}
+       AND EXISTS(SELECT 1 FROM inventory_${provider}_send_candidates c
+        WHERE (c.tenant,c.${column})=(?2,?3) AND c.expires_at<=?7
+        AND ${allowedManagedMembers(provider, "?5", "c")}
+        AND (?6 IS NULL OR c.destination_connection IN(SELECT value FROM json_each(?6))))
+       RETURNING version,turns,${memberKeys[provider]} AS member_keys,
+       (SELECT c.destination_connection FROM inventory_${provider}_send_candidates c WHERE (c.tenant,c.${column})=(?2,?3)) AS destination`,
+        Date.now() + 90_000,
+        tenant,
+        id,
+        workVersion,
+        ...managedBindings(auth),
+      )
+      .first<{
+        version: number;
+        turns: number;
+        member_keys: string;
+        destination: string;
+      }>();
+    if (!job) return "stale";
+    const keys: string[] = JSON.parse(job.member_keys);
+    const result = await this.dispatch.send(tenant, id, () => {
+      const current = managedInventoryAuthorization(this.env, provider);
+      return current?.expiresAt === auth.expiresAt &&
+        (current.destinations === null ||
+          current.destinations.includes(job.destination)) &&
+        keys.length > 0 &&
+        (current.keys === null ||
+          keys.every((key) => current.keys?.includes(key)))
+        ? current.gates
+        : { ...auth.gates, exportsEnabled: false };
+    });
+    return this.finishTurn(tenant, id, job, result);
+  }
+
+  private async finishTurn(
+    tenant: string,
+    id: string,
+    job: { version: number; turns: number },
+    result: Awaited<ReturnType<Dispatch["send"]>>,
+  ) {
+    const { provider } = this;
+    const { store } = this.dispatch;
+    const column = `${itemKey(provider)}_id`;
     // A possible send retires this job and creates readback work atomically.
     if (result.kind !== "deferred" && result.kind !== "held")
       return result.kind;

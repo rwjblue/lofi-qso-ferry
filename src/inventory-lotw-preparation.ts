@@ -2,6 +2,7 @@ import { InventoryComparisonGenerations } from "./inventory-comparison-generatio
 import type { InventoryComparisonKey } from "./inventory-comparison-keys.ts";
 import { INVENTORY_LOTW_BATCH_LIMIT } from "./inventory-delivery-limits.ts";
 import { InventoryDeliveryWorkspace } from "./inventory-delivery-workspace.ts";
+import { inventoryLotwReportGroups } from "./inventory-lotw-neighborhood.ts";
 import { inventoryOwnershipTokens } from "./inventory-ownership.ts";
 import { LotwClient } from "./lotw.ts";
 import {
@@ -250,6 +251,8 @@ export class InventoryLotwPreparation {
     if (!station || !certificate) throw new Error("inventory_lotw_empty_batch");
     if (new Set(rows.map((row) => row.identity_hash)).size !== rows.length)
       return held("lotw_batch_identity_conflict");
+    if (!inventoryLotwReportGroups(station, members))
+      return held("lotw_batch_report_bound");
     const rowsJson = canonical(rows);
     const reserved = await this.store
       .statement(

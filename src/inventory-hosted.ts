@@ -1,3 +1,5 @@
+import { purgeAuth } from "./auth.ts";
+import type { InventoryBodyArchive } from "./inventory-body-archive.ts";
 import {
   consumeComparisonWakeups,
   isComparisonMessage,
@@ -24,7 +26,10 @@ import { runLotwConfirmationSchedule } from "./inventory-lotw-confirmation-sched
 import { InventoryLotwDispatch } from "./inventory-lotw-dispatch.ts";
 import { InventoryLotwReadback } from "./inventory-lotw-readback.ts";
 import { collectInventoryMatchProofs } from "./inventory-match-retention.ts";
-import { collectInventoryPayloads } from "./inventory-payload-retention.ts";
+import {
+  collectInventoryColdBodies,
+  collectInventoryPayloads,
+} from "./inventory-payload-retention.ts";
 import {
   configuredInventoryShadow,
   InventoryPreparationShadow,
@@ -51,6 +56,8 @@ import {
   isSourceProofWakeup,
   publishSourceProofWakeups,
 } from "./inventory-source-proof-wakeups.ts";
+import { InventoryUploadPlanner } from "./inventory-upload-planner.ts";
+import { rotatePrivateData } from "./maintenance.ts";
 import { keyring } from "./security.ts";
 import { Store } from "./store.ts";
 
@@ -58,7 +65,12 @@ const hostedMode = {
   read_only: "inventory_read_only",
   selected_qrz: "inventory_selected_qrz",
   selected_lotw: "inventory_selected_lotw",
+  managed: "inventory_managed",
 } as const;
+
+type InventoryHostedEnvironment = InventoryDeliveryEnvironment & {
+  INVENTORY_BODY_ARCHIVE?: InventoryBodyArchive;
+};
 
 function configuredMode(env: Env) {
   const value = env.INVENTORY_RUNTIME_MODE ?? "off";
@@ -66,14 +78,15 @@ function configuredMode(env: Env) {
     value !== "off" &&
     value !== "read_only" &&
     value !== "selected_qrz" &&
-    value !== "selected_lotw"
+    value !== "selected_lotw" &&
+    value !== "managed"
   )
     throw new Error("invalid_inventory_runtime_mode");
   return value;
 }
 
 export async function runHostedScheduled(
-  env: InventoryDeliveryEnvironment & {
+  env: InventoryHostedEnvironment & {
     INVENTORY_LOTW_ACCOUNT_FEEDS?: string;
     INVENTORY_LOTW_CONFIRMATIONS?: string;
   },
@@ -82,8 +95,9 @@ export async function runHostedScheduled(
   } = {},
 ) {
   const mode = configuredMode(env);
+  await purgeAuth(env);
   if (mode === "off") return { mode: "inventory_paused" as const, queued: 0 };
-  const store = new Store(env.DB, keyring(env));
+  const store = new Store(env.DB, keyring(env), env.INVENTORY_BODY_ARCHIVE);
   const runtime = await activateInventoryRuntime(store);
   const registration = await registerInventorySources(store, runtime);
   const calendarRegistration = await registerSourceCalendarSelections(
@@ -109,33 +123,41 @@ export async function runHostedScheduled(
     env.INVENTORY_QUEUE,
   );
   const proofJobs = new InventorySourceProofJobs(runs);
-  const sendProvider =
-    mode === "selected_qrz" ? "qrz" : mode === "selected_lotw" ? "lotw" : null;
-  const sender = sendProvider
-    ? new InventorySendQueue(
-        env,
-        sendProvider,
-        sendProvider === "qrz"
-          ? new InventoryQrzDispatch(store)
-          : new InventoryLotwDispatch(store),
-      )
-    : null;
+  const sendProviders = inventoryShadowProviders.filter(
+    (provider) => mode === "managed" || mode === `selected_${provider}`,
+  );
+  const senders = {
+    qrz: new InventorySendQueue(env, "qrz", new InventoryQrzDispatch(store)),
+    lotw: new InventorySendQueue(env, "lotw", new InventoryLotwDispatch(store)),
+  };
   const sends = {
     qrz: { queued: 0, failed: 0, retired: 0 },
     lotw: { queued: 0, failed: 0, retired: 0 },
   };
-  if (sender && sendProvider) {
+  for (const provider of sendProviders) {
     try {
-      sends[sendProvider].retired = await sender.retireExpired();
+      sends[provider].retired = await senders[provider].retireExpired();
     } catch {
-      sends[sendProvider].failed = 1;
+      sends[provider].failed = 1;
+    }
+  }
+  let uploadPlanner = { qrz: 0, lotw: 0, failed: 0 };
+  if (mode === "managed") {
+    try {
+      const enrolled = await new InventoryUploadPlanner(
+        env,
+        proofJobs,
+      ).enroll();
+      uploadPlanner = { ...enrolled, failed: 0 };
+    } catch {
+      uploadPlanner.failed = 1;
     }
   }
   const shadows = { qrz: "off", lotw: "off" };
   for (const provider of inventoryShadowProviders) {
     const config = configuredInventoryShadow(env, provider);
     shadows[provider] = config.kind;
-    if (config.kind !== "configured") continue;
+    if (config.kind !== "configured" || mode === "managed") continue;
     try {
       shadows[provider] = (
         await new InventoryPreparationShadow(
@@ -163,11 +185,11 @@ export async function runHostedScheduled(
     "lotw",
     env.INVENTORY_QUEUE,
   );
-  if (sender && sendProvider) {
+  for (const provider of sendProviders) {
     try {
-      sends[sendProvider].queued = await sender.schedule();
+      sends[provider].queued = await senders[provider].schedule();
     } catch {
-      sends[sendProvider].failed = 1;
+      sends[provider].failed = 1;
     }
   }
   let matchProofsCollected = 0;
@@ -184,6 +206,17 @@ export async function runHostedScheduled(
   } catch {
     rawPayloadCollectionFailed = 1;
   }
+  let coldBodiesCollected = 0;
+  let coldBodyCollectionFailed = 0;
+  try {
+    coldBodiesCollected = await collectInventoryColdBodies(store);
+  } catch {
+    coldBodyCollectionFailed = 1;
+  }
+  const credentialsRotation = await rotatePrivateData(store).catch(() => ({
+    rotated: 0,
+    blocked: 1,
+  }));
   const lotwConfirmations =
     env.INVENTORY_LOTW_CONFIRMATIONS === "true"
       ? await runLotwConfirmationSchedule(
@@ -223,19 +256,23 @@ export async function runHostedScheduled(
     matchProofCollectionFailed,
     rawPayloadsCollected,
     rawPayloadCollectionFailed,
+    coldBodiesCollected,
+    coldBodyCollectionFailed,
+    credentialsRotation,
     qrzShadow: shadows.qrz,
     lotwShadow: shadows.lotw,
+    uploadPlanner,
   };
 }
 
 /** Reads and recovery remain available independently of the selected sender. */
 export async function runHostedInventoryQueue(
-  env: InventoryDeliveryEnvironment,
+  env: InventoryHostedEnvironment,
   batch: MessageBatch<unknown>,
   fetcher: typeof fetch = fetch,
 ) {
   const mode = configuredMode(env);
-  const store = new Store(env.DB, keyring(env));
+  const store = new Store(env.DB, keyring(env), env.INVENTORY_BODY_ARCHIVE);
   const runtime = await inventoryRuntime(store);
   if (mode === "off" || runtime.mode !== "inventory_read_only") {
     batch.retryAll({ delaySeconds: 300 });
@@ -312,17 +349,20 @@ export async function runHostedInventoryQueue(
     },
   );
   const proofJobs = new InventorySourceProofJobs(runner.runs, fetcher);
+  const planner =
+    mode === "managed" ? new InventoryUploadPlanner(env, proofJobs) : null;
   const shadows: Record<
     (typeof inventoryShadowProviders)[number],
     string | null
   > = { qrz: null, lotw: null };
-  const configured = proofMessages.length
-    ? inventoryShadowProviders.map((provider) => {
-        const config = configuredInventoryShadow(env, provider);
-        if (config.kind === "invalid") shadows[provider] = "invalid";
-        return { provider, selection: config.selection };
-      })
-    : [];
+  const configured =
+    proofMessages.length && !planner
+      ? inventoryShadowProviders.map((provider) => {
+          const config = configuredInventoryShadow(env, provider);
+          if (config.kind === "invalid") shadows[provider] = "invalid";
+          return { provider, selection: config.selection };
+        })
+      : [];
   const sendAfterProof = { qrz: 0, lotw: 0 };
   const proof = await consumeSourceProofWakeups(
     proofJobs,
@@ -336,6 +376,23 @@ export async function runHostedInventoryQueue(
         proofJobs,
         env.INVENTORY_QUEUE,
       );
+      if (planner) {
+        if (
+          result.kind !== "complete" &&
+          result.kind !== "stale" &&
+          result.kind !== "held"
+        )
+          return;
+        const staged = await planner.stage(
+          wakeup.tenant,
+          wakeup.scope,
+          wakeup.id,
+        );
+        if (staged.provider)
+          sendAfterProof[staged.provider] +=
+            await senders[staged.provider].schedule();
+        return staged.retryAt;
+      }
       if (result.kind !== "complete" && result.kind !== "stale") return;
       let retryAt: number | undefined;
       for (const { provider, selection } of configured) {
@@ -377,6 +434,15 @@ export async function runHostedInventoryQueue(
       isInventorySendWakeup("lotw", message.body),
     ),
   );
+  if (planner && (qrzSend.processed || lotwSend.processed)) {
+    await planner.enroll();
+    sourceProofQueued += await publishSourceProofWakeups(
+      proofJobs,
+      env.INVENTORY_QUEUE,
+    );
+    sendAfterProof.qrz += await senders.qrz.schedule();
+    sendAfterProof.lotw += await senders.lotw.schedule();
+  }
   const reports = [
     inventory,
     comparison,

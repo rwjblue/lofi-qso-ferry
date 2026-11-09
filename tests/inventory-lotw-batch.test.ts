@@ -5,14 +5,17 @@ import { gunzipSync } from "node:zlib";
 import { serializeAdifRecord } from "../src/adif.ts";
 import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
 import { InventoryComparisonPages } from "../src/inventory-comparison-pages.ts";
+import {
+  InventorySendQueue,
+  isInventorySendWakeup,
+} from "../src/inventory-delivery-send.ts";
+import { runHostedInventoryQueue } from "../src/inventory-hosted.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { InventoryLotwDispatch } from "../src/inventory-lotw-dispatch.ts";
 import { InventoryLotwPreparation } from "../src/inventory-lotw-preparation.ts";
 import { InventoryLotwReadback } from "../src/inventory-lotw-readback.ts";
-import {
-  configuredInventoryShadow,
-  InventoryPreparationShadow,
-} from "../src/inventory-preparation-shadow.ts";
+import { configuredInventoryShadow } from "../src/inventory-preparation-shadow.ts";
+import { InventoryQrzDispatch } from "../src/inventory-qrz-dispatch.ts";
 import { InventoryRunner } from "../src/inventory-runner.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import { activateInventoryRuntime } from "../src/inventory-runtime.ts";
@@ -21,14 +24,16 @@ import {
   startInventorySelections,
 } from "../src/inventory-scheduler.ts";
 import { InventorySourceProofJobs } from "../src/inventory-source-proof-jobs.ts";
+import { InventoryUploadPlanner } from "../src/inventory-upload-planner.ts";
 import { importPkcs12 } from "../src/signing.ts";
+import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import { database } from "./helpers.ts";
 import {
   applyAdditionalMigrations,
   fixtureEnvironment,
 } from "./runtime-fixtures.ts";
 
-test("the native sender stages 100 members, sends once, and settles partial LoTW receipts", async (t) => {
+test("managed delivery sends 100 LoTW members, recovers partial receipts, and advances QRZ", async (t) => {
   const { db, mf, store } = await database();
   t.after(() => mf.dispose());
   await applyAdditionalMigrations(db);
@@ -37,17 +42,24 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
     "ferry-fixture",
     { version: "fixture-batch" },
   );
+  const book = {
+    bookId: "7",
+    stationCallsign: "W1AW",
+    startDate: "2026-11-07",
+    endDate: "2026-11-09",
+  };
   await store.db.batch([
     store.statement(
       "INSERT INTO accounts(id,email,user_handle,verified_at) VALUES('a','a@example.test','a',1)",
     ),
     store.statement(
-      "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,config,created_at) VALUES('a','source','lofi','a','Source','active','v1',?,1),('a','lotw','lotw','a','LoTW','active','v1',?,1)",
+      "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,config,created_at) VALUES('a','source','lofi','a','Source','active','v1',?,1),('a','lotw','lotw','a','LoTW','active','v1',?,1),('a','qrz','qrz','7','QRZ','active','v1',?,1)",
       JSON.stringify({ accountId: "a" }),
       JSON.stringify({
         readAccess: true,
         station: { callsign: "W1AW", dxcc: 291 },
       }),
+      JSON.stringify(book),
     ),
     await store.putPrivate("a", "source", "v1", "credential", {
       key: "browser:fixture",
@@ -58,6 +70,18 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
       query: { username: "fixture", password: "fixture" },
       signing,
     }),
+    await store.putPrivate("a", "qrz", "v1", "credential", {
+      apiKey: "fixture",
+    }),
+    store.statement(
+      "INSERT INTO templates(tenant,destination,id,config,created_at) VALUES('a','qrz','v1',?,1)",
+      JSON.stringify({
+        profile: TEMPLATE_PROFILE,
+        fields: {},
+        fallbackNotes: false,
+      }),
+    ),
+    store.statement("INSERT INTO active_templates VALUES('a','qrz','v1')"),
   ]);
   const operation = {
     uuid: "op",
@@ -65,7 +89,7 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
     syncedAtMillis: Date.now() - 60_000,
   };
   const contacts = Array.from({ length: 100 }, (_, index) => ({
-    uuid: `qso-${String(index).padStart(3, "0")}`,
+    uuid: `qso-${String(99 - index).padStart(3, "0")}`,
     operation: operation.uuid,
     syncedAtMillis: operation.syncedAtMillis + index + 1,
     startAtMillis: Date.parse("2026-11-08T12:00:01Z") + 60_000 * index,
@@ -78,6 +102,7 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
   }));
   const recordKeys = contacts.map(({ uuid }) => uuid);
   let uploadRequests = 0;
+  let qrzInserts = 0;
   let witnessed = 0;
   let receiptRecords: string[] = [];
   let expectedTq8: Uint8Array | null = null;
@@ -113,6 +138,19 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
         },
       });
     }
+    if (url.hostname === "logbook.qrz.com") {
+      const form = new URLSearchParams(await request.text());
+      if (form.get("ACTION") === "STATUS")
+        return new Response(
+          `RESULT=OK&BOOKID=7&CALLSIGN=W1AW&STARTDATE=${book.startDate}&ENDDATE=${book.endDate}`,
+        );
+      if (form.get("ACTION") === "INSERT") {
+        qrzInserts++;
+        return new Response("RESULT=OK&COUNT=1&LOGID=1");
+      }
+      assert.equal(form.get("ACTION"), "FETCH");
+      return new Response("RESULT=OK&COUNT=0&ADIF=");
+    }
     assert.equal(url.hostname, "lotw.arrl.org");
     if (url.pathname === "/lotw/crl")
       return new Response("<Status>Unrevoked</Status>");
@@ -136,7 +174,8 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
   const runtime = await activateInventoryRuntime(store);
   const source = await store.connection("a", "source");
   const lotw = await store.connection("a", "lotw");
-  assert.ok(source && lotw);
+  const qrz = await store.connection("a", "qrz");
+  assert.ok(source && lotw && qrz);
   await registerInventorySelection(store, runtime, source, {
     provider: "lofi",
   });
@@ -144,7 +183,12 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
     provider: "lotw",
     selection: { startDate: "2026-11-07", endDate: "2026-11-09" },
   });
-  assert.equal((await startInventorySelections(store)).started, 2);
+  await registerInventorySelection(store, runtime, qrz, {
+    provider: "qrz",
+    book,
+    between: [book.startDate, book.endDate],
+  });
+  assert.equal((await startInventorySelections(store)).started, 3);
   const runs = new InventoryRuns(
     new InventoryIngestion(store, new InventoryComparisonPages(store)),
   );
@@ -159,7 +203,8 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
       .first<string>("scope_id");
   const sourceScope = await scope("lofi");
   const destinationScope = await scope("lotw");
-  assert.ok(sourceScope && destinationScope);
+  const qrzScope = await scope("qrz");
+  assert.ok(sourceScope && destinationScope && qrzScope);
 
   async function finish(scopeId: string) {
     for (let step = 0; step < 15; step++) {
@@ -208,6 +253,7 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
   }
   await finish(sourceScope);
   await finish(destinationScope);
+  await finish(qrzScope);
   const coordinator = new InventoryComparisonCoordinator(store);
   for (let step = 0; step < 100; step++) {
     const outcome = await coordinator.step("a");
@@ -248,11 +294,53 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
     ]);
   }
   const selection = { tenant: "a", sourceScope, destinationScope, recordKeys };
+  const messages: unknown[] = [];
+  const message = (body: unknown): Message<unknown> => ({
+    id: "fixture",
+    timestamp: new Date(),
+    attempts: 1,
+    body,
+    ack() {},
+    retry() {
+      assert.fail("unexpected send retry");
+    },
+  });
+  const delivery = (body: unknown): MessageBatch<unknown> => ({
+    queue: "fixture",
+    messages: [message(body)],
+    metadata: { metrics: { backlogCount: 1, backlogBytes: 0 } },
+    ackAll() {
+      assert.fail("unexpected batch ack");
+    },
+    retryAll() {
+      assert.fail("unexpected batch retry");
+    },
+  });
   const env = {
     ...fixtureEnvironment(db),
-    INVENTORY_LOTW_SHADOW_JSON: JSON.stringify(selection),
+    INVENTORY_RUNTIME_MODE: "managed",
+    EXPORTS_ENABLED: "true",
+    ROLLOUT_CHECKS_PASSED: "true",
+    LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
+    QRZ_FRESH_INSERTS_ENABLED: "true",
+    LOTW_FRESH_INSERTS_ENABLED: "true",
+    ROLLOUT_QSO_IDS_JSON: JSON.stringify(["*"]),
+    ROLLOUT_DESTINATION_IDS_JSON: JSON.stringify(["lotw", "qrz"]),
+    INVENTORY_QUEUE: {
+      async sendBatch(batch) {
+        messages.push(...Array.from(batch, ({ body }) => body));
+        return {
+          metadata: {
+            metrics: { backlogCount: messages.length, backlogBytes: 0 },
+          },
+        };
+      },
+    } as Env["INVENTORY_QUEUE"],
   };
-  const configured = configuredInventoryShadow(env, "lotw");
+  const configured = configuredInventoryShadow(
+    { ...env, INVENTORY_LOTW_SHADOW_JSON: JSON.stringify(selection) },
+    "lotw",
+  );
   assert.equal(configured.kind, "configured");
   assert.deepEqual(
     configuredInventoryShadow(
@@ -267,9 +355,25 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
     ),
     { kind: "invalid" },
   );
-  const shadow = new InventoryPreparationShadow(proofJobs, selection, "lotw");
-  const job = await shadow.enroll();
-  assert.equal(job.kind, "queued", JSON.stringify(job));
+  assert.deepEqual(
+    await new InventoryUploadPlanner(
+      { ...env, INVENTORY_RUNTIME_MODE: "read_only" },
+      proofJobs,
+    ).enroll(),
+    { qrz: 0, lotw: 0 },
+  );
+  assert.deepEqual(
+    await new InventoryUploadPlanner(
+      { ...env, ROLLOUT_QSO_IDS_JSON: "[]" },
+      proofJobs,
+    ).enroll(),
+    { qrz: 0, lotw: 0 },
+  );
+  const planner = new InventoryUploadPlanner(env, proofJobs);
+  assert.deepEqual(await planner.enroll(), { qrz: 0, lotw: 1 });
+  assert.deepEqual(await planner.enroll(), { qrz: 0, lotw: 0 });
+  const job = await proofJobs.load("a", sourceScope);
+  assert.ok(job && job.phase === "collecting");
   // Skip the optional cached witnesses to exercise one larger LoFi read.
   await store
     .statement(
@@ -278,12 +382,12 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
     .run();
   await store.statement("DELETE FROM inventory_read_pacing").run();
   assert.equal(
-    (await proofJobs.step("a", sourceScope, job.id)).kind,
+    (await proofJobs.step("a", sourceScope, job.job_id)).kind,
     "draining",
   );
   assert.equal(witnessed, 1);
   assert.equal(
-    (await proofJobs.step("a", sourceScope, job.id)).kind,
+    (await proofJobs.step("a", sourceScope, job.job_id)).kind,
     "deferred",
   );
   await finish(sourceScope);
@@ -293,14 +397,34 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
       Date.now(),
     )
     .run();
-  assert.equal(
-    (await proofJobs.step("a", sourceScope, job.id)).kind,
-    "complete",
+  const ready = await proofJobs.load("a", sourceScope);
+  assert.ok(ready && ready.phase === "draining");
+  const staged = await runHostedInventoryQueue(
+    env,
+    delivery({
+      kind: "inventory-source-proof",
+      version: 1,
+      tenant: "a",
+      scope: sourceScope,
+      id: ready.job_id,
+      workVersion: ready.version,
+    }),
+    fetcher,
   );
-  const prepared = await shadow.stage(job.id);
-  assert.equal(prepared.kind, "prepared", JSON.stringify(prepared));
-  assert.ok("batchId" in prepared);
-  assert.equal(prepared.members.length, 100);
+  assert.equal(staged.mode, "inventory_managed");
+  assert.equal(staged.sourceProofProcessed, 1);
+  assert.equal(staged.lotwSendQueued, 1);
+  assert.equal(staged.failed, 0);
+  assert.deepEqual(await planner.stage("a", sourceScope, job.job_id), {
+    kind: "idle",
+  });
+  const prepared = await store
+    .statement(
+      "SELECT batch_id AS batchId,member_count AS members FROM inventory_lotw_batches WHERE tenant='a'",
+    )
+    .first<{ batchId: string; members: number }>();
+  assert.ok(prepared);
+  assert.equal(prepared.members, 100);
   const artifact = await new InventoryLotwPreparation(store).artifact(
     "a",
     prepared.batchId,
@@ -314,27 +438,24 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
     100,
   );
   const dispatch = new InventoryLotwDispatch(store, fetcher);
-  const gates = () => ({
-    exportsEnabled: true,
-    liveWriteAuthorized: true,
-    lotwFreshInsertsEnabled: true,
-    sourceBoundaryVerified: false,
-    allowedQsoIds: recordKeys,
-    allowedDestinationIds: ["lotw"],
-  });
-  assert.deepEqual(
-    await dispatch.send("a", prepared.batchId, () => ({
-      ...gates(),
-      allowedQsoIds: recordKeys.slice(0, 99),
-    })),
-    { kind: "held", reason: "lotw_exports_disabled" },
+  const sender = new InventorySendQueue(env, "lotw", dispatch);
+  assert.equal(await sender.retireExpired(), 0);
+  assert.equal(await sender.schedule(), 0);
+  const wakeup = messages.find((body) => isInventorySendWakeup("lotw", body));
+  assert.ok(wakeup);
+  const restricted = new InventorySendQueue(
+    { ...env, ROLLOUT_QSO_IDS_JSON: JSON.stringify(recordKeys.slice(0, 99)) },
+    "lotw",
+    dispatch,
   );
+  assert.equal((await restricted.consume([message(wakeup)])).outcome, "stale");
   assert.equal(uploadRequests, 0);
-  assert.equal(
-    (await dispatch.send("a", prepared.batchId, gates)).kind,
-    "submitted",
-  );
-  await dispatch.send("a", prepared.batchId, gates);
+  const sent = await runHostedInventoryQueue(env, delivery(wakeup), fetcher);
+  assert.equal(sent.mode, "inventory_managed");
+  assert.equal(sent.lotwSendOutcome, "submitted");
+  assert.equal(sent.qrzSendQueued, 1);
+  assert.equal(sent.failed, 0);
+  assert.equal((await sender.consume([message(wakeup)])).outcome, "stale");
   assert.equal(uploadRequests, 1);
   const claimedAt = await store
     .statement(
@@ -375,4 +496,68 @@ test("the native sender stages 100 members, sends once, and settles partial LoTW
     observed: 100,
   });
   assert.equal(uploadRequests, 1);
+  assert.deepEqual(await planner.enroll(), { qrz: 0, lotw: 0 });
+  assert.equal(
+    await store
+      .statement(
+        "SELECT count(*) n FROM inventory_qrz_attempts WHERE tenant='a'",
+      )
+      .first("n"),
+    20,
+  );
+  assert.deepEqual(
+    (
+      await store
+        .statement(
+          "SELECT record_key FROM inventory_qrz_attempts WHERE tenant='a' ORDER BY record_key",
+        )
+        .all<{ record_key: string }>()
+    ).results.map(({ record_key }) => record_key),
+    recordKeys.slice(0, 20).sort(),
+  );
+  const qrzSender = new InventorySendQueue(
+    env,
+    "qrz",
+    new InventoryQrzDispatch(store, fetcher),
+  );
+  assert.equal(await qrzSender.retireExpired(), 0);
+  const qrzWakeup = messages.find((body) => isInventorySendWakeup("qrz", body));
+  assert.ok(qrzWakeup);
+  assert.equal(
+    (await qrzSender.consume([message(qrzWakeup)])).outcome,
+    "delivered",
+  );
+  assert.equal(
+    (await qrzSender.consume([message(qrzWakeup)])).outcome,
+    "stale",
+  );
+  assert.equal(qrzInserts, 1);
+
+  // Advance the fixture's proof expiry without waiting five minutes. The
+  // archived proof trigger is restored before the managed retirement turn.
+  const immutableProof = await store
+    .statement(
+      "SELECT sql FROM sqlite_master WHERE name='inventory_source_proof_immutable'",
+    )
+    .first<string>("sql");
+  assert.ok(immutableProof);
+  await db.batch([
+    db.prepare("DROP TRIGGER inventory_source_proof_immutable"),
+    db.prepare(
+      "UPDATE inventory_source_proofs SET expires_at=created_at+1 WHERE tenant='a'",
+    ),
+    db.prepare(immutableProof),
+  ]);
+  assert.equal(await qrzSender.retireExpired(), 16);
+  assert.equal(await qrzSender.retireExpired(), 3);
+  assert.equal(await sender.retireExpired(), 0);
+  assert.equal(
+    await store
+      .statement(
+        "SELECT count(*) n FROM inventory_qrz_attempts WHERE tenant='a' AND cancelled_at IS NULL",
+      )
+      .first("n"),
+    1,
+  );
+  assert.equal(qrzInserts, 1);
 });

@@ -58,14 +58,14 @@ export function configuredInventoryShadow(
   return { kind: "configured" as const, selection: value as Selection };
 }
 
-const reviewGuard: Record<Provider, string> = {
+export const inventoryPreparationReviewGuard: Record<Provider, string> = {
   qrz: `json_extract(b.destination_config,'$.bookId')=b.book_identity
-   AND EXISTS(SELECT 1 FROM active_templates t WHERE t.tenant=?2 AND t.destination=b.destination_connection)
-   AND NOT EXISTS(SELECT 1 FROM inventory_qrz_attempts a WHERE a.tenant=?2 AND a.book_identity=b.book_identity
+   AND EXISTS(SELECT 1 FROM active_templates t WHERE t.tenant=b.tenant AND t.destination=b.destination_connection)
+   AND NOT EXISTS(SELECT 1 FROM inventory_qrz_attempts a WHERE a.tenant=b.tenant AND a.book_identity=b.book_identity
        AND a.source_identity=b.source_identity AND a.record_key=b.record_key AND a.cancelled_at IS NULL)`,
   lotw: `json_extract(b.destination_config,'$.readAccess')=1
    AND (json_type(b.destination_config,'$.station')='object' OR json_array_length(b.destination_config,'$.stations')>0)
-   AND NOT EXISTS(SELECT 1 FROM inventory_lotw_batch_members a WHERE a.tenant=?2
+   AND NOT EXISTS(SELECT 1 FROM inventory_lotw_batch_members a WHERE a.tenant=b.tenant
        AND a.source_identity=b.source_identity AND a.record_key=b.record_key AND a.cancelled_at IS NULL)`,
 };
 
@@ -91,7 +91,7 @@ export class InventoryPreparationShadow {
              SELECT b.record_key,b.proof_not_before,b.result_set
              FROM json_each(?1) j CROSS JOIN inventory_delivery_preparation_review b
              WHERE (b.tenant,b.source_scope,b.destination,b.record_key)=(?2,?3,?4,j.value)
-               AND b.provider=?5 AND ${reviewGuard[this.provider]}
+               AND b.provider=?5 AND ${inventoryPreparationReviewGuard[this.provider]}
                AND NOT EXISTS(SELECT 1 FROM inventory_restore_locks l WHERE l.tenant=?2)
            ), fresh AS MATERIALIZED(
              SELECT result_set FROM (SELECT DISTINCT result_set FROM chosen) c

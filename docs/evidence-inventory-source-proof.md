@@ -422,3 +422,16 @@ of at most 20 members, so a restart can resume the remaining work.
 The new member limits are part of the unpublished inventory schema.
 Earlier private rehearsal databases can still be read and replayed into
 fresh databases with the larger limits.
+
+## Managed native delivery
+
+The managed Worker selects current reviews under explicit provider and
+rollout gates. The planner saves a bounded per-route cursor and orders
+the next cohort by LoFi source stamp. It splits incompatible LoTW
+selections while retaining the existing proof, dispatch and receipt
+fences. The checked-in configuration stays read-only.
+
+The native fixture sent a simulated 100-contact LoTW file once and
+settled it in two reports. The hosted Queue then scheduled a QRZ cohort
+from the same source proof. A narrowed selection blocked the entire
+LoTW file before transport. Expiry retired only unsent QRZ artifacts.

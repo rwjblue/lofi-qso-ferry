@@ -3,11 +3,12 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
+import { serializeAdifRecord } from "../src/adif.ts";
 import { Store } from "../src/store.ts";
 import { keys, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
-test("actual Worker cron drives paced source inventory and automatic destination comparisons", async (t) => {
+test("actual Worker cron drives paced inventory, comparison and historical adoption", async (t) => {
   const bundle = await build({
     entryPoints: ["src/index.ts"],
     bundle: true,
@@ -69,7 +70,22 @@ test("actual Worker cron drives paced source inventory and automatic destination
           }
           assert.equal(form.get("ACTION"), "FETCH");
           qrzReads++;
-          return new Response("RESULT=OK&COUNT=0&ADIF=");
+          return new Response(
+            new URLSearchParams({
+              RESULT: "OK",
+              COUNT: "1",
+              ADIF: serializeAdifRecord({
+                OPERATOR: "N1RWJ",
+                CALL: "W1AW",
+                QSO_DATE: "20261108",
+                TIME_ON: "1300",
+                BAND: "20m",
+                MODE: "CW",
+                MY_GRIDSQUARE: "FN31",
+                APP_QRZLOG_LOGID: "9",
+              }),
+            }),
+          );
         }
         assert.equal(request.url, "https://lofi.ham2k.net/v1/sync");
         assert.equal(request.method, "POST");
@@ -82,21 +98,35 @@ test("actual Worker cron drives paced source inventory and automatic destination
         readTimes.push(Date.now());
         return Response.json({
           account: { uuid: "source" },
-          operations: [
-            { uuid: "op", stationCall: "N1RWJ", syncedAtMillis: 99 },
-          ],
-          qsos: [
-            {
-              uuid: "q1",
-              operation: "op",
-              syncedAtMillis: 100,
-              startAtMillis: Date.parse("2026-11-08T13:00:00Z"),
-              their: { call: "W1AW" },
-              our: { grid: "FN31" },
-              band: "20m",
-              mode: "CW",
-            },
-          ],
+          operations:
+            reads === 1
+              ? [{ uuid: "op", stationCall: "N1RWJ", syncedAtMillis: 99 }]
+              : [],
+          qsos:
+            reads === 1
+              ? [
+                  {
+                    uuid: "q1",
+                    operation: "op",
+                    syncedAtMillis: 100,
+                    startAtMillis: Date.parse("2026-11-08T13:00:00Z"),
+                    their: { call: "W1AW" },
+                    our: { grid: "FN31" },
+                    band: "20m",
+                    mode: "CW",
+                  },
+                  {
+                    uuid: "q2",
+                    operation: "op",
+                    syncedAtMillis: 101,
+                    startAtMillis: Date.parse("2026-11-08T13:01:00Z"),
+                    their: { call: "W2AW" },
+                    our: { grid: "FN31" },
+                    band: "20m",
+                    mode: "CW",
+                  },
+                ]
+              : [],
           meta: {
             operations: { records_left: 0 },
             qsos: { records_left: 0 },
@@ -183,18 +213,22 @@ test("actual Worker cron drives paced source inventory and automatic destination
   assert.equal(
     (
       await db
-        .prepare("SELECT count(*) n FROM inventory_records")
+        .prepare(
+          "SELECT count(*) n FROM inventory_records r JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.scope_id WHERE s.provider='lofi'",
+        )
         .first<{ n: number }>()
     )?.n,
-    2,
+    3,
   );
   assert.equal(
     (
       await db
-        .prepare("SELECT count(*) n FROM inventory_run_membership")
+        .prepare(
+          "SELECT count(*) n FROM inventory_run_membership r JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.scope_id WHERE s.provider='lofi'",
+        )
         .first<{ n: number }>()
     )?.n,
-    2,
+    3,
   );
   for (const table of [
     "source_work",
@@ -293,5 +327,23 @@ test("actual Worker cron drives paced source inventory and automatic destination
   assert.deepEqual(
     await db.prepare("SELECT count(*) AS n FROM attempts").first(),
     { n: 0 },
+  );
+  assert.deepEqual(
+    await db
+      .prepare(
+        "SELECT (SELECT count(*) FROM match_results_current WHERE state='matched_existing') AS matched,(SELECT count(*) FROM inventory_historical_associations WHERE record_key='q1') AS historical,(SELECT count(*) FROM inventory_adoption_work) AS pending",
+      )
+      .first(),
+    { matched: 1, historical: 1, pending: 0 },
+  );
+  assert.deepEqual(
+    (
+      await db
+        .prepare(
+          "SELECT envelope FROM private_data WHERE kind='credential' ORDER BY connection",
+        )
+        .all()
+    ).results,
+    credentials,
   );
 });

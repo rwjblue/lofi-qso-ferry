@@ -172,6 +172,33 @@ test("managed trial completes real native selections and reopens without additio
   assert.ok(!JSON.stringify(report).includes("browser:synthetic"));
 });
 
+test("read-only trial stops when the LoFi bearer is rejected without registering", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ferry-managed-auth-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const mock = transport();
+  const lofiPaths: string[] = [];
+  const report = await inventoryManagedTrial(
+    { capture: "synthetic", maxRequests: 20, maxDurationMs: 60000 },
+    {
+      root,
+      access,
+      async fetcher(input, init) {
+        const url = new URL(String(input));
+        if (url.hostname === "lofi.ham2k.net") {
+          lofiPaths.push(url.pathname);
+          return new Response("", { status: 401 });
+        }
+        return mock.fetcher(input, init);
+      },
+    },
+  );
+  assert.equal(report.stopReason, "source_authentication_required");
+  assert.deepEqual(lofiPaths, ["/v1/sync"]);
+  assert.equal(report.requestsInInvocation.byProvider.lofi, 1);
+  assert.ok(report.originalAccessUnchanged);
+  assert.equal(report.uploads, 0);
+});
+
 test("request-limited trial resumes original baseline jobs in a new runtime", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ferry-managed-resume-"));
   t.after(() => rm(root, { recursive: true, force: true }));

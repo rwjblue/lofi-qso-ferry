@@ -135,6 +135,7 @@ export function createInventoryTrialTransport(
       : Math.max(MIN_LOFI_INTERVAL_MS, requestedInterval);
   let requestCount = 0;
   let lastLoFiStartedAt: number | null = null;
+  let lofiAuthorizationRequired = false;
   let loFiQueue: Promise<void> = Promise.resolve();
   const metrics = {
     requests: 0,
@@ -163,6 +164,8 @@ export function createInventoryTrialTransport(
       // Upstream errors can contain LoTW passwords or other request details.
       throw new Error("inventory_trial_transport_failed");
     }
+    if (provider === "lofi" && response.status === 401)
+      lofiAuthorizationRequired = true;
     if (
       response.redirected ||
       ["opaque", "opaqueredirect"].includes(response.type) ||
@@ -209,6 +212,10 @@ export function createInventoryTrialTransport(
       body !== undefined && body !== null ? true : Boolean(request?.body);
     if (url.origin === "https://lofi.ham2k.net") {
       requireValue(!url.search);
+      // A cleared or missing bearer may make the client try registration.
+      // Preserve a useful stop reason without sending that request.
+      if (url.pathname === "/v1/client" && method === "POST")
+        lofiAuthorizationRequired = true;
       if (url.pathname === "/v1/accounts")
         requireValue(method === "GET" && !bodyPresent);
       else {
@@ -295,5 +302,12 @@ export function createInventoryTrialTransport(
       redirect: "error",
     });
   };
-  return { fetch: guarded, metrics, setLoFiDelay };
+  return {
+    fetch: guarded,
+    metrics,
+    setLoFiDelay,
+    get lofiAuthorizationRequired() {
+      return lofiAuthorizationRequired;
+    },
+  };
 }

@@ -497,7 +497,13 @@ export async function inventoryManagedTrial(
           );
           readTurns++;
         } catch {
-          stopReason = "read_turn_failed";
+          stopReason = transport.lofiAuthorizationRequired
+            ? "source_authentication_required"
+            : "read_turn_failed";
+          break;
+        }
+        if (transport.lofiAuthorizationRequired) {
+          stopReason = "source_authentication_required";
           break;
         }
       } else if (
@@ -653,9 +659,12 @@ if (
     process.stdout.write(`${JSON.stringify(report)}\n`);
     if (
       "stopReason" in report &&
-      ["read_turn_failed", "comparison_turn_failed", "selection_held"].includes(
-        report.stopReason,
-      )
+      [
+        "read_turn_failed",
+        "comparison_turn_failed",
+        "selection_held",
+        "source_authentication_required",
+      ].includes(report.stopReason)
     )
       process.exitCode = 1;
   } catch {

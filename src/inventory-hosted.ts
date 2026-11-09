@@ -37,6 +37,7 @@ import {
 } from "./inventory-runtime.ts";
 import {
   registerKnownInventoryConnections,
+  registerLotwAccountFeeds,
   registerOverflowSelections,
   registerSourceCalendarSelections,
   restoreLotwDatedPolls,
@@ -72,7 +73,7 @@ function configuredMode(env: Env) {
 
 /** Environment off pauses a handed-off database; it cannot restore its sender. */
 export async function runHostedScheduled(
-  env: InventoryDeliveryEnvironment,
+  env: InventoryDeliveryEnvironment & { INVENTORY_LOTW_ACCOUNT_FEEDS?: string },
   options: { scheduledTime?: number; legacy?: typeof runScheduledTick } = {},
 ) {
   const mode = configuredMode(env);
@@ -92,6 +93,10 @@ export async function runHostedScheduled(
     store,
     runtime,
   );
+  const lotwAccountRegistration =
+    env.INVENTORY_LOTW_ACCOUNT_FEEDS === "true"
+      ? await registerLotwAccountFeeds(store, runtime)
+      : { registered: 0, failed: 0 };
   const overflowRegistration = await registerOverflowSelections(store, runtime);
   const lotwDatedPollsRestored = await restoreLotwDatedPolls(store);
   const starts = await startInventorySelections(store);
@@ -186,6 +191,7 @@ export async function runHostedScheduled(
     mode: hostedMode[mode],
     registration,
     calendarRegistration,
+    lotwAccountRegistration,
     overflowRegistration,
     lotwDatedPollsRestored,
     starts,

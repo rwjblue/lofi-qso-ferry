@@ -14,6 +14,7 @@ import { canonical, sha256 } from "./security.ts";
 import type { Connection, Store } from "./store.ts";
 
 const DAY = 86_400_000;
+const LOTW_ACCOUNT_INITIAL_LOOKBACK_MS = 3_600_000;
 export interface InventorySchedulePolicy {
   pollPeriodMs?: number;
   verificationPeriodMs?: number;
@@ -322,6 +323,107 @@ export async function registerSourceCalendarSelections(
       progress.last_tenant,
       progress.last_connection,
       progress.last_month,
+    )
+    .run();
+  return report;
+}
+
+/** Add one positive-only receipt feed to each eligible LoTW calendar. */
+export async function registerLotwAccountFeeds(
+  store: Store,
+  runtime: InventoryRuntime,
+  limit = 8,
+) {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 16)
+    throw new Error("invalid_inventory_schedule_limit");
+  const progress = await store
+    .statement(
+      "SELECT last_tenant,last_connection FROM inventory_lotw_account_registration_progress WHERE id=1",
+    )
+    .first<{ last_tenant: string; last_connection: string }>();
+  if (!progress)
+    throw new Error("inventory_lotw_account_registration_unavailable");
+  const candidates = (
+    await store
+      .statement(
+        `SELECT c.*,min(p.created_at) AS calendar_started,
+         json_extract(f.plan,'$.selection.initialReceivedSince') AS initial_received_since,
+         f.poll_period_ms AS account_poll_period_ms,f.verification_period_ms AS account_verification_period_ms
+         FROM connections c JOIN accounts a ON a.id=c.tenant AND a.status='active'
+         JOIN private_data k ON (k.tenant,k.connection,k.id,k.kind)=(c.tenant,c.id,c.credential_version,'credential')
+         JOIN inventory_scopes s ON (s.tenant,s.connection_id,s.logical_identity,s.provider)=(c.tenant,c.id,c.remote_identity,c.kind)
+         JOIN inventory_scheduled_selections p
+          ON (p.tenant,p.scope_id,p.config_version,p.runtime_version)=(s.tenant,s.scope_id,s.config_version,s.runtime_version)
+         LEFT JOIN inventory_scheduled_selections f ON (f.tenant,f.scope_id)=(s.tenant,s.scope_id)
+          AND json_extract(f.plan,'$.provider')='lotw' AND json_extract(f.plan,'$.selection.kind')='account_received'
+         WHERE (c.tenant,c.id)>(?1,?2) AND c.kind='lotw' AND c.status='active'
+          AND json_extract(c.config,'$.readAccess')=1 AND k.revoked_at IS NULL
+          AND (k.expires_at IS NULL OR k.expires_at>unixepoch('subsec')*1000)
+          AND s.state='observing' AND s.runtime_version=?3
+          AND json_extract(p.plan,'$.provider')='lotw' AND json_type(p.plan,'$.selection.startDate')='text'
+          AND json_type(p.plan,'$.selection.stationCallsign') IS NULL
+          AND json_type(p.plan,'$.selection.workedCallsign') IS NULL
+          AND (f.stream_id IS NULL OR f.config_version!=s.config_version)
+         GROUP BY c.tenant,c.id ORDER BY c.tenant,c.id LIMIT ?4`,
+        progress.last_tenant,
+        progress.last_connection,
+        runtime.version,
+        limit,
+      )
+      .all<
+        Connection & {
+          calendar_started: number;
+          initial_received_since: string | null;
+          account_poll_period_ms: number | null;
+          account_verification_period_ms: number | null;
+        }
+      >()
+  ).results;
+  const report = { registered: 0, failed: 0 };
+  const now = Date.now();
+  for (const {
+    calendar_started,
+    initial_received_since,
+    account_poll_period_ms,
+    account_verification_period_ms,
+    ...connection
+  } of candidates) {
+    try {
+      const initial = Math.min(
+        now,
+        Math.max(calendar_started, now - LOTW_ACCOUNT_INITIAL_LOOKBACK_MS),
+      );
+      await registerInventorySelection(
+        store,
+        runtime,
+        connection,
+        {
+          provider: "lotw",
+          selection: {
+            kind: "account_received",
+            initialReceivedSince:
+              initial_received_since ??
+              new Date(initial).toISOString().slice(0, 19).replace("T", " "),
+          },
+        },
+        {
+          pollPeriodMs: account_poll_period_ms ?? undefined,
+          verificationPeriodMs: account_verification_period_ms ?? undefined,
+        },
+      );
+      report.registered++;
+    } catch {
+      report.failed++;
+    }
+  }
+  const last = candidates.length === limit ? candidates.at(-1) : undefined;
+  await store
+    .statement(
+      "UPDATE inventory_lotw_account_registration_progress SET last_tenant=?,last_connection=? WHERE id=1 AND (last_tenant,last_connection)=(?,?)",
+      last?.tenant ?? "",
+      last?.id ?? "",
+      progress.last_tenant,
+      progress.last_connection,
     )
     .run();
   return report;

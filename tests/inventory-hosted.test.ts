@@ -8,7 +8,10 @@ import {
   runHostedScheduled,
 } from "../src/inventory-hosted.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
-import { planInventoryRun } from "../src/inventory-run-plans.ts";
+import {
+  inventoryRunQuery,
+  planInventoryRun,
+} from "../src/inventory-run-plans.ts";
 import {
   InventoryRunner,
   type InventoryRunWakeup,
@@ -23,6 +26,7 @@ import {
   lotwInventorySelections,
   registerInventorySelection,
   registerKnownInventoryConnections,
+  registerLotwAccountFeeds,
   registerSourceCalendarSelections,
   restoreLotwDatedPolls,
   startInventorySelections,
@@ -600,6 +604,180 @@ test("calendar enrollment resumes by month and binds current unfiltered LoTW sel
     registered: 2,
     failed: 0,
   });
+
+  const accountFeed = () =>
+    f.db
+      .prepare(
+        `SELECT p.plan,p.scope_id,p.stream_id,p.poll_period_ms,j.active_run_id
+         FROM inventory_scheduled_selections p
+         JOIN inventory_stream_jobs j USING(tenant,scope_id,stream_id)
+         WHERE json_extract(p.plan,'$.selection.kind')='account_received'`,
+      )
+      .first<{
+        plan: string;
+        scope_id: string;
+        stream_id: string;
+        poll_period_ms: number;
+        active_run_id: string;
+      }>();
+  assert.ok((await runHostedScheduled(f.env)).mode === "inventory_read_only");
+  assert.equal(await accountFeed(), null);
+  const env = { ...f.env, INVENTORY_LOTW_ACCOUNT_FEEDS: "true" };
+  const enrollment = await runHostedScheduled(env);
+  assert.ok(enrollment.mode === "inventory_read_only");
+  assert.deepEqual(enrollment.lotwAccountRegistration, {
+    registered: 1,
+    failed: 0,
+  });
+  const feed = await accountFeed();
+  assert.ok(feed?.active_run_id);
+  assert.equal(feed.poll_period_ms, 7_200_000);
+  const oldest = await f.db
+    .prepare(
+      `SELECT min(created_at) AS at FROM inventory_scheduled_selections
+       WHERE scope_id=? AND json_type(plan,'$.selection.startDate')='text'
+       AND json_type(plan,'$.selection.stationCallsign') IS NULL`,
+    )
+    .bind(feed.scope_id)
+    .first<number>("at");
+  assert.ok(oldest);
+  const plan = JSON.parse(feed.plan);
+  const initial = plan.selection.initialReceivedSince;
+  assert.equal(
+    initial,
+    new Date(oldest).toISOString().slice(0, 19).replace("T", " "),
+  );
+  const repeated = await runHostedScheduled(env);
+  assert.ok(repeated.mode === "inventory_read_only");
+  assert.deepEqual(repeated.lotwAccountRegistration, {
+    registered: 0,
+    failed: 0,
+  });
+  assert.deepEqual(await accountFeed(), feed);
+
+  const runs = new InventoryRuns(new InventoryIngestion(f.store));
+  const nextStamp = (at: string) =>
+    new Date(Date.parse(`${at.replace(" ", "T")}Z`) + 1000)
+      .toISOString()
+      .slice(0, 19)
+      .replace("T", " ");
+  const through = nextStamp(initial);
+  const record = serializeAdifRecord({
+    CALL: "W1AW",
+    STATION_CALLSIGN: "N1RWJ",
+    QSO_DATE: "20240301",
+    TIME_ON: "120000",
+    MODE: "CW",
+    BAND: "20M",
+    QSL_RCVD: "N",
+    APP_LOTW_RXQSO: through,
+  });
+  const reads: string[] = [];
+  const runner = new InventoryRunner(
+    runs,
+    async (url) => {
+      const query = new URL(String(url)).searchParams;
+      assert.equal(query.has("qso_startdate"), false);
+      reads.push(query.get("qso_qsorxsince") ?? "");
+      return new Response(
+        `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>1<APP_LOTW_LASTQSORX:19>${through}<EOH>${record}<APP_LOTW_EOF>`,
+      );
+    },
+    { scheduled: true },
+  );
+  assert.equal(
+    (await runner.step(await f.due(feed.active_run_id))).kind,
+    "advanced",
+  );
+  assert.equal(
+    (await runner.step(await f.due(feed.active_run_id))).kind,
+    "complete",
+  );
+  assert.deepEqual(reads, [initial]);
+  const oldWakeup = await f.due(feed.active_run_id);
+  await f.db
+    .prepare("UPDATE connections SET config=? WHERE id='lotw'")
+    .bind('{"readAccess":false}')
+    .run();
+  assert.deepEqual(await registerLotwAccountFeeds(f.store, runtime), {
+    registered: 0,
+    failed: 0,
+  });
+  await f.db
+    .prepare("UPDATE connections SET config=? WHERE id='lotw'")
+    .bind('{"readAccess":true}')
+    .run();
+  await registerSourceCalendarSelections(f.store, runtime);
+  assert.deepEqual(await registerLotwAccountFeeds(f.store, runtime), {
+    registered: 1,
+    failed: 0,
+  });
+  const stream = await runs.inventory.snapshot(
+    "a",
+    feed.scope_id,
+    feed.stream_id,
+  );
+  assert.ok(stream);
+  const definition = await planInventoryRun(stream, plan);
+  const query = inventoryRunQuery(definition.fixedQuery);
+  assert.ok(query.provider === "lotw" && "kind" in query.query);
+  assert.equal(query.query.receivedSince, through);
+  const lease = await f.store.claim(
+    "a",
+    `inventory:${feed.scope_id}`,
+    Date.now(),
+    90_000,
+  );
+  assert.ok(lease);
+  try {
+    await assert.rejects(
+      runs.begin({
+        stream,
+        lease,
+        definition: {
+          ...definition,
+          fixedQuery: {
+            ...query,
+            query: { ...query.query, receivedSince: nextStamp(through) },
+          },
+        },
+        replaceHeld: true,
+      }),
+      /inventory run changed/,
+    );
+  } finally {
+    await f.store.release(lease);
+  }
+  const restarted = await runHostedScheduled(env);
+  assert.ok(restarted.mode === "inventory_read_only");
+  const newFeed = await accountFeed();
+  assert.ok(
+    newFeed?.active_run_id && newFeed.active_run_id !== feed.active_run_id,
+  );
+  assert.equal(newFeed.plan, feed.plan);
+  assert.equal(newFeed.stream_id, feed.stream_id);
+  assert.deepEqual(await runner.step(oldWakeup), {
+    kind: "skipped",
+    reason: "stale",
+  });
+  assert.equal(
+    (await runner.step(await f.due(newFeed.active_run_id))).kind,
+    "advanced",
+  );
+  assert.equal(
+    (await runner.step(await f.due(newFeed.active_run_id))).kind,
+    "complete",
+  );
+  assert.deepEqual(reads, [initial, through]);
+  assert.deepEqual(
+    await f.db
+      .prepare(
+        "SELECT state,kind,epoch FROM inventory_coverage WHERE stream_id=?",
+      )
+      .bind(feed.stream_id)
+      .first(),
+    { state: "partial", kind: "positive_only", epoch: 0 },
+  );
 });
 
 test("scheduled recurrence respects poll policy and switches to full verification when due", async (t) => {

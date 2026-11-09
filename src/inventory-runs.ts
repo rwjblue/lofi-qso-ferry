@@ -5,6 +5,7 @@ import type {
   InventoryStream,
   PreparedInventoryPage,
 } from "./inventory-ingestion.ts";
+import { inventoryRunQuery } from "./inventory-run-plans.ts";
 import type {
   InventoryRunDefinition,
   InventoryRunPhase,
@@ -210,10 +211,14 @@ export class InventoryRuns {
       d.mode !== "full" || stream.provider !== "lofi" || d.catchupBinding,
       "source_inventory_requires_catchup",
     );
-    requireValue(
-      !options.replaceHeld || d.mode === "full",
-      "held_run_requires_full_restart",
-    );
+    if (options.replaceHeld && d.mode === "delta") {
+      const query =
+        stream.provider === "lotw" && inventoryRunQuery(d.fixedQuery);
+      requireValue(
+        query && query.provider === "lotw" && "kind" in query.query,
+        "held_run_requires_full_restart",
+      );
+    }
     const digest = await sha256(
       canonical([
         stream,

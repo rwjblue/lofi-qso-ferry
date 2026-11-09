@@ -762,7 +762,10 @@ creates this boundary on a private local copy. It preserves passkeys,
 linked credential ciphertext and template bindings, starts with empty
 contact state, and durably blocks writes before the previous sender
 has been audited. Real QRZ and LoTW selections completed on the copy.
-The LoFi continuation retained its cursor after a rejected bearer.
+The LoFi continuation retained its cursor after a rejected bearer. A
+[complete offline replay](evidence-inventory-fresh-start.md#complete-account-only-offline-replay)
+rebuilt all 17 selections from the captured bodies and recovered the
+same per-contact classifications and historical associations.
 
 At deployment cutover, pause the previous sender before allowing the replacement to write. Resolve or quarantine any outstanding submitted/dispatching/uncertain vendor work before treating a fresh negative read as permission to insert; a reset must not turn a possibly queued old upload into a new contact. This can be evaluated before the old database is retired without copying its complete history into the replacement. The local implementation and trial authorization does not include a production reset or cutover.
 

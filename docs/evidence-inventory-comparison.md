@@ -41,6 +41,30 @@ The distinct-bucket test guards against quadratic scratch-table checks. Publicat
 
 Twenty lookup selections against 1,003 retained contacts read **684 rows** in the candidate/dependency query. A 1,000-candidate shared bucket read **1,043 rows** before reporting overflow at the 512-candidate cap. Those lookup numbers exclude generation/key loading and HMAC preparation.
 
+## Backfill payload lookup
+
+The account-only replay exposed a scan in preparation that the
+publication-only counters did not capture. SQLite chose the
+tenant/scope prefix of the payload key and joined that scope's payloads
+to each page's JSON IDs. Driving the join from the page IDs makes the
+planner probe the full tenant, scope and payload key.
+
+The same first 180 coordinator turns on two private copies of the
+personal log each built 60 pages. The replay compared their index
+record identities, key classes, semantic versions and states.
+
+| D1 reads | Original join | Page IDs first |
+| --- | ---: | ---: |
+| Payload lookup statements | 51,463,812 | 23,732 |
+| All 180 turns | 52,129,982 | 689,779 |
+
+Both passes used 2,879 calls and 3,540 SQL statements, reported 208,463
+rows written, and produced the same inspected index rows. This is a
+local cold-build slice and made zero vendor requests. The native
+regression counts preparation and publication for a 200-record page
+inside a 450-record scope. The old plan read 94,908 rows and the
+updated plan read 4,858.
+
 ## Encrypted real-data replay
 
 The [trial tool](../scripts/inventory-comparison-trial.ts), exposed as `mise run inventory-comparison-trial`, copied the prior three-provider [run capture](evidence-inventory-runs.md) into a separate private directory. The original capture was not opened for mutation. The copy kept its existing account/connection credentials and payload encryption identities. This trial made **zero vendor HTTP requests and zero uploads**.

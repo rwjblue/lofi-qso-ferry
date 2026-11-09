@@ -507,3 +507,38 @@ first native account poll completed in one live request and returned
 zero receipts for the one-hour lookback. It published positive-only
 coverage and preserved the other stream jobs, checkpoints, coverage and
 credential envelopes. The trial made zero uploads.
+
+## Complete account-only offline replay
+
+A fresh write-locked copy started with empty contact tables and kept
+the account, passkeys, four linked credential envelopes and template
+bindings. The native inventory reader replayed the retained encrypted
+LoFi, QRZ and LoTW bodies through local responses. The replay rebuilt
+LoFi's independent operation and QSO cursors, used an empty QRZ
+modification catch-up for the static capture, and simulated two quota
+windows. It made zero external requests and uploads.
+
+All 17 selections published ready coverage. They retained 4,251 active
+LoFi contacts, 4,252 QRZ receipts and 4,082 LoTW receipts. The LoTW
+selections cover the captured contact-date windows. The coordinator
+finished comparison, historical adoption and ownership review. A
+read-only reopen compared all 12,956 raw body hashes and record
+statuses, all 8,502 current classifications and reasons, and all 6,260
+source-to-receipt associations against the capture. Every set matched.
+Review marked 1,112 absences as requiring source proof. There were zero
+dispatch claims, zero pending historical adoptions, and no foreign-key
+violations.
+
+| Local phase | D1 calls | SQL statements | Rows read | Rows written | Elapsed |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Inventory read and publication | 1,887 | 5,385 | 1,109,900 | 318,817 | 48.4 s |
+| Comparison, adoption and review before lookup fix | 97,020 | 113,998 | 68,805,488 | 1,540,524 | 493.6 s |
+
+The reader used 59 local responses and transferred 12,615,336 bytes.
+The quiescent copy reported 281,378,816 allocated bytes. These times
+measure the native local reader and coordinator. They exclude vendor
+network latency, hosted Queue delivery, snapshot preparation and the
+final audit. The [backfill lookup profile](evidence-inventory-comparison.md#backfill-payload-lookup)
+isolates the preparation fix discovered during the replay. The live
+LoFi account-only resume still requires a current bearer for the same
+client.

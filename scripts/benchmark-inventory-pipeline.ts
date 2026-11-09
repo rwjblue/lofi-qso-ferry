@@ -38,6 +38,7 @@ const { values } = parseArgs({
     remote: { type: "string", default: "empty" },
     "page-size": { type: "string", default: "1000" },
     schema: { type: "string", default: "current" },
+    "source-comparison": { type: "string", default: "interleaved" },
     "incremental-rounds": { type: "string", default: "0" },
   },
 });
@@ -49,6 +50,10 @@ assert.ok(
 );
 assert.ok(Number.isSafeInteger(pageSize) && pageSize >= 1 && pageSize <= 1000);
 assert.ok(values.remote === "empty" || values.remote === "matched");
+const sourceComparison = values["source-comparison"];
+assert.ok(
+  sourceComparison === "interleaved" || sourceComparison === "after-coverage",
+);
 assert.ok(
   values.schema === "current" ||
     values.schema === "74" ||
@@ -448,7 +453,7 @@ try {
   const sourceRun = await runId(source);
   for (let i = 0; i < operations.length; i += pageSize) {
     await append(sourceRun, operations.slice(i, i + pageSize), false);
-    await drain();
+    if (sourceComparison === "interleaved") await drain();
   }
   for (let i = 0; i < sourceRows.length; i += pageSize) {
     await append(
@@ -456,7 +461,7 @@ try {
       sourceRows.slice(i, i + pageSize),
       i + pageSize >= sourceRows.length,
     );
-    await drain();
+    if (sourceComparison === "interleaved") await drain();
   }
   checkpoint();
   stage = "source-completion-and-classification";
@@ -529,6 +534,7 @@ try {
       remote,
       pageSize,
       schema: values.schema,
+      sourceComparison,
       stages,
       database: meter.totals,
       queueSends,

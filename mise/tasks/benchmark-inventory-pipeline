@@ -5,6 +5,9 @@
 #USAGE   choices "empty" "matched"
 #USAGE }
 #USAGE flag "--page-size <page_size>" default="1000" help="Source contacts per normalized page from 1 to 1000"
+#USAGE flag "--source-comparison <schedule>" default="interleaved" help="When to drain comparison during the source backfill" {
+#USAGE   choices "interleaved" "after-coverage"
+#USAGE }
 #USAGE flag "--schema <schema>" default="current" help="Current migrations or pre-optimization schema through 0074/0075" {
 #USAGE   choices "current" "74" "75"
 #USAGE }

@@ -121,6 +121,34 @@ delivery and Worker CPU. Storage, latency and the
 [10 GB per-database limit](https://developers.cloudflare.com/d1/platform/limits/)
 need separate qualification even when row-operation allowances appear adequate.
 
+## Comparison timing during a first source scan
+
+The same native fixture ran twice through migration 0114 with 1,000
+synthetic contacts and an empty QRZ selection. Both published 1,000
+current absence classifications. One run drained comparison after
+every source page. The other drained source comparison after the full
+LoFi selection had completed catch-up and published coverage.
+
+| Source comparison starts | D1 calls | SQL statements | Rows read | Rows written | Queue turns | Allocated growth |
+| ------------------------ | -------: | -------------: | --------: | -----------: | ----------: | ---------------: |
+| After each page          |   11,053 |         14,187 | 1,350,886 |      180,319 |         547 | 18,300,928 bytes |
+| After coverage           |    5,811 |          7,420 |   838,955 |      127,257 |         274 | 15,314,944 bytes |
+
+Deferring comparison in the fixture reduced projection payloads from
+2,000 to 1,000 and match sets from 100 to 50. The interleaved run
+materialized incomplete operation context and replaced it when source
+coverage became ready. These counts isolate the amount of work
+associated with that transition. Deferring comparison also delays
+visibility of partial results, which the final-result check does not
+measure.
+
+```sh
+mise run benchmark-inventory-pipeline --contacts 1000 --remote empty \
+  --source-comparison interleaved
+mise run benchmark-inventory-pipeline --contacts 1000 --remote empty \
+  --source-comparison after-coverage
+```
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

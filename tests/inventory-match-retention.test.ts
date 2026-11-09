@@ -427,3 +427,42 @@ test("operator cooling period ages historical proof dependencies while preservin
     await runtime.mf.dispose();
   }
 });
+
+test("the settled-result census reads one page despite a long aged tail", async (t) => {
+  const { db, mf, store } = await database();
+  t.after(() => mf.dispose());
+  await db.batch(
+    [
+      "CREATE TABLE inventory_settled_result_census(singleton INTEGER PRIMARY KEY, derived_at INTEGER, tenant TEXT, destination TEXT, source_scope TEXT, record_key TEXT, restart_at INTEGER)",
+      "INSERT INTO inventory_settled_result_census VALUES(1,0,'','','','',NULL)",
+      "CREATE TABLE inventory_retention_policy(settled_retention_days INTEGER)",
+      "INSERT INTO inventory_retention_policy VALUES(90)",
+      "CREATE TABLE inventory_match_sets(tenant TEXT, set_id TEXT, token_count INTEGER, record_count INTEGER, row_count INTEGER, PRIMARY KEY(tenant,set_id))",
+      "INSERT INTO inventory_match_sets VALUES('t','set',1,1,1)",
+      "CREATE TABLE match_results(derived_at INTEGER, tenant TEXT, destination TEXT, source_scope TEXT, record_key TEXT, set_id TEXT, state TEXT)",
+      "CREATE INDEX inventory_settled_result_age ON match_results(derived_at,tenant,destination,source_scope,record_key) WHERE state IN('matched_existing','absent_at_inventory')",
+      `WITH RECURSIVE ids(n) AS(VALUES(1) UNION ALL SELECT n+1 FROM ids WHERE n<4000)
+       INSERT INTO match_results SELECT n,'t','d','s',CAST(n AS TEXT),'set','absent_at_inventory' FROM ids`,
+    ].map((sql) => db.prepare(sql)),
+  );
+
+  const censusStore = new Store(db, store.keys);
+  let census: D1PreparedStatement | undefined;
+  censusStore.statement = (sql, ...params) => {
+    if (sql.includes("UPDATE inventory_settled_result_census"))
+      census = store.statement(sql, ...params);
+    return db.prepare("SELECT 0 AS collected");
+  };
+  await collectInventoryMatchProofs(censusStore);
+  assert.ok(census);
+  for (const cursor of [256, 512]) {
+    const { meta } = await census.run();
+    assert.ok(meta.rows_read < 3_000, `read ${meta.rows_read} rows`);
+    assert.equal(
+      await db
+        .prepare("SELECT derived_at FROM inventory_settled_result_census")
+        .first("derived_at"),
+      cursor,
+    );
+  }
+});

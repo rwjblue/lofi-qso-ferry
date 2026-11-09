@@ -23,6 +23,7 @@ export async function collectInventoryMatchProofs(store: Store) {
        WHERE singleton=1 AND complete=0`,
       CENSUS_PAGE_SIZE,
     ),
+    // Scalar cursor bounds let the age index supply the page in order.
     store.statement(
       `WITH cursor AS MATERIALIZED (
          SELECT CASE WHEN c.restart_at IS NULL THEN c.derived_at ELSE 0 END AS derived_at,
@@ -34,17 +35,18 @@ export async function collectInventoryMatchProofs(store: Store) {
          FROM inventory_settled_result_census c CROSS JOIN inventory_retention_policy p
          WHERE c.singleton=1 AND (c.restart_at IS NULL OR c.restart_at<=unixepoch('subsec')*1000)
        ), page AS MATERIALIZED (
-         SELECT r.derived_at,r.tenant,r.destination,r.source_scope,r.record_key,
-           h.token_count+h.record_count+h.row_count AS dependency_bound
-         FROM cursor c CROSS JOIN match_results r INDEXED BY inventory_settled_result_age
-         CROSS JOIN inventory_match_sets h
-         WHERE r.state IN('matched_existing','absent_at_inventory') AND r.derived_at<=c.cutoff
-           AND (r.derived_at,r.tenant,r.destination,r.source_scope,r.record_key)>(c.derived_at,c.tenant,c.destination,c.source_scope,c.record_key)
-           AND (h.tenant,h.set_id)=(r.tenant,r.set_id)
+         SELECT r.derived_at,r.tenant,r.destination,r.source_scope,r.record_key,r.set_id
+         FROM match_results r INDEXED BY inventory_settled_result_age
+         WHERE r.state IN('matched_existing','absent_at_inventory')
+           AND r.derived_at<=(SELECT cutoff FROM cursor)
+           AND (r.derived_at,r.tenant,r.destination,r.source_scope,r.record_key)>
+             (SELECT derived_at,tenant,destination,source_scope,record_key FROM cursor)
          ORDER BY r.derived_at,r.tenant,r.destination,r.source_scope,r.record_key LIMIT ?1+1
        ), sized AS MATERIALIZED (
-         SELECT *,sum(dependency_bound) OVER (ORDER BY derived_at,tenant,destination,source_scope,record_key ROWS UNBOUNDED PRECEDING) AS dependencies
-         FROM page
+         SELECT p.*,sum(h.token_count+h.record_count+h.row_count) OVER (
+           ORDER BY p.derived_at,p.tenant,p.destination,p.source_scope,p.record_key ROWS UNBOUNDED PRECEDING
+         ) AS dependencies
+         FROM page p JOIN inventory_match_sets h ON (h.tenant,h.set_id)=(p.tenant,p.set_id)
        ), tail AS MATERIALIZED (
          SELECT * FROM (SELECT * FROM sized WHERE dependencies<=?3 ORDER BY derived_at,tenant,destination,source_scope,record_key LIMIT ?1)
          ORDER BY derived_at DESC,tenant DESC,destination DESC,source_scope DESC,record_key DESC LIMIT 1

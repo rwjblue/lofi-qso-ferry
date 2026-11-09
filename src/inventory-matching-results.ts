@@ -41,6 +41,17 @@ const identifier = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 512;
 const MATCH_RESULT_LIMIT = 20;
 
+export const inventoryCurrentMatchSelection = `WITH chosen AS MATERIALIZED(
+ SELECT r.* FROM json_each(?1) j CROSS JOIN match_results r
+ WHERE (r.tenant,r.destination,r.source_scope,r.record_key)=(?2,?3,json_extract(j.value,'$.scope'),json_extract(j.value,'$.key'))
+), valid AS MATERIALIZED(
+ SELECT h.set_id,h.generation_id FROM (SELECT DISTINCT set_id FROM chosen) c CROSS JOIN inventory_match_sets h
+ WHERE (h.tenant,h.set_id)=(?2,c.set_id) AND h.state='committed'
+ AND NOT EXISTS(SELECT 1 FROM inventory_match_stale_sets x WHERE (x.tenant,x.set_id)=(h.tenant,h.set_id))
+), current_matches AS (
+ SELECT r.*,v.generation_id FROM chosen r JOIN valid v ON v.set_id=r.set_id
+)`;
+
 function recoveredMatch(receipt: MatchReceipt, id: string, digest: string) {
   if (receipt.input_digest !== digest || receipt.state !== "committed")
     throw new Error("inventory_match_receipt_conflict");
@@ -393,10 +404,8 @@ export class InventoryMatchingResults {
       throw new Error("invalid_inventory_matching_selection");
     const result = await this.store
       .statement(
-        `WITH chosen AS MATERIALIZED(
-      SELECT r.* FROM json_each(?1) j CROSS JOIN match_results r WHERE r.tenant=?2 AND r.destination=?3 AND r.source_scope=json_extract(j.value,'$.scope') AND r.record_key=json_extract(j.value,'$.key')
-     ), valid AS MATERIALIZED(SELECT h.set_id FROM (SELECT DISTINCT set_id FROM chosen) c CROSS JOIN inventory_match_sets h WHERE h.tenant=?2 AND h.set_id=c.set_id AND h.state='committed' AND NOT EXISTS(SELECT 1 FROM inventory_match_stale_sets x WHERE x.tenant=h.tenant AND x.set_id=h.set_id))
-     SELECT r.source_scope,r.record_key,r.state,r.reason,r.remote_key,r.version,r.set_id,r.derived_at FROM chosen r JOIN valid v ON v.set_id=r.set_id`,
+        `${inventoryCurrentMatchSelection}
+         SELECT source_scope,record_key,state,reason,remote_key,version,set_id,derived_at FROM current_matches`,
         canonical(selected),
         tenant,
         destination,

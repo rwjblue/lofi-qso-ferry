@@ -179,6 +179,20 @@ normalized ownership records agreed. The credential, checkpoint and
 current classification audits passed. Both copies recorded zero
 provider requests, attempts and dispatches.
 
+### Adoption match snapshot
+
+Adoption reads current results and their exact projection references in
+one statement. It shares the bounded current-result query, which
+validates each selected set once. Publication independently validates
+the pinned result, projection and ownership dependencies.
+
+Replaying the same 2,917 pending QRZ adoptions used 2,111 D1 calls,
+4,221 SQL statements and 1,063,940 row reads. The preceding replay used
+2,322 calls, 4,432 statements and 1,072,700 reads. Both runs wrote
+65,651 rows in 211 turns. The historical mappings, normalized ownership
+records, per-contact results, coverage and credentials agreed. Both
+copies recorded zero provider requests, attempts and dispatches.
+
 ### Warm matching and adoption together
 
 A native fixture through migration 0123 published coverage and
@@ -191,15 +205,15 @@ guarded publication.
 | Worker turn | D1 calls | SQL statements | Rows read | Rows written |
 | --- | ---: | ---: | ---: | ---: |
 | Matching | 9 | 25 | 13,661 | 1,807 |
-| Historical adoption | 12 → 11 | 21 | 5,791 | 448 |
-| Total | 21 → 20 | 46 | 19,452 | 2,255 |
+| Historical adoption | 12 → 10 | 21 → 20 | 5,791 → 5,731 | 448 |
+| Total | 21 → 19 | 46 → 45 | 19,452 → 19,392 | 2,255 |
 
 All 20 results were current matches, with 20 durable associations and
 20 ownership records. Both work queues drained. The fixture made zero
-provider requests and created zero attempts or dispatches. These 20
+provider requests and created zero attempts or dispatches. These 19
 calls exclude enrollment, coordinator turns, Queue transport and the
 final audit. They exceed the proposed six-call full-cohort target by
-14, with adoption accounting for more than half of the calls.
+13, with adoption accounting for more than half of the calls.
 
 ### Coalesced idle coordinator phases
 

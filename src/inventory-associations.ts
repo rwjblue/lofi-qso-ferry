@@ -5,7 +5,7 @@ import {
 } from "./historical-matching.ts";
 import { InventoryComparisonGenerations } from "./inventory-comparison-generations.ts";
 import { inventoryJsonChunks } from "./inventory-ingestion.ts";
-import { InventoryMatchingResults } from "./inventory-matching-results.ts";
+import { inventoryCurrentMatchSelection } from "./inventory-matching-results.ts";
 import {
   InventoryOwnership,
   type InventoryOwnershipBody,
@@ -36,6 +36,12 @@ interface Member extends Selection {
   source_payload: string;
   remote_projection_version: number;
   remote_payload: string;
+}
+interface CurrentMember extends Member {
+  state: string;
+  reason: string | null;
+  generation_id: string;
+  inputs_ready: number;
 }
 export interface InventoryAdoptionRow extends Member {
   association_id: string;
@@ -164,26 +170,6 @@ export class InventoryAssociations {
       digest: await sha256(canonical(page)),
     });
     if (!pending.length) return finish();
-    const current = await new InventoryMatchingResults(this.store).current(
-      tenant,
-      destination,
-      pending,
-    );
-    const matches = current.results.filter(
-      (row) => row.state === "matched_existing",
-    );
-    for (const row of pending) {
-      const result = current.results.find(
-        (result) =>
-          result.source_scope === row.scope && result.record_key === row.key,
-      );
-      if (result?.state !== "matched_existing")
-        skipped.push({
-          ...row,
-          reason: result?.reason ?? "comparison_not_matched",
-        });
-    }
-    if (!matches.length) return finish();
     const {
       results: [prior, metadata],
       openKey,
@@ -194,38 +180,60 @@ export class InventoryAssociations {
         target.provider,
       ),
       this.store.statement(
-        `SELECT r.source_scope AS scope,r.record_key AS key,s.logical_identity AS source_identity,r.set_id AS match_set,r.version AS match_version,r.remote_key AS remote_record_key,h.generation_id,
-   src.current_projection_version AS source_projection_version,src.payload_id AS source_payload,remote.current_projection_version AS remote_projection_version,remote.payload_id AS remote_payload
-   FROM json_each(?1) j CROSS JOIN match_results r CROSS JOIN inventory_match_sets h CROSS JOIN inventory_scopes s
-   CROSS JOIN inventory_match_records src CROSS JOIN inventory_match_records remote
-   WHERE (r.tenant,r.destination,r.source_scope,r.record_key)=(?2,?3,json_extract(j.value,'$.source_scope'),json_extract(j.value,'$.record_key'))
-   AND (r.version,r.set_id,r.state)=(json_extract(j.value,'$.version'),json_extract(j.value,'$.set_id'),'matched_existing')
-   AND (h.tenant,h.set_id)=(r.tenant,r.set_id)
-   AND (s.tenant,s.scope_id,s.provider)=(r.tenant,r.source_scope,'lofi')
-   AND (src.tenant,src.set_id,src.scope_id,src.record_key,src.facet)=(r.tenant,r.set_id,r.source_scope,r.record_key,'source')
-   AND (remote.tenant,remote.set_id,remote.scope_id,remote.record_key,remote.facet)=(r.tenant,r.set_id,r.destination,r.remote_key,'receipt')`,
-        canonical(matches),
+        `${inventoryCurrentMatchSelection}
+         SELECT r.source_scope AS scope,r.record_key AS key,r.state,r.reason,r.generation_id,
+           s.logical_identity AS source_identity,r.set_id AS match_set,r.version AS match_version,r.remote_key AS remote_record_key,
+           src.current_projection_version AS source_projection_version,src.payload_id AS source_payload,
+           remote.current_projection_version AS remote_projection_version,remote.payload_id AS remote_payload,
+           (s.scope_id IS NOT NULL AND src.record_key IS NOT NULL AND remote.record_key IS NOT NULL) AS inputs_ready
+         FROM current_matches r
+         LEFT JOIN inventory_scopes s ON r.state='matched_existing' AND (s.tenant,s.scope_id,s.provider)=(r.tenant,r.source_scope,'lofi')
+         LEFT JOIN inventory_match_records src ON s.scope_id IS NOT NULL
+           AND (src.tenant,src.set_id,src.scope_id,src.record_key,src.facet)=(r.tenant,r.set_id,r.source_scope,r.record_key,'source')
+         LEFT JOIN inventory_match_records remote ON s.scope_id IS NOT NULL
+           AND (remote.tenant,remote.set_id,remote.scope_id,remote.record_key,remote.facet)=(r.tenant,r.set_id,r.destination,r.remote_key,'receipt')`,
+        canonical(pending),
         tenant,
         destination,
       ),
     ]);
+    const current = metadata.results as CurrentMember[];
+    const byKey = new Map(current.map((row) => [key(row), row]));
+    const matches: CurrentMember[] = [];
+    for (const row of pending) {
+      const result = byKey.get(key(row));
+      if (result?.state === "matched_existing") matches.push(result);
+      else
+        skipped.push({
+          ...row,
+          reason: result?.reason ?? "comparison_not_matched",
+        });
+    }
+    if (!matches.length) return finish();
     if (prior.results.length) {
       for (const row of matches)
         skipped.push({
-          scope: row.source_scope,
-          key: row.record_key,
+          scope: row.scope,
+          key: row.key,
           reason: "prior_delivery_evidence",
         });
       return finish();
     }
-    const rows = metadata.results as (Member & { generation_id: string })[];
-    if (rows.length !== matches.length)
+    if (matches.some((row) => !row.inputs_ready))
       throw new Error("inventory_adoption_match_changed");
-    const generationIds = new Set(rows.map((row) => row.generation_id));
+    const generationIds = new Set(matches.map((row) => row.generation_id));
     if (generationIds.size !== 1)
       throw new Error("inventory_adoption_generation_changed");
     const generation = [...generationIds][0];
-    const members = rows.map(({ generation_id: _, ...row }) => row);
+    const members = matches.map(
+      ({
+        generation_id: _generation,
+        state: _state,
+        reason: _reason,
+        inputs_ready: _ready,
+        ...row
+      }) => row,
+    );
     const refs = members.flatMap((row) => [
       {
         scope: row.scope,

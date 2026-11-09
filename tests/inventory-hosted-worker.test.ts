@@ -7,6 +7,7 @@ import { serializeAdifRecord } from "../src/adif.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
 import { registerInventorySelection } from "../src/inventory-scheduler.ts";
+import { InventorySourceProofWorkspace } from "../src/inventory-source-proof-workspace.ts";
 import { Store } from "../src/store.ts";
 import { keys, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
@@ -367,6 +368,40 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     ).results,
     [{ provider: "qrz", record_key: "q2", decision: "source_proof_required" }],
   );
+  const sourceScope = await db
+    .prepare("SELECT scope_id FROM inventory_scopes WHERE provider='lofi'")
+    .first<string>("scope_id");
+  assert.ok(sourceScope);
+  const captured = await new InventorySourceProofWorkspace(store).capture(
+    "a",
+    sourceScope,
+    ["q2"],
+  );
+  assert.equal(captured.kind, "captured");
+  if (captured.kind !== "captured") assert.fail(JSON.stringify(captured));
+  assert.deepEqual(
+    captured.snapshot.dependencies.map(({ target }) => [
+      target.kind,
+      target.id,
+    ]),
+    [
+      ["operation", "op"],
+      ["qso", "q2"],
+    ],
+  );
+  const observedAt = await db
+    .prepare(
+      "SELECT p.request_started_at FROM inventory_record_facets f JOIN ingestion_pages p ON p.tenant=f.tenant AND p.page_id=f.last_page_id WHERE f.facet='source' AND f.record_key='q2'",
+    )
+    .first<number>("request_started_at");
+  assert.ok(observedAt && observedAt <= readTimes[0]);
+  assert.deepEqual(
+    captured.snapshot.cachedWitnesses.map(
+      (witness) => witness.requestStartedAt,
+    ),
+    [observedAt, observedAt],
+  );
+  assert.ok(captured.snapshot.contacts[0].eligibleAfter > Date.now());
   assert.deepEqual(
     await db.prepare("SELECT count(*) AS n FROM attempts").first(),
     { n: 0 },

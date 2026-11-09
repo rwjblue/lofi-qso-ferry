@@ -46,3 +46,32 @@ trials now report `source_authentication_required` immediately instead
 of spending local turns trying a registration that the transport blocks.
 The fixture verifies this stop and verifies preservation of passkey and
 template bindings on a fresh copy with an unsettled legacy attempt.
+
+## Resume after LoFi authentication loss
+
+```sh
+mise run inventory-fresh-start -- \
+  --rehearsal /path/to/closed-rehearsal \
+  --lofi-bearer-from /path/to/closed-snapshot
+```
+
+The rehearsal must have its durable send lock and exactly one active
+LoFi link. The other private snapshot must have one active link for
+the same LoFi account and the same client key and secret. If the
+rehearsal still has a bearer, the command makes no requests.
+
+After an authentication loss, the command checks the offered bearer
+with one read-only LoFi account request. It updates only the existing
+encrypted LoFi credential in the rehearsal after the account matches.
+The credential ID, saved cursor, run, destination links and send lock
+stay in place. The command never calls LoFi registration or renewal.
+
+A native D1 fixture accepted a page, received HTTP 401 on the next
+read, and resumed at the exact saved cursor after bearer recovery.
+Rejected bearers and mismatched accounts failed verification. The
+original snapshot and the rehearsal's destination credentials kept
+their ciphertext. The fixture used a simulated provider.
+
+A local census examined 58 private captures. The 55 with the same
+client all held the rejected bearer. The real rehearsal still needs
+a current same-client bearer before its next LoFi read.

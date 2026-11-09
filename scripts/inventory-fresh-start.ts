@@ -11,12 +11,18 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { inventoryJsonChunks } from "../src/inventory-ingestion.ts";
-import { activateInventoryRuntime } from "../src/inventory-runtime.ts";
+import {
+  activateInventoryRuntime,
+  inventoryRuntime,
+} from "../src/inventory-runtime.ts";
+import { LoFiClient, type LoFiCredentials } from "../src/lofi.ts";
 import { canonical } from "../src/security.ts";
+import { openSourceCredentials } from "../src/source-credentials.ts";
 import type { Connection, Store } from "../src/store.ts";
 import { applyMigration } from "../tests/helpers.ts";
 import { applyAdditionalMigrations } from "../tests/runtime-fixtures.ts";
 import { openInventoryTrial } from "./inventory-run-trial.ts";
+import { createInventoryTrialTransport } from "./inventory-trial-transport.ts";
 
 const MAX_ROWS = 4096;
 const MAX_BYTES = 16 * 1024 * 1024;
@@ -107,15 +113,8 @@ async function priorWork(store: Store) {
   };
 }
 
-/** Copy from a closed, private local snapshot to a newly allocated rehearsal. */
-export async function inventoryFreshStart(
-  sourceDirectory: string,
-  root = join(
-    homedir(),
-    "Library/Application Support/LoFi QSO Ferry/inventory-fresh-starts",
-  ),
-) {
-  const source = await realpath(sourceDirectory);
+async function privateSnapshot(directory: string) {
+  const source = await realpath(directory);
   const keyFile = join(source, "keys.json");
   const [directoryInfo, keyInfo, databaseInfo] = await Promise.all([
     lstat(source),
@@ -130,6 +129,19 @@ export async function inventoryFreshStart(
     !databaseInfo.isDirectory()
   )
     throw new Error("inventory_fresh_start_requires_private_snapshot");
+  return source;
+}
+
+/** Copy from a closed, private local snapshot to a newly allocated rehearsal. */
+export async function inventoryFreshStart(
+  sourceDirectory: string,
+  root = join(
+    homedir(),
+    "Library/Application Support/LoFi QSO Ferry/inventory-fresh-starts",
+  ),
+) {
+  const source = await privateSnapshot(sourceDirectory);
+  const keyFile = join(source, "keys.json");
   const previousMask = process.umask(0o077);
   let captured: Trial | undefined;
   let target: Trial | undefined;
@@ -256,18 +268,125 @@ export async function inventoryFreshStart(
   }
 }
 
+async function oneActiveLoFi(store: Store, identity: string | null) {
+  const { results } = await store
+    .statement(
+      `SELECT c.* FROM connections c JOIN accounts a ON a.id=c.tenant
+       WHERE c.kind='lofi' AND c.status='active' AND a.status='active'
+       AND json_extract(c.config,'$.accountId')=c.remote_identity
+       AND (?1 IS NULL OR c.remote_identity=?1) LIMIT 2`,
+      identity,
+    )
+    .all<Connection>();
+  if (results.length !== 1)
+    throw new Error("inventory_fresh_start_lofi_link_required");
+  return results[0];
+}
+
+/** Recover only the bearer of the retained client on a closed rehearsal. */
+export async function refreshFreshStartLoFi(
+  rehearsal: string,
+  snapshot: string,
+  fetcher: typeof fetch = fetch,
+) {
+  const [directory, source] = await Promise.all([
+    privateSnapshot(rehearsal),
+    privateSnapshot(snapshot),
+  ]);
+  if (directory === source)
+    throw new Error("inventory_fresh_start_separate_snapshot_required");
+  const target = await openInventoryTrial(directory);
+  try {
+    if (
+      (await inventoryRuntime(target.store)).mode !== "inventory_read_only" ||
+      !(await target.store
+        .statement("SELECT id FROM inventory_fresh_start_lock WHERE id=1")
+        .first())
+    )
+      throw new Error("inventory_fresh_start_write_lock_required");
+    const link = await oneActiveLoFi(target.store, null);
+    const session = await openSourceCredentials(target.store, link);
+    if (session.credentials.token)
+      return { status: "bearer_present" as const, requests: 0 };
+    const donor = await openInventoryTrial(source);
+    let offered: LoFiCredentials;
+    try {
+      const donorLink = await oneActiveLoFi(donor.store, link.remote_identity);
+      offered = (await openSourceCredentials(donor.store, donorLink))
+        .credentials;
+    } finally {
+      await donor.mf.dispose();
+    }
+    if (
+      !offered.key ||
+      !offered.secret ||
+      offered.key !== session.credentials.key ||
+      offered.secret !== session.credentials.secret
+    )
+      throw new Error("inventory_fresh_start_lofi_client_changed");
+    if (typeof offered.token !== "string" || !offered.token)
+      throw new Error("inventory_fresh_start_lofi_bearer_unavailable");
+    const transport = createInventoryTrialTransport(fetcher, {
+      maxRequests: 1,
+    });
+    const account = await new LoFiClient(offered, transport.fetch)
+      .accounts()
+      .catch(() => {
+        throw new Error("inventory_fresh_start_lofi_verification_failed");
+      });
+    if (account.uuid !== link.remote_identity)
+      throw new Error("inventory_fresh_start_lofi_account_changed");
+    await session.persistRenewal(offered);
+    const current = await oneActiveLoFi(target.store, null);
+    if (
+      current.tenant !== link.tenant ||
+      current.id !== link.id ||
+      current.credential_version !== link.credential_version ||
+      current.remote_identity !== link.remote_identity ||
+      (await openSourceCredentials(target.store, current)).credentials.token !==
+        offered.token
+    )
+      throw new Error("inventory_fresh_start_lofi_recovery_raced");
+    return {
+      status: "bearer_verified" as const,
+      requests: transport.metrics.requests,
+    };
+  } finally {
+    await target.mf.dispose();
+  }
+}
+
 if (
   process.argv[1] &&
   import.meta.url === pathToFileURL(process.argv[1]).href
 ) {
   try {
-    const { values } = parseArgs({ options: { source: { type: "string" } } });
-    if (!values.source) throw new Error("inventory_fresh_start_source_missing");
-    console.log(JSON.stringify(await inventoryFreshStart(values.source)));
-  } catch {
-    console.error(
-      "Fresh-start rehearsal failed. Supply a closed private local snapshot.",
-    );
+    const { values } = parseArgs({
+      options: {
+        source: { type: "string" },
+        rehearsal: { type: "string" },
+        "lofi-bearer-from": { type: "string" },
+      },
+    });
+    if (values.source && !values.rehearsal && !values["lofi-bearer-from"])
+      console.log(JSON.stringify(await inventoryFreshStart(values.source)));
+    else if (!values.source && values.rehearsal && values["lofi-bearer-from"])
+      console.log(
+        JSON.stringify(
+          await refreshFreshStartLoFi(
+            values.rehearsal,
+            values["lofi-bearer-from"],
+          ),
+        ),
+      );
+    else throw new Error("inventory_fresh_start_invalid_arguments");
+  } catch (error) {
+    const reason =
+      error instanceof Error &&
+      /^inventory_fresh_start_[a-z_]+$/.test(error.message)
+        ? error.message
+        : "closed_private_snapshot_required";
+    console.error(`Fresh-start rehearsal failed (${reason}).`);
     process.exitCode = 1;
   }
 }

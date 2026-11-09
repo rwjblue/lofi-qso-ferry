@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-#MISE description="Create a private write-locked inventory database with account and link records only"
+#MISE description="Create a write-locked account copy or recover its LoFi bearer"
 #USAGE flag "--source <directory>" help="Closed local snapshot directory with keys.json and database/"
+#USAGE flag "--rehearsal <directory>" help="Closed write-locked account copy to recover"
+#USAGE flag "--lofi-bearer-from <directory>" help="Closed private snapshot with the same linked LoFi client"
 set -euo pipefail
 npx tsx scripts/inventory-fresh-start.ts "$@"

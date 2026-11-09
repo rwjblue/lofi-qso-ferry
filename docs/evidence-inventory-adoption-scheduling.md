@@ -104,6 +104,30 @@ Both timings exclude enrollment, the coordinator's idle phases,
 and final audit. The profile leaves shared proof validation as the
 largest remaining read cost within each adoption turn.
 
+### Coalesced idle coordinator phases
+
+The coordinator now checks consecutive idle phases under one lease and
+saves their progress in one control update. It stops after a productive
+or deferred phase. The matching, adoption and delivery review phase keeps
+its own guarded turn and retains its rotation. If new work arrives during
+a sweep, the control update clears the idle count and keeps the durable
+wakeup due.
+
+Two private clones of the same captured inventory replayed all 2,917
+pending QRZ adoptions with schema 0106. Both produced identical mappings
+and made zero provider requests. The comparison includes native
+coordinator overhead and excludes Queue transport, enrollment and audit.
+
+| Native coordinator      | Productive turns | Idle turns | D1 calls | Rows read | Rows written | Elapsed |
+| ----------------------- | ---------------: | ---------: | -------: | --------: | -----------: | ------: |
+| One phase per turn      |              211 |      2,121 |   22,668 | 1,362,913 |       79,034 |  93.3 s |
+| Consecutive idle phases |              211 |        213 |    9,312 | 1,282,768 |       65,696 |  57.6 s |
+
+Total turns fell from 2,332 to 424 and D1 calls fell by 59%. The native
+Queue fixture verifies that the grouped sweep can park without another
+message, and that a signal arriving after an earlier phase was checked
+still leaves a due wakeup.
+
 ## Storage census
 
 The replay increased D1's reported size from 275,439,616 to **285,364,224

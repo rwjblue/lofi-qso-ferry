@@ -141,17 +141,21 @@ export class InventoryComparisonCoordinator {
     tenant: string,
     control: Control,
     lease: Lease,
-    progress: boolean,
-    nextPhase: number,
-    build?: { generation_id: string; scope_id: string },
-    nextDueAt?: number,
+    turn: {
+      progress: boolean;
+      nextPhase: number;
+      checked?: number;
+      build?: { generation_id: string; scope_id: string };
+      nextDueAt?: number;
+    },
   ) {
+    const { progress, nextPhase, checked = 1, build, nextDueAt } = turn;
     const { match_activity: activity, review_activity: review } = control;
     const advanceActivity =
       control.phase === matchPhase && nextPhase === matchPhase + 1;
     return this.store
       .statement(
-        `UPDATE inventory_comparison_coordinators SET ${activity === undefined ? "" : "match_activity=?,"}${review === undefined ? "" : "review_activity=?,"}version=version+1,observed_version=work_version,phase=?,idle_turns=CASE WHEN ?=1 OR observed_version!=work_version THEN 0 ELSE min(phase_count,idle_turns+1) END,next_due_at=coalesce(?,next_due_at),build_generation=?,build_scope=?,updated_at=?
+        `UPDATE inventory_comparison_coordinators SET ${activity === undefined ? "" : "match_activity=?,"}${review === undefined ? "" : "review_activity=?,"}version=version+1,observed_version=work_version,phase=?,idle_turns=CASE WHEN ?=1 OR observed_version!=work_version THEN 0 ELSE min(phase_count,idle_turns+?) END,next_due_at=coalesce(?,next_due_at),build_generation=?,build_scope=?,updated_at=?
 WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a ON a.id=l.tenant AND a.status='active' WHERE l.tenant=? AND l.scope='inventory-comparison' AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000) RETURNING idle_turns,work_version,observed_version,next_due_at`,
         ...(activity === undefined
           ? []
@@ -161,6 +165,7 @@ WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a O
           : [advanceActivity ? (review + 1) % 3 : review]),
         nextPhase,
         Number(progress),
+        checked,
         nextDueAt ?? null,
         build?.generation_id ?? control.build_generation,
         build?.scope_id ?? control.build_scope,
@@ -178,6 +183,142 @@ WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a O
         observed_version: number;
       }>();
   }
+  private async checkPhase(
+    tenant: string,
+    control: Control,
+    lease: Lease,
+    phase: (typeof phases)[number],
+    pendingGeneration: string | null,
+  ) {
+    let progress = false;
+    let deferred = false;
+    let build: { generation_id: string; scope_id: string } | undefined;
+    let records = 0;
+    let pageId: string | undefined;
+    let nextDueAt: number | undefined;
+    let activity: "match" | "adopt" | "review" | undefined;
+    if (phase === "build") {
+      const candidate = await this.store
+        .statement(
+          `SELECT b.generation_id,b.scope_id FROM comparison_domains d CROSS JOIN index_generations g CROSS JOIN comparison_builds b
+WHERE d.tenant=? AND g.tenant=d.tenant AND g.generation_id IN(d.active_generation,d.pending_generation) AND g.state IN('active','building') AND b.tenant=g.tenant AND b.generation_id=g.generation_id AND b.complete=0
+ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`,
+          tenant,
+          control.build_generation,
+          control.build_scope,
+        )
+        .first<{ generation_id: string; scope_id: string }>();
+      if (candidate) {
+        build = candidate;
+        const result = await new InventoryComparisonBuilds(this.store).step(
+          tenant,
+          build.generation_id,
+          build.scope_id,
+        );
+        deferred = "deferred" in result;
+        progress = !deferred;
+        records = "records" in result ? result.records : 0;
+      }
+    } else if (phase === "operation") {
+      const result = await new InventoryProjectionJobs(this.store).expandNext(
+        tenant,
+      );
+      progress = result.kind === "expanded";
+      pageId = "pageId" in result ? result.pageId : undefined;
+      deferred = result.kind === "deferred";
+      records = "records" in result ? result.records : 0;
+    } else if (phase === "coverage") {
+      const result = await new InventoryProjectionCoverageJobs(this.store).step(
+        tenant,
+      );
+      progress = result.kind === "queued";
+      pageId = "pageId" in result ? result.pageId : undefined;
+      deferred = result.kind === "deferred";
+      records = "records" in result ? result.records : 0;
+    } else if (phase === "project") {
+      const result = await new InventoryProjectionJobs(this.store).projectNext(
+        tenant,
+      );
+      progress = result.kind === "projected";
+      pageId = "pageId" in result ? result.pageId : undefined;
+      deferred = result.kind === "deferred";
+      records = "records" in result ? result.records : 0;
+    } else if (phase === "match") {
+      const matching = new InventoryMatchingWork(this.store);
+      const adoption =
+        control.match_activity === undefined
+          ? null
+          : new InventoryAdoptionWork(this.store);
+      const review =
+        control.review_activity === undefined
+          ? null
+          : new InventoryDeliveryReview(this.store);
+      const turns = [
+        { activity: "match", run: () => matching.step(tenant) },
+        ...(adoption
+          ? [{ activity: "adopt" as const, run: () => adoption.step(tenant) }]
+          : []),
+        ...(review
+          ? [{ activity: "review" as const, run: () => review.step(tenant) }]
+          : []),
+      ] as const;
+      const preferred = control.review_activity ?? control.match_activity ?? 0;
+      for (let offset = 0; offset < turns.length; offset++) {
+        const turn = turns[(preferred + offset) % turns.length];
+        const result = await turn.run();
+        if (turns.length > 1) activity = turn.activity;
+        if (result.kind === "idle") continue;
+        deferred = result.kind === "deferred";
+        progress = !deferred;
+        records = "records" in result ? (result.records ?? 0) : 0;
+        pageId = "setId" in result ? result.setId : undefined;
+        break;
+      }
+      const retry = await this.store
+        .statement(
+          `WITH routes AS MATERIALIZED(SELECT * FROM inventory_matching_coverage_live_routes WHERE tenant=?1),heads AS MATERIALIZED(SELECT (SELECT w.due_at FROM matching_work w INDEXED BY matching_work_scope_pending WHERE w.tenant=r.tenant AND w.generation_id=r.generation_id AND w.destination=r.destination AND w.source_scope=r.source_scope AND w.source_config_version=r.source_config_version AND w.destination_config_version=r.destination_config_version AND w.completed_version<w.work_version ORDER BY w.due_at,w.record_key LIMIT 1) AS due_at${adoption ? ",(SELECT w.due_at FROM inventory_adoption_work w INDEXED BY inventory_adoption_work_due WHERE w.tenant=r.tenant AND w.generation_id=r.generation_id AND w.destination=r.destination AND w.source_scope=r.source_scope AND w.source_config_version=r.source_config_version AND w.destination_config_version=r.destination_config_version ORDER BY w.due_at,w.record_key LIMIT 1) AS adoption_due" : ""} FROM routes r) SELECT coalesce(min(due_at),0) AS due_at FROM (SELECT due_at FROM heads${adoption ? " UNION ALL SELECT adoption_due FROM heads" : ""})`,
+          tenant,
+        )
+        .first<{ due_at: number }>();
+      nextDueAt = retry?.due_at ?? 0;
+      const reviewDueAt = review ? await review.nextDueAt(tenant) : 0;
+      if (reviewDueAt)
+        nextDueAt = Math.min(nextDueAt || reviewDueAt, reviewDueAt);
+    } else if (
+      phase === "pair" ||
+      phase === "bucket" ||
+      phase === "coverage-events" ||
+      phase === "coverage-match" ||
+      phase === "selected"
+    ) {
+      const result =
+        phase === "pair"
+          ? await new InventoryMatchingPairs(this.store).step(tenant)
+          : phase === "bucket"
+            ? await new InventoryMatchingInvalidations(this.store).step(tenant)
+            : phase === "coverage-events"
+              ? await new InventoryMatchingCoverageEvents(this.store).step(
+                  tenant,
+                )
+              : phase === "coverage-match"
+                ? await new InventoryMatchingCoverage(this.store).step(tenant)
+                : await new InventoryMatchingSelected(this.store).step(tenant);
+      progress = result.kind !== "idle" && result.kind !== "deferred";
+      deferred = result.kind === "deferred";
+      records = "records" in result ? (result.records ?? 0) : 0;
+      pageId =
+        "pageId" in result
+          ? result.pageId
+          : "dispatchId" in result
+            ? result.dispatchId
+            : undefined;
+    } else if (pendingGeneration) {
+      const result = await this.activate(tenant, pendingGeneration, lease);
+      progress = result.kind === "activated";
+    }
+    return { progress, deferred, build, records, pageId, nextDueAt, activity };
+  }
+
   async step(tenant: string) {
     if (!identifier(tenant))
       throw new Error("invalid_comparison_coordinator_tenant");
@@ -234,158 +375,56 @@ WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a O
       let domain = await generations.domain(tenant);
       if (!domain?.active_generation && !domain?.pending_generation) {
         domain = await generations.begin(tenant);
-        const saved = await this.finish(tenant, control, lease, true, 0);
+        const saved = await this.finish(tenant, control, lease, {
+          progress: true,
+          nextPhase: 0,
+        });
         return {
           kind: saved ? ("initialized" as const) : ("deferred" as const),
           more: true,
           generation: domain.pending_generation,
         };
       }
-      const phase = phases[control.phase];
-      let progress = false;
-      let deferred = false;
-      let build: { generation_id: string; scope_id: string } | undefined;
-      let records = 0;
-      let pageId: string | undefined;
-      let nextDueAt: number | undefined;
-      let activity: "match" | "adopt" | "review" | undefined;
-      if (phase === "build") {
-        const candidate = await this.store
-          .statement(
-            `SELECT b.generation_id,b.scope_id FROM comparison_domains d CROSS JOIN index_generations g CROSS JOIN comparison_builds b
-WHERE d.tenant=? AND g.tenant=d.tenant AND g.generation_id IN(d.active_generation,d.pending_generation) AND g.state IN('active','building') AND b.tenant=g.tenant AND b.generation_id=g.generation_id AND b.complete=0
-ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`,
-            tenant,
-            control.build_generation,
-            control.build_scope,
-          )
-          .first<{ generation_id: string; scope_id: string }>();
-        if (candidate) {
-          build = candidate;
-          const result = await new InventoryComparisonBuilds(this.store).step(
-            tenant,
-            build.generation_id,
-            build.scope_id,
-          );
-          deferred = "deferred" in result;
-          progress = !deferred;
-          records = "records" in result ? result.records : 0;
-        }
-      } else if (phase === "operation") {
-        const result = await new InventoryProjectionJobs(this.store).expandNext(
+      let cursor = control.phase;
+      let checked = 0;
+      let phase: (typeof phases)[number];
+      let result: Awaited<
+        ReturnType<InventoryComparisonCoordinator["checkPhase"]>
+      >;
+      do {
+        phase = phases[cursor];
+        result = await this.checkPhase(
           tenant,
-        );
-        progress = result.kind === "expanded";
-        pageId = "pageId" in result ? result.pageId : undefined;
-        deferred = result.kind === "deferred";
-        records = "records" in result ? result.records : 0;
-      } else if (phase === "coverage") {
-        const result = await new InventoryProjectionCoverageJobs(
-          this.store,
-        ).step(tenant);
-        progress = result.kind === "queued";
-        pageId = "pageId" in result ? result.pageId : undefined;
-        deferred = result.kind === "deferred";
-        records = "records" in result ? result.records : 0;
-      } else if (phase === "project") {
-        const result = await new InventoryProjectionJobs(
-          this.store,
-        ).projectNext(tenant);
-        progress = result.kind === "projected";
-        pageId = "pageId" in result ? result.pageId : undefined;
-        deferred = result.kind === "deferred";
-        records = "records" in result ? result.records : 0;
-      } else if (phase === "match") {
-        const matching = new InventoryMatchingWork(this.store);
-        const adoption =
-          control.match_activity === undefined
-            ? null
-            : new InventoryAdoptionWork(this.store);
-        const review =
-          control.review_activity === undefined
-            ? null
-            : new InventoryDeliveryReview(this.store);
-        const turns = [
-          { activity: "match", run: () => matching.step(tenant) },
-          ...(adoption
-            ? [{ activity: "adopt" as const, run: () => adoption.step(tenant) }]
-            : []),
-          ...(review
-            ? [{ activity: "review" as const, run: () => review.step(tenant) }]
-            : []),
-        ] as const;
-        const preferred =
-          control.review_activity ?? control.match_activity ?? 0;
-        for (let offset = 0; offset < turns.length; offset++) {
-          const turn = turns[(preferred + offset) % turns.length];
-          const result = await turn.run();
-          if (turns.length > 1) activity = turn.activity;
-          if (result.kind === "idle") continue;
-          deferred = result.kind === "deferred";
-          progress = !deferred;
-          records = "records" in result ? (result.records ?? 0) : 0;
-          pageId = "setId" in result ? result.setId : undefined;
-          break;
-        }
-        const retry = await this.store
-          .statement(
-            `WITH routes AS MATERIALIZED(SELECT * FROM inventory_matching_coverage_live_routes WHERE tenant=?1),heads AS MATERIALIZED(SELECT (SELECT w.due_at FROM matching_work w INDEXED BY matching_work_scope_pending WHERE w.tenant=r.tenant AND w.generation_id=r.generation_id AND w.destination=r.destination AND w.source_scope=r.source_scope AND w.source_config_version=r.source_config_version AND w.destination_config_version=r.destination_config_version AND w.completed_version<w.work_version ORDER BY w.due_at,w.record_key LIMIT 1) AS due_at${adoption ? ",(SELECT w.due_at FROM inventory_adoption_work w INDEXED BY inventory_adoption_work_due WHERE w.tenant=r.tenant AND w.generation_id=r.generation_id AND w.destination=r.destination AND w.source_scope=r.source_scope AND w.source_config_version=r.source_config_version AND w.destination_config_version=r.destination_config_version ORDER BY w.due_at,w.record_key LIMIT 1) AS adoption_due" : ""} FROM routes r) SELECT coalesce(min(due_at),0) AS due_at FROM (SELECT due_at FROM heads${adoption ? " UNION ALL SELECT adoption_due FROM heads" : ""})`,
-            tenant,
-          )
-          .first<{ due_at: number }>();
-        nextDueAt = retry?.due_at ?? 0;
-        const reviewDueAt = review ? await review.nextDueAt(tenant) : 0;
-        if (reviewDueAt)
-          nextDueAt = Math.min(nextDueAt || reviewDueAt, reviewDueAt);
-      } else if (
-        phase === "pair" ||
-        phase === "bucket" ||
-        phase === "coverage-events" ||
-        phase === "coverage-match" ||
-        phase === "selected"
-      ) {
-        const result =
-          phase === "pair"
-            ? await new InventoryMatchingPairs(this.store).step(tenant)
-            : phase === "bucket"
-              ? await new InventoryMatchingInvalidations(this.store).step(
-                  tenant,
-                )
-              : phase === "coverage-events"
-                ? await new InventoryMatchingCoverageEvents(this.store).step(
-                    tenant,
-                  )
-                : phase === "coverage-match"
-                  ? await new InventoryMatchingCoverage(this.store).step(tenant)
-                  : await new InventoryMatchingSelected(this.store).step(
-                      tenant,
-                    );
-        progress = result.kind !== "idle" && result.kind !== "deferred";
-        deferred = result.kind === "deferred";
-        records = "records" in result ? (result.records ?? 0) : 0;
-        pageId =
-          "pageId" in result
-            ? result.pageId
-            : "dispatchId" in result
-              ? result.dispatchId
-              : undefined;
-      } else if (domain.pending_generation) {
-        const result = await this.activate(
-          tenant,
-          domain.pending_generation,
+          control,
           lease,
+          phase,
+          domain.pending_generation,
         );
-        progress = result.kind === "activated";
-      }
-      const saved = await this.finish(
-        tenant,
-        control,
-        lease,
-        progress || deferred,
-        (control.phase + 1) % phases.length,
+        checked++;
+        cursor = (cursor + 1) % phases.length;
+        // Matching keeps its own durable turn for adoption and review rotation.
+      } while (
+        !result.progress &&
+        !result.deferred &&
+        phase !== "match" &&
+        cursor !== matchPhase
+      );
+      const {
+        progress,
+        deferred,
+        build,
+        records,
+        pageId,
+        nextDueAt,
+        activity,
+      } = result;
+      const saved = await this.finish(tenant, control, lease, {
+        progress: progress || deferred,
+        nextPhase: cursor,
+        checked,
         build,
         nextDueAt,
-      );
+      });
       return {
         kind:
           !saved || deferred

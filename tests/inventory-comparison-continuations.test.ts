@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
 import {
   consumeComparisonWakeups,
   publishComparisonWakeups,
   type ComparisonQueueMessage,
 } from "../src/inventory-comparison-continuations.ts";
 import { activateInventoryRuntime } from "../src/inventory-runtime.ts";
+import { Store } from "../src/store.ts";
 import { applyMigration } from "./helpers.ts";
 import { comparisonWakeupsFixture } from "./inventory-comparison-wakeups-fixtures.ts";
 
@@ -100,7 +102,7 @@ test("Queue-driven comparison drains and repeated parked messages leave current 
       assert.equal(report.failed, 0);
       assert.deepEqual(delivery.outcomes, [["ack"]]);
     }
-    assert.ok(turns > 11);
+    assert.ok(turns < 20, `single-contact drain took ${turns} Queue messages`);
     assert.deepEqual(
       await f.db
         .prepare(
@@ -129,6 +131,85 @@ test("Queue-driven comparison drains and repeated parked messages leave current 
     assert.deepEqual(
       await f.db.prepare("SELECT count(*) AS n FROM attempts").first(),
       { n: 0 },
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("an idle phase sweep preserves a work signal that arrives after it checked a phase", async () => {
+  const f = await fixture();
+  try {
+    const coordinator = new InventoryComparisonCoordinator(f.store);
+    for (let i = 0; ; i++) {
+      assert.ok(i < 30);
+      if (!(await coordinator.step("a")).more) break;
+    }
+    const lease = await f.store.claim(
+      "a",
+      "inventory-comparison",
+      Date.now(),
+      60_000,
+    );
+    assert.ok(lease);
+    await f.db
+      .prepare(
+        "UPDATE inventory_comparison_coordinators SET version=version+1,phase=10,idle_turns=1 WHERE tenant='a'",
+      )
+      .run();
+    await f.store.release(lease);
+
+    const store = new Store(f.db, f.store.keys);
+    const statement = store.statement.bind(store);
+    let signaled = false;
+    store.statement = (sql, ...params) => {
+      const bound = statement(sql, ...params);
+      if (
+        !sql.startsWith(
+          "SELECT b.generation_id,b.scope_id FROM comparison_domains",
+        )
+      )
+        return bound;
+      return new Proxy(bound, {
+        get(target, property) {
+          if (property === "first")
+            return async () => {
+              const row = await target.first();
+              await f.db
+                .prepare(
+                  "UPDATE inventory_comparison_coordinators SET work_version=work_version+1 WHERE tenant='a'",
+                )
+                .run();
+              signaled = true;
+              return row;
+            };
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    };
+    const swept = await new InventoryComparisonCoordinator(store).step("a");
+    assert.equal(signaled, true);
+    assert.equal(swept.more, true);
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT c.phase,c.idle_turns,c.observed_version=c.work_version AS caught_up,w.not_before IS NOT NULL AS scheduled FROM inventory_comparison_coordinators c JOIN inventory_comparison_wakeups w USING(tenant)",
+        )
+        .first(),
+      { phase: 9, idle_turns: 0, caught_up: 1, scheduled: 1 },
+    );
+    const match = await coordinator.step("a");
+    assert.equal(match.more, true);
+    assert.equal("phase" in match && match.phase, "match");
+    assert.equal((await coordinator.step("a")).more, false);
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT idle_turns,not_before FROM inventory_comparison_coordinators JOIN inventory_comparison_wakeups USING(tenant)",
+        )
+        .first(),
+      { idle_turns: 11, not_before: null },
     );
   } finally {
     await f.mf.dispose();

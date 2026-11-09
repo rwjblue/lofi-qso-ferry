@@ -745,6 +745,31 @@ isolates the preparation fix discovered during the replay. The live
 LoFi account-only resume still requires a current bearer for the same
 client.
 
+### Rebuild from captures through migration 0123
+
+A new account-only copy replayed the same encrypted personal log through
+migration 0123. Its read transport returned 51 local responses. All 17
+selections published ready coverage. The comparison Queue consumer ran
+with up to four steps per delivery and drained all work. It used 3,061
+steps across 766 deliveries, with at most 100 D1 calls per delivery.
+
+| Local phase | D1 calls | SQL statements | Rows read | Rows written | Elapsed |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Inventory read and publication | 1,613 | 4,367 | 873,576 | 304,191 | 45.9 s |
+| Comparison, adoption and review | 54,996 | 85,804 | 13,514,221 | 1,539,090 | 438.3 s |
+
+A read-only reopen matched all 12,956 saved body hashes and record
+statuses, 8,502 current decisions and selected receipts, and 6,260
+historical association identities against the earlier complete replay.
+The copy preserved linked credentials and account bindings. It had
+zero pending adoptions, foreign-key violations, provider requests or
+uploads. Timings cover the local reader and Queue consumer and exclude
+the final audit, hosted delivery and vendor latency.
+
+The closed SQLite file occupied 281.9 MB. Raw payloads and their index
+occupied 26.0 MB. Bucket tokens, reverse dependencies and their indexes
+occupied 93.7 MB.
+
 ### Rebuild the captured comparison generation
 
 A second private copy of the completed offline replay was upgraded

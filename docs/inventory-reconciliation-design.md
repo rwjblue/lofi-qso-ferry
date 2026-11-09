@@ -836,7 +836,7 @@ that saved run. [Account-only rehearsal](evidence-inventory-fresh-start.md#real-
 A separate recovery rehearsal verified that a refused cursor can restart
 just the source scan. A complete offline replay rebuilt all 17 selections
 from the captured bodies and recovered the same per-contact
-classifications and historical associations. [Cursor recovery](evidence-inventory-fresh-start.md#restart-a-refused-lofi-cursor) · [Offline replay](evidence-inventory-fresh-start.md#complete-account-only-offline-replay)
+classifications and historical associations. [Cursor recovery](evidence-inventory-fresh-start.md#restart-a-refused-lofi-cursor) · [Offline replay](evidence-inventory-fresh-start.md#rebuild-from-captures-through-migration-0123)
 
 At deployment cutover, pause the previous sender before allowing the replacement to write. Resolve or quarantine any outstanding submitted/dispatching/uncertain vendor work before treating a fresh negative read as permission to insert; a reset must not turn a possibly queued old upload into a new contact. This can be evaluated before the old database is retired without copying its complete history into the replacement. The local implementation and trial authorization does not include a production reset or cutover.
 

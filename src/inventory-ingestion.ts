@@ -624,7 +624,9 @@ export class InventoryIngestion {
     const bound = (sql: string) => statement(sql, s.tenant, input.pageId);
     const plan: D1PreparedStatement[] = [
       statement(
-        `INSERT INTO ingestion_pages(tenant,page_id,scope_id,stream_id,input_digest,manifest_digest,adapter_binding,query_binding,expected_config_version,expected_sequence,expected_stream_version,credential_version,connection_config,remote_identity,lease_scope,lease_token,lease_fence,request_started_at,prepared_at,raw_count,distinct_count,accepted_count,changed_count,next_resume,next_checkpoint,origin${calendar ? ",lotw_calendar_months" : ""}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?${calendar ? ",?" : ""})`,
+        // The SQL guard checks preparation against D1 time. Keep the real
+        // provider request timestamp, which establishes observation freshness.
+        `INSERT INTO ingestion_pages(tenant,page_id,scope_id,stream_id,input_digest,manifest_digest,adapter_binding,query_binding,expected_config_version,expected_sequence,expected_stream_version,credential_version,connection_config,remote_identity,lease_scope,lease_token,lease_fence,request_started_at,prepared_at,raw_count,distinct_count,accepted_count,changed_count,next_resume,next_checkpoint,origin${calendar ? ",lotw_calendar_months" : ""}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,min(?,CAST(unixepoch('subsec')*1000 AS INTEGER)),?,?,?,?,?,?,?${calendar ? ",?" : ""})`,
         s.tenant,
         input.pageId,
         s.scope,
@@ -678,13 +680,14 @@ export class InventoryIngestion {
     for (const chunk of inventoryJsonChunks(payloads)) {
       plan.push(
         statement(
-          `INSERT INTO inventory_payloads(tenant,scope_id,payload_id,connection_id,kind,envelope,created_at) SELECT ?,?,json_extract(value,'$.id'),?,?,json_extract(value,'$.envelope'),? FROM json_each(?)`,
-          s.tenant,
-          s.scope,
+          `INSERT INTO inventory_payloads(tenant,scope_id,payload_id,connection_id,kind,envelope,created_at)
+           SELECT p.tenant,p.scope_id,json_extract(value,'$.id'),?, ?,json_extract(value,'$.envelope'),p.prepared_at
+           FROM ingestion_pages p CROSS JOIN json_each(?) WHERE (p.tenant,p.page_id)=(?,?)`,
           s.connection,
           input.facet === "source" ? "inventory_source" : "inventory_receipt",
-          page.preparedAt,
           chunk,
+          s.tenant,
+          input.pageId,
         ),
       );
     }

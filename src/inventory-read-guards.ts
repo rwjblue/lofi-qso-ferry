@@ -13,7 +13,6 @@ export function inventoryStreamReadGuard(
   store: Store,
   stream: InventoryStream,
   lease: Lease,
-  now: number,
 ) {
   const pageId = `read:${randomToken()}`;
   const bound = (sql: string) => store.statement(sql, stream.tenant, pageId);
@@ -21,7 +20,9 @@ export function inventoryStreamReadGuard(
   return {
     pageId,
     prepare: store.statement(
-      `INSERT INTO ingestion_pages(tenant,page_id,scope_id,stream_id,input_digest,manifest_digest,adapter_binding,query_binding,expected_config_version,expected_sequence,expected_stream_version,credential_version,connection_config,remote_identity,lease_scope,lease_token,lease_fence,request_started_at,prepared_at,raw_count,distinct_count,accepted_count,changed_count,next_resume,next_checkpoint,origin${calendar ? ",lotw_calendar_months" : ""}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,0,0,?,NULL,'historical'${calendar ? ",'[]'" : ""})`,
+      // D1 owns both timestamps for this transient guard, which records no
+      // provider observation and compares prepared_at with D1's clock.
+      `INSERT INTO ingestion_pages(tenant,page_id,scope_id,stream_id,input_digest,manifest_digest,adapter_binding,query_binding,expected_config_version,expected_sequence,expected_stream_version,credential_version,connection_config,remote_identity,lease_scope,lease_token,lease_fence,request_started_at,prepared_at,raw_count,distinct_count,accepted_count,changed_count,next_resume,next_checkpoint,origin${calendar ? ",lotw_calendar_months" : ""}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(unixepoch('subsec')*1000 AS INTEGER),CAST(unixepoch('subsec')*1000 AS INTEGER),0,0,0,0,?,NULL,'historical'${calendar ? ",'[]'" : ""})`,
       stream.tenant,
       pageId,
       stream.scope,
@@ -39,8 +40,6 @@ export function inventoryStreamReadGuard(
       lease.scope,
       lease.token,
       lease.fence,
-      now,
-      now,
       canonical(stream.resume),
     ),
     verify: bound(
@@ -79,7 +78,7 @@ export function inventoryReadGuardStatements(
   const requestBinding =
     run.phase === "collecting" ? run.collectionBinding : run.catchupBinding;
   requireValue(typeof requestBinding === "string" && requestBinding.length > 0);
-  const guard = inventoryStreamReadGuard(store, stream, lease, now);
+  const guard = inventoryStreamReadGuard(store, stream, lease);
   const { pageId } = guard;
   const statement = (sql: string, ...params: (string | number | null)[]) =>
     store.statement(sql, ...params);

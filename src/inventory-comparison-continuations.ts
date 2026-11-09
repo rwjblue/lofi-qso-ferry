@@ -1,8 +1,15 @@
 import {
+  type ComparisonPhase,
   type ComparisonWakeupHint,
   InventoryComparisonCoordinator,
   MAX_COMPARISON_STEPS_PER_WAKEUP,
 } from "./inventory-comparison-coordinator.ts";
+import {
+  type ComparisonFailure,
+  type ComparisonFailureStage,
+  type ComparisonPublicationStage,
+  classifyComparisonFailure,
+} from "./inventory-comparison-logging.ts";
 import {
   COMPARISON_QUEUE_HORIZON_MS,
   InventoryComparisonWakeups,
@@ -18,6 +25,7 @@ type ComparisonQueue = Pick<Queue<ComparisonQueueMessage>, "sendBatch">;
 export { MAX_COMPARISON_STEPS_PER_WAKEUP };
 
 const COMPARISON_WAKEUP_SLICE_MS = 5_000;
+const COMPARISON_FAILURE_DELAY_SECONDS = 60;
 const identifier = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 512;
 const positive = (value: unknown): value is number =>
@@ -65,12 +73,19 @@ export function comparisonQueueMessage(value: unknown): ComparisonQueueMessage {
 export async function publishComparisonWakeups(
   store: Store,
   queue: ComparisonQueue,
-  options: Parameters<InventoryComparisonWakeups["pending"]>[0] = {},
+  options: NonNullable<Parameters<InventoryComparisonWakeups["pending"]>[0]> & {
+    onStage?: (
+      stage: ComparisonPublicationStage,
+      successorsSent: number,
+    ) => void;
+  } = {},
 ) {
   const wakeups = new InventoryComparisonWakeups(store);
+  options.onStage?.("comparison_wakeup_select", 0);
   const rows = await wakeups.pending(options);
   if (!rows.length) return 0;
   const now = options.now ?? Date.now();
+  options.onStage?.("comparison_wakeup_send", 0);
   await queue.sendBatch(
     rows.map((row) => ({
       body: {
@@ -86,6 +101,7 @@ export async function publishComparisonWakeups(
       delaySeconds: Math.max(0, Math.ceil((row.not_before - now) / 1000)),
     })),
   );
+  options.onStage?.("comparison_wakeup_mark", rows.length);
   await wakeups.markPublished(rows);
   return rows.length;
 }
@@ -110,6 +126,7 @@ export async function consumeComparisonWakeups(
     maxTurns?: number;
     maxStepsPerWakeup?: number;
     afterPublish?: () => Promise<void>;
+    onFailure?: (failure: ComparisonFailure) => void;
   } = {},
 ) {
   const maxTurns = options.maxTurns ?? 1;
@@ -129,7 +146,36 @@ export async function consumeComparisonWakeups(
     failed: 0,
     queued: 0,
   };
-  const completed: Message<unknown>[] = [];
+  type Delivery = {
+    message: Message<unknown>;
+    startedAt: number;
+    completedSteps: number;
+    phase?: ComparisonPhase;
+  };
+  const completed: Delivery[] = [];
+  const retryFailure = (
+    delivery: Delivery,
+    stage: ComparisonFailureStage,
+    error: unknown,
+    successorsSent = 0,
+  ) => {
+    delivery.message.retry({ delaySeconds: COMPARISON_FAILURE_DELAY_SECONDS });
+    report.retried++;
+    try {
+      options.onFailure?.({
+        ...classifyComparisonFailure(error),
+        stage,
+        ...(delivery.phase ? { phase: delivery.phase } : {}),
+        attempt: delivery.message.attempts,
+        retryDelaySeconds: COMPARISON_FAILURE_DELAY_SECONDS,
+        completedSteps: delivery.completedSteps,
+        successorsSent,
+        elapsedMs: Date.now() - delivery.startedAt,
+      });
+    } catch {
+      // A diagnostics failure must not interfere with retrying the work.
+    }
+  };
   const coordinator = new InventoryComparisonCoordinator(store);
   for (const message of batch.messages) {
     let wakeup: ComparisonQueueMessage;
@@ -147,12 +193,22 @@ export async function consumeComparisonWakeups(
       continue;
     }
     report.processed++;
+    const delivery: Delivery = {
+      message,
+      startedAt: Date.now(),
+      completedSteps: 0,
+    };
     try {
       const result = await coordinator.stepWakeup(wakeup, {
         maxSteps: message.attempts > 1 ? 1 : maxStepsPerWakeup,
-        deadline: Date.now() + COMPARISON_WAKEUP_SLICE_MS,
+        deadline: delivery.startedAt + COMPARISON_WAKEUP_SLICE_MS,
         onStep: () => {
           report.steps++;
+          delivery.completedSteps++;
+          delete delivery.phase;
+        },
+        onPhase: (phase) => {
+          delivery.phase = phase;
         },
       });
       if (result.kind === "deferred") {
@@ -166,26 +222,32 @@ export async function consumeComparisonWakeups(
           ),
         });
         report.retried++;
-      } else completed.push(message);
-    } catch {
-      message.retry({ delaySeconds: 60 });
-      report.retried++;
+      } else completed.push(delivery);
+    } catch (error) {
+      retryFailure(delivery, "comparison_step", error);
       report.failed++;
     }
   }
   if (completed.length) {
+    let stage: ComparisonFailureStage = "comparison_wakeup_select";
+    let successorsSent = 0;
     try {
-      report.queued = await publishComparisonWakeups(store, queue);
+      report.queued = await publishComparisonWakeups(store, queue, {
+        onStage: (current, sent) => {
+          stage = current;
+          successorsSent = sent;
+        },
+      });
+      stage = "inventory_wakeup_publish";
       await options.afterPublish?.();
-      for (const message of completed) {
+      stage = "acknowledge";
+      for (const { message } of completed) {
         message.ack();
         report.acknowledged++;
       }
-    } catch {
-      for (const message of completed) {
-        message.retry({ delaySeconds: 60 });
-        report.retried++;
-      }
+    } catch (error) {
+      for (const delivery of completed)
+        retryFailure(delivery, stage, error, successorsSent);
       report.failed++;
     }
   }

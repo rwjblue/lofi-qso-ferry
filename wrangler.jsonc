@@ -110,8 +110,8 @@
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "ferry-production",
-          "database_id": "45ad64ad-92bb-491a-b6e6-1d2b17450144",
+          "database_name": "ferry-production-native",
+          "database_id": "04e6c874-8ad6-417d-897c-b79b25581b9d",
           "migrations_dir": "migrations"
         }
       ],

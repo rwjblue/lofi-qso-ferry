@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { inspect } from "node:util";
 import {
   type ComparisonQueueMessage,
   consumeComparisonWakeups,
@@ -509,20 +510,39 @@ test("Queue publication failure retries the old message and leaves the advanced 
   try {
     await publishComparisonWakeups(f.store, f.queue);
     const delivery = batch([f.sent.shift()!.body]);
+    const failures: unknown[] = [];
     const report = await consumeComparisonWakeups(
       f.store,
       delivery.value,
       {
         async sendBatch() {
-          throw new Error("synthetic Queue outage");
+          throw new Error("synthetic Queue outage", {
+            cause: new Error("private-queue-token"),
+          });
         },
       },
-      { maxStepsPerWakeup: 4 },
+      {
+        maxStepsPerWakeup: 4,
+        onFailure: (event) => failures.push(event),
+      },
     );
     assert.deepEqual(delivery.outcomes, [[60]]);
     assert.equal(report.steps, 4);
     assert.equal(report.failed, 1);
     assert.equal(report.acknowledged, 0);
+    assert.equal(failures.length, 1);
+    assert.partialDeepStrictEqual(failures[0], {
+      stage: "comparison_wakeup_send",
+      code: "unknown",
+      attempt: 1,
+      retryDelaySeconds: 60,
+      completedSteps: 4,
+      successorsSent: 0,
+    });
+    assert.doesNotMatch(
+      inspect(failures),
+      /synthetic Queue outage|private-queue-token/,
+    );
     const pending = await f.wakeups.pending();
     assert.equal(pending.length, 1);
     assert.equal(pending[0].published_at, 0);
@@ -544,6 +564,117 @@ test("Queue publication failure retries the old message and leaves the advanced 
     assert.ok(final && final.version > pending[0].version);
     assert.equal(final.not_before, null);
     assert.deepEqual(await f.wakeups.pending(), []);
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("a failed publication mark reports the successor that Queue accepted", async () => {
+  const f = await fixture();
+  try {
+    await publishComparisonWakeups(f.store, f.queue);
+    await f.db
+      .prepare(
+        `CREATE TRIGGER test_comparison_mark BEFORE UPDATE OF published_at ON inventory_comparison_wakeups
+         WHEN NEW.published_at>0 BEGIN SELECT RAISE(ABORT,'comparison wakeup publication changed'); END`,
+      )
+      .run();
+    const delivery = batch([f.sent.shift()!.body]);
+    const failures: unknown[] = [];
+    const report = await consumeComparisonWakeups(
+      f.store,
+      delivery.value,
+      f.queue,
+      { onFailure: (event) => failures.push(event) },
+    );
+    assert.deepEqual(delivery.outcomes, [[60]]);
+    assert.equal(f.sent.length, 1);
+    assert.equal(report.failed, 1);
+    assert.equal(failures.length, 1);
+    assert.partialDeepStrictEqual(failures[0], {
+      stage: "comparison_wakeup_mark",
+      code: "d1_guard",
+      guard: "comparison wakeup publication changed",
+      completedSteps: 1,
+      successorsSent: 1,
+    });
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("inventory publication failures are distinguished after the comparison successor is published", async () => {
+  const f = await fixture();
+  try {
+    await publishComparisonWakeups(f.store, f.queue);
+    const delivery = batch([f.sent.shift()!.body], f.trace, 2);
+    const failures: unknown[] = [];
+    const report = await consumeComparisonWakeups(
+      f.store,
+      delivery.value,
+      f.queue,
+      {
+        maxStepsPerWakeup: 4,
+        async afterPublish() {
+          throw new Error("https://provider.invalid/?token=private-token");
+        },
+        onFailure: (event) => failures.push(event),
+      },
+    );
+    assert.deepEqual(delivery.outcomes, [[60]]);
+    assert.deepEqual(f.trace, ["send", "send", "retry"]);
+    assert.equal(report.steps, 1);
+    assert.equal(report.queued, 1);
+    assert.equal(report.failed, 1);
+    assert.deepEqual(await f.wakeups.pending(), []);
+    assert.equal(failures.length, 1);
+    assert.partialDeepStrictEqual(failures[0], {
+      stage: "inventory_wakeup_publish",
+      code: "unknown",
+      attempt: 2,
+      retryDelaySeconds: 60,
+      completedSteps: 1,
+      successorsSent: 1,
+    });
+    assert.doesNotMatch(inspect(failures), /provider\.invalid|private-token/);
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("a comparison step reports the stable code of a known native guard failure", async () => {
+  const f = await fixture();
+  try {
+    await publishComparisonWakeups(f.store, f.queue);
+    await f.db
+      .prepare(
+        `CREATE TRIGGER test_comparison_guard BEFORE UPDATE ON inventory_comparison_coordinators
+         BEGIN SELECT RAISE(ABORT,'comparison coordinator lease missing'); END`,
+      )
+      .run();
+    const delivery = batch([f.sent.shift()!.body]);
+    const failures: unknown[] = [];
+    const report = await consumeComparisonWakeups(
+      f.store,
+      delivery.value,
+      f.queue,
+      { onFailure: (event) => failures.push(event) },
+    );
+    assert.deepEqual(delivery.outcomes, [[60]]);
+    assert.equal(report.steps, 0);
+    assert.equal(report.queued, 0);
+    assert.equal(report.failed, 1);
+    assert.equal(failures.length, 1);
+    assert.partialDeepStrictEqual(failures[0], {
+      stage: "comparison_step",
+      phase: "operation",
+      code: "d1_guard",
+      guard: "comparison coordinator lease missing",
+      attempt: 1,
+      retryDelaySeconds: 60,
+      completedSteps: 0,
+      successorsSent: 0,
+    });
   } finally {
     await f.mf.dispose();
   }

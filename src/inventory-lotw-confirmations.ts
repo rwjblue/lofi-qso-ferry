@@ -151,12 +151,7 @@ export async function pollInventoryLotwConfirmations(
     const transport = vendorFetch(store, "lotw", fetcher, {
       priority: "background",
       admit: async (reservation) => {
-        const guard = inventoryStreamReadGuard(
-          store,
-          stream,
-          lease,
-          Date.now(),
-        );
+        const guard = inventoryStreamReadGuard(store, stream, lease);
         const results = await store.db.batch<{
           window_start: number;
           cooldown_until: number;
@@ -196,7 +191,7 @@ export async function pollInventoryLotwConfirmations(
       });
     }
     const confirmedThrough = report.confirmedThrough ?? lower;
-    const guard = inventoryStreamReadGuard(store, stream, lease, Date.now());
+    const guard = inventoryStreamReadGuard(store, stream, lease);
     const result = await store.db.batch([
       guard.prepare,
       guard.verify,

@@ -115,6 +115,23 @@ test("denied quota cleans temporary guards without changing run progress", async
   }
 });
 
+test("read admission uses the D1 clock when the Worker clock is ahead", async (t) => {
+  const f = await fixture();
+  try {
+    const before = await snapshot(f);
+    const request = reader(f, async () => new Response("synthetic"));
+    t.mock.method(Date, "now", () => f.context.run.startedAt + 60_000);
+    assert.equal(
+      await (await request("https://logbook.qrz.com/api")).text(),
+      "synthetic",
+    );
+    assert.deepEqual(await snapshot(f), before);
+  } finally {
+    t.mock.restoreAll();
+    await f.mf.dispose();
+  }
+});
+
 test("raced run/job and current authority fail before charging vendor quota", async (t) => {
   const mutations = [
     "UPDATE inventory_runs SET version=version+1",

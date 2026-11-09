@@ -355,6 +355,31 @@ retirement queue accounted for 191,024 of the 366,408 tokens. All 945
 were still within their grace period. This was a copy used for several
 replays, so these counts measure that backlog.
 
+### Batched comparison proof retention
+
+Two private copies advanced the preparation time and queue deadline of
+the same 945 superseded proofs to simulate expiry. The production guards
+were in place for both collector runs. The batch takes the oldest
+eligible prefix, up to 16 proofs and 20,000 dependency rows per tick, and
+uses the same native pin checks and atomic deletion as the single-proof
+collector. The largest proof in this capture had 698 dependencies.
+
+| Captured backlog | Single proof | Batched proofs |
+| --- | ---: | ---: |
+| Productive ticks | 945 | 60 |
+| D1 statements including the empty check | 946 | 61 |
+| Total rows read | 1,086,569 | 1,095,139 |
+| Total rows written | 270,104 | 270,104 |
+| Peak rows written in one tick | 699 | 7,084 |
+| SQLite bytes made reusable | 72,470,528 | 72,462,336 |
+
+At the configured five-minute cadence, 60 productive ticks represent
+about five hours of scheduled cleanup after eligibility. Both runs
+removed exactly 269,159 dependency rows, preserved proof headers and
+result rows, and kept current matches, ownership, linked credentials,
+coverage and stream checkpoints identical. Both passed SQLite's foreign
+key check and made zero provider requests.
+
 ### Full QRZ catch-up verification
 
 A full run can use the same covering scan when its `MODSINCE` catch-up

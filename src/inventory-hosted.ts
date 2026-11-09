@@ -21,7 +21,7 @@ import {
 import { InventoryIngestion } from "./inventory-ingestion.ts";
 import { InventoryLotwDispatch } from "./inventory-lotw-dispatch.ts";
 import { InventoryLotwReadback } from "./inventory-lotw-readback.ts";
-import { collectInventoryMatchProof } from "./inventory-match-retention.ts";
+import { collectInventoryMatchProofs } from "./inventory-match-retention.ts";
 import { collectInventoryPayloads } from "./inventory-payload-retention.ts";
 import {
   configuredInventoryShadow,
@@ -169,7 +169,7 @@ export async function runHostedScheduled(
   let matchProofsCollected = 0;
   let matchProofCollectionFailed = 0;
   try {
-    matchProofsCollected = await collectInventoryMatchProof(store);
+    matchProofsCollected = await collectInventoryMatchProofs(store);
   } catch {
     matchProofCollectionFailed = 1;
   }

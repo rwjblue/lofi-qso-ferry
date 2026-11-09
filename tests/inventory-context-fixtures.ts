@@ -43,19 +43,23 @@ export function observation(
     },
   };
 }
-export async function fixture(existing?: Awaited<ReturnType<typeof database>>) {
+export async function fixture(
+  existing?: Awaited<ReturnType<typeof database>>,
+  schema: "minimal" | "current" = "minimal",
+) {
   const f = existing ?? (await database());
   await seed(f.store);
-  for (const name of [
-    "0039_inventory_ingestion.sql",
-    "0040_inventory_runs.sql",
-    "0044_inventory_comparison_generations.sql",
-    "0045_inventory_comparison_ingestion.sql",
-    "0046_inventory_comparison_builds.sql",
-    "0047_inventory_context_membership.sql",
-    "0048_inventory_projection_publication.sql",
-  ])
-    await applyMigration(f.db, name);
+  if (schema === "minimal")
+    for (const name of [
+      "0039_inventory_ingestion.sql",
+      "0040_inventory_runs.sql",
+      "0044_inventory_comparison_generations.sql",
+      "0045_inventory_comparison_ingestion.sql",
+      "0046_inventory_comparison_builds.sql",
+      "0047_inventory_context_membership.sql",
+      "0048_inventory_projection_publication.sql",
+    ])
+      await applyMigration(f.db, name);
   const hook = new InventoryComparisonPages(f.store);
   const inventory = new InventoryIngestion(f.store, hook);
   await inventory.initialize(

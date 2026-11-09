@@ -15,6 +15,7 @@ import {
 } from "./inventory-continuations.ts";
 import { InventoryIngestion } from "./inventory-ingestion.ts";
 import { InventoryLotwReadback } from "./inventory-lotw-readback.ts";
+import { collectInventoryMatchProof } from "./inventory-match-retention.ts";
 import {
   configuredInventoryShadow,
   InventoryPreparationShadow,
@@ -164,6 +165,13 @@ export async function runHostedScheduled(
       sends[sendProvider].failed = 1;
     }
   }
+  let matchProofsCollected = 0;
+  let matchProofCollectionFailed = 0;
+  try {
+    matchProofsCollected = await collectInventoryMatchProof(store);
+  } catch {
+    matchProofCollectionFailed = 1;
+  }
   return {
     mode: hostedMode[mode],
     registration,
@@ -189,6 +197,8 @@ export async function runHostedScheduled(
     lotwSendQueued: sends.lotw.queued,
     lotwSendFailed: sends.lotw.failed,
     lotwExpiredRetired: sends.lotw.retired,
+    matchProofsCollected,
+    matchProofCollectionFailed,
     qrzShadow: shadows.qrz,
     lotwShadow: shadows.lotw,
   };

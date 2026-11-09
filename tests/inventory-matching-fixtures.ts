@@ -54,14 +54,19 @@ export async function matchingFixture(
     range?: [string, string];
   } = {},
   existing?: Awaited<ReturnType<typeof database>>,
+  schema: "minimal" | "current" = "minimal",
 ) {
-  const f = await fixture(existing);
-  await applyMigration(f.db, "0049_inventory_matching_read_indexes.sql");
-  await applyMigration(f.db, "0050_inventory_match_results.sql");
-  await applyMigration(f.db, "0064_inventory_matching_result_update.sql");
-  await applyMigration(f.db, "0061_inventory_matching_coverage_clocks.sql");
-  await applyMigration(f.db, "0065_inventory_matching_coverage_recovery.sql");
-  await applyMigration(f.db, "0051_inventory_historical_ownership.sql");
+  const f = await fixture(existing, schema);
+  if (schema === "minimal")
+    for (const name of [
+      "0049_inventory_matching_read_indexes.sql",
+      "0050_inventory_match_results.sql",
+      "0064_inventory_matching_result_update.sql",
+      "0061_inventory_matching_coverage_clocks.sql",
+      "0065_inventory_matching_coverage_recovery.sql",
+      "0051_inventory_historical_ownership.sql",
+    ])
+      await applyMigration(f.db, name);
   const provider = options.provider ?? "qrz";
   if (provider === "lotw")
     await f.db

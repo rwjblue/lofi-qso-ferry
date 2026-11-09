@@ -11,6 +11,7 @@ import { InventoryMatchingWork } from "../src/inventory-matching-work.ts";
 import { Store } from "../src/store.ts";
 import { observation } from "./inventory-context-fixtures.ts";
 import { receipt, sourceContact } from "./inventory-matching-fixtures.ts";
+import { invalidationFixture } from "./inventory-matching-invalidations-fixtures.ts";
 import { matchingWorkFixture } from "./inventory-matching-work-fixtures.ts";
 
 async function captured(count = 1) {
@@ -412,6 +413,101 @@ test("source reprojection atomically reopens its completed comparison work", asy
     );
     assert.equal((await f.work.step("a")).kind, "matched");
     assert.equal((await counts(f))?.done, 1);
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("receipt projection pages postpone a stale comparison until the destination settles", async () => {
+  const f = await invalidationFixture({
+    receipts: [receipt("1"), receipt("2", "140000")],
+  });
+  try {
+    const current = async () =>
+      (await f.matches.current("a", "destination", f.selected)).results[0];
+    const expandInvalidations = async () => {
+      for (let turn = 0; turn < 10; turn++) {
+        const result = await f.invalidations.step("a");
+        if (result.kind === "idle") return;
+        assert.equal(result.kind, "expanded");
+      }
+      assert.fail("receipt invalidations did not drain");
+    };
+
+    await f.work.enqueue("a", f.generation, "destination", f.selected);
+    assert.equal((await f.work.step("a")).kind, "matched");
+    assert.equal((await current())?.remote_key, "1");
+
+    await f.fullReceipt([receipt("1", "140000"), receipt("2", "131500")]);
+    await expandInvalidations();
+    assert.equal(await current(), undefined);
+    assert.equal((await counts(f))?.done, 0);
+    assert.deepEqual(await f.work.step("a"), { kind: "idle" });
+
+    await f.projections.project("a", f.generation, "destination", ["1"]);
+    await expandInvalidations();
+    assert.deepEqual(await f.work.step("a"), { kind: "idle" });
+    assert.equal(await current(), undefined);
+    assert.equal((await counts(f))?.done, 0);
+
+    await f.projections.project("a", f.generation, "destination", ["2"]);
+    await expandInvalidations();
+    assert.equal((await f.work.step("a")).kind, "matched");
+    assert.equal((await current())?.remote_key, "2");
+    assert.equal((await current())?.version, 2);
+    assert.equal((await counts(f))?.done, 1);
+    assert.deepEqual(await f.work.step("a"), { kind: "idle" });
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("matching ignores future receipt work and rechecks when it becomes due before the claim", async () => {
+  const f = await matchingWorkFixture({
+    receipts: [receipt("1"), receipt("2", "140000", "W2AW")],
+  });
+  try {
+    const scheduleProjection = (dueAt: number) =>
+      f.db
+        .prepare(
+          "UPDATE comparison_work SET due_at=? WHERE scope_id='destination' AND record_key='2' AND facet='receipt' AND completed_version<work_version",
+        )
+        .bind(dueAt)
+        .run();
+    await f.fullReceipt([receipt("1"), receipt("2", "160000", "W2AW")]);
+    assert.equal(
+      (await scheduleProjection(Date.now() + 300_000)).meta.changes,
+      1,
+    );
+    await f.work.enqueue("a", f.generation, "destination", f.selected);
+
+    let raced = false;
+    const db = new Proxy(f.db, {
+      get(target, property) {
+        if (property === "batch")
+          return async (statements: D1PreparedStatement[]) => {
+            if (!raced) {
+              raced = true;
+              assert.equal((await scheduleProjection(0)).meta.changes, 1);
+            }
+            return target.batch(statements);
+          };
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const work = new InventoryMatchingWork(new Store(db, f.store.keys));
+    assert.equal((await work.step("a")).kind, "idle");
+    assert.equal(raced, true);
+    assert.equal((await counts(f))?.done, 0);
+
+    await scheduleProjection(Date.now() + 300_000);
+    assert.equal((await f.work.step("a")).kind, "matched");
+    assert.equal(
+      (await f.matches.current("a", "destination", f.selected)).results[0]
+        ?.remote_key,
+      "1",
+    );
   } finally {
     await f.mf.dispose();
   }

@@ -347,6 +347,27 @@ bytes** before collection. The corresponding page census attributes
 to inventory/projection payload tables. This again favors proof retention
 and index density work before a payload backend change.
 
+## Historical frequency tolerance
+
+The historical matcher accepts valid reported transmit and receive
+frequencies within 100 Hz after it establishes unique candidacy. The
+wire payload and exact receipt checks keep their original precision.
+Migration 0126 schedules bounded rechecks through the active pair census.
+
+A write-locked replay rechecked 705 held decisions from the captured
+personal log. It adopted eight additional QRZ contacts and five
+additional LoTW contacts. Another ten QRZ frequency differences still
+had coordinate conflicts. The replay kept the existing destination
+identities, credential envelopes, checkpoints and coverage and made
+zero vendor requests.
+
+Grid precision prefixes remain compatible. Conflicting grid values
+still need review. ARRL documents corrected Station Location resubmission
+and award-credit constraints. QRZ documents replacing a record with a
+single-record INSERT and warns about the effect on confirmation status.
+[ARRL grid corrections](https://lotw.arrl.org/lotw-help/updatingconfirmations/)
+· [QRZ replacement](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html)
+
 ## Superseded comparison proof retention
 
 [Migration 0105](../migrations/0105_inventory_match_proof_retirement.sql)

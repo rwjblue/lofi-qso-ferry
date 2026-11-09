@@ -7,6 +7,7 @@ import {
   matchingPairLeaseScope,
 } from "../src/inventory-matching-pairs.ts";
 import { Store } from "../src/store.ts";
+import { applyMigration } from "./helpers.ts";
 import { observation } from "./inventory-context-fixtures.ts";
 import { sourceContact } from "./inventory-matching-fixtures.ts";
 import { pairPagesFixture } from "./inventory-matching-pairs-fixtures.ts";
@@ -157,6 +158,33 @@ test("an empty source census finishes without inventing matching or delivery rec
         )?.n,
         0,
       );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("a historical policy migration resumes bounded census without rewriting published results", async () => {
+  const f = await pairPagesFixture();
+  try {
+    assert.equal((await f.pairs.step("a")).kind, "enrolled");
+    assert.equal((await f.work.step("a")).kind, "matched");
+    assert.equal((await f.pairs.step("a")).kind, "idle");
+    const result = () => f.db.prepare("SELECT * FROM match_results").first();
+    const published = await result();
+    assert.ok(published);
+
+    await applyMigration(
+      f.db,
+      "0126_inventory_historical_frequency_recheck.sql",
+    );
+    assert.deepEqual(await result(), published);
+    assert.equal((await f.work.step("a")).kind, "idle");
+    const page = await f.pairs.step("a");
+    assert.ok(page.kind === "enrolled");
+    assert.equal(page.records, 1);
+    assert.equal(page.complete, true);
+    assert.equal((await f.work.step("a")).kind, "matched");
+    assert.equal((await f.work.step("a")).kind, "idle");
   } finally {
     await f.mf.dispose();
   }

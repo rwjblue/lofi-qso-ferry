@@ -11,6 +11,34 @@ const lotwFields = new Set(
   ),
 );
 
+function frequencyParts(value: string | undefined) {
+  if (!value || !/^\d+(?:\.\d+)?$/.test(value)) return null;
+  const magnitude = Number(value);
+  if (!Number.isFinite(magnitude) || magnitude <= 0) return null;
+  const [megahertz, fraction = ""] = value.split(".");
+  return {
+    hertz:
+      BigInt(megahertz.replace(/^0+(?=\d)/, "")) * 1_000_000n +
+      BigInt(fraction.slice(0, 6).padEnd(6, "0")),
+    remainder: fraction.slice(6).replace(/0+$/, ""),
+  };
+}
+
+function withinHistoricalFrequency(
+  source: string | undefined,
+  remote: string | undefined,
+): boolean {
+  const local = frequencyParts(source);
+  const observed = frequencyParts(remote);
+  if (!local || !observed) return false;
+  const delta = local.hertz - observed.hertz;
+  // Use the exact decimal remainder at the inclusive boundary. Converting
+  // the whole comparison to floating point can round a value across it.
+  if (delta === 100n) return local.remainder <= observed.remainder;
+  if (delta === -100n) return local.remainder >= observed.remainder;
+  return delta > -100n && delta < 100n;
+}
+
 /** Run only after precise identity candidacy has been established. Temporary
  * identity alignment permits operating-detail comparison without changing the
  * original records, receipt identity or source projection. No adoption proof. */
@@ -19,19 +47,6 @@ export function historicalOperatingDetails(
   source: AdifRecord,
   remote: AdifRecord,
 ): QrzMatch {
-  if (vendor === "lotw")
-    for (const field of ["FREQ", "FREQ_RX"]) {
-      const frequency = source[field];
-      if (
-        frequency &&
-        (!/^\d+(?:\.\d+)?$/.test(frequency) ||
-          (frequency.split(".")[1] ?? "").replace(/0+$/, "").length > 5)
-      )
-        return {
-          state: "history_ambiguous",
-          reason: `LoTW query cannot establish the transmitted precision of ${field}`,
-        };
-    }
   const operating =
     vendor === "lotw"
       ? Object.fromEntries(
@@ -51,5 +66,8 @@ export function historicalOperatingDetails(
   }
   if (historicalGridsCompatible(source.MY_GRIDSQUARE, remote.MY_GRIDSQUARE))
     operating.MY_GRIDSQUARE = remote.MY_GRIDSQUARE;
+  for (const field of ["FREQ", "FREQ_RX"])
+    if (withinHistoricalFrequency(source[field], remote[field]))
+      operating[field] = remote[field];
   return matchQrzHistory(operating, [remote]);
 }

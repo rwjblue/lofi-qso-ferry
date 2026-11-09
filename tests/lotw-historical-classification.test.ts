@@ -138,9 +138,9 @@ test("valid nested grids match in either precision direction while missing or co
     classify(source, [{ ...remote, FREQ: "14.075" }]).state,
     "history_mismatch",
   );
-  assert.match(
-    classify({ ...source, FREQ: "14.074001" }).reason!,
-    /transmitted precision/,
+  assert.equal(
+    classify({ ...source, FREQ: "14.074001" }).state,
+    "adopted_existing",
   );
 });
 

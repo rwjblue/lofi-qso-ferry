@@ -253,12 +253,12 @@ export default {
   ) {
     context.waitUntil(
       runHostedScheduled(env).then((result) => {
-        console.log(JSON.stringify({ event: "ferry_tick", ...result }));
+        console.log({ event: "ferry_tick", ...result });
       }),
     );
   },
   async queue(batch: MessageBatch<unknown>, env: Env) {
     const report = await runHostedInventoryQueue(env, batch);
-    console.log(JSON.stringify({ event: "ferry_inventory_queue", ...report }));
+    console.log({ event: "ferry_inventory_queue", ...report });
   },
 } satisfies ExportedHandler<Env>;

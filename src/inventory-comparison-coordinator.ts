@@ -59,6 +59,7 @@ const phases = [
   "match",
   "selected",
 ] as const;
+export type ComparisonPhase = (typeof phases)[number];
 export const INVENTORY_COMPARISON_PHASE_COUNT = phases.length;
 const matchPhase = phases.indexOf("match");
 const identifier = (value: unknown): value is string =>
@@ -412,7 +413,12 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
   /** A delivery shares the lease and re-admits every turn against the live outbox. */
   async stepWakeup(
     hint: ComparisonWakeupHint,
-    options: { maxSteps: number; deadline: number; onStep?: () => void },
+    options: {
+      maxSteps: number;
+      deadline: number;
+      onStep?: () => void;
+      onPhase?: (phase: ComparisonPhase) => void;
+    },
   ) {
     if (
       !Number.isSafeInteger(options.maxSteps) ||
@@ -486,7 +492,7 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
         }
         if (!lease || frame.lease_current === 0)
           return { kind: "deferred" as const, retryAt: Date.now() + 1000 };
-        const turn = await this.advance(tenant, frame, lease);
+        const turn = await this.advance(tenant, frame, lease, options.onPhase);
         if (turn.kind === "deferred")
           return { kind: "deferred" as const, retryAt: Date.now() + 1000 };
         options.onStep?.();
@@ -507,6 +513,7 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
     tenant: string,
     current: ControlSnapshot,
     lease: Lease,
+    onPhase?: (phase: ComparisonPhase) => void,
   ) {
     if (current.phase_count !== phases.length)
       throw new Error("comparison_coordinator_unavailable");
@@ -534,6 +541,7 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
     }
     const pendingGeneration = current.pending_generation;
     if (!current.active_generation && !pendingGeneration) {
+      onPhase?.("build");
       const domain = await new InventoryComparisonGenerations(this.store).begin(
         tenant,
       );
@@ -557,6 +565,7 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
       >;
       do {
         phase = phases[cursor];
+        onPhase?.(phase);
         result = await this.checkPhase(
           tenant,
           control,

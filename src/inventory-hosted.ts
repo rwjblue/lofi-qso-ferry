@@ -359,6 +359,9 @@ export async function runHostedInventoryQueue(
     {
       maxTurns: 1,
       maxStepsPerWakeup: MAX_COMPARISON_STEPS_PER_WAKEUP,
+      onFailure(failure) {
+        console.error({ event: "ferry_comparison_failure", ...failure });
+      },
       async afterPublish() {
         inventoryAfterComparison += await publishInventoryWakeups(
           runner.runs,

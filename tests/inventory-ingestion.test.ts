@@ -147,6 +147,37 @@ test("bulk publication encrypts source bodies and commits vector progress withou
   }
 });
 
+test("publication bounds preparation by the D1 clock without changing observation time", async () => {
+  const f = await fixture();
+  try {
+    const page = await f.page([qso("q")], {
+      requestStartedAt: Date.now() - 1000,
+    });
+    const workerPreparedAt = page.preparedAt + 60_000;
+    await f.inventory.publish({ ...page, preparedAt: workerPreparedAt });
+    const timestamps = await f.db
+      .prepare(
+        `SELECT p.request_started_at,p.prepared_at,d.created_at,f.last_observed_at
+         FROM ingestion_pages p JOIN inventory_record_facets f ON (f.tenant,f.last_page_id)=(p.tenant,p.page_id)
+         JOIN inventory_payloads d ON (d.tenant,d.scope_id,d.payload_id)=(f.tenant,f.scope_id,f.payload_id)`,
+      )
+      .first<{
+        request_started_at: number;
+        prepared_at: number;
+        created_at: number;
+        last_observed_at: number;
+      }>();
+    assert.ok(timestamps);
+    assert.equal(timestamps.request_started_at, page.input.requestStartedAt);
+    assert.equal(timestamps.last_observed_at, page.input.requestStartedAt);
+    assert.ok(timestamps.prepared_at >= timestamps.request_started_at);
+    assert.ok(timestamps.prepared_at < workerPreparedAt);
+    assert.equal(timestamps.created_at, timestamps.prepared_at);
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
 test("stable polls reuse ciphertext, newer metadata leaves semantic work stable, and stale data cannot refresh a witness", async () => {
   const f = await fixture();
   try {

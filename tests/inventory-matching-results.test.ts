@@ -7,31 +7,43 @@ import {
 } from "../src/inventory-matching-workspace.ts";
 import { canonical, sha256 } from "../src/security.ts";
 import { Store } from "../src/store.ts";
+import { database } from "./helpers.ts";
 import { observation } from "./inventory-context-fixtures.ts";
 import {
   matchingFixture,
   receipt,
   sourceContact,
 } from "./inventory-matching-fixtures.ts";
+import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
 async function prepared(options: Parameters<typeof matchingFixture>[0] = {}) {
-  const f = await matchingFixture(options);
-  const lease = await f.store.claim(
-    "a",
-    "matching:destination",
-    Date.now(),
-    60_000,
-  );
-  assert.ok(lease);
-  const selected = f.sources.map((row) => ({ scope: "source", key: row.key }));
-  const page = await f.workspace.prepare("a", "destination", selected);
-  return {
-    ...f,
-    lease,
-    selected,
-    page,
-    matches: new InventoryMatchingResults(f.store),
-  };
+  const runtime = await database();
+  try {
+    await applyAdditionalMigrations(runtime.db);
+    const f = await matchingFixture(options, runtime, "current");
+    const lease = await f.store.claim(
+      "a",
+      "matching:destination",
+      Date.now(),
+      60_000,
+    );
+    assert.ok(lease);
+    const selected = f.sources.map((row) => ({
+      scope: "source",
+      key: row.key,
+    }));
+    const page = await f.workspace.prepare("a", "destination", selected);
+    return {
+      ...f,
+      lease,
+      selected,
+      page,
+      matches: new InventoryMatchingResults(f.store),
+    };
+  } catch (error) {
+    await runtime.mf.dispose();
+    throw error;
+  }
 }
 async function resign(page: PreparedInventoryMatchingSnapshot) {
   const { digest: _digest, ...input } = page;
@@ -122,6 +134,36 @@ test("empty candidate sets publish inventory absence and a first zero-hit bucket
       (await f.matches.current("a", "destination", f.selected)).results.length,
       0,
     );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("indexed native match checks reject an altered token shape and malformed coverage keys", async () => {
+  const f = await prepared({ receipts: [] });
+  try {
+    const wrongShape = structuredClone(f.page);
+    const token = wrongShape.lookups[0].probe.buckets.find(
+      (row) => row.keyClass === "call_and_time",
+    );
+    assert.ok(token && token.version === 0);
+    token.keyClass = "time_only";
+    await resign(wrongShape);
+    await assert.rejects(
+      f.matches.publish(wrongShape, f.lease),
+      /inventory match probe incomplete/,
+    );
+    await empty(f);
+
+    const badKey = structuredClone(f.page);
+    badKey.results[0].coverage = ["invalid coverage key"];
+    await resign(badKey);
+    await assert.rejects(
+      f.matches.publish(badKey, f.lease),
+      /inventory match result requirements incomplete/,
+    );
+    await empty(f);
+    assert.equal((await f.matches.publish(f.page, f.lease)).records, 1);
   } finally {
     await f.mf.dispose();
   }

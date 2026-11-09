@@ -248,6 +248,34 @@ The writer lookup also reads the wrapped comparison key in the same
 snapshot as the generation pointers and format. Key identity and
 rewrapping tests passed, along with the existing publication fences.
 
+### Native match admission
+
+[Migration 0117](../migrations/0117_inventory_match_guard_indexed_checks.sql)
+counts each probe's token classes in one indexed pass. It also seeks
+required coverage by the complete partition key and checks the exact
+stored reference. Candidate closure and the commit-time authority
+check still run. The admission trigger keeps the recovery, coverage
+and work checks ahead of the general authority check.
+
+Two private copies of the captured comparison generation republished
+the same 400 classifications. Each provider contributed five matched
+cohorts and five absence cohorts of 20 contacts. Classification,
+selected remote record, statement count and rows written matched
+between copies. The credential, coverage and historical association
+audits passed, with zero external requests and uploads.
+
+| Captured publication | Original rows read | Indexed rows read |
+| -------------------- | -----------------: | ----------------: |
+| LoTW                 |            111,391 |           107,263 |
+| QRZ                  |            115,128 |           111,468 |
+
+In the separate 1,000-contact fully matched synthetic fixture, the
+native admission statement read 227,871 rows before the migration
+and 203,558 after it. The full classification stage read 1,234,841
+and 1,209,786 rows respectively. Both runs published all 1,000
+matches using 4,738 D1 calls and 6,288 statements. The figures
+measure local database work.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

@@ -41,6 +41,15 @@ export interface LotwQuery {
   receivedSince?: string;
   workedCallsign?: string;
 }
+export interface LotwConfirmationQuery
+  extends Omit<LotwQuery, "receivedSince"> {
+  confirmedSince: string;
+}
+export interface LotwConfirmationReport {
+  records: AdifRecord[];
+  confirmedThrough: string | null;
+  complete: true;
+}
 export interface LotwAccountReceiptSelection {
   kind: "account_received";
   initialReceivedSince: string;
@@ -110,6 +119,52 @@ function validDate(value: string): boolean {
 function validReportCallsign(value: string): boolean {
   return !/[^A-Za-z0-9/]/.test(value) && validCallsign(value.toUpperCase());
 }
+
+function datedReportFilters(selection: LotwQuery) {
+  if (
+    !validDate(selection.startDate) ||
+    !validDate(selection.endDate) ||
+    selection.endDate < selection.startDate ||
+    Date.parse(selection.endDate) - Date.parse(selection.startDate) >
+      31 * 86_400_000
+  )
+    throw new Error(
+      "LoTW query requires a date partition of at most 32 inclusive days",
+    );
+  if (
+    [selection.stationCallsign, selection.workedCallsign].some(
+      (value) =>
+        value !== undefined && value !== "" && !validReportCallsign(value),
+    )
+  )
+    throw new Error("Invalid LoTW query callsign");
+  return {
+    qso_startdate: selection.startDate,
+    qso_enddate: selection.endDate,
+    ...(selection.stationCallsign && {
+      qso_owncall: selection.stationCallsign,
+    }),
+    ...(selection.workedCallsign && { qso_callsign: selection.workedCallsign }),
+  };
+}
+
+function requireDatedScope(records: AdifRecord[], selection: LotwQuery) {
+  const startDate = selection.startDate.replaceAll("-", "");
+  const endDate = selection.endDate.replaceAll("-", "");
+  const station = selection.stationCallsign?.toUpperCase();
+  const worked = selection.workedCallsign?.toUpperCase();
+  if (
+    records.some(
+      (record) =>
+        record.QSO_DATE < startDate ||
+        record.QSO_DATE > endDate ||
+        (station && record.STATION_CALLSIGN.toUpperCase() !== station) ||
+        (worked && record.CALL.toUpperCase() !== worked),
+    )
+  )
+    throw new Error("LoTW report does not match the requested scope");
+}
+
 function validReportIdentity(record: AdifRecord): boolean {
   const date = record.QSO_DATE ?? "";
   const mode = record.APP_LOTW_MODE || record.MODE || "";
@@ -167,10 +222,7 @@ export async function boundedResponse(
     cancelBestEffort(reader);
   }
 }
-export function parseLotwReport(
-  input: string,
-  limit = MAX_RESPONSE,
-): LotwReport {
+function parseReportDocument(input: string, limit: number) {
   if (!/<EOH>/i.test(input) || !/<APP_LOTW_EOF>\s*$/i.test(input))
     throw new Error("Incomplete or non-ADIF LoTW report");
   const document = parseAdif(input.replace(/<APP_LOTW_EOF>\s*$/i, ""), limit);
@@ -187,10 +239,19 @@ export function parseLotwReport(
     )
       throw new Error("LoTW report has invalid identity/confirmation fields");
   }
+  return document;
+}
+
+export function parseLotwReport(
+  input: string,
+  limit = MAX_RESPONSE,
+): LotwReport {
+  const document = parseReportDocument(input, limit);
   const receivedThrough = document.header.APP_LOTW_LASTQSORX ?? null;
   if (
-    receivedThrough &&
-    !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(receivedThrough)
+    document.header.APP_LOTW_LASTQSL !== undefined ||
+    (receivedThrough &&
+      !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(receivedThrough))
   )
     throw new Error("Invalid LoTW receive checkpoint");
   return { records: document.records, receivedThrough, complete: true };
@@ -235,16 +296,8 @@ export class LotwClient {
     }
   }
   async query(partition: LotwQuery): Promise<LotwReport> {
-    if (
-      !validDate(partition.startDate) ||
-      !validDate(partition.endDate) ||
-      partition.endDate < partition.startDate ||
-      Date.parse(partition.endDate) - Date.parse(partition.startDate) >
-        31 * 86_400_000
-    )
-      throw new Error(
-        "LoTW query requires a date partition of at most 32 inclusive days",
-      );
+    partition = { ...partition };
+    const dated = datedReportFilters(partition);
     if (
       partition.receivedSince &&
       !/^\d{4}-\d{2}-\d{2}(?: \d{2}:\d{2}:\d{2})?$/.test(
@@ -252,42 +305,54 @@ export class LotwClient {
       )
     )
       throw new Error("Invalid LoTW receive checkpoint");
-    if (
-      [partition.stationCallsign, partition.workedCallsign].some(
-        (value) =>
-          value !== undefined && value !== "" && !validReportCallsign(value),
-      )
-    )
-      throw new Error("Invalid LoTW query callsign");
-    const filters = {
-      qso_qsorxsince: partition.receivedSince ?? "1900-01-01",
-      qso_startdate: partition.startDate,
-      qso_enddate: partition.endDate,
-      ...(partition.stationCallsign && {
-        qso_owncall: partition.stationCallsign,
+    const report = parseLotwReport(
+      await this.readReport({
+        qso_qsorxsince: partition.receivedSince ?? "1900-01-01",
+        ...dated,
       }),
-      ...(partition.workedCallsign && {
-        qso_callsign: partition.workedCallsign,
-      }),
-    };
-    const startDate = partition.startDate.replaceAll("-", "");
-    const endDate = partition.endDate.replaceAll("-", "");
-    const stationCallsign = partition.stationCallsign?.toUpperCase();
-    const workedCallsign = partition.workedCallsign?.toUpperCase();
-    const report = await this.readReport(filters);
-    // A contradictory row makes the entire report unavailable.
-    if (
-      report.records.some(
-        (record) =>
-          record.QSO_DATE < startDate ||
-          record.QSO_DATE > endDate ||
-          (stationCallsign &&
-            record.STATION_CALLSIGN.toUpperCase() !== stationCallsign) ||
-          (workedCallsign && record.CALL.toUpperCase() !== workedCallsign),
-      )
-    )
-      throw new Error("LoTW report does not match the requested scope");
+    );
+    requireDatedScope(report.records, partition);
     return report;
+  }
+
+  /** QSL reads always carry their own bounded date selection and cursor. */
+  async queryConfirmations(
+    selection: LotwConfirmationQuery,
+  ): Promise<LotwConfirmationReport> {
+    selection = { ...selection };
+    const { confirmedSince } = selection;
+    if (!validLotwReceiveTime(confirmedSince))
+      throw new Error("Invalid LoTW confirmation checkpoint");
+    const { header, records } = parseReportDocument(
+      await this.readReport({
+        ...datedReportFilters(selection),
+        qso_qsl: "yes",
+        qso_qslsince: confirmedSince,
+      }),
+      MAX_RESPONSE,
+    );
+    requireDatedScope(records, selection);
+    const through = header.APP_LOTW_LASTQSL ?? null;
+    if (
+      header.APP_LOTW_LASTQSORX !== undefined ||
+      (through !== null && !validLotwReceiveTime(through)) ||
+      (records.length &&
+        (!through ||
+          records[0].APP_LOTW_RXQSL !== through ||
+          records.some(
+            ({ QSL_RCVD, APP_LOTW_RXQSL }) =>
+              QSL_RCVD !== "Y" ||
+              !validLotwReceiveTime(APP_LOTW_RXQSL) ||
+              APP_LOTW_RXQSL < confirmedSince ||
+              APP_LOTW_RXQSL > through,
+          )))
+    )
+      throw new Error("Invalid LoTW confirmation checkpoint");
+    return {
+      records,
+      confirmedThrough: records.length ? through : null,
+      complete: true,
+    };
   }
 
   /** Account receipt deltas require a receive timestamp and carry no date coverage. */
@@ -297,9 +362,10 @@ export class LotwClient {
   ): Promise<LotwReport> {
     if (!validLotwReceiveTime(receivedSince))
       throw new Error("Invalid LoTW receive checkpoint");
-    const report = await this.readReport(
-      { qso_qsorxsince: receivedSince },
-      largeReport ? LARGE_ACCOUNT_RESPONSE : MAX_RESPONSE,
+    const limit = largeReport ? LARGE_ACCOUNT_RESPONSE : MAX_RESPONSE;
+    const report = parseLotwReport(
+      await this.readReport({ qso_qsorxsince: receivedSince }, limit),
+      limit,
     );
     const through = report.receivedThrough;
     if (
@@ -320,7 +386,7 @@ export class LotwClient {
   private async readReport(
     filters: Record<string, string>,
     limit = MAX_RESPONSE,
-  ): Promise<LotwReport> {
+  ): Promise<string> {
     if (!this.credentials)
       throw new Error("LoTW query credentials are not configured");
     const parameters = new URLSearchParams({
@@ -365,7 +431,7 @@ export class LotwClient {
       )
     )
       throw new LotwLoginError("credentials");
-    return parseLotwReport(body, limit);
+    return body;
   }
   async certificateStatus(serial: string): Promise<CertificateStatus> {
     if (!/^\d{1,50}$/.test(serial)) return "unknown";

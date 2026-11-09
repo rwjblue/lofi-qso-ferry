@@ -588,7 +588,15 @@ after both plans are durably registered. Coverage comes from completed
 reports and applies to the selected date ranges. See the
 [calendar evidence](evidence-inventory-adoption-scheduling.md#hosted-calendar-enrollment-and-overflow-recovery).
 
-Track confirmation updates separately using the QSL stream. This is new adapter work: the current query implementation requests `qso_qsl=no`. A confirmation-only report cannot replace receipt inventory. Empty reports do not justify advancing a checkpoint to local wall time unless the contract establishes that boundary. Report precision and missing fields remain visible to matching and receipt verification. See the [LoTW query API](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/).
+Track confirmation updates separately using the QSL stream. The client can
+read a bounded contact-date selection with `qso_qsl=yes` and an explicit
+inclusive `qso_qslsince` timestamp. A nonempty report returns a separate
+`APP_LoTW_LASTQSL` watermark, and an empty report leaves the cursor in place.
+Native confirmation scheduling, checkpoint persistence and correlation with
+receipt records remain open. Confirmation observations can enrich existing
+matches after correlation, while receipt reports continue to establish
+destination coverage. See the [LoTW query API](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
+and [bounded confirmation read](evidence-inventory-fresh-start.md#lotw-confirmation-read).
 
 ### Commit and recovery
 

@@ -38,6 +38,114 @@ const record = {
 const report = (records: AdifRecord[] = [record]) =>
   `<PROGRAMID:4>LoTW<APP_LoTW_LASTQSORX:19>2026-10-22 13:00:00<APP_LoTW_NUMREC:${String(records.length).length}>${records.length}<EOH>${records.map(serializeAdifRecord).join("\n")}<APP_LoTW_EOF>`;
 
+test("LoTW confirmation reads use an independent cursor and accept inclusive timestamp ties", async () => {
+  const confirmedSince = "2026-10-22 13:00:00";
+  const confirmed = {
+    ...record,
+    QSL_RCVD: "Y",
+    APP_LOTW_RXQSL: confirmedSince,
+    APP_LOTW_RXQSO: "2026-10-22 12:59:00",
+  };
+  const records = [confirmed, { ...confirmed, CALL: "K1XYZ" }];
+  const confirmationReport = report(records).replace("LASTQSORX", "LASTQSL");
+  const client = new LotwClient(
+    { username: "fixture", password: "fixture" },
+    {
+      fetcher: async (input) => {
+        const { searchParams } = new URL(String(input));
+        assert.equal(searchParams.get("qso_qsl"), "yes");
+        assert.equal(searchParams.get("qso_qslsince"), confirmedSince);
+        assert.equal(searchParams.get("qso_qsorxsince"), null);
+        assert.equal(searchParams.get("qso_owncall"), "W1AW");
+        assert.equal(searchParams.get("qso_startdate"), "2026-10-22");
+        assert.equal(searchParams.get("qso_enddate"), "2026-10-22");
+        return new Response(confirmationReport);
+      },
+    },
+  );
+  const confirmedReport = await client.queryConfirmations({
+    startDate: "2026-10-22",
+    endDate: "2026-10-22",
+    stationCallsign: "W1AW",
+    confirmedSince,
+  });
+  assert.equal(confirmedReport.confirmedThrough, confirmedSince);
+  assert.equal(confirmedReport.complete, true);
+  assert.deepEqual(
+    confirmedReport.records.map((row) => ({ ...row })),
+    records,
+  );
+  assert.throws(
+    () => parseLotwReport(confirmationReport),
+    /Invalid LoTW receive checkpoint/,
+  );
+});
+
+test("LoTW confirmation reports reject receipt evidence and keep the cursor on empty results", async () => {
+  const selection = {
+    startDate: "2026-10-22",
+    endDate: "2026-10-22",
+    confirmedSince: "2026-10-22 13:00:00",
+  };
+  const confirmed = {
+    ...record,
+    QSL_RCVD: "Y",
+    APP_LOTW_RXQSL: selection.confirmedSince,
+  };
+  let response = report([]).replace("LASTQSORX", "LASTQSL");
+  let requests = 0;
+  const client = new LotwClient(
+    { username: "fixture", password: "fixture" },
+    {
+      fetcher: async () => {
+        requests++;
+        return new Response(response);
+      },
+    },
+  );
+  assert.deepEqual(await client.queryConfirmations(selection), {
+    records: [],
+    confirmedThrough: null,
+    complete: true,
+  });
+  for (const invalid of [
+    report([confirmed]),
+    report([{ ...confirmed, QSL_RCVD: "N" }]).replace("LASTQSORX", "LASTQSL"),
+    report([{ ...confirmed, APP_LOTW_RXQSL: "2026-10-22 12:59:59" }]).replace(
+      "LASTQSORX",
+      "LASTQSL",
+    ),
+    report([
+      confirmed,
+      { ...confirmed, APP_LOTW_RXQSL: "2026-10-22 13:00:01" },
+    ]).replace("LASTQSORX", "LASTQSL"),
+  ]) {
+    response = invalid;
+    await assert.rejects(
+      client.queryConfirmations(selection),
+      /Invalid LoTW confirmation checkpoint/,
+    );
+  }
+  response = report([{ ...confirmed, QSO_DATE: "20261021" }]).replace(
+    "LASTQSORX",
+    "LASTQSL",
+  );
+  await assert.rejects(
+    client.queryConfirmations(selection),
+    /does not match the requested scope/,
+  );
+  const before = requests;
+  await assert.rejects(
+    client.queryConfirmations({ ...selection, confirmedSince: "" }),
+    /Invalid LoTW confirmation checkpoint/,
+  );
+  await assert.rejects(
+    client.queryConfirmations({ ...selection, endDate: "2026-11-30" }),
+    /requires a date partition/,
+  );
+  assert.equal(requests, before);
+});
+
 test("LoTW preserves typed transport deferrals for query, certificate status and upload", async () => {
   const deferred = new VendorDeferredError(Date.now() + 300000);
   const client = new LotwClient(

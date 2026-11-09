@@ -511,6 +511,19 @@ ordered observations. STATUS calls dropped from 18 to 10, so total
 requests fell from 36 to 28. This replay used local responses and
 excluded quota delays and catch-up.
 
+## LoTW confirmation read
+
+One live QSL report requested a single contact date, own callsign and worked
+callsign from the confirmation timestamp of an archived receipt. LoTW returned
+HTTP 200 and one matching confirmation at the inclusive timestamp. The
+1,024-byte response took 1.34 seconds including local request admission.
+The private copy retained its receipt coverage, checkpoints, stream jobs
+and linked credentials. The trial made zero uploads.
+
+This qualifies the bounded client read. Native confirmation scheduling,
+checkpoint persistence and correlation with receipt inventory remain open.
+[ARRL report documentation](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
+
 ## LoTW account receipt deltas
 
 ARRL's receipt report accepts an explicit `qso_qsorxsince` with optional

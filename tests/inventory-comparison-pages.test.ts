@@ -1,16 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { AdifRecord } from "../src/adif.ts";
 import { InventoryComparisonGenerations } from "../src/inventory-comparison-generations.ts";
 import { inventoryComparisonLookup } from "../src/inventory-comparison-keys.ts";
 import {
-  inventoryComparisonHint,
   InventoryComparisonPages,
+  inventoryComparisonHint,
 } from "../src/inventory-comparison-pages.ts";
 import {
   InventoryIngestion,
   type InventoryObservation,
   type InventoryPageInput,
 } from "../src/inventory-ingestion.ts";
+import { qrzInventoryObservations } from "../src/inventory-observations.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
 
 const at = Date.parse("2026-11-08T12:30:00Z");
@@ -336,6 +338,100 @@ test("stable observations and metadata-only changes do not invalidate matching b
       )?.work_version,
       1,
     );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("QRZ refreshes raw download metadata without queuing comparison work", async () => {
+  const f = await fixture();
+  try {
+    await f.inventory.initialize(
+      {
+        tenant: "a",
+        scope: "book",
+        connection: "destination",
+        provider: "qrz",
+        logicalIdentity: "book",
+        adapterBinding: "test-v1",
+        ordering: "serialized",
+      },
+      "sync",
+      "book-v1",
+    );
+    const lease = await f.store.claim(
+      "a",
+      "inventory:book",
+      Date.now(),
+      90_000,
+    );
+    assert.ok(lease);
+    const publish = async (body: AdifRecord, legacy = false) => {
+      const stream = await f.inventory.snapshot("a", "book", "sync");
+      assert.ok(stream);
+      const observations = await qrzInventoryObservations([body]);
+      if (legacy) delete observations[0].semantic;
+      return f.inventory.publish(
+        await f.inventory.prepare({
+          pageId: crypto.randomUUID(),
+          stream,
+          lease,
+          requestStartedAt: Date.now(),
+          facet: "receipt",
+          origin: "historical",
+          nextResume: { version: stream.version + 1 },
+          observations,
+        }),
+      );
+    };
+    const state = () =>
+      f.db
+        .prepare(
+          `SELECT f.raw_version,f.semantic_version,w.work_version,b.version AS bucket_version FROM inventory_record_facets f
+           JOIN comparison_work w USING(tenant,scope_id,record_key,facet)
+           JOIN comparison_index i USING(tenant,generation_id,scope_id,record_key,facet)
+           JOIN bucket_versions b USING(tenant,generation_id,key_class,bucket_hash)
+           WHERE f.scope_id='book'`,
+        )
+        .first();
+    const receipt = {
+      APP_QRZLOG_LOGID: "123",
+      CALL: "W1AW",
+      QSO_DATE: "20261108",
+      TIME_ON: "123000",
+      BAND: "20M",
+      MODE: "CW",
+      QRZCOM_QSO_DOWNLOAD_DATE: "20261108",
+    };
+    await publish(receipt, true);
+    assert.equal((await publish(receipt)).changed, 0);
+    assert.deepEqual(await state(), {
+      raw_version: 1,
+      semantic_version: 2,
+      work_version: 2,
+      bucket_version: 2,
+    });
+    const downloaded = { ...receipt, QRZCOM_QSO_DOWNLOAD_DATE: "20261109" };
+    const refreshed = await publish(downloaded);
+    assert.equal(refreshed.changed, 1);
+    assert.deepEqual(refreshed.resume, { version: 3 });
+    assert.deepEqual(
+      await f.inventory.body("a", "book", "qso", "123", "receipt"),
+      downloaded,
+    );
+    assert.deepEqual(await state(), {
+      raw_version: 2,
+      semantic_version: 2,
+      work_version: 2,
+      bucket_version: 2,
+    });
+    await publish({ ...downloaded, BAND: "40M" });
+    assert.deepEqual(await state(), {
+      raw_version: 3,
+      semantic_version: 3,
+      work_version: 3,
+      bucket_version: 3,
+    });
   } finally {
     await f.mf.dispose();
   }

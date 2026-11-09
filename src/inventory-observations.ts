@@ -133,6 +133,8 @@ export async function qrzInventoryObservations(
       typeof id === "string" && /^\d{1,64}$/.test(id),
       "invalid_qrz_inventory_logid",
     );
+    // QRZ stamps the download date on reads. Keep it in the raw receipt only.
+    const { QRZCOM_QSO_DOWNLOAD_DATE: _downloadDate, ...semantic } = body;
     observations.push({
       family: "qso",
       key: id,
@@ -141,6 +143,7 @@ export async function qrzInventoryObservations(
       revision: await sha256(canonical(body)),
       order: null,
       body,
+      semantic,
     });
   }
   return observations;

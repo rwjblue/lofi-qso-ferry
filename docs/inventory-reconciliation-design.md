@@ -608,6 +608,11 @@ A clear review makes the member eligible for a fresh source proof. The
 [personal-log review](evidence-inventory-delivery-review.md) records the
 replay costs and native invalidation behavior.
 
+The [LoFi source evidence trial](evidence-inventory-source-proof.md)
+qualifies shared dependency snapshots and a canonical forward drain on
+retained live data. Durable witness collection and expiring proof
+publication are the next preparation work.
+
 Load source data, routing, credentials, templates, ownership and match results for a bounded cohort. Reuse the source-proof coordinator's shared collection and final canonical drain while retaining each member's original generation, proof identity and expiry. Stage immutable per-QSO attempts with the existing individually guarded cohort transaction.
 
 Implement source/adoption/proof guards directly against the new inventory and projection model. Existing guards that join `source_work` and unexpired `kind='source'` bodies cannot simply be copied unchanged. Preserve their correctness conditions, original observation metadata and ordinary fresh proof acquisition without a legacy compatibility materialization. Retaining or resealing source data is not a new source observation.

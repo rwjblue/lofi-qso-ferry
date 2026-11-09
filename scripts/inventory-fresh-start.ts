@@ -113,7 +113,7 @@ async function priorWork(store: Store) {
   };
 }
 
-async function privateSnapshot(directory: string) {
+export async function privateSnapshot(directory: string) {
   const source = await realpath(directory);
   const keyFile = join(source, "keys.json");
   const [directoryInfo, keyInfo, databaseInfo] = await Promise.all([
@@ -130,6 +130,18 @@ async function privateSnapshot(directory: string) {
   )
     throw new Error("inventory_fresh_start_requires_private_snapshot");
   return source;
+}
+
+export async function requireFreshStartLock(store: Store) {
+  const runtime = await inventoryRuntime(store);
+  if (
+    runtime.mode !== "inventory_read_only" ||
+    !(await store
+      .statement("SELECT id FROM inventory_fresh_start_lock WHERE id=1")
+      .first())
+  )
+    throw new Error("inventory_fresh_start_write_lock_required");
+  return runtime;
 }
 
 /** Copy from a closed, private local snapshot to a newly allocated rehearsal. */
@@ -297,13 +309,7 @@ export async function refreshFreshStartLoFi(
     throw new Error("inventory_fresh_start_separate_snapshot_required");
   const target = await openInventoryTrial(directory);
   try {
-    if (
-      (await inventoryRuntime(target.store)).mode !== "inventory_read_only" ||
-      !(await target.store
-        .statement("SELECT id FROM inventory_fresh_start_lock WHERE id=1")
-        .first())
-    )
-      throw new Error("inventory_fresh_start_write_lock_required");
+    await requireFreshStartLock(target.store);
     const link = await oneActiveLoFi(target.store, null);
     const session = await openSourceCredentials(target.store, link);
     if (session.credentials.token)

@@ -3,6 +3,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { rebuildFreshStart } from "../scripts/inventory-fresh-start-rebuild.ts";
 import {
   inventoryFreshStart,
   refreshFreshStartLoFi,
@@ -171,6 +172,104 @@ test("a fresh account copy retains credential bindings and quarantines prior uns
   } finally {
     await reopened.mf.dispose();
   }
+});
+
+test("a write-locked rebuild completes destination selections while LoFi waits for authentication", async (t) => {
+  const root = await mkdtemp(`${tmpdir()}/ferry-fresh-rebuild-`);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const snapshot = await trialCapture(root);
+  const captured = await openInventoryTrial(snapshot);
+  try {
+    await applyMigration(captured.db, "0006_account_templates.sql");
+    await captured.db
+      .prepare("UPDATE connections SET remote_identity='7' WHERE kind='qrz'")
+      .run();
+  } finally {
+    await captured.mf.dispose();
+  }
+  const { directory } = await inventoryFreshStart(snapshot, root);
+  const requests: string[] = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(init?.redirect, "error");
+    if (url.hostname === "lofi.ham2k.net") {
+      assert.equal(url.pathname, "/v1/sync");
+      requests.push("lofi");
+      return new Response(null, { status: 401 });
+    }
+    if (url.hostname === "logbook.qrz.com") {
+      requests.push("qrz");
+      const form = init?.body;
+      assert.ok(form instanceof URLSearchParams);
+      const action = form.get("ACTION");
+      assert.ok(action === "STATUS" || action === "FETCH");
+      return new Response(
+        action === "STATUS"
+          ? "RESULT=OK&BOOKID=7&CALLSIGN=N1RWJ&STARTDATE=2025-01-01&ENDDATE=2027-12-31"
+          : "RESULT=OK&COUNT=0&ADIF=",
+      );
+    }
+    assert.equal(url.hostname, "lotw.arrl.org");
+    assert.equal(url.pathname, "/lotwuser/lotwreport.adi");
+    requests.push("lotw");
+    return new Response(
+      "<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>0<EOH><APP_LOTW_EOF>",
+    );
+  };
+  const report = await rebuildFreshStart(
+    {
+      rehearsal: directory,
+      selections: [
+        { connection: "lofi" },
+        { connection: "qrz" },
+        { connection: "lotw", from: "2026-11-01", through: "2026-11-30" },
+      ],
+      maxRequests: 10,
+      maxDurationMs: 60_000,
+    },
+    { fetcher },
+  );
+  assert.equal(report.stopReason, "source_authentication_required");
+  assert.equal(report.sourceAuthenticationRequired, true);
+  assert.equal(report.writeLocked, true);
+  assert.equal(report.uploads, 0);
+  assert.equal(report.destinationCredentialEnvelopesUnchanged, true);
+  assert.ok(
+    requests
+      .slice(requests.indexOf("lofi") + 1)
+      .some((request) => request !== "lofi"),
+  );
+  assert.deepEqual(report.requests.byProvider, { lofi: 1, qrz: 4, lotw: 1 });
+  assert.deepEqual(
+    report.coverage.map(({ provider, phase, state, published }) => ({
+      provider,
+      phase,
+      state,
+      published,
+    })),
+    [
+      {
+        provider: "lofi",
+        phase: "collecting",
+        state: "collecting",
+        published: 0,
+      },
+      { provider: "lotw", phase: "complete", state: "ready", published: 1 },
+      { provider: "qrz", phase: "complete", state: "ready", published: 1 },
+    ],
+  );
+  const reopened = await rebuildFreshStart(
+    { rehearsal: directory, maxRequests: 1, maxDurationMs: 1000 },
+    {
+      fetcher: async () =>
+        assert.fail(
+          "completed selections and a missing bearer need no network",
+        ),
+    },
+  );
+  assert.equal(reopened.stopReason, "source_authentication_required");
+  assert.equal(reopened.requests.requests, 0);
+  assert.deepEqual(reopened.coverage, report.coverage);
 });
 
 test("a verified same-client LoFi bearer resumes a write-locked rebuild at its accepted cursor", async (t) => {

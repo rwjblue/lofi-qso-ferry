@@ -75,3 +75,53 @@ their ciphertext. The fixture used a simulated provider.
 A local census examined 58 private captures. The 55 with the same
 client all held the rejected bearer. The real rehearsal still needs
 a current same-client bearer before its next LoFi read.
+
+## Run or continue a locked rebuild
+
+```sh
+mise run inventory-fresh-start-rebuild -- \
+  --rehearsal /path/to/closed-rehearsal --plan /path/to/private-plan.json \
+  --max-requests 120 --max-minutes 20
+```
+
+Supply a JSON array of selections to enroll in a single active account.
+Each selection names the copied connection ID. LoFi scans the source
+with 1,000 records per stream. QRZ uses the verified book's date bounds
+unless the selection supplies dates. LoTW requires dates for each
+bounded report.
+
+```json
+[
+  {"connection": "lofi-link"},
+  {"connection": "verified-qrz-link"},
+  {"connection": "lotw-link", "from": "2026-10-01", "through": "2026-10-31"}
+]
+```
+
+Omit `--plan` to continue the existing selections. Each invocation
+drives the native baseline and comparison jobs and saves aggregate
+progress, coverage, D1 cost and database size in the rehearsal.
+A missing or rejected LoFi bearer pauses source reads and lets the
+selected destinations finish. The command retains the source checkpoint
+and reports incomplete source coverage. The durable write lock and
+read-only transport apply throughout.
+
+### Real continuation while LoFi waited
+
+A private clone of the interrupted rehearsal, upgraded through
+migration 0104, completed three additional LoTW months in two
+invocations. The first two months added coverage without adding
+records. The largest added 703 receipts in one request, matching the
+count from the earlier calendar trial. Across the two invocations,
+three LoTW requests transferred 421,001 bytes in 50.0 seconds of
+combined elapsed time, including local comparison work. The larger
+invocation used 5,149 SQL statements and 401 comparison turns. The
+database occupied 42,483,712 bytes after the reads.
+
+The reopened clone had four ready LoTW selections and 706 active LoTW
+receipts, alongside the earlier 73 QRZ receipts. It decrypted a new
+monthly receipt and matched the original rehearsal's LoFi checkpoint,
+job version and credential envelopes. A repeat continuation made
+zero provider requests and performed zero reader or comparison turns.
+LoFi coverage is still incomplete, and the new LoTW results cover only
+the selected dates.

@@ -5,14 +5,15 @@ import {
   inventoryComparisonToken,
 } from "./inventory-comparison-keys.ts";
 import {
-  type InventoryPageInput,
-  inventoryJsonChunks,
-} from "./inventory-ingestion.ts";
-import type { Store } from "./store.ts";
-import {
   InventoryContextEffects,
   type InventoryContextRow,
 } from "./inventory-context-effects.ts";
+import {
+  type InventoryPageInput,
+  inventoryJsonChunks,
+} from "./inventory-ingestion.ts";
+import { inventorySourceStart } from "./inventory-source-calendar.ts";
+import type { Store } from "./store.ts";
 
 interface ComparisonInput {
   family: string;
@@ -56,18 +57,9 @@ export function inventoryComparisonHint(
   const hint: AdifRecord = {};
   if (typeof their.call === "string")
     hint.CALL = their.call.trim().toUpperCase();
-  const value = raw.startAtMillis;
-  const at =
-    (typeof value === "number" ||
-      (typeof value === "string" && value.trim())) &&
-    Number(value);
-  if (
-    typeof at === "number" &&
-    Number.isSafeInteger(at) &&
-    at > 0 &&
-    Number.isFinite(new Date(at).getTime())
-  ) {
-    const iso = new Date(Math.floor(at / 1000) * 1000).toISOString();
+  const at = inventorySourceStart(raw);
+  if (at !== undefined) {
+    const iso = new Date(at).toISOString();
     hint.QSO_DATE = iso.slice(0, 10).replaceAll("-", "");
     hint.TIME_ON = iso.slice(11, 19).replaceAll(":", "");
   }

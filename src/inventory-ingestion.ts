@@ -8,6 +8,7 @@ import {
   inventoryRunEffects,
   inventoryRunPrelude,
 } from "./inventory-run-publication.ts";
+import { inventorySourceMonths } from "./inventory-source-calendar.ts";
 import {
   canonical,
   type Envelope,
@@ -39,6 +40,7 @@ export interface InventoryStream extends InventoryScope {
   credentialVersion: string;
   connectionConfig: string;
   remoteIdentity: string;
+  sourceCalendarFormat?: 1;
 }
 export interface InventoryObservation {
   family: "operation" | "qso";
@@ -107,6 +109,7 @@ export interface PreparedInventoryPage {
   readonly rows: readonly PreparedRow[];
   readonly payloads: readonly { id: string; envelope: string }[];
   readonly comparison?: PreparedComparisonPage | null;
+  readonly calendarMonths?: readonly string[];
   readonly preparationMs: number;
   readonly plaintextBytes: number;
   readonly encryptedBytes: number;
@@ -139,8 +142,28 @@ const accepted = `${relation} AND r.accepted=1`;
 function inputDigest(input: InventoryPageInput) {
   // A replacement lease may recover the same original request after restart.
   // Lease authority is revalidated natively, separately from page identity.
-  const { lease: _lease, ...request } = input;
-  return sha256(canonical([VERSION, request]));
+  const { lease: _lease, stream, ...request } = input;
+  // A local scheduling format is not part of the provider request identity.
+  const { sourceCalendarFormat: _format, ...position } = stream;
+  return sha256(canonical([VERSION, { ...request, stream: position }]));
+}
+
+function pageManifest(
+  page: Pick<
+    PreparedInventoryPage,
+    "digest" | "rows" | "payloads" | "comparison" | "calendarMonths"
+  >,
+) {
+  return sha256(
+    canonical([
+      VERSION,
+      page.digest,
+      page.rows,
+      page.payloads,
+      page.comparison ?? null,
+      ...(page.calendarMonths ? [page.calendarMonths] : []),
+    ]),
+  );
 }
 
 export class InventoryIngestionError extends Error {
@@ -265,6 +288,7 @@ export class InventoryIngestion {
         credential_version: string | null;
         connection_config: string;
         remote_identity: string;
+        source_calendar_format?: number;
       }>();
     if (!row) return null;
     requireValue(row.credential_version, "inventory_credential_unavailable");
@@ -286,6 +310,9 @@ export class InventoryIngestion {
       credentialVersion: row.credential_version,
       connectionConfig: row.connection_config,
       remoteIdentity: row.remote_identity,
+      ...(row.provider === "lofi" && row.source_calendar_format === 1
+        ? { sourceCalendarFormat: 1 as const }
+        : {}),
     };
   }
 
@@ -416,6 +443,7 @@ export class InventoryIngestion {
     }
     const rows: PreparedRow[] = [];
     const payloads: { id: string; envelope: string }[] = [];
+    const months = s.sourceCalendarFormat === 1 ? new Set<string>() : null;
     let encryptedBytes = 0;
     const kind =
       input.facet === "source" ? "inventory_source" : "inventory_receipt";
@@ -439,6 +467,14 @@ export class InventoryIngestion {
           ? (value.order as number) < (old.revision_order as number)
           : input.requestStartedAt < (old.last_observed_at ?? 0));
       const changed = !stale && bodyHash !== old.body_hash;
+      if (
+        months &&
+        !stale &&
+        value.subtype === "qso" &&
+        value.status === "active"
+      )
+        for (const month of inventorySourceMonths(value.body))
+          months.add(month);
       const semanticChanged =
         !stale &&
         (semanticHash !== old.semantic_hash ||
@@ -504,9 +540,14 @@ export class InventoryIngestion {
           })),
         )
       : null;
-    const manifest = await sha256(
-      canonical([VERSION, digest, rows, payloads, comparison]),
-    );
+    const calendarMonths = months ? [...months].sort() : undefined;
+    const manifest = await pageManifest({
+      digest,
+      rows,
+      payloads,
+      comparison,
+      calendarMonths,
+    });
     return {
       input,
       digest,
@@ -515,6 +556,7 @@ export class InventoryIngestion {
       rows,
       payloads,
       comparison,
+      ...(calendarMonths ? { calendarMonths } : {}),
       preparationMs: performance.now() - started,
       plaintextBytes,
       encryptedBytes,
@@ -562,15 +604,7 @@ export class InventoryIngestion {
     page = structuredClone(page);
     requireValue(
       (await inputDigest(page.input)) === page.digest &&
-        (await sha256(
-          canonical([
-            VERSION,
-            page.digest,
-            page.rows,
-            page.payloads,
-            page.comparison ?? null,
-          ]),
-        )) === page.manifest,
+        (await pageManifest(page)) === page.manifest,
       "inventory_prepared_page_changed",
     );
     const existing = await this.recover(page);
@@ -582,6 +616,11 @@ export class InventoryIngestion {
     const { input, rows, payloads } = page;
     const context = this.comparisons?.context(input, rows);
     const { stream: s, lease } = input;
+    const calendar = page.calendarMonths;
+    requireValue(
+      (s.sourceCalendarFormat === 1) === (calendar !== undefined),
+      "invalid_inventory_source_calendar_manifest",
+    );
     const count = (key: "accepted" | "changed") =>
       rows.reduce((n, row) => n + row[key], 0);
     const acceptedCount = count("accepted");
@@ -591,7 +630,7 @@ export class InventoryIngestion {
     const bound = (sql: string) => statement(sql, s.tenant, input.pageId);
     const plan: D1PreparedStatement[] = [
       statement(
-        `INSERT INTO ingestion_pages(tenant,page_id,scope_id,stream_id,input_digest,manifest_digest,adapter_binding,query_binding,expected_config_version,expected_sequence,expected_stream_version,credential_version,connection_config,remote_identity,lease_scope,lease_token,lease_fence,request_started_at,prepared_at,raw_count,distinct_count,accepted_count,changed_count,next_resume,next_checkpoint,origin) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO ingestion_pages(tenant,page_id,scope_id,stream_id,input_digest,manifest_digest,adapter_binding,query_binding,expected_config_version,expected_sequence,expected_stream_version,credential_version,connection_config,remote_identity,lease_scope,lease_token,lease_fence,request_started_at,prepared_at,raw_count,distinct_count,accepted_count,changed_count,next_resume,next_checkpoint,origin${calendar ? ",lotw_calendar_months" : ""}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?${calendar ? ",?" : ""})`,
         s.tenant,
         input.pageId,
         s.scope,
@@ -620,6 +659,7 @@ export class InventoryIngestion {
           ? null
           : canonical(input.nextCheckpoint),
         input.origin,
+        ...(calendar ? [canonical(calendar)] : []),
       ),
     ];
     plan.push(...inventoryRunPrelude(this.store, input));

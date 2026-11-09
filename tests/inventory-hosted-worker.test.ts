@@ -198,7 +198,21 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     if (state?.published_at) break;
     await delay(50);
   }
-  assert.equal(state?.phase, "catchup");
+  assert.equal(
+    state?.phase,
+    "catchup",
+    JSON.stringify({
+      reads,
+      qrzReads,
+      runs: (
+        await db
+          .prepare(
+            "SELECT s.provider,r.phase,j.state,j.reason FROM inventory_runs r JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.scope_id JOIN inventory_stream_jobs j ON j.tenant=r.tenant AND j.scope_id=r.scope_id AND j.stream_id=r.stream_id ORDER BY s.provider",
+          )
+          .all()
+      ).results,
+    }),
+  );
   assert.ok(state.published_at);
   assert.ok(state.next_due_at >= readTimes[0] + 19000);
   assert.equal(reads, 1);
@@ -335,6 +349,16 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       )
       .first(),
     { matched: 1, historical: 1, pending: 0 },
+  );
+  assert.deepEqual(
+    (
+      await db
+        .prepare(
+          "SELECT month_start FROM inventory_source_calendar_months WHERE tenant='a'",
+        )
+        .all()
+    ).results,
+    [{ month_start: "2026-11-01" }],
   );
   assert.deepEqual(
     (

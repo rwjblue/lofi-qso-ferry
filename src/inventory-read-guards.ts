@@ -37,10 +37,12 @@ export function inventoryReadGuardStatements(
   const statement = (sql: string, ...params: (string | number | null)[]) =>
     store.statement(sql, ...params);
   const bound = (sql: string) => statement(sql, stream.tenant, pageId);
+  // The transient admission page has no observations or calendar demand.
+  const calendar = stream.sourceCalendarFormat === 1;
   return {
     before: [
       statement(
-        `INSERT INTO ingestion_pages(tenant,page_id,scope_id,stream_id,input_digest,manifest_digest,adapter_binding,query_binding,expected_config_version,expected_sequence,expected_stream_version,credential_version,connection_config,remote_identity,lease_scope,lease_token,lease_fence,request_started_at,prepared_at,raw_count,distinct_count,accepted_count,changed_count,next_resume,next_checkpoint,origin) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,0,0,?,NULL,'historical')`,
+        `INSERT INTO ingestion_pages(tenant,page_id,scope_id,stream_id,input_digest,manifest_digest,adapter_binding,query_binding,expected_config_version,expected_sequence,expected_stream_version,credential_version,connection_config,remote_identity,lease_scope,lease_token,lease_fence,request_started_at,prepared_at,raw_count,distinct_count,accepted_count,changed_count,next_resume,next_checkpoint,origin${calendar ? ",lotw_calendar_months" : ""}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,0,0,?,NULL,'historical'${calendar ? ",'[]'" : ""})`,
         stream.tenant,
         pageId,
         stream.scope,

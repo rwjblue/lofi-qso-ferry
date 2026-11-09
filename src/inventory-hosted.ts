@@ -9,6 +9,12 @@ import {
   publishInventoryWakeups,
 } from "./inventory-continuations.ts";
 import { InventoryIngestion } from "./inventory-ingestion.ts";
+import { InventoryQrzDispatch } from "./inventory-qrz-dispatch.ts";
+import {
+  consumeQrzRecoveryWakeups,
+  isQrzRecoveryWakeup,
+  publishQrzRecoveryWakeups,
+} from "./inventory-qrz-recovery.ts";
 import { InventoryRunner } from "./inventory-runner.ts";
 import { InventoryRuns } from "./inventory-runs.ts";
 import {
@@ -77,16 +83,25 @@ export async function runHostedScheduled(
     new InventorySourceProofJobs(runs),
     env.INVENTORY_QUEUE,
   );
+  const qrzRecoveryQueued = await publishQrzRecoveryWakeups(
+    store,
+    env.INVENTORY_QUEUE,
+  );
   return {
     mode: "inventory_read_only" as const,
     registration,
     calendarRegistration,
     overflowRegistration,
     starts,
-    queued: inventoryQueued + comparisonQueued + sourceProofQueued,
+    queued:
+      inventoryQueued +
+      comparisonQueued +
+      sourceProofQueued +
+      qrzRecoveryQueued,
     inventoryQueued,
     comparisonQueued,
     sourceProofQueued,
+    qrzRecoveryQueued,
   };
 }
 
@@ -115,10 +130,15 @@ export async function runHostedInventoryQueue(
   );
   const inventoryMessages = batch.messages.filter(
     (message) =>
-      !isComparisonMessage(message.body) && !isSourceProofWakeup(message.body),
+      !isComparisonMessage(message.body) &&
+      !isSourceProofWakeup(message.body) &&
+      !isQrzRecoveryWakeup(message.body),
   );
   const proofMessages = batch.messages.filter((message) =>
     isSourceProofWakeup(message.body),
+  );
+  const recoveryMessages = batch.messages.filter((message) =>
+    isQrzRecoveryWakeup(message.body),
   );
   let comparisonAfterInventory = 0,
     inventoryAfterComparison = 0,
@@ -167,20 +187,35 @@ export async function runHostedInventoryQueue(
       );
     },
   );
+  const recovery = await consumeQrzRecoveryWakeups(
+    new InventoryQrzDispatch(store, fetcher),
+    recoveryMessages,
+  );
   const inventoryQueued =
     inventory.queued + inventoryAfterComparison + inventoryAfterProof;
   const comparisonQueued = comparison.queued + comparisonAfterInventory;
   return {
     mode: "inventory_read_only" as const,
-    processed: inventory.processed + comparison.processed + proof.processed,
+    processed:
+      inventory.processed +
+      comparison.processed +
+      proof.processed +
+      recovery.processed,
     inventoryProcessed: inventory.processed,
     comparisonProcessed: comparison.processed,
     sourceProofProcessed: proof.processed,
+    qrzRecoveryProcessed: recovery.processed,
     acknowledged:
-      inventory.acknowledged + comparison.acknowledged + proof.acknowledged,
-    retried: inventory.retried + comparison.retried + proof.retried,
-    invalid: inventory.invalid + comparison.invalid + proof.invalid,
-    failed: inventory.failed + comparison.failed + proof.failed,
+      inventory.acknowledged +
+      comparison.acknowledged +
+      proof.acknowledged +
+      recovery.acknowledged,
+    retried:
+      inventory.retried + comparison.retried + proof.retried + recovery.retried,
+    invalid:
+      inventory.invalid + comparison.invalid + proof.invalid + recovery.invalid,
+    failed:
+      inventory.failed + comparison.failed + proof.failed + recovery.failed,
     queued: inventoryQueued + comparisonQueued + sourceProofQueued,
     inventoryQueued,
     comparisonQueued,

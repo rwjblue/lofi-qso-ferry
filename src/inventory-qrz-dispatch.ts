@@ -270,6 +270,21 @@ export class InventoryQrzDispatch {
     );
     if (!lease) return outcome;
     try {
+      return await this.reconcileLeased(attempt, lease, priority);
+    } finally {
+      await this.store.release(lease);
+    }
+  }
+
+  /** The caller owns the book lease across readback and any work update. */
+  async reconcileLeased(
+    attempt: string,
+    lease: Lease,
+    priority: VendorPriority = "background",
+  ): Promise<DispatchResult> {
+    const { tenant } = lease;
+    const outcome = { kind: "uncertain" } as const;
+    try {
       const binding = await this.store
         .statement(
           `SELECT book_identity,connection_id,credential_version,connection_config,lease_expires_at
@@ -356,8 +371,6 @@ export class InventoryQrzDispatch {
       )
         return outcome;
       throw error;
-    } finally {
-      await this.store.release(lease);
     }
   }
 

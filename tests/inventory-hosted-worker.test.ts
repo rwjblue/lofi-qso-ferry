@@ -10,6 +10,10 @@ import { InventoryOwnership } from "../src/inventory-ownership.ts";
 import { InventoryQrzDispatch } from "../src/inventory-qrz-dispatch.ts";
 import { InventoryQrzNeighborhood } from "../src/inventory-qrz-neighborhood.ts";
 import { InventoryQrzPreparation } from "../src/inventory-qrz-preparation.ts";
+import {
+  consumeQrzRecoveryWakeups,
+  publishQrzRecoveryWakeups,
+} from "../src/inventory-qrz-recovery.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
 import { registerInventorySelection } from "../src/inventory-scheduler.ts";
@@ -36,6 +40,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   let reads = 0;
   let qrzReads = 0;
   let qrzStatuses = 0;
+  let recoveryFixture: { adif: string | null; actions: string[] } | null = null;
   const lotwReads: [string | null, string | null][] = [];
   const readTimes: number[] = [];
   const runtime = new Miniflare(
@@ -85,8 +90,23 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         if (url.hostname === "logbook.qrz.com") {
           assert.equal(request.method, "POST");
           const form = new URLSearchParams(await request.text());
+          if (recoveryFixture) {
+            const action = form.get("ACTION");
+            assert.ok(action === "STATUS" || action === "FETCH");
+            recoveryFixture.actions.push(action);
+            if (action === "FETCH") {
+              assert.match(form.get("OPTION") ?? "", /CALL:W2AW/);
+              return new Response(
+                new URLSearchParams({
+                  RESULT: "OK",
+                  COUNT: recoveryFixture.adif ? "1" : "0",
+                  ADIF: recoveryFixture.adif ?? "",
+                }),
+              );
+            }
+          }
           if (form.get("ACTION") === "STATUS") {
-            qrzStatuses++;
+            if (!recoveryFixture) qrzStatuses++;
             return new Response(
               new URLSearchParams({
                 RESULT: "OK",
@@ -792,7 +812,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     fields: string[];
     unsettled: unknown;
   }[] = [];
-  let sendMode: "candidate" | "budget" | "lost" | "readback" = "candidate";
+  let sendMode: "candidate" | "budget" | "lost" = "candidate";
   const writeGates = () => ({
     exportsEnabled: true,
     liveWriteAuthorized: true,
@@ -832,7 +852,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         )
         .bind(Date.now() + 60_000)
         .run();
-    if (sendMode === "candidate" || sendMode === "readback")
+    if (sendMode === "candidate")
       return new Response(
         `RESULT=OK&COUNT=1&ADIF=${serializeAdifRecord({
           ...sendArtifact.record,
@@ -919,18 +939,107 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   });
   assert.equal(dispatchReads, beforeRecovery);
   assert.ok(stopped.strandedLease);
+  const dueRecovery = () =>
+    store
+      .statement(
+        "UPDATE inventory_qrz_recovery_jobs SET due_at=? WHERE tenant='a' AND attempt_id=?",
+        Date.now() - 1,
+        sendAttempt,
+      )
+      .run();
+  const recoveryJob = () =>
+    store
+      .statement(
+        "SELECT version,turns,due_at,published_version FROM inventory_qrz_recovery_jobs WHERE tenant='a' AND attempt_id=?",
+        sendAttempt,
+      )
+      .first<{
+        version: number;
+        turns: number;
+        due_at: number;
+        published_version: number;
+      }>();
+  assert.equal((await recoveryJob())?.version, 1);
+  assert.ok((await recoveryJob())!.due_at > Date.now());
+  await dueRecovery();
+  recoveryFixture = { adif: null, actions: [] };
+  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  assert.equal((await recoveryJob())?.published_version, 0);
   await store.release(stopped.strandedLease);
-  assert.deepEqual(await restarted.reconcile("a", sendAttempt), {
-    kind: "uncertain",
-  });
-  assert.equal(dispatchReads, beforeRecovery + 2);
+  await assert.rejects(
+    publishQrzRecoveryWakeups(store, {
+      async sendBatch() {
+        throw new Error("fixture recovery Queue unavailable");
+      },
+    }),
+    /fixture recovery Queue unavailable/,
+  );
+  assert.equal((await recoveryJob())?.published_version, 0);
+  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  for (let i = 0; i < 120 && recoveryFixture.actions.length < 2; i++)
+    await delay(50);
+  assert.deepEqual(recoveryFixture.actions, ["STATUS", "FETCH"]);
+  const retry = await recoveryJob();
+  assert.equal(retry?.turns, 1);
+  assert.equal(retry?.version, 2);
+  assert.ok(retry && retry.due_at > Date.now() + 240_000);
+  for (let i = 0; i < 120; i++) {
+    const leaseUntil = await store
+      .statement(
+        "SELECT expires_at FROM leases WHERE tenant=? AND scope=?",
+        "a",
+        stopped.strandedLease.scope,
+      )
+      .first<number>("expires_at");
+    if (!leaseUntil) break;
+    await delay(50);
+  }
+  let acknowledged = false;
+  await consumeQrzRecoveryWakeups(
+    new InventoryQrzDispatch(store, async () =>
+      assert.fail(
+        "a superseded QRZ recovery message must not read the provider",
+      ),
+    ),
+    [
+      {
+        id: "stale-recovery",
+        timestamp: new Date(),
+        attempts: 1,
+        body: {
+          kind: "inventory-qrz-recovery",
+          version: 1,
+          tenant: "a",
+          attempt: sendAttempt,
+          workVersion: 1,
+        },
+        ack() {
+          acknowledged = true;
+        },
+        retry() {
+          assert.fail("superseded recovery was retried");
+        },
+      },
+    ],
+  );
+  assert.ok(acknowledged);
   await db.prepare("UPDATE accounts SET quiet_minutes=31 WHERE id='a'").run();
   assert.equal(await reloaded.current("a", queuedProof.id), null);
-  sendMode = "readback";
-  assert.deepEqual(await restarted.reconcile("a", sendAttempt), {
-    kind: "observed",
-    remoteId: "2",
+  recoveryFixture.adif = serializeAdifRecord({
+    ...sendArtifact.record,
+    APP_QRZLOG_LOGID: "002",
   });
+  await dueRecovery();
+  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  for (let i = 0; i < 120 && (await recoveryJob()); i++) await delay(50);
+  assert.equal(await recoveryJob(), null);
+  assert.deepEqual(recoveryFixture.actions, [
+    "STATUS",
+    "FETCH",
+    "STATUS",
+    "FETCH",
+  ]);
+  recoveryFixture = null;
   assert.equal(inserts, 1);
   assert.equal(
     await db

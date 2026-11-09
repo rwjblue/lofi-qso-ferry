@@ -212,8 +212,8 @@ six pages before repeated read failures left it held. Diagnostic reads at
 the held cursor produced both a LOGID validation failure and a valid page.
 Reopening confirmed the previous checkpoint and full selection were still
 retained, the source checkpoint and credential envelopes were unchanged,
-and no delivery attempts existed. Full-book live verification remains
-unqualified under these response failures.
+and no delivery attempts existed. That invocation left full-book live
+verification open.
 
 Two alternating read-only probes at the held cursor reproduced an unusable
 LOGID in each 250-record response. Both 125-record responses validated
@@ -258,6 +258,34 @@ The rearm retained all eight accepted pages, the exact resume state and
 committed checkpoint, and the full selection. It advanced the job and
 coverage versions, and the reader rejected the old wakeup without
 contacting QRZ.
+
+The live continuation then accepted 15 more pages in 35 read-only QRZ
+requests over 5 minutes 14 seconds. It resumed at the saved 32-record
+size, reached 250 again, and completed the same delta run. Reopening the
+clone verified 4,252 distinct observations across 23 accepted pages,
+4,252 active receipts, ready coverage on the retained full selection,
+the published delta checkpoint, and a next poll one day later. The
+source cursor and credential envelopes stayed intact, with zero delivery
+attempts. The live scan published 4,250 changed receipt bodies and left
+4,252 QRZ projections pending for the separate comparison coordinator.
+
+Two bounded local passes drained those projections and the comparison
+queue in 4 minutes 44 seconds. The 4,251 current QRZ comparison results
+included 3,005 existing matches, 537 operating-detail mismatches, 367
+inventory absences and 20 ambiguous matches. The passes used 51,547 D1
+calls and 63,802 SQL statements, with about 9.42 million rows read and
+865,442 rows written. They made zero vendor requests and zero uploads.
+Reopening and comparing locally preserved the source and vendor
+checkpoints and credential envelopes.
+
+An offline comparison of the earlier closed baseline and the completed
+clone found the same 4,252 active receipt IDs. For 4,240 receipts, only
+`QRZCOM_QSO_DOWNLOAD_DATE` differed. The other 12 differed in additional
+fields. This compares the two closed copies. The live publication count
+above measures changes against the state immediately before that run.
+Removing the download date from change detection is a candidate for
+reducing receipt and projection churn. Measure coverage-driven matching
+separately because it can queue work when receipt content is unchanged.
 
 Wire inspection found that the numeric LOGID tag was present in the
 malformed response. A preceding `X_HAM2K_SOLAR` field's declared length

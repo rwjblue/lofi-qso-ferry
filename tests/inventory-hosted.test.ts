@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readdir } from "node:fs/promises";
 import test, { type TestContext } from "node:test";
 import { resumeHeldLotwAccount } from "../scripts/inventory-fresh-start-rebuild.ts";
 import { serializeAdifRecord } from "../src/adif.ts";
@@ -13,6 +14,7 @@ import {
   lofiRecurringDueAt,
 } from "../src/inventory-lofi-schedule.ts";
 import { runLotwConfirmationSchedule } from "../src/inventory-lotw-confirmation-schedule.ts";
+import { pollInventoryLotwConfirmations } from "../src/inventory-lotw-confirmations.ts";
 import { lotwRecurringDueAt } from "../src/inventory-lotw-schedule.ts";
 import {
   inventoryRunQuery,
@@ -40,7 +42,7 @@ import {
 import { isSourceProofWakeup } from "../src/inventory-source-proof-wakeups.ts";
 import { inventoryVendorFetch } from "../src/inventory-vendor-admission.ts";
 import { VendorDeferredError } from "../src/vendor-requests.ts";
-import { database, seed } from "./helpers.ts";
+import { applyMigration, database, seed } from "./helpers.ts";
 import {
   applyAdditionalMigrations,
   fixtureEnvironment,
@@ -1116,6 +1118,7 @@ test("hosted QSL polling is opt-in, paced and independent of receipt coverage", 
   assert.equal(report.mode, "inventory_read_only");
   assert.deepEqual(report.lotwConfirmations, {
     registered: 2,
+    split: 0,
     polled: 1,
     added: 1,
     deferred: 0,
@@ -1246,6 +1249,217 @@ test("hosted QSL polling is opt-in, paced and independent of receipt coverage", 
       .all()
       .then((rows) => rows.results),
     confirmations.results,
+  );
+});
+
+test("an upgraded QSL hold splits atomically at its saved watermark", async (t) => {
+  const f = await database();
+  t.after(() => f.mf.dispose());
+  const upgrade = "0121_inventory_lotw_confirmation_splits.sql";
+  for (const name of (await readdir(new URL("../migrations/", import.meta.url)))
+    .filter(
+      (file) =>
+        file.endsWith(".sql") && file > "0001_foundation.sql" && file < upgrade,
+    )
+    .sort())
+    await applyMigration(f.db, name);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  await seed(f.store);
+  await f.db
+    .prepare(
+      `INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at,config)
+     VALUES('a','lotw','lotw','fixture','LoTW','active','v1',1,'{"readAccess":true}')`,
+    )
+    .run();
+  await (
+    await f.store.putPrivate("a", "lotw", "v1", "credential", {
+      query: { username: "fixture", password: "fixture" },
+    })
+  ).run();
+  const connection = await f.store.connection("a", "lotw");
+  assert.ok(connection);
+  const selection = {
+    startDate: "2026-11-08",
+    endDate: "2026-11-09",
+    stationCallsign: "N1RWJ",
+    workedCallsign: "W1AW",
+  };
+  const initial = "2026-11-08 00:00:00";
+  const watermark = "2026-11-08 14:00:00";
+  const runtime = await activateInventoryRuntime(f.store);
+  const root = await registerInventorySelection(f.store, runtime, connection, {
+    provider: "lotw",
+    selection,
+  });
+  const record = serializeAdifRecord({
+    CALL: selection.workedCallsign,
+    STATION_CALLSIGN: selection.stationCallsign,
+    QSO_DATE: "20261108",
+    TIME_ON: "120000",
+    MODE: "CW",
+    BAND: "20M",
+    QSL_RCVD: "Y",
+    APP_LOTW_RXQSL: watermark,
+  });
+  const qsl = () =>
+    new Response(
+      `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>1<APP_LOTW_LASTQSL:19>${watermark}<EOH>${record}<APP_LOTW_EOF>`,
+    );
+  const saved = await pollInventoryLotwConfirmations(
+    f.store,
+    {
+      tenant: "a",
+      scope: root.scope,
+      selection: { ...selection, confirmedSince: initial },
+    },
+    async () => qsl(),
+  );
+  assert.equal(saved.state, "complete");
+  assert.equal(saved.confirmedThrough, watermark);
+  await f.db
+    .prepare(
+      `INSERT INTO inventory_lotw_confirmation_schedule(tenant,scope_id,receipt_stream_id,scope_version,initial_confirmed_since,next_due_at,version,overflow)
+     SELECT tenant,scope_id,stream_id,config_version,?,0,3,1 FROM inventory_scheduled_selections WHERE stream_id=?`,
+    )
+    .bind(initial, root.stream)
+    .run();
+  await applyMigration(f.db, upgrade);
+  const parentCheckpoint = () =>
+    f.db
+      .prepare(
+        "SELECT checkpoint_version,committed_checkpoint FROM inventory_streams WHERE stream_id=?",
+      )
+      .bind(saved.streamId)
+      .first();
+  const parentBefore = await parentCheckpoint();
+  const schedules = async () =>
+    (
+      await f.db
+        .prepare(
+          "SELECT branch,start_date,end_date,initial_confirmed_since,version,overflow,split_at FROM inventory_lotw_confirmation_schedule ORDER BY branch",
+        )
+        .all<{
+          branch: string;
+          start_date: string | null;
+          end_date: string | null;
+          initial_confirmed_since: string;
+          version: number;
+          overflow: number;
+          split_at: number | null;
+        }>()
+    ).results;
+  assert.deepEqual(await schedules(), [
+    {
+      branch: "",
+      start_date: null,
+      end_date: null,
+      initial_confirmed_since: initial,
+      version: 3,
+      overflow: 1,
+      split_at: null,
+    },
+  ]);
+  await f.db
+    .prepare(
+      `CREATE TRIGGER fixture_qsl_split_failure BEFORE UPDATE OF split_at ON inventory_lotw_confirmation_schedule
+     WHEN NEW.split_at IS NOT NULL BEGIN SELECT RAISE(ABORT,'fixture split failure'); END`,
+    )
+    .run();
+  let requests = 0;
+  const fetcher: typeof fetch = async (input) => {
+    const { searchParams } = new URL(String(input));
+    const start = searchParams.get("qso_startdate");
+    assert.equal(start, searchParams.get("qso_enddate"));
+    assert.equal(searchParams.get("qso_owncall"), selection.stationCallsign);
+    assert.equal(searchParams.get("qso_callsign"), selection.workedCallsign);
+    assert.equal(searchParams.get("qso_qslsince"), watermark);
+    assert.equal(searchParams.get("qso_qsl"), "yes");
+    assert.equal(
+      start,
+      requests === 0 ? selection.startDate : selection.endDate,
+    );
+    requests++;
+    return start === selection.startDate
+      ? qsl()
+      : new Response(new Uint8Array(2 * 1024 * 1024 + 1));
+  };
+  const failed = await runLotwConfirmationSchedule(f.store, fetcher);
+  assert.equal(failed.failed, 1);
+  assert.equal(failed.split, 0);
+  assert.equal(requests, 0);
+  assert.equal((await schedules()).length, 1);
+  assert.equal((await schedules())[0].split_at, null);
+  await f.db.prepare("DROP TRIGGER fixture_qsl_split_failure").run();
+  await f.db
+    .prepare("UPDATE inventory_lotw_confirmation_schedule SET next_due_at=0")
+    .run();
+
+  const reports = await Promise.all([
+    runLotwConfirmationSchedule(f.store, fetcher),
+    runLotwConfirmationSchedule(f.store, fetcher),
+  ]);
+  assert.equal(
+    reports.reduce((sum, report) => sum + report.split, 0),
+    1,
+  );
+  assert.equal(
+    reports.reduce((sum, report) => sum + report.polled, 0),
+    1,
+  );
+  assert.equal(
+    reports.reduce((sum, report) => sum + report.added, 0),
+    0,
+  );
+  assert.equal(requests, 1);
+  const [parent, left, right] = await schedules();
+  assert.equal(parent.split_at, Date.now());
+  assert.equal(parent.version, 4);
+  assert.deepEqual(
+    [left, right].map(
+      ({ branch, start_date, end_date, initial_confirmed_since }) => [
+        branch,
+        start_date,
+        end_date,
+        initial_confirmed_since,
+      ],
+    ),
+    [
+      ["0", selection.startDate, selection.startDate, watermark],
+      ["1", selection.endDate, selection.endDate, watermark],
+    ],
+  );
+  assert.deepEqual(await parentCheckpoint(), parentBefore);
+  const nextSlot = () =>
+    f.db
+      .prepare("UPDATE inventory_lotw_confirmation_slot SET last_slot=-1")
+      .run();
+  await nextSlot();
+  const singleDay = await runLotwConfirmationSchedule(f.store, fetcher);
+  assert.equal(singleDay.held, 1);
+  assert.equal(requests, 2);
+  await nextSlot();
+  await f.db
+    .prepare(
+      "UPDATE inventory_lotw_confirmation_schedule SET next_due_at=0 WHERE branch='1'",
+    )
+    .run();
+  const stillHeld = await runLotwConfirmationSchedule(f.store, fetcher);
+  assert.equal(stillHeld.split, 0);
+  assert.equal(stillHeld.polled, 0);
+  assert.equal(requests, 2);
+  assert.equal((await schedules()).length, 3);
+  assert.deepEqual(await parentCheckpoint(), parentBefore);
+  assert.equal(
+    await f.db
+      .prepare("SELECT count(*) AS n FROM inventory_coverage")
+      .first("n"),
+    0,
+  );
+  assert.equal(
+    await f.db
+      .prepare("SELECT count(*) AS n FROM inventory_lotw_confirmations")
+      .first("n"),
+    1,
   );
 });
 

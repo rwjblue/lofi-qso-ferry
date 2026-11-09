@@ -1,6 +1,7 @@
 import type { AdifRecord } from "./adif.ts";
 import {
   InventoryIngestion,
+  type InventoryStream,
   inventoryJsonChunks,
 } from "./inventory-ingestion.ts";
 import { lotwVariantPrefix } from "./inventory-observations.ts";
@@ -29,6 +30,52 @@ function supportedIdentity(record: AdifRecord) {
     // The QSL is still evidence when this mode cannot be correlated.
     return null;
   }
+}
+
+async function confirmationStreamId(
+  scopeVersion: number,
+  filters: ReturnType<typeof lotwConfirmationFilters>,
+) {
+  return `lotw-confirmation-v1:${await sha256(canonical([scopeVersion, filters]))}`;
+}
+
+function confirmationLower(
+  selection: LotwConfirmationQuery,
+  stream: InventoryStream | null,
+) {
+  if (!stream?.version) return selection.confirmedSince;
+  const checkpoint = stream.checkpoint as { confirmedThrough?: unknown } | null;
+  if (
+    !validLotwReceiveTime(checkpoint?.confirmedThrough) ||
+    checkpoint.confirmedThrough < selection.confirmedSince
+  )
+    throw new Error("inventory_lotw_confirmation_checkpoint_invalid");
+  return checkpoint.confirmedThrough;
+}
+
+/** Read the committed position of a held selection before splitting it. */
+export async function savedLotwConfirmationLower(
+  store: Store,
+  tenant: string,
+  scope: string,
+  scopeVersion: number,
+  selection: LotwConfirmationQuery,
+) {
+  const streamId = await confirmationStreamId(
+    scopeVersion,
+    lotwConfirmationFilters(selection),
+  );
+  const stream = await new InventoryIngestion(store).snapshot(
+    tenant,
+    scope,
+    streamId,
+  );
+  if (
+    stream &&
+    (stream.configVersion !== scopeVersion || stream.queryBinding !== streamId)
+  )
+    throw new Error("inventory_lotw_confirmation_scope_unavailable");
+  return confirmationLower(selection, stream);
 }
 
 /** Poll one explicit selection under the same native lease as receipt reads. */
@@ -63,7 +110,7 @@ export async function pollInventoryLotwConfirmations(
     )
       throw new Error("inventory_lotw_confirmation_scope_unavailable");
     const scopeVersion = authority.config_version;
-    const streamId = `lotw-confirmation-v1:${await sha256(canonical([scopeVersion, filters]))}`;
+    const streamId = await confirmationStreamId(scopeVersion, filters);
     await store
       .statement(
         `INSERT INTO inventory_streams(tenant,scope_id,stream_id,query_binding)
@@ -89,18 +136,7 @@ export async function pollInventoryLotwConfirmations(
       stream.queryBinding !== streamId
     )
       throw new Error("inventory_lotw_confirmation_scope_unavailable");
-    let lower = selection.confirmedSince;
-    if (stream.version > 0) {
-      const checkpoint = stream.checkpoint as {
-        confirmedThrough?: unknown;
-      } | null;
-      if (
-        !validLotwReceiveTime(checkpoint?.confirmedThrough) ||
-        checkpoint.confirmedThrough < lower
-      )
-        throw new Error("inventory_lotw_confirmation_checkpoint_invalid");
-      lower = checkpoint.confirmedThrough;
-    }
+    const lower = confirmationLower(selection, stream);
     const credential = await store.private<{
       query?: { username: string; password: string };
     }>(tenant, stream.connection, stream.credentialVersion, "credential");

@@ -604,12 +604,14 @@ Each starts one hour before its receipt selection was registered. Cron
 reserves at most one scheduled QSL poll per five-minute slot across
 invocations. The poll uses the shared LoTW background quota and cooldown.
 Successful streams settle into weekly phases. A rejected credential holds
-the affected selections until relinking. An oversized report holds the
-selection at its saved watermark.
+the affected selections until relinking. An oversized multi-day report
+holds at its saved watermark. Cron atomically registers two adjacent
+child ranges with independent cursors that start at that watermark.
+An oversized one-day range stays held for review.
 
 The dashboard shows recent native LoTW adoptions and observed deliveries.
 It resolves QSL badges in one bounded lookup and keeps the ledger state for
-routes already visible there. Splitting QSL-only overflows remains open.
+routes already visible there.
 [LoTW query API](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
 [Native confirmation rehearsal](evidence-inventory-fresh-start.md#lotw-confirmation-read)
 

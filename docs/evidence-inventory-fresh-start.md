@@ -563,6 +563,21 @@ Bulk confirmation correlation read 351 rows, and exact totals read
 9,910. The fixture also verifies that ambiguous evidence leaves the
 badge unset and a route already visible in the ledger keeps its state.
 
+### LoTW confirmation overflow recovery
+
+A private copy replayed a captured confirmation into a two-day parent
+selection, then simulated a report over the two-MiB bound. The next
+scheduler turn registered two one-day children at the parent's inclusive
+saved watermark. One scoped live child read took 1.18 seconds and returned
+the same confirmation. It added no duplicate evidence. The parent's
+checkpoint and the receipt coverage, stream jobs and linked credentials
+stayed intact. The trial made zero uploads and passed the foreign-key check.
+
+The native fixture upgrades an existing held schedule, forces a late
+transaction failure and verifies that neither child survives. Concurrent
+retry turns register one child pair and make one poll in the same slot.
+A child that still overflows at one day stays held.
+
 ## LoTW account receipt deltas
 
 ARRL's receipt report accepts an explicit `qso_qsorxsince` with optional

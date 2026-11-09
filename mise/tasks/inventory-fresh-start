@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Create a private write-locked inventory database with account and link records only"
+#USAGE flag "--source <directory>" help="Closed local snapshot directory with keys.json and database/"
+set -euo pipefail
+npx tsx scripts/inventory-fresh-start.ts "$@"

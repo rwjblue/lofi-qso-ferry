@@ -51,14 +51,23 @@ export class InventoryQrzDispatch {
   private async outcome(tenant: string, attempt: string) {
     const row = await this.store
       .statement(
-        `SELECT r.kind,r.remote_id FROM inventory_qrz_dispatches d
-         LEFT JOIN inventory_qrz_dispatch_receipts r USING(tenant,attempt_id)
-         WHERE d.tenant=? AND d.attempt_id=?`,
+        `SELECT d.attempt_id,r.kind,r.remote_id,EXISTS(SELECT 1 FROM inventory_fresh_start_lock WHERE id=1) AS write_locked
+         FROM (SELECT 1) seed
+         LEFT JOIN inventory_qrz_dispatches d ON d.tenant=? AND d.attempt_id=?
+         LEFT JOIN inventory_qrz_dispatch_receipts r ON r.tenant=d.tenant AND r.attempt_id=d.attempt_id`,
         tenant,
         attempt,
       )
-      .first<Receipt | { kind: null; remote_id: null }>();
-    if (!row) return null;
+      .first<
+        (Receipt | { kind: null; remote_id: null }) & {
+          attempt_id: string | null;
+          write_locked: number;
+        }
+      >();
+    if (!row?.attempt_id)
+      return row?.write_locked
+        ? { kind: "held" as const, reason: "fresh_start_requires_cutover" }
+        : null;
     return row.kind
       ? { kind: row.kind, remoteId: row.remote_id }
       : { kind: "uncertain" as const };

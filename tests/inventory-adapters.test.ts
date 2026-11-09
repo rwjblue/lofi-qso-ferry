@@ -1142,15 +1142,16 @@ test("QRZ exact 250-record terminal FAIL recovers using explicit 249-record repl
   ]);
 });
 
-test("QRZ covering verification reduces MAX at the same cursor after an invalid LOGID", async () => {
-  const records = Array.from({ length: 400 }, (_, i) => ({
+test("QRZ covering verification reduces and restores MAX at the saved cursor", async () => {
+  const records = Array.from({ length: 900 }, (_, i) => ({
     ...adif,
     APP_QRZLOG_LOGID: String(i + 1),
   }));
   const fetches: { after: number; max: number }[] = [];
   let truncateRetry = false;
+  let rejectProbe = false;
   const pages = qrzPagedTransport(records, fetches, (after, max, selected) => {
-    if (after === 251 && max === 250) {
+    if (max === 250 && (after === 251 || (after === 626 && rejectProbe))) {
       const invalid = { ...selected[0], APP_QRZLOG_LOGID: "" };
       return new Response(fetchBody([invalid, ...selected.slice(1)]));
     }
@@ -1185,9 +1186,30 @@ test("QRZ covering verification reduces MAX at the same cursor after an invalid 
   const next = second.progress.resume as QrzInventoryResume;
   assert.equal(next.pageSize, 125);
   assert.equal(next.afterLogId, 376);
+  assert.equal(next.coveringStablePages, undefined);
+  let stable = next;
+  for (const streak of [1, 2]) {
+    const page = await adapter.readStep(context(transport), {
+      ...request,
+      resume: stable,
+    });
+    assert.ok(page.kind === "page" && page.progress.kind === "continue");
+    stable = page.progress.resume as QrzInventoryResume;
+    assert.equal(stable.pageSize, 125);
+    assert.equal(stable.coveringStablePages, streak);
+  }
+  const probe = await adapter.readStep(context(transport), {
+    ...request,
+    resume: stable,
+  });
+  assert.ok(probe.kind === "page" && probe.progress.kind === "continue");
+  const restored = probe.progress.resume as QrzInventoryResume;
+  assert.equal(restored.pageSize, 250);
+  assert.equal(restored.afterLogId, 876);
+  assert.equal(restored.coveringStablePages, undefined);
   const tail = await adapter.readStep(context(transport), {
     ...request,
-    resume: next,
+    resume: restored,
   });
   assert.ok(tail.kind === "page" && tail.progress.kind === "observed_complete");
   assert.equal(tail.observations.length, 25);
@@ -1196,6 +1218,26 @@ test("QRZ covering verification reduces MAX at the same cursor after an invalid 
     { after: 251, max: 250 },
     { after: 251, max: 125 },
     { after: 376, max: 125 },
+    { after: 501, max: 125 },
+    { after: 626, max: 250 },
+    { after: 876, max: 250 },
+  ]);
+
+  rejectProbe = true;
+  const backedOff = await adapter.readStep(context(transport), {
+    ...request,
+    resume: stable,
+  });
+  assert.ok(
+    backedOff.kind === "page" && backedOff.progress.kind === "continue",
+  );
+  const reduced = backedOff.progress.resume as QrzInventoryResume;
+  assert.equal(reduced.pageSize, 125);
+  assert.equal(reduced.afterLogId, 751);
+  assert.equal(reduced.coveringStablePages, undefined);
+  assert.deepEqual(fetches.slice(-2), [
+    { after: 626, max: 250 },
+    { after: 626, max: 125 },
   ]);
 
   truncateRetry = true;

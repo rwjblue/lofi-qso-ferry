@@ -153,6 +153,8 @@ export interface QrzInventoryResume {
   pageSize?: number;
   /** An in-progress covering read retains the original modified query key. */
   coveringDateSelection?: true;
+  /** Full pages accepted at a reduced size since the last size change. */
+  coveringStablePages?: number;
   previousFullPage?: {
     afterLogId: number;
     pageSize: number;
@@ -829,7 +831,8 @@ function validateQrzResume(
     requireValue(
       resume.pageSize === undefined &&
         resume.previousFullPage === undefined &&
-        resume.coveringDateSelection === undefined,
+        resume.coveringDateSelection === undefined &&
+        resume.coveringStablePages === undefined,
     );
     return;
   }
@@ -846,6 +849,11 @@ function validateQrzResume(
       (canVerifyModifiedSelection &&
         resume.coveringDateSelection === true &&
         previous !== undefined),
+  );
+  requireValue(
+    resume.coveringStablePages === undefined ||
+      (resume.coveringDateSelection === true &&
+        (resume.coveringStablePages === 1 || resume.coveringStablePages === 2)),
   );
   if (previous !== undefined)
     requireValue(
@@ -890,11 +898,14 @@ export function createQrzInventoryAdapter(
           input.verifyAmbiguousModifiedSelection === true &&
           input.selection.modifiedSince !== undefined;
         validateQrzResume(input.resume, queryKey, canVerifyModifiedSelection);
-        // A recovery's smaller effective MAX persists even when core continues
-        // supplying the run's original configured page size.
-        let limit = input.resume?.pageSize ?? requestedLimit;
+        const savedLimit = input.resume?.pageSize ?? requestedLimit;
+        const stablePages = input.resume?.coveringStablePages ?? 0;
+        // Probe the configured MAX only after two full pages at the lower size.
+        const probing = stablePages === 2 && savedLimit < requestedLimit;
+        let limit = probing ? requestedLimit : savedLimit;
         let afterLogId = input.resume?.afterLogId ?? 0;
         let covering = input.resume?.coveringDateSelection === true;
+        let retried = false;
         const client = new QrzClient(apiKey, { fetch: budget.fetch });
         await client.verifyBook(book);
         const fetchPage = () =>
@@ -912,11 +923,14 @@ export function createQrzInventoryAdapter(
           if (
             covering &&
             error.detail === "invalid_page_logid" &&
-            limit > MIN_QRZ_COVERING_PAGE_SIZE
+            (probing || limit > MIN_QRZ_COVERING_PAGE_SIZE)
           ) {
             // The rejected page cannot witness a tail. A full smaller page
             // can advance the same cursor, with the new MAX saved on commit.
-            limit = Math.max(MIN_QRZ_COVERING_PAGE_SIZE, Math.floor(limit / 2));
+            limit = probing
+              ? savedLimit
+              : Math.max(MIN_QRZ_COVERING_PAGE_SIZE, Math.floor(limit / 2));
+            retried = true;
             page = await fetchPage();
             if (page.nextAfterLogId === null) throw error;
           } else if (error.detail !== "ambiguous_empty_selection") {
@@ -939,6 +953,7 @@ export function createQrzInventoryAdapter(
             // explicitly empty replay cannot establish a positive witness.
             afterLogId = previous.afterLogId;
             limit = previous.pageSize - 1;
+            retried = true;
             page = await fetchPage();
             if (!page.records.length) throw error;
           }
@@ -975,6 +990,11 @@ export function createQrzInventoryAdapter(
             recovery: "verify",
           };
         const observations = await qrzInventoryObservations(page.records);
+        const acceptedAtReducedSize =
+          covering &&
+          !retried &&
+          limit < requestedLimit &&
+          page.nextAfterLogId !== null;
         const resume: QrzInventoryResume = {
           version: 1,
           afterLogId: page.nextAfterLogId ?? afterLogId,
@@ -982,6 +1002,9 @@ export function createQrzInventoryAdapter(
           pageSize: limit,
           ...(covering && (input.resume || page.nextAfterLogId !== null)
             ? { coveringDateSelection: true }
+            : {}),
+          ...(acceptedAtReducedSize
+            ? { coveringStablePages: Math.min(stablePages + 1, 2) }
             : {}),
           ...(page.nextAfterLogId === null
             ? {}

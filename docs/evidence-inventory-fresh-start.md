@@ -226,6 +226,24 @@ the previous committed checkpoint and full selection retained, unchanged
 source and credential envelopes, and zero delivery attempts. The live
 run still requires a successful terminal page.
 
+The covering reader now tries the configured page size again after two
+full pages at a reduced size. If the larger request returns an invalid
+LOGID, the reader retries at the last validated size and the same cursor.
+The two-page count persists in the resume state.
+
+A captured-book replay injected four invalid LOGID responses. It stepped
+down to 62 records and recovered to 250, then reduced and recovered once
+more. It accepted all 4,252 receipts in 25 pages with no changed bodies,
+published the delta, and retained the full coverage epoch. It consumed
+56 local responses with simulated vendor windows and made zero provider
+requests or uploads.
+
+The live continuation accepted one more 32-record page and then held
+after an invalid response and its retry. Reopening counted 1,126
+accepted observations, retained the previous committed checkpoint and
+full selection, and verified unchanged source and credential envelopes
+with zero delivery attempts.
+
 ### Full QRZ catch-up verification
 
 A full run can use the same covering scan when its `MODSINCE` catch-up

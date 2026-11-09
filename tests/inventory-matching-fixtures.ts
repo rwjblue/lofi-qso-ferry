@@ -52,6 +52,7 @@ export async function matchingFixture(
     sources?: InventoryObservation[];
     receipts?: InventoryObservation[];
     range?: [string, string];
+    lotwReadAccess?: true;
   } = {},
   existing?: Awaited<ReturnType<typeof database>>,
   schema: "minimal" | "current" = "minimal",
@@ -71,8 +72,9 @@ export async function matchingFixture(
   if (provider === "lotw")
     await f.db
       .prepare(
-        "UPDATE connections SET kind='lotw' WHERE tenant='a' AND id='destination'",
+        "UPDATE connections SET kind='lotw',config=? WHERE tenant='a' AND id='destination'",
       )
+      .bind(options.lotwReadAccess ? '{"readAccess":true}' : "{}")
       .run();
   const destinationStream = await f.inventory.initialize(
     {

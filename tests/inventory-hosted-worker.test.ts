@@ -24,6 +24,7 @@ import {
   runHostedScheduled,
 } from "../src/inventory-hosted.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
+import { inventoryLotwActivity } from "../src/inventory-lotw-activity.ts";
 import { InventoryLotwDispatch } from "../src/inventory-lotw-dispatch.ts";
 import { InventoryLotwPreparation } from "../src/inventory-lotw-preparation.ts";
 import { InventoryLotwReadback } from "../src/inventory-lotw-readback.ts";
@@ -2436,6 +2437,16 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     [
       { record_key: "q2", confirmed: 1 },
       { record_key: "q3", confirmed: 0 },
+    ],
+  );
+  const lotwActivity = await inventoryLotwActivity(store, "a");
+  assert.deepEqual(
+    lotwActivity.activity
+      .map(({ qso, state, confirmed }) => ({ qso, state, confirmed }))
+      .sort((a, b) => a.qso.localeCompare(b.qso)),
+    [
+      { qso: "q2", state: "observed", confirmed: 1 },
+      { qso: "q3", state: "observed", confirmed: 0 },
     ],
   );
   const otherOwner = await new InventoryOwnership(store).lookup("a", "lotw", [

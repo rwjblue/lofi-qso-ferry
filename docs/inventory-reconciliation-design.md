@@ -607,7 +607,9 @@ Successful streams settle into weekly phases. A rejected credential holds
 the affected selections until relinking. An oversized report holds the
 selection at its saved watermark.
 
-Status integration and splitting QSL-only overflows remain open.
+The dashboard shows recent native LoTW adoptions and observed deliveries.
+It resolves QSL badges in one bounded lookup and keeps the ledger state for
+routes already visible there. Splitting QSL-only overflows remains open.
 [LoTW query API](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
 [Native confirmation rehearsal](evidence-inventory-fresh-start.md#lotw-confirmation-read)
 

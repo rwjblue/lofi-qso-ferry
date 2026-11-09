@@ -206,68 +206,118 @@ export async function pollInventoryLotwConfirmations(
   }
 }
 
-/** Resolve QSL evidence against exactly one known receipt variant at read time. */
+interface ConfirmationTarget {
+  scope: string;
+  identityHash: string;
+}
+
+interface ConfirmationEvidence {
+  confirmedAt: string;
+  observedAt: number;
+  envelope: string | null;
+  bodyHash: string;
+  connection: string;
+  scopeVersion: number;
+}
+
+/** Resolve a bounded list against current receipt variants in one snapshot. */
+export async function inventoryLotwConfirmationEvidence(
+  store: Store,
+  tenant: string,
+  targets: readonly ConfirmationTarget[],
+  includeBody = false,
+) {
+  if (targets.length > 50) throw new Error("inventory_lotw_confirmation_limit");
+  if (!targets.length) return [];
+  const input = targets.map(({ scope, identityHash }) => {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(identityHash))
+      throw new Error("invalid_lotw_inventory_identity");
+    const lower = lotwVariantPrefix(identityHash);
+    return { scope, identityHash, lower, upper: `${lower.slice(0, -1)};` };
+  });
+  const rows = await store
+    .statement(
+      `WITH targets AS (
+        SELECT CAST(key AS INTEGER) AS position,json_extract(value,'$.scope') AS scope,
+               json_extract(value,'$.identityHash') AS identity_hash,json_extract(value,'$.lower') AS lower_key,
+               json_extract(value,'$.upper') AS upper_key FROM json_each(?1)
+       )
+       SELECT
+        (SELECT json_group_array(record_key) FROM (
+          SELECT f.record_key FROM inventory_record_facets f
+          JOIN inventory_records r ON (r.tenant,r.scope_id,r.entity_family,r.record_key)=(f.tenant,f.scope_id,f.entity_family,f.record_key)
+          JOIN ingestion_pages p ON (p.tenant,p.page_id)=(f.tenant,f.last_page_id)
+          WHERE (f.tenant,f.scope_id,f.entity_family)=(s.tenant,s.scope_id,'qso') AND f.facet='receipt'
+            AND f.record_key>=t.lower_key AND f.record_key<t.upper_key
+            AND r.status='active' AND p.expected_config_version=s.config_version LIMIT 2
+        )) AS receipts,
+        (SELECT json_group_array(json_object(
+          'confirmedAt',confirmed_at,'observedAt',observed_at,'envelope',envelope,
+          'bodyHash',body_hash,'connection',connection_id,'scopeVersion',scope_version
+        )) FROM (
+          SELECT q.confirmed_at,q.observed_at,CASE WHEN ?3 THEN q.envelope END AS envelope,
+                 q.body_hash,q.connection_id,q.scope_version
+          FROM inventory_lotw_confirmations q
+          WHERE (q.tenant,q.scope_id,q.scope_version,q.identity_hash)=(s.tenant,s.scope_id,s.config_version,t.identity_hash)
+          ORDER BY q.confirmed_at DESC,q.body_hash LIMIT 2
+        )) AS confirmations
+       FROM targets t
+       LEFT JOIN inventory_scopes s ON (s.tenant,s.scope_id)=(?2,t.scope) AND s.provider='lotw' AND s.state='observing'
+       ORDER BY t.position`,
+      canonical(input),
+      tenant,
+      Number(includeBody),
+    )
+    .all<{ receipts: string; confirmations: string }>();
+  return rows.results.map(({ receipts, confirmations }) => {
+    const [evidence, next] = JSON.parse(
+      confirmations,
+    ) as ConfirmationEvidence[];
+    if (!evidence) return { state: "missing_confirmation" as const };
+    const [receipt, competing] = JSON.parse(receipts) as string[];
+    if (!receipt) return { state: "missing_receipt" as const };
+    if (competing) return { state: "ambiguous_receipt" as const };
+    if (next?.confirmedAt === evidence.confirmedAt)
+      return { state: "ambiguous_confirmation" as const };
+    return { state: "confirmed" as const, receipt, evidence };
+  });
+}
+
+/** Open the authenticated body for one exact, unambiguous correlation. */
 export async function inventoryLotwConfirmation(
   store: Store,
   tenant: string,
   scope: string,
   identityHash: string,
 ) {
-  if (!/^[A-Za-z0-9_-]{43}$/.test(identityHash))
-    throw new Error("invalid_lotw_inventory_identity");
-  const prefix = lotwVariantPrefix(identityHash);
-  const [receipts, confirmations] = await store.db.batch<{
-    record_key?: string;
-    confirmed_at: string;
-    observed_at: number;
-    envelope: string;
-    body_hash: string;
-    connection_id: string;
-    scope_version: number;
-  }>([
-    store.statement(
-      `SELECT f.record_key FROM inventory_record_facets f
-       JOIN inventory_records r ON (r.tenant,r.scope_id,r.entity_family,r.record_key)=(f.tenant,f.scope_id,f.entity_family,f.record_key)
-       JOIN inventory_scopes s ON (s.tenant,s.scope_id)=(f.tenant,f.scope_id)
-       JOIN ingestion_pages p ON (p.tenant,p.page_id)=(f.tenant,f.last_page_id)
-       WHERE (f.tenant,f.scope_id,f.entity_family)=(?,?,'qso') AND f.facet='receipt'
-         AND f.record_key>=? AND f.record_key<? AND r.status='active'
-         AND s.provider='lotw' AND s.state='observing' AND p.expected_config_version=s.config_version
-       LIMIT 2`,
-      tenant,
-      scope,
-      prefix,
-      `${prefix.slice(0, -1)};`,
-    ),
-    store.statement(
-      `SELECT q.* FROM inventory_scopes s
-       JOIN inventory_lotw_confirmations q ON (q.tenant,q.scope_id,q.scope_version)=(s.tenant,s.scope_id,s.config_version)
-       WHERE (s.tenant,s.scope_id)=(?,?) AND s.provider='lotw' AND s.state='observing' AND q.identity_hash=?
-       ORDER BY q.confirmed_at DESC,q.body_hash LIMIT 2`,
-      tenant,
-      scope,
-      identityHash,
-    ),
-  ]);
-  const [row, next] = confirmations.results;
-  if (!row) return { state: "missing_confirmation" as const };
-  const [receipt] = receipts.results;
-  if (!receipt?.record_key) return { state: "missing_receipt" as const };
-  if (receipts.results.length > 1)
-    return { state: "ambiguous_receipt" as const };
-  if (next?.confirmed_at === row.confirmed_at)
-    return { state: "ambiguous_confirmation" as const };
+  const [result] = await inventoryLotwConfirmationEvidence(
+    store,
+    tenant,
+    [{ scope, identityHash }],
+    true,
+  );
+  if (result.state !== "confirmed") return result;
+  const {
+    envelope,
+    connection,
+    scopeVersion,
+    bodyHash,
+    confirmedAt,
+    observedAt,
+  } = result.evidence;
+  if (envelope === null)
+    throw new Error("inventory_lotw_confirmation_unavailable");
   return {
     state: "confirmed" as const,
-    receipt: receipt.record_key,
-    confirmedAt: row.confirmed_at,
-    observedAt: row.observed_at,
+    receipt: result.receipt,
+    confirmedAt,
+    observedAt,
     record: await open<AdifRecord>(
-      JSON.parse(row.envelope),
+      JSON.parse(envelope),
       {
         tenant,
-        connection: row.connection_id,
-        id: payloadId(scope, row.scope_version, row.body_hash),
+        connection,
+        id: payloadId(scope, scopeVersion, bodyHash),
         kind,
         purpose: "storage",
       },

@@ -6,6 +6,7 @@ import {
   runHostedInventoryQueue,
   runHostedScheduled,
 } from "./inventory-hosted.ts";
+import { inventoryLotwActivity } from "./inventory-lotw-activity.ts";
 import { lofiAccountLabel } from "./lofi-identity.ts";
 import { lotwVerification } from "./lotw-verification.ts";
 import { reviewRoute } from "./review.ts";
@@ -100,7 +101,7 @@ export default {
         const activityRows = (
           await store
             .statement(
-              "SELECT source,qso,destination,state,reason,confirmed FROM ledger WHERE tenant=? ORDER BY updated_at DESC LIMIT 50",
+              "SELECT source,qso,destination,state,reason,confirmed,updated_at FROM ledger WHERE tenant=? ORDER BY updated_at DESC LIMIT 50",
               identity.tenant,
             )
             .all<{
@@ -110,6 +111,7 @@ export default {
               state: string;
               reason: string | null;
               confirmed: number;
+              updated_at: number;
             }>()
         ).results;
         const connections = (
@@ -152,6 +154,20 @@ export default {
             .filter((connection) => connection.kind === "lotw")
             .map((connection) => connection.id),
         );
+        const native = lotwDestinations.size
+          ? await inventoryLotwActivity(store, identity.tenant)
+          : { activity: [], counts: [] };
+        for (const incoming of native.counts) {
+          const count = counts.find(({ state }) => state === incoming.state);
+          if (count) count.count += incoming.count;
+          else counts.push(incoming);
+        }
+        const recent = [
+          ...activityRows.map((row) => ({ ...row, priorIdentityCount: null })),
+          ...native.activity,
+        ]
+          .sort((a, b) => b.updated_at - a.updated_at)
+          .slice(0, 50);
         const activity: {
           qso: string;
           destination: string;
@@ -160,17 +176,26 @@ export default {
           confirmed: number;
           priorIdentityCount?: number;
         }[] = await Promise.all(
-          activityRows.map(async ({ source, ...row }) => ({
-            ...row,
-            priorIdentityCount: lotwDestinations.has(row.destination)
-              ? await store.lotwPriorIdentityCount({
-                  tenant: identity.tenant,
-                  source,
-                  qso: row.qso,
-                  destination: row.destination,
-                })
-              : 0,
-          })),
+          recent.map(
+            async ({
+              source,
+              updated_at: _updatedAt,
+              priorIdentityCount,
+              ...row
+            }) => ({
+              ...row,
+              priorIdentityCount:
+                priorIdentityCount ??
+                (lotwDestinations.has(row.destination)
+                  ? await store.lotwPriorIdentityCount({
+                      tenant: identity.tenant,
+                      source,
+                      qso: row.qso,
+                      destination: row.destination,
+                    })
+                  : 0),
+            }),
+          ),
         );
         const sourceErrors = (
           await store

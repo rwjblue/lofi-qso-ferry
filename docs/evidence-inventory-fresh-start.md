@@ -547,6 +547,22 @@ hours. The model assumes every available slot can make a successful
 poll. It excludes shared-budget contention and vendor latency.
 [ARRL report documentation](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
 
+### LoTW dashboard activity
+
+A private copy of the completed comparison replay held 3,303 native
+LoTW adoptions and an empty ledger. One scoped live read returned the
+confirmation for a recent adoption. The authenticated dashboard replay
+showed the confirmed badge and the same adoption total. It made zero
+provider calls and zero database writes. The temporary local sign-in
+fixture was removed. Credentials, receipt coverage and linked account
+state matched the original, and the foreign-key check passed.
+
+The native LoTW activity used three D1 calls and read 10,462 rows.
+The indexed recent list read 201 rows for 50 displayed records.
+Bulk confirmation correlation read 351 rows, and exact totals read
+9,910. The fixture also verifies that ambiguous evidence leaves the
+badge unset and a route already visible in the ledger keeps its state.
+
 ## LoTW account receipt deltas
 
 ARRL's receipt report accepts an explicit `qso_qsorxsince` with optional

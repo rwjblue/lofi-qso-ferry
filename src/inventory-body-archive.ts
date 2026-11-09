@@ -1,3 +1,4 @@
+import { requestInventoryBodyReplay } from "./inventory-body-replay-state.ts";
 import { canonical, type Envelope, open, sha256 } from "./security.ts";
 import type { Store } from "./store.ts";
 
@@ -90,7 +91,10 @@ export async function openInventoryBody<T>(
     const object = await store.inventoryBodyArchive?.get(
       await objectKey(location, archived.digest),
     );
-    if (!object) throw new InventoryBodyArchiveUnavailable(location);
+    if (!object) {
+      await requestInventoryBodyReplay(store, location, stored);
+      throw new InventoryBodyArchiveUnavailable(location);
+    }
     if (object.size !== archived.bytes)
       throw new Error("inventory_body_archive_size_changed");
     const encrypted = await object.text();

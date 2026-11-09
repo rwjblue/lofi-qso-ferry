@@ -1,5 +1,6 @@
 import { purgeAuth } from "./auth.ts";
 import type { InventoryBodyArchive } from "./inventory-body-archive.ts";
+import { stepInventoryBodyReplay } from "./inventory-body-replay.ts";
 import {
   consumeComparisonWakeups,
   isComparisonMessage,
@@ -91,6 +92,7 @@ export async function runHostedScheduled(
     INVENTORY_LOTW_CONFIRMATIONS?: string;
   },
   options: {
+    inventoryFetch?: typeof fetch;
     lotwConfirmationFetch?: typeof fetch;
   } = {},
 ) {
@@ -217,6 +219,10 @@ export async function runHostedScheduled(
     rotated: 0,
     blocked: 1,
   }));
+  const bodyReplay = await stepInventoryBodyReplay(
+    store,
+    options.inventoryFetch,
+  ).catch(() => ({ kind: "failed" as const }));
   const lotwConfirmations =
     env.INVENTORY_LOTW_CONFIRMATIONS === "true"
       ? await runLotwConfirmationSchedule(
@@ -259,6 +265,7 @@ export async function runHostedScheduled(
     coldBodiesCollected,
     coldBodyCollectionFailed,
     credentialsRotation,
+    bodyReplay,
     qrzShadow: shadows.qrz,
     lotwShadow: shadows.lotw,
     uploadPlanner,

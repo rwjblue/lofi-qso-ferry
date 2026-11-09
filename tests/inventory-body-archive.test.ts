@@ -6,11 +6,13 @@ import {
   type InventoryBodyArchive,
   InventoryBodyArchiveUnavailable,
 } from "../src/inventory-body-archive.ts";
+import { stepInventoryBodyReplay } from "../src/inventory-body-replay.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { InventoryMatchingResults } from "../src/inventory-matching-results.ts";
+import { lofiInventoryObservations } from "../src/inventory-observations.ts";
 import { collectInventoryColdBodies } from "../src/inventory-payload-retention.ts";
 import { InventoryProjectionWorkspace } from "../src/inventory-projection-workspace.ts";
-import { canonical, sha256 } from "../src/security.ts";
+import { canonical, seal, sha256 } from "../src/security.ts";
 import { Store } from "../src/store.ts";
 import { applyMigration, database } from "./helpers.ts";
 import {
@@ -31,12 +33,14 @@ test("settled cold ciphertext moves after object persistence and reopens under n
         name < "0135_"
       )
         await applyMigration(runtime.db, name);
+    const record = {
+      ...(sourceContact("q0").body as Record<string, unknown>),
+      syncedAtMillis: Date.now() - 100 * 86_400_000,
+    };
+    const [source] = await lofiInventoryObservations([], [record]);
     const f = await matchingFixture(
       {
-        sources: [
-          sourceContact("q0"),
-          sourceContact("missing", "13:00:00", "K1XYZ"),
-        ],
+        sources: [source, sourceContact("missing", "13:00:00", "K1XYZ")],
       },
       runtime,
       "current",
@@ -107,6 +111,7 @@ test("settled cold ciphertext moves after object persistence and reopens under n
       ),
     ]);
     await applyMigration(f.db, "0135_inventory_cold_bodies.sql");
+    await applyMigration(f.db, "0136_inventory_cold_body_replay.sql");
     const bodies = new Map<string, string>();
     let allowWrites = false;
     const archive: InventoryBodyArchive = {
@@ -165,11 +170,145 @@ test("settled cold ciphertext moves after object persistence and reopens under n
       (await f.db.prepare("PRAGMA foreign_key_check").all()).results.length,
       0,
     );
+    for (const [key, encrypted] of bodies) {
+      bodies.set(key, `[${encrypted.slice(1)}`);
+      await assert.rejects(
+        intake.body("a", "source", "qso", "q0", "source"),
+        /inventory_body_archive_digest_changed/,
+      );
+    }
     bodies.clear();
     await assert.rejects(
       intake.body("a", "source", "qso", "q0", "source"),
       InventoryBodyArchiveUnavailable,
     );
+    await assert.rejects(
+      intake.body("a", "source", "qso", "q0", "source"),
+      InventoryBodyArchiveUnavailable,
+    );
+    assert.equal(
+      await f.db
+        .prepare(
+          "SELECT count(*) AS n FROM inventory_body_replay_requests WHERE state='pending'",
+        )
+        .first("n"),
+      1,
+    );
+
+    const credential = await seal(
+      { key: "browser:replay", secret: "fixture", token: "fixture" },
+      {
+        tenant: "a",
+        connection: "source",
+        id: "v1",
+        kind: "credential",
+        purpose: "storage",
+      },
+      f.store.keys,
+    );
+    await f.db
+      .prepare(
+        "UPDATE private_data SET envelope=? WHERE tenant='a' AND connection='source' AND id='v1'",
+      )
+      .bind(canonical(credential))
+      .run();
+    await f.db
+      .prepare(
+        "INSERT INTO inventory_read_pacing(vendor,tenant,source,last_requested_at,next_allowed_at,loop_delay_ms) VALUES('lofi','a','source',0,0,5000)",
+      )
+      .run();
+    await f.store.release(f.lease);
+    const normalCursor = await intake.snapshot("a", "source", "sync");
+    let requests = 0;
+    const replay: typeof fetch = async (input, init) => {
+      assert.equal(new URL(String(input)).pathname, "/v1/sync");
+      assert.equal(init?.method, "POST");
+      const payload = JSON.parse(String(init.body));
+      assert.deepEqual(Object.keys(payload), ["meta"]);
+      assert.equal(payload.meta.sync.qsos.anyClient, true);
+      assert.equal(
+        payload.meta.sync.qsos.cursor,
+        requests ? "repair-next" : undefined,
+      );
+      requests++;
+      return Response.json({
+        account: { uuid: "source" },
+        operations:
+          requests === 1
+            ? [
+                {
+                  uuid: "op",
+                  stationCall: "N1RWJ",
+                  syncedAtMillis: record.syncedAtMillis + 10,
+                },
+              ]
+            : [],
+        qsos:
+          requests === 1
+            ? [
+                {
+                  ...record,
+                  notes: "different version",
+                  syncedAtMillis: record.syncedAtMillis + 1,
+                },
+              ]
+            : [record],
+        meta: {
+          operations: { records_left: 0 },
+          qsos:
+            requests === 1
+              ? { records_left: 1, next_cursor: "repair-next" }
+              : { records_left: 0 },
+          suggestedSyncLoopDelay: 0,
+        },
+      });
+    };
+    assert.deepEqual(await stepInventoryBodyReplay(store, replay), {
+      kind: "continue",
+      restored: 0,
+    });
+    assert.deepEqual(
+      await intake.snapshot("a", "source", "sync"),
+      normalCursor,
+    );
+    assert.equal((await storage())[1].cold, 1);
+    await new Promise((resolve) => setTimeout(resolve, 5100));
+    const interrupted: typeof fetch = async (input, init) => {
+      const response = await replay(input, init);
+      await f.db
+        .prepare(
+          "UPDATE leases SET expires_at=0 WHERE tenant='a' AND scope='inventory:source'",
+        )
+        .run();
+      return response;
+    };
+    await assert.rejects(
+      stepInventoryBodyReplay(store, interrupted),
+      /inventory body replay authority changed/,
+    );
+    assert.equal((await storage())[1].cold, 1);
+    assert.deepEqual(
+      await intake.snapshot("a", "source", "sync"),
+      normalCursor,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5100));
+    assert.deepEqual(await stepInventoryBodyReplay(store, replay), {
+      kind: "complete",
+      restored: 1,
+    });
+    assert.equal(requests, 3);
+    assert.deepEqual(
+      await intake.snapshot("a", "source", "sync"),
+      normalCursor,
+    );
+    assert.deepEqual(
+      await intake.body("a", "source", "qso", "q0", "source"),
+      original,
+    );
+    assert.equal((await storage())[1].cold, 0);
+    assert.deepEqual(await stepInventoryBodyReplay(store, replay), {
+      kind: "idle",
+    });
   } finally {
     await runtime.mf.dispose();
   }

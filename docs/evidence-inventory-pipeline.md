@@ -588,6 +588,49 @@ SQLite allocated 322,732,032 bytes. The benchmark made zero provider
 requests or uploads. The timing describes the local fixture under
 concurrent workloads and excludes vendor pacing and hosted latency.
 
+Repeating the same profile after metadata and lease batching, through
+migration 0121, verified the same 20,000 current classifications.
+Classification used 47,281 D1 calls and 85,036 statements across the
+same 751 deliveries. The largest delivery used 80 D1 calls. The
+instrumented classification stage took 514.1 seconds and recorded
+13,197,007 rows read and 1,542,363 rows written.
+
+| Statement family | Executions | Rows read |
+| --- | ---: | ---: |
+| Match result upsert and triggers | 1,000 | 2,257,334 |
+| Match admission guard | 1,000 | 2,097,672 |
+| Match set commit and triggers | 1,000 | 1,560,888 |
+| Delivery review publication | 1,000 | 1,188,972 |
+
+Native SQL time was 48.4 seconds across classification. Timing also
+includes workerd binding overhead, Queue coordination and application
+preparation in the local runner. Both audits used 16 result pages and
+recorded zero provider requests and uploads.
+
+### Bucket freshness read order
+
+The shared freshness view now seeks the set and reads its probes before
+looking up their tokens. Each probe's search scope is loaded once. The
+bucket version comparison, including version zero for missing buckets,
+still runs for every token at admission and commit. The same view also
+protects current-result reads.
+
+Two private copies of the captured log republished the same 160 LoTW
+and QRZ classifications. The updated view read 107,277 rows, down from
+110,241, across the same 99 calls and 217 statements. Every result state,
+reason and selected receipt agreed. Credentials, checkpoints, coverage
+and historical associations passed the audit. The replay made zero
+provider requests or uploads.
+
+The two 1,000-contact profiles verified all current classifications
+with the same calls, statements, writes and Queue deliveries. The
+matched profile also benefits when adoption rechecks the proof.
+
+| Destination | Classification rows read before → after |
+| --- | ---: |
+| Empty, up to four steps per delivery | 656,787 → 638,628 |
+| Matched, one step per delivery | 1,232,740 → 1,172,080 |
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

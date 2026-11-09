@@ -858,6 +858,8 @@ function validateQrzResume(
     );
 }
 
+const MIN_QRZ_COVERING_PAGE_SIZE = 32;
+
 export function createQrzInventoryAdapter(
   apiKey: string,
   expectedBook: QrzBook,
@@ -906,12 +908,20 @@ export function createQrzInventoryAdapter(
         try {
           page = await fetchPage();
         } catch (error) {
+          if (!(error instanceof QrzError)) throw error;
           if (
-            !(error instanceof QrzError) ||
-            error.detail !== "ambiguous_empty_selection"
-          )
+            covering &&
+            error.detail === "invalid_page_logid" &&
+            limit > MIN_QRZ_COVERING_PAGE_SIZE
+          ) {
+            // The rejected page cannot witness a tail. A full smaller page
+            // can advance the same cursor, with the new MAX saved on commit.
+            limit = Math.max(MIN_QRZ_COVERING_PAGE_SIZE, Math.floor(limit / 2));
+            page = await fetchPage();
+            if (page.nextAfterLogId === null) throw error;
+          } else if (error.detail !== "ambiguous_empty_selection") {
             throw error;
-          if (canVerifyDelta && !input.resume) {
+          } else if (canVerifyDelta && !input.resume) {
             // A successful scan over the same dates covers the modified
             // selection. Use a separate effective cursor from the first page.
             covering = true;

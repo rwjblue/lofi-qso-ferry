@@ -1142,6 +1142,73 @@ test("QRZ exact 250-record terminal FAIL recovers using explicit 249-record repl
   ]);
 });
 
+test("QRZ covering verification reduces MAX at the same cursor after an invalid LOGID", async () => {
+  const records = Array.from({ length: 400 }, (_, i) => ({
+    ...adif,
+    APP_QRZLOG_LOGID: String(i + 1),
+  }));
+  const fetches: { after: number; max: number }[] = [];
+  let truncateRetry = false;
+  const pages = qrzPagedTransport(records, fetches, (after, max, selected) => {
+    if (after === 251 && max === 250) {
+      const invalid = { ...selected[0], APP_QRZLOG_LOGID: "" };
+      return new Response(fetchBody([invalid, ...selected.slice(1)]));
+    }
+    if (after === 251 && max === 125 && truncateRetry)
+      return new Response(fetchBody(selected.slice(0, 1)));
+  });
+  const transport: typeof fetch = async (input, init) => {
+    const form = init?.body;
+    assert.ok(form instanceof URLSearchParams);
+    if (form.get("OPTION")?.includes("MODSINCE:"))
+      return new Response("RESULT=FAIL&COUNT=0");
+    return pages(input, init);
+  };
+  const request = qrzRequest({
+    verifyAmbiguousDelta: true,
+    selection: {
+      between: ["2026-11-01", "2026-11-14"],
+      modifiedSince: "2026-11-07",
+    },
+  });
+  const adapter = createQrzInventoryAdapter("key", book);
+  const first = await adapter.readStep(context(transport), request);
+  assert.ok(first.kind === "page" && first.progress.kind === "continue");
+  const resume = first.progress.resume as QrzInventoryResume;
+  const second = await adapter.readStep(context(transport), {
+    ...request,
+    resume,
+  });
+  assert.ok(second.kind === "page" && second.progress.kind === "continue");
+  assert.equal(second.usage.requests, 3);
+  assert.equal(second.observations.length, 125);
+  const next = second.progress.resume as QrzInventoryResume;
+  assert.equal(next.pageSize, 125);
+  assert.equal(next.afterLogId, 376);
+  const tail = await adapter.readStep(context(transport), {
+    ...request,
+    resume: next,
+  });
+  assert.ok(tail.kind === "page" && tail.progress.kind === "observed_complete");
+  assert.equal(tail.observations.length, 25);
+  assert.deepEqual(fetches, [
+    { after: 0, max: 250 },
+    { after: 251, max: 250 },
+    { after: 251, max: 125 },
+    { after: 376, max: 125 },
+  ]);
+
+  truncateRetry = true;
+  const refused = await adapter.readStep(context(transport), {
+    ...request,
+    resume,
+  });
+  assert.equal(refused.kind, "blocked");
+  assert.equal(refused.code, "invalid_response");
+  assert.equal("progress" in refused, false);
+  assert.equal("observations" in refused, false);
+});
+
 test("QRZ recovery budget exhaustion keeps the original resume and no partial observations", async () => {
   const f = await qrzFullPage();
   const before = structuredClone(f.resume);

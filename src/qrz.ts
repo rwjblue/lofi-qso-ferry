@@ -15,7 +15,7 @@ export class QrzError extends Error {
       | "protocol"
       | "blocked",
     message: string,
-    public readonly detail?: "ambiguous_empty_selection",
+    public readonly detail?: "ambiguous_empty_selection" | "invalid_page_logid",
   ) {
     super(message);
   }
@@ -432,7 +432,11 @@ export class QrzClient {
         Number(id) < after ||
         seen.has(id)
       )
-        throw new QrzError("protocol", "Invalid or repeated QRZ LOGID");
+        throw new QrzError(
+          "protocol",
+          "Invalid or repeated QRZ LOGID",
+          "invalid_page_logid",
+        );
       seen.add(id);
       highest = Math.max(highest, Number(id));
     }

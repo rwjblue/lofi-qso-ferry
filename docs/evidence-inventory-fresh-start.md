@@ -205,3 +205,13 @@ Reopening confirmed the previous checkpoint and full selection were still
 retained, the source checkpoint and credential envelopes were unchanged,
 and no delivery attempts existed. Full-book live verification remains
 unqualified under these response failures.
+
+Two alternating read-only probes at the held cursor reproduced an unusable
+LOGID in each 250-record response. Both 125-record responses validated
+and advanced. A later probe returned valid pages at both sizes and also
+validated the next 125-record page, so the failure was intermittent.
+
+On an invalid LOGID during a covering scan, the reader retries once at
+the same cursor with half the page size, down to 32 records. Only a full,
+valid smaller page can save the new size and cursor. An incomplete
+smaller result supplies no evidence for finishing the selection.

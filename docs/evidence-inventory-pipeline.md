@@ -471,6 +471,39 @@ agreed for all 160 results. Receipt coverage, checkpoints, linked
 credentials and historical associations passed the audit. The replay
 made zero provider calls and uploads.
 
+### Projection input snapshot
+
+Projection preparation loads the wrapped generation key, then reads the
+scope, coverage, selected records, operation and event dependencies, and
+admitted payloads in one D1 statement. SQLite measures the deduplicated
+ciphertext union before returning any payloads. A context overflow leaves
+only the selected bodies eligible for loading. The existing publication
+guards still check every captured dependency.
+
+On a private copy of the captured log, both readers prepared the same
+400 projections. Their decrypted bodies, states, reasons, dependency
+metadata and byte accounting agreed. The audit preserved account
+bindings, credential envelopes, checkpoints and coverage. Preparation
+made zero writes or provider requests.
+
+| Captured inputs | Records | D1 calls before → after | Rows read before → after |
+| --- | ---: | ---: | ---: |
+| LoFi | 200 | 60 → 20 | 6,442 → 11,396 |
+| LoTW | 100 | 20 → 10 | 850 → 1,505 |
+| QRZ | 100 | 20 → 10 | 850 → 1,505 |
+
+Both 1,000-contact pipeline fixtures retained their classifications
+and Queue delivery counts. The figures cover the classification stage
+after source coverage.
+
+| Destination | D1 calls before → after | Rows read before → after |
+| --- | ---: | ---: |
+| Empty, up to four steps per delivery | 2,697 → 2,497 | 650,123 → 660,116 |
+| Matched, one step per delivery | 3,728 → 3,528 | 1,223,724 → 1,233,373 |
+
+The byte-bound fixture recorded zero ciphertext rows for an oversized
+cohort and one for a smaller eligible cohort.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

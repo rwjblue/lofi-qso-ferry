@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { measureD1 } from "../scripts/inventory-benchmark-metrics.ts";
 import { InventoryComparisonBuilds } from "../src/inventory-comparison-builds.ts";
 import type { InventoryObservation } from "../src/inventory-ingestion.ts";
 import {
+  type InventoryProjectionBody,
   InventoryProjectionWorkspace,
   inventoryProjectionDigest,
   inventoryProjectionIdentity,
-  type InventoryProjectionBody,
   type PreparedInventoryProjections,
 } from "../src/inventory-projection-workspace.ts";
 import { type Envelope, open } from "../src/security.ts";
-import { receiptFixture } from "./inventory-receipt-fixtures.ts";
+import { Store } from "../src/store.ts";
 import { fixture, observation } from "./inventory-context-fixtures.ts";
+import { receiptFixture } from "./inventory-receipt-fixtures.ts";
 
 const at = Date.parse("2026-11-08T12:30:00Z");
 async function decrypt(
@@ -75,7 +77,7 @@ test("a source cohort decrypts shared context once, preserves precision, and ret
     assert.ok(page.rows.every((row) => row.state === "ready"));
     assert.equal(page.stats.dependencies, 22);
     assert.equal(page.stats.decryptedBodies, 22);
-    assert.ok(calls <= 8, `${calls} D1 calls`);
+    assert.equal(calls, 2);
     t.diagnostic(
       `20 source contacts with shared operation/event: ${calls} D1 calls, ${page.stats.decryptedBodies} body decryptions`,
     );
@@ -274,7 +276,16 @@ test("ciphertext byte admission holds the entire cohort before loading or decryp
       };
       return row;
     });
-    const workspace = await ready(f, qsos);
+    await ready(f, qsos);
+    let ciphertextRows = 0;
+    const meter = measureD1(f.db, (result) => {
+      ciphertextRows += result.results.filter(
+        (row) => (row as { row_type?: string }).row_type === "payload",
+      ).length;
+    });
+    const workspace = new InventoryProjectionWorkspace(
+      new Store(meter.database, f.store.keys),
+    );
     const held = await workspace.prepare(
       "a",
       f.generation,
@@ -288,8 +299,10 @@ test("ciphertext byte admission holds the entire cohort before loading or decryp
     );
     assert.equal(held.stats.decryptedBodies, 0);
     assert.equal(held.stats.plaintextBytes, 0);
+    assert.equal(ciphertextRows, 0);
     const one = await workspace.prepare("a", f.generation, "source", ["q0"]);
     assert.equal(one.rows[0].state, "ready");
+    assert.equal(ciphertextRows, 1);
   } finally {
     await f.mf.dispose();
   }

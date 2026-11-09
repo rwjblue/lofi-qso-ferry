@@ -126,6 +126,106 @@ interface Scope {
   connection_state: string;
   complete: number;
 }
+interface ProjectionSnapshotRow {
+  row_type: "scope" | "input" | "context" | "payload";
+  ordinal: number;
+  payload_id: string | null;
+  data: string;
+}
+const referenceFields = `'family',r.family,'key',r.key,'subtype',r.subtype,'parent_key',r.parent_key,
+ 'status',r.status,'facet',r.facet,'semantic_version',r.semantic_version,'payload_id',r.payload_id,
+ 'connection_id',r.connection_id,'kind',r.kind,'payload_bytes',r.payload_bytes,
+ 'membership_version',r.membership_version,'member_state',r.member_state`;
+
+// Keep the scope, membership and bodies in one read snapshot. Return each
+// dependency and envelope separately to keep individual result rows small.
+const projectionSnapshot = `WITH scoped AS MATERIALIZED (
+ SELECT s.tenant,s.scope_id,s.connection_id,s.provider,s.config_version,s.state,
+        c.status AS connection_state,a.status AS account_state,b.complete
+ FROM inventory_scopes s
+ JOIN connections c ON (c.tenant,c.id)=(s.tenant,s.connection_id)
+ JOIN accounts a ON a.id=s.tenant
+ JOIN comparison_builds b ON (b.tenant,b.scope_id,b.generation_id,b.config_version)=(s.tenant,s.scope_id,?3,s.config_version)
+ JOIN comparison_domains d ON d.tenant=s.tenant AND d.version=?4 AND ?3 IN (d.active_generation,d.pending_generation)
+ WHERE (s.tenant,s.scope_id)=(?1,?2)
+), coverage AS MATERIALIZED (
+ SELECT cv.stream_id,cv.partition_id,cv.version,cv.epoch,cv.state,cv.kind,cv.published_config_version,
+   CASE WHEN r.mode='full' AND r.requires_catchup=1 AND r.phase='complete' AND r.config_version=s.config_version
+     AND json_array_length(r.required_streams)=2
+     AND EXISTS(SELECT 1 FROM json_each(r.required_streams) WHERE value='operations')
+     AND EXISTS(SELECT 1 FROM json_each(r.required_streams) WHERE value='qsos') THEN 1 ELSE 0 END AS full_context
+ FROM scoped s CROSS JOIN inventory_coverage cv
+ LEFT JOIN inventory_runs r ON (r.tenant,r.run_id)=(cv.tenant,cv.published_run_id)
+ WHERE s.provider='lofi' AND s.complete=1 AND s.account_state='active'
+   AND (cv.tenant,cv.scope_id,cv.facet)=(s.tenant,s.scope_id,'source')
+ ORDER BY (cv.state='ready') DESC,cv.completed_at DESC,cv.stream_id,cv.partition_id LIMIT 1
+), inputs AS MATERIALIZED (
+ SELECT CAST(j.key AS INTEGER) AS ordinal,e.entity_family AS family,e.record_key AS key,e.subtype,e.parent_key,e.status,
+        f.facet,f.semantic_version,f.payload_id,p.connection_id,p.kind,length(p.envelope) AS payload_bytes,
+        length(CAST(p.envelope AS BLOB)) AS cipher_bytes,
+        coalesce(mv.version,0) AS membership_version,m.state AS member_state,i.key_class,i.bucket_hash,i.projection_version,
+        coalesce(pd.topology_version,0) AS topology_version,w.work_version,w.completed_version
+ FROM scoped s CROSS JOIN json_each(?5) j CROSS JOIN inventory_records e
+ JOIN inventory_record_facets f ON (f.tenant,f.scope_id,f.entity_family,f.record_key,f.facet)=
+   (e.tenant,e.scope_id,e.entity_family,e.record_key,CASE s.provider WHEN 'lofi' THEN 'source' ELSE 'receipt' END)
+ JOIN inventory_payloads p ON (p.tenant,p.scope_id,p.payload_id)=(f.tenant,f.scope_id,f.payload_id)
+ JOIN comparison_index i ON (i.tenant,i.generation_id,i.scope_id,i.record_key,i.facet)=(e.tenant,?3,e.scope_id,e.record_key,f.facet)
+   AND i.state!='retired' AND i.semantic_version=f.semantic_version AND i.config_version=s.config_version
+ JOIN comparison_work w ON (w.tenant,w.generation_id,w.scope_id,w.record_key,w.facet)=(i.tenant,i.generation_id,i.scope_id,i.record_key,i.facet)
+ LEFT JOIN projection_domains pd ON (pd.tenant,pd.scope_id,pd.operation_key)=(e.tenant,e.scope_id,e.parent_key)
+ LEFT JOIN inventory_membership_versions mv ON (mv.tenant,mv.scope_id,mv.entity_family,mv.record_key,mv.facet)=
+   (e.tenant,e.scope_id,e.entity_family,e.record_key,f.facet)
+ LEFT JOIN coverage cv ON 1
+ LEFT JOIN inventory_partition_membership m ON (m.tenant,m.scope_id,m.stream_id,m.partition_id,m.entity_family,m.record_key,m.facet)=
+   (e.tenant,e.scope_id,cv.stream_id,cv.partition_id,e.entity_family,e.record_key,f.facet)
+ WHERE s.complete=1 AND s.account_state='active'
+   AND (e.tenant,e.scope_id,e.entity_family,e.record_key)=(s.tenant,s.scope_id,'qso',j.value)
+   AND e.subtype='qso' AND e.status='active'
+), parents AS MATERIALIZED (
+ SELECT i.parent_key AS key FROM coverage cv CROSS JOIN scoped s CROSS JOIN inputs i
+ WHERE i.parent_key IS NOT NULL AND i.parent_key!=''
+   AND cv.state='ready' AND cv.kind='observed_selection' AND cv.full_context=1 AND cv.published_config_version=s.config_version
+ GROUP BY i.parent_key ORDER BY min(i.ordinal)
+), refs AS (
+ SELECT 'operation' AS family,key FROM parents
+ UNION ALL SELECT e.entity_family,e.record_key FROM parents p CROSS JOIN inventory_records e INDEXED BY inventory_parent
+ WHERE (e.tenant,e.scope_id,e.parent_key,e.entity_family,e.subtype)=(?1,?2,p.key,'qso','event')
+ LIMIT ${MAX_DEPENDENCIES + 1}
+), context_rows AS MATERIALIZED (
+ SELECT r.family,r.key,e.subtype,e.parent_key,e.status,'source' AS facet,f.semantic_version,f.payload_id,
+        p.connection_id,p.kind,length(p.envelope) AS payload_bytes,length(CAST(p.envelope AS BLOB)) AS cipher_bytes,
+        coalesce(mv.version,0) AS membership_version,m.state AS member_state
+ FROM coverage cv CROSS JOIN refs r
+ LEFT JOIN inventory_records e ON (e.tenant,e.scope_id,e.entity_family,e.record_key)=(?1,?2,r.family,r.key)
+ LEFT JOIN inventory_record_facets f ON (f.tenant,f.scope_id,f.entity_family,f.record_key,f.facet)=(e.tenant,e.scope_id,e.entity_family,e.record_key,'source')
+ LEFT JOIN inventory_payloads p ON (p.tenant,p.scope_id,p.payload_id)=(f.tenant,f.scope_id,f.payload_id)
+ LEFT JOIN inventory_membership_versions mv ON (mv.tenant,mv.scope_id,mv.entity_family,mv.record_key,mv.facet)=
+   (e.tenant,e.scope_id,e.entity_family,e.record_key,'source')
+ LEFT JOIN inventory_partition_membership m ON (m.tenant,m.scope_id,m.stream_id,m.partition_id,m.entity_family,m.record_key,m.facet)=
+   (e.tenant,e.scope_id,cv.stream_id,cv.partition_id,e.entity_family,e.record_key,'source')
+), payloads AS MATERIALIZED (
+ SELECT payload_id,cipher_bytes FROM inputs WHERE payload_id IS NOT NULL
+ UNION SELECT payload_id,cipher_bytes FROM context_rows WHERE payload_id IS NOT NULL
+   AND (SELECT count(*) FROM inputs)+(SELECT count(*) FROM context_rows)<=${MAX_DEPENDENCIES}
+), budget AS MATERIALIZED (
+ SELECT coalesce(sum(cipher_bytes),0) AS bytes FROM payloads
+)
+SELECT 'scope' AS row_type,0 AS ordinal,NULL AS payload_id,json_object(
+  'scope',json_object('connection_id',s.connection_id,'provider',s.provider,'config_version',s.config_version,
+    'state',s.state,'connection_state',s.connection_state,'account_state',s.account_state,'complete',s.complete),
+  'coverage',json((SELECT json_object('stream_id',stream_id,'partition_id',partition_id,'version',version,'epoch',epoch,
+    'state',state,'kind',kind,'published_config_version',published_config_version,'full_context',full_context) FROM coverage)),
+  'cipherBytes',(SELECT bytes FROM budget)
+) AS data FROM scoped s
+UNION ALL SELECT 'input',r.ordinal,NULL,json_object(${referenceFields},
+  'key_class',r.key_class,'bucket_hash',r.bucket_hash,'projection_version',r.projection_version,
+  'topology_version',r.topology_version,'work_version',r.work_version,'completed_version',r.completed_version)
+FROM inputs r
+UNION ALL SELECT 'context',0,NULL,json_object(${referenceFields}) FROM context_rows r
+UNION ALL SELECT 'payload',0,p.payload_id,p.envelope FROM budget b CROSS JOIN payloads ids CROSS JOIN inventory_payloads p
+WHERE b.bytes<=?6 AND (SELECT count(*) FROM inputs)=json_array_length(?5)
+  AND (p.tenant,p.scope_id,p.payload_id)=(?1,?2,ids.payload_id)`;
+
 function object(value: unknown): SourceRecord {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as SourceRecord)
@@ -180,100 +280,46 @@ export class InventoryProjectionWorkspace {
     );
     if (!writers || !context)
       throw new Error("inventory_comparison_generation_unavailable");
-    const current = await this.store
+    const { results: snapshot } = await this.store
       .statement(
-        `SELECT s.connection_id,s.provider,s.config_version,s.state,c.status AS connection_state,a.status AS account_state,b.complete
-      FROM inventory_scopes s JOIN connections c ON c.tenant=s.tenant AND c.id=s.connection_id JOIN accounts a ON a.id=s.tenant
-      JOIN comparison_builds b ON b.tenant=s.tenant AND b.scope_id=s.scope_id AND b.generation_id=? AND b.config_version=s.config_version
-      JOIN comparison_domains d ON d.tenant=s.tenant AND d.version=? AND ? IN (d.active_generation,d.pending_generation)
-      WHERE s.tenant=? AND s.scope_id=?`,
-        generation,
-        writers.domain.version,
-        generation,
+        projectionSnapshot,
         tenant,
         scope,
+        generation,
+        writers.domain.version,
+        canonical(keys),
+        MAX_BYTES,
       )
-      .first<Scope>();
-    if (!current) throw new Error("inventory_projection_scope_changed");
+      .all<ProjectionSnapshotRow>();
+    const header = snapshot.find((row) => row.row_type === "scope");
+    if (!header) throw new Error("inventory_projection_scope_changed");
+    const {
+      scope: current,
+      coverage,
+      cipherBytes,
+    } = JSON.parse(header.data) as {
+      scope: Scope;
+      coverage: InventoryProjectionCoverage | null;
+      cipherBytes: number;
+    };
     if (!current.complete)
       throw new Error("inventory_projection_index_incomplete");
     if (current.account_state !== "active")
       throw new Error("inventory_projection_account_unavailable");
-    const facet = current.provider === "lofi" ? "source" : "receipt";
-    const coverage =
-      current.provider === "lofi"
-        ? await this.store
-            .statement(
-              `SELECT c.stream_id,c.partition_id,c.version,c.epoch,c.state,c.kind,c.published_config_version,
-      CASE WHEN r.mode='full' AND r.requires_catchup=1 AND r.phase='complete' AND r.config_version=? AND json_array_length(r.required_streams)=2
-        AND EXISTS(SELECT 1 FROM json_each(r.required_streams) WHERE value='operations') AND EXISTS(SELECT 1 FROM json_each(r.required_streams) WHERE value='qsos') THEN 1 ELSE 0 END AS full_context
-      FROM inventory_coverage c LEFT JOIN inventory_runs r ON r.tenant=c.tenant AND r.run_id=c.published_run_id
-      WHERE c.tenant=? AND c.scope_id=? AND c.facet='source' ORDER BY (c.state='ready') DESC,c.completed_at DESC,c.stream_id,c.partition_id LIMIT 1`,
-              current.config_version,
-              tenant,
-              scope,
-            )
-            .first<InventoryProjectionCoverage>()
-        : null;
     const coverageReady =
       coverage?.state === "ready" &&
       coverage.kind === "observed_selection" &&
       coverage.full_context === 1 &&
       coverage.published_config_version === current.config_version;
-    const inputs = (
-      await this.store
-        .statement(
-          `SELECT e.entity_family AS family,e.record_key AS key,e.subtype,e.parent_key,e.status,f.facet,f.semantic_version,f.payload_id,p.connection_id,p.kind,length(p.envelope) AS payload_bytes,
-      coalesce(mv.version,0) AS membership_version,m.state AS member_state,i.key_class,i.bucket_hash,i.projection_version,coalesce(pd.topology_version,0) AS topology_version,w.work_version,w.completed_version
-      FROM json_each(?) j CROSS JOIN inventory_records e
-      JOIN inventory_record_facets f ON f.tenant=e.tenant AND f.scope_id=e.scope_id AND f.entity_family=e.entity_family AND f.record_key=e.record_key AND f.facet=?
-      JOIN inventory_payloads p ON p.tenant=f.tenant AND p.scope_id=f.scope_id AND p.payload_id=f.payload_id
-      JOIN comparison_index i ON i.tenant=e.tenant AND i.generation_id=? AND i.scope_id=e.scope_id AND i.record_key=e.record_key AND i.facet=f.facet AND i.state!='retired' AND i.semantic_version=f.semantic_version AND i.config_version=?
-      JOIN comparison_work w ON w.tenant=i.tenant AND w.generation_id=i.generation_id AND w.scope_id=i.scope_id AND w.record_key=i.record_key AND w.facet=i.facet
-      LEFT JOIN projection_domains pd ON pd.tenant=e.tenant AND pd.scope_id=e.scope_id AND pd.operation_key=e.parent_key
-      LEFT JOIN inventory_membership_versions mv ON mv.tenant=e.tenant AND mv.scope_id=e.scope_id AND mv.entity_family=e.entity_family AND mv.record_key=e.record_key AND mv.facet=f.facet
-      LEFT JOIN inventory_partition_membership m ON m.tenant=e.tenant AND m.scope_id=e.scope_id AND m.stream_id=? AND m.partition_id=? AND m.entity_family=e.entity_family AND m.record_key=e.record_key AND m.facet=f.facet
-      WHERE e.tenant=? AND e.scope_id=? AND e.entity_family='qso' AND e.subtype='qso' AND e.status='active' AND e.record_key=j.value`,
-          canonical(keys),
-          facet,
-          generation,
-          current.config_version,
-          coverage?.stream_id ?? null,
-          coverage?.partition_id ?? null,
-          tenant,
-          scope,
-        )
-        .all<InventoryProjectionInput>()
-    ).results;
+    const inputs = snapshot
+      .filter((row) => row.row_type === "input")
+      .sort((a, b) => a.ordinal - b.ordinal)
+      .map((row) => JSON.parse(row.data) as InventoryProjectionInput);
     if (inputs.length !== keys.length)
       throw new Error("inventory_projection_inputs_changed");
-    const parents = [
-      ...new Set(
-        inputs.flatMap((row) => (row.parent_key ? [row.parent_key] : [])),
-      ),
-    ];
-    let refs: InventoryProjectionReference[] = [];
-    if (current.provider === "lofi" && coverageReady && parents.length)
-      refs = (
-        await this.store
-          .statement(
-            `WITH refs AS (
-      SELECT 'operation' AS family,value AS key FROM json_each(?1)
-      UNION ALL SELECT e.entity_family,e.record_key FROM json_each(?1) j CROSS JOIN inventory_records e WHERE e.tenant=?2 AND e.scope_id=?3 AND e.parent_key=j.value AND e.entity_family='qso' AND e.subtype='event' LIMIT 257
-      ) SELECT r.family,r.key,e.subtype,e.parent_key,e.status,'source' AS facet,f.semantic_version,f.payload_id,p.connection_id,p.kind,length(p.envelope) AS payload_bytes,coalesce(mv.version,0) AS membership_version,m.state AS member_state
-      FROM refs r LEFT JOIN inventory_records e ON e.tenant=?2 AND e.scope_id=?3 AND e.entity_family=r.family AND e.record_key=r.key
-      LEFT JOIN inventory_record_facets f ON f.tenant=e.tenant AND f.scope_id=e.scope_id AND f.entity_family=e.entity_family AND f.record_key=e.record_key AND f.facet='source'
-      LEFT JOIN inventory_payloads p ON p.tenant=f.tenant AND p.scope_id=f.scope_id AND p.payload_id=f.payload_id
-      LEFT JOIN inventory_membership_versions mv ON mv.tenant=e.tenant AND mv.scope_id=e.scope_id AND mv.entity_family=e.entity_family AND mv.record_key=e.record_key AND mv.facet='source'
-      LEFT JOIN inventory_partition_membership m ON m.tenant=e.tenant AND m.scope_id=e.scope_id AND m.stream_id=?4 AND m.partition_id=?5 AND m.entity_family=e.entity_family AND m.record_key=e.record_key AND m.facet='source'`,
-            canonical(parents),
-            tenant,
-            scope,
-            coverage?.stream_id ?? null,
-            coverage?.partition_id ?? null,
-          )
-          .all<InventoryProjectionReference>()
-      ).results;
+    let refs = snapshot
+      .filter((row) => row.row_type === "context")
+      .map((row) => JSON.parse(row.data) as InventoryProjectionReference);
     const contextOverflow = inputs.length + refs.length > MAX_DEPENDENCIES;
     if (contextOverflow) refs = []; // No truncated context is usable.
     const dependencies: InventoryProjectionReference[] = [...inputs, ...refs];
@@ -296,48 +342,42 @@ export class InventoryProjectionWorkspace {
       (sum, row) => sum + Number(row.payload_bytes),
       0,
     );
+    if (cipherBytes !== encryptedInputBytes)
+      throw new Error("inventory_projection_payload_size_changed");
     let byteOverflow = encryptedInputBytes > MAX_BYTES,
       plaintextBytes = 0,
       decryptedBodies = 0;
     const bodies = new Map<string, SourceRecord>();
     if (!byteOverflow) {
-      for (const chunk of inventoryJsonChunks([...payloadRefs.keys()])) {
-        const payloads = await this.store
-          .statement(
-            `SELECT p.payload_id,p.envelope FROM json_each(?) j CROSS JOIN inventory_payloads p WHERE p.tenant=? AND p.scope_id=? AND p.payload_id=j.value`,
-            chunk,
+      for (const payload of snapshot) {
+        if (payload.row_type !== "payload") continue;
+        const { payload_id: id, data: envelope } = payload;
+        const ref = id && payloadRefs.get(id);
+        if (
+          !id ||
+          !ref ||
+          encoder.encode(envelope).byteLength !== ref.payload_bytes
+        )
+          throw new Error("inventory_projection_payload_size_changed");
+        const body = await open<unknown>(
+          JSON.parse(envelope) as Envelope,
+          {
             tenant,
-            scope,
-          )
-          .all<{ payload_id: string; envelope: string }>();
-        for (const payload of payloads.results) {
-          const ref = payloadRefs.get(payload.payload_id);
-          if (
-            !ref ||
-            encoder.encode(payload.envelope).byteLength !== ref.payload_bytes
-          )
-            throw new Error("inventory_projection_payload_size_changed");
-          const body = await open<unknown>(
-            JSON.parse(payload.envelope) as Envelope,
-            {
-              tenant,
-              connection: current.connection_id,
-              id: payload.payload_id,
-              kind: ref.kind ?? "",
-              purpose: "storage",
-            },
-            this.store.keys,
-          );
-          decryptedBodies++;
-          plaintextBytes += encoder.encode(canonical(body)).byteLength;
-          if (plaintextBytes > MAX_BYTES) {
-            byteOverflow = true;
-            bodies.clear();
-            break;
-          }
-          bodies.set(payload.payload_id, object(body));
+            connection: current.connection_id,
+            id,
+            kind: ref.kind ?? "",
+            purpose: "storage",
+          },
+          this.store.keys,
+        );
+        decryptedBodies++;
+        plaintextBytes += encoder.encode(canonical(body)).byteLength;
+        if (plaintextBytes > MAX_BYTES) {
+          byteOverflow = true;
+          bodies.clear();
+          break;
         }
-        if (byteOverflow) break;
+        bodies.set(id, object(body));
       }
       if (!byteOverflow && bodies.size !== payloadRefs.size)
         throw new Error("inventory_projection_payload_unavailable");
@@ -490,7 +530,9 @@ export class InventoryProjectionWorkspace {
       dependencies,
       contextComplete:
         !contextOverflow &&
-        (current.provider !== "lofi" || !parents.length || coverageReady),
+        (current.provider !== "lofi" ||
+          coverageReady ||
+          !inputs.some((row) => row.parent_key)),
       rows,
       payloads,
       preparedAt: Date.now(),

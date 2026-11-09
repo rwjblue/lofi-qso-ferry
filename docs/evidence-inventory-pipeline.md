@@ -174,6 +174,22 @@ migration. Both runs classified all 1,000 contacts as absent from
 inventory. The large-run observations cover operation enrollment and
 early ingestion.
 
+### 200,000-contact source coverage
+
+The migration 0115 run with comparison deferred accepted 200,000 QSOs
+and 2,000 operations in 202 normalized source pages. Collection took
+196.9 seconds and used 1,815 D1 calls and 9,875 explicit statements.
+Native metadata recorded 43,284,543 rows read and 9,066,675 rows
+written during collection.
+
+Ready coverage published 338.1 seconds after source enrollment, with
+all 202,000 members present at epoch 1. The interval after collection
+included catch-up, 1,010 membership pages of 200 rows and terminal
+publication. The first ready sample allocated 1.19 GB in SQLite as
+comparison began. This qualifies local source coverage on normalized
+synthetic pages. Classification was still in progress at the sample.
+The timing excludes adapter processing and live provider pacing.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

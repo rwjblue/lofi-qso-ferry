@@ -184,12 +184,58 @@ request admission, preparation and later scheduling. Transient LoFi
 admission pages carry an empty hint list and publish nothing.
 
 The real source-calendar trial above used explicit registration on schema
-0079. The new hints supply durable input for automatic registration;
-consuming them and recovering split selections are subsequent work.
+0079. The new hints supply durable input for the hosted scheduler.
+
+## Hosted calendar enrollment and overflow recovery
+
+[Migration 0081](../migrations/0081_inventory_calendar_scheduling.sql)
+and the hosted cron enroll up to sixteen month/link pairs per turn from
+the current managed LoFi scopes. An active LoTW query link can pick up
+months already stored before it was added. The exact unfiltered scheduled
+plan and current scope configuration acknowledge enrollment. A station
+filter or partial range leaves the full month due. A keyset cursor and
+periodic wrap pick up months that arrive behind the current position.
+
+The offline scheduler replay used a copy of the real personal log.
+Trial setup derived fourteen month hints from 4,251 retained accepted
+LoFi bodies and reused their stored observation times. The normal hosted
+cron enrolled and started all fourteen LoTW jobs in 2.0 seconds. That turn
+used 238 D1 calls, 504 statements, 2,631 rows read and 610 rows written,
+including native run/wakeup publication and the other cron work on the
+copy. The second turn registered, started and queued zero jobs. All
+fourteen LoTW runs reopened in collecting state. The replay made zero
+vendor requests and verified the original access and credential
+ciphertext. The earlier real trial measured report and comparison
+completion for the same fourteen source months.
+
+[Migration 0082](../migrations/0082_inventory_lotw_overflow.sql)
+indexes held jobs for bounded recovery. A byte or record limit, or a
+deadline after HTTP 200 body progress, can put a multi-day LoTW report
+into this hold. A stalled connection or a cooldown uses the retry path.
+The next cron can enroll two disjoint, adjacent child ranges with the
+same filters and schedule policy. Each starts a full report with its
+own receipt checkpoint. If cron stops after the first child commits,
+the next pass reuses that selection and enrolls the missing child.
+The parent job acknowledges the split only while both child plans
+are current, and its coverage remains held. An overflowing one-day
+report stays held for review.
+
+The actual Worker test returned an oversized November report, persisted
+one child before rerunning cron, and completed both children in two
+requests. A further cron turn made zero duplicate requests or selections.
+The adapter test separately distinguishes successful body progress from
+a connection stall, an empty stalled body and a stalled HTTP 503.
+
+Recurring report demand depends on the age of each range at enrollment.
+A fourteen-month initial log with two months on the 15-minute cadence
+schedules about 204 reports per day before splits. One hundred such
+accounts would request about 20,400 reports per day against the global
+background allowance of 2,304 per day. Each enrolled range keeps its
+original cadence as it ages, so newly enrolled months can also increase
+demand over time. Revise the cadence before a multi-account rollout.
 
 The [sanitized measurements](benchmarks/inventory-adoption-2026-11-08.json)
-retain the replay, reopen, page censuses and LoTW trial summaries.
-No raw contacts, credentials or private directory locations are included.
+retain the replay, reopen, page censuses, LoTW trials and scheduler costs.
 
 ## Qualification and remaining integration
 
@@ -203,7 +249,9 @@ ciphertext and no requests beyond the independent service scans. Six
 earlier coordinator regressions and seven managed/access/audit regressions
 also passed. Twenty-seven native ingestion/calendar cases passed; the
 actual Worker test passed again with source month publication and the
-transient admission format enabled. TypeScript, lint, formatting and the
+transient admission format enabled. The calendar enrollment and split
+follow-up passed 88 adapter and LoTW cases and 13 hosted cases, including
+the actual Worker cron/Queue test. TypeScript, lint, formatting and the
 Worker dry-run build passed.
 
 Ownership-aware delivery planning, fresh source proofs, new delivery

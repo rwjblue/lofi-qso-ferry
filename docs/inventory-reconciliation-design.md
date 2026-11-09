@@ -1,6 +1,6 @@
 # Inventory driven reconciliation design
 
-Status: **Architecture with local inventory, matching and historical adoption implementation, 2026-11-08.** Bulk ingestion, bounded reads, run/membership/coverage, reader handoff, hosted scheduler/Queue wiring, encrypted comparison keys, atomic hash/context invalidation, resumable index generations, native encrypted projection publication, shared body loading, bounded matching snapshots, guarded persisted comparison results, permanent read-only historical associations, durable operation projection jobs, coverage-recovery wakeups, unified build/projection/matching coordination, guarded matching-work completion, bounded bucket/scope invalidation and current coverage wait points/readiness journaling, guarded prefix dispatch and bounded rematching publication are implemented locally. See [ingestion evidence](evidence-inventory-ingestion.md), [run evidence](evidence-inventory-runs.md), [runtime evidence](evidence-inventory-runtime.md), [comparison evidence](evidence-inventory-comparison.md), [projection evidence](evidence-inventory-projections.md), [matching evidence](evidence-inventory-matching.md), [matching-work evidence](evidence-inventory-matching-work.md), [invalidation evidence](evidence-inventory-matching-invalidation.md), [scope-enrollment evidence](evidence-inventory-matching-pairs.md), [coverage-wait evidence](evidence-inventory-matching-coverage.md), [ownership evidence](evidence-inventory-ownership.md) and [coordinator evidence](evidence-inventory-coordinator.md). Durable hosted comparison wakeups, Queue/cron recovery and native read-only lease admission are implemented locally; see [hosted comparison evidence](evidence-inventory-hosted-comparison.md). Automatic historical adoption is implemented and exercised on a full personal-log replay; see [adoption scheduling evidence](evidence-inventory-adoption-scheduling.md). Ownership-aware delivery planning, fresh source proofs, automatic LoTW date discovery/splitting, delivery integration and deployment remain future work. Selected-input cohort invalidation, including missing/retired identities, is implemented with guarded bounded recovery; see [selected-input evidence](evidence-inventory-matching-selected.md). Runtime activation is configured off; no production reset or export-policy change has been performed.
+Status: **Architecture with local inventory, matching and historical adoption implementation, 2026-11-08.** Bulk ingestion, bounded reads, run/membership/coverage, reader handoff, hosted scheduler/Queue wiring, encrypted comparison keys, atomic hash/context invalidation, resumable index generations, native encrypted projection publication, shared body loading, bounded matching snapshots, guarded persisted comparison results, permanent read-only historical associations, durable operation projection jobs, coverage-recovery wakeups, unified build/projection/matching coordination, guarded matching-work completion, bounded bucket/scope invalidation and current coverage wait points/readiness journaling, guarded prefix dispatch and bounded rematching publication are implemented locally. See [ingestion evidence](evidence-inventory-ingestion.md), [run evidence](evidence-inventory-runs.md), [runtime evidence](evidence-inventory-runtime.md), [comparison evidence](evidence-inventory-comparison.md), [projection evidence](evidence-inventory-projections.md), [matching evidence](evidence-inventory-matching.md), [matching-work evidence](evidence-inventory-matching-work.md), [invalidation evidence](evidence-inventory-matching-invalidation.md), [scope-enrollment evidence](evidence-inventory-matching-pairs.md), [coverage-wait evidence](evidence-inventory-matching-coverage.md), [ownership evidence](evidence-inventory-ownership.md) and [coordinator evidence](evidence-inventory-coordinator.md). Durable hosted comparison wakeups, Queue/cron recovery and native read-only lease admission are implemented locally; see [hosted comparison evidence](evidence-inventory-hosted-comparison.md). Automatic historical adoption is implemented and exercised on a full personal-log replay; see [adoption scheduling evidence](evidence-inventory-adoption-scheduling.md). Hosted LoTW calendar enrollment and overflow recovery are implemented locally. Ownership-aware delivery planning, fresh source proofs, delivery integration and deployment remain future work. Selected-input cohort invalidation, including missing/retired identities, is implemented with guarded bounded recovery; see [selected-input evidence](evidence-inventory-matching-selected.md). Runtime activation is configured off; no production reset or export-policy change has been performed.
 
 Ferry should inventory each service independently, retain the latest encrypted LoFi source data, and reconcile bounded groups through a shared local comparison index. Persisted results would drive delivery planning. External discovery would follow service pages and changes, while matching and queue creation would operate on sets of records locally.
 
@@ -506,6 +506,15 @@ Use periodic bounded inventory verification for changes not established by the d
 
 Baseline bounded station/date ranges, splitting oversized responses. Include accepted unconfirmed QSOs and own-station/location details. Incremental receipt queries use `qso_qsorxsince`, with inclusive overlap and a checkpoint tied to the identical query scope. `APP_LOTW_LASTQSORX` is not an account-wide checkpoint when obtained from a restricted report.
 
+The hosted scheduler enrolls unfiltered UTC month ranges from committed
+LoFi source month hints, including the comparison tolerance at month
+boundaries. Multi-day reports that overflow or run past a body deadline
+after making progress stay held. Cron starts two adjacent full child
+ranges with independent checkpoints and acknowledges the parent only
+after both plans are durably registered. Coverage comes from completed
+reports and applies to the selected date ranges. See the
+[calendar evidence](evidence-inventory-adoption-scheduling.md#hosted-calendar-enrollment-and-overflow-recovery).
+
 Track confirmation updates separately using the QSL stream. This is new adapter work: the current query implementation requests `qso_qsl=no`. A confirmation-only report cannot replace receipt inventory. Empty reports do not justify advancing a checkpoint to local wall time unless the contract establishes that boundary. Report precision and missing fields remain visible to matching and receipt verification. See the [LoTW query API](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/).
 
 ### Commit and recovery
@@ -655,11 +664,12 @@ receipt selections covering all ready source contact windows. It retained
 LoTW had 746 absences at inventory; those remain planning inputs. The
 392.9-MB pre-collection database is dominated by proofs and comparison
 indexes, not payload tables. Native source ingestion now records deduplicated
-UTC month hints with the accepted page and checkpoint. The next LoTW step
-is bounded automatic enrollment of those hints into independent selections
-with their own receive checkpoints, plus durable split recovery for an
-oversized or slow report. Hints are not coverage, and the completed source
-calendar is not account-wide LoTW coverage.
+UTC month hints with the accepted page and checkpoint. Hosted cron uses
+those hints to start independent selections and recover oversized or
+slow reports in smaller ranges. The completed calendar covers the ready
+source contact windows. At 100 accounts, the current LoTW recurrence
+defaults exceed the shared background allowance; revise steady-state
+read scheduling before a rollout at that scale.
 
 
 ## Fresh database rollout phases

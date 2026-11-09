@@ -488,6 +488,40 @@
     },
     "requests": 0
   },
+  "hostedCalendarEnrollment": {
+    "kind": "offline-hosted-calendar-enrollment",
+    "schemaThrough": 82,
+    "contacts": 4251,
+    "months": 14,
+    "registered": 14,
+    "started": 14,
+    "initialQueueMessages": 16,
+    "repeatRegistration": 0,
+    "repeatQueueMessages": 0,
+    "firstCosts": {
+      "calls": 238,
+      "statements": 504,
+      "metadataStatements": 504,
+      "rowsRead": 2631,
+      "rowsWritten": 610,
+      "sqlMs": 220
+    },
+    "repeatCosts": {
+      "calls": 12,
+      "statements": 12,
+      "metadataStatements": 12,
+      "rowsRead": 210,
+      "rowsWritten": 2,
+      "sqlMs": 1
+    },
+    "elapsedMs": 1995,
+    "provenance": "retained accepted source bodies and stored observation times",
+    "reopened": true,
+    "originalAccessUnchanged": true,
+    "credentialEnvelopesUnchanged": true,
+    "requests": 0,
+    "uploads": 0
+  },
   "sourceCalendarPublication": {
     "kind": "native-source-calendar-publication",
     "results": [

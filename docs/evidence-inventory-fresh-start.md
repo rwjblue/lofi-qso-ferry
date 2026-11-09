@@ -922,6 +922,10 @@ durable next wakeups across the 34 five-minute windows in the cycle.
 Three sampled roster lookups each read 801 D1 rows. This fixture used
 simulated quota windows and pacing and made zero external requests.
 
+The [multi-account daily burst](evidence-inventory-pipeline.md#multi-account-daily-burst)
+extended the workload to 100 contacts per account and verified
+current decisions against two destinations in the shared database.
+
 ### Mixed LoFi bootstrap and recurring work
 
 [Migration 0114](../migrations/0114_inventory_lofi_bootstrap_reserve.sql)

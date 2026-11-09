@@ -20,6 +20,11 @@ LoFi remains the source for new delivery and corrections. Destination inventorie
 
 The confirmed workload priority is personal use first, with 100 accounts creating 100 contacts/day retained as a scale check. The scale scenario exposes growth and request-policy constraints; achieving its full sustained capacity is not a prerequisite for the personal-use implementation. Correctness, recoverability and tenant isolation still apply at either scale.
 
+A native scale check exercised one 10,000-contact burst, a simulated
+vendor cooldown and database reopen. It verified 20,000 current
+decisions for two destinations per account, and the burst added
+247.1 MB of SQLite allocation. [Roster benchmark](evidence-inventory-pipeline.md#multi-account-daily-burst)
+
 The confirmed initial storage choice is D1 for both payloads and indexed state, with an explicit path to move full payloads to R2 later. Preserve backend/version-aware payload references in the design; initial implementation does not require an R2 bucket or cross-store publication protocol.
 
 Starting with fresh contact and reconciliation state is explicitly acceptable. Preserve accounts, authentication and account links, including LoFi, LoTW and QRZ credentials and the encryption identities needed to read them. Existing contact mappings, timestamps, attempts and artifacts do not require a data-preserving migration, compatibility writers, dual materialization or an old-worker rollback floor. This decision concerns local/database state, not edits to vendor logs. No database reset is performed by this planning decision.

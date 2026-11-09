@@ -659,6 +659,51 @@ includes workerd binding overhead, Queue coordination and application
 preparation in the local runner. Both audits used 16 result pages and
 recorded zero provider requests and uploads.
 
+### Multi-account daily burst
+
+```sh
+node --import tsx scripts/benchmark-inventory-roster.ts
+```
+
+The fixture uses one native D1 database with 100 accounts and three
+ready inventory selections per account. An established LoFi link
+polls while other baselines are queued. The burst then supplies 100
+new contacts per account, with empty LoTW and QRZ receipt windows
+covering the contact dates. Contact IDs repeat across tenants. The
+audit checks current decisions separately for each tenant and provider.
+
+One synthetic LoFi response is HTTP 429. The fixture closes the
+database, reopens it, and checks that the saved retry remains gated
+until due. It compresses deadlines and vendor windows in the fixture
+while exercising the native runner, quota admission, and comparison
+Queue consumer. Stage costs include the driver queries and deadline
+changes. These timings describe local execution with synthetic
+provider responses.
+
+The run through migration 0125 finished in 508.9 seconds. The daily
+burst used 100 successful LoFi responses and one simulated 429. LoTW
+and QRZ made their fixture reads during baseline setup.
+
+| Local stage | D1 calls | SQL statements | Rows read | Rows written | Elapsed |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Enrollment | 5,524 | 11,526 | 87,433 | 21,007 | 37.0 s |
+| Ready baselines | 29,158 | 65,446 | 667,451 | 66,594 | 180.3 s |
+| Delta burst with interleaved comparison | 10,149 | 24,826 | 2,870,646 | 660,264 | 76.2 s |
+| Remaining classification | 34,875 | 64,973 | 9,874,500 | 1,199,956 | 214.6 s |
+
+The audit verified 10,000 source contacts and all 20,000 current
+absences, split evenly between LoTW and QRZ. All 300 selections were
+ready. The matching queue drained and all 100 LoFi poll wakeups
+retained their assigned slots across 34 five-minute windows. The
+whole run used 1,100 comparison deliveries with a peak of 70 D1
+calls in a delivery. It recorded zero external requests and
+dispatches.
+
+SQLite allocated 255.7 MB at the end, up 247.1 MB from the ready
+baselines. This is the allocation for one burst of short synthetic
+contacts and two destinations per account. It leaves sustained
+retention and live provider throughput as separate measurements.
+
 ### Bucket freshness read order
 
 The shared freshness view now seeks the set and reads its probes before

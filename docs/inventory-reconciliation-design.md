@@ -712,6 +712,13 @@ Use `off`, `shadow` and `active` planner modes independently of export gates and
 
 Preserve existing account, authentication and connection records, encrypted credentials, configuration and their required references. Validate that preserved credentials still decrypt under their original identities. Contact/mapping/attempt data import is not required. Existing remote history is observed and conservatively adopted, including remote narrative preservation. An absent new local mapping does not mean a contact is absent at a vendor.
 
+The [account-only rehearsal](evidence-inventory-fresh-start.md) now
+creates this boundary on a private local copy. It preserves passkeys,
+linked credential ciphertext and template bindings, starts with empty
+contact state, and durably blocks writes before the previous sender
+has been audited. Real QRZ and LoTW selections completed on the copy.
+The LoFi continuation retained its cursor after a rejected bearer.
+
 At deployment cutover, pause the previous sender before allowing the replacement to write. Resolve or quarantine any outstanding submitted/dispatching/uncertain vendor work before treating a fresh negative read as permission to insert; a reset must not turn a possibly queued old upload into a new contact. This can be evaluated before the old database is retired without copying its complete history into the replacement. The local implementation and trial authorization does not include a production reset or cutover.
 
 After the replacement starts submitting, its new durable ownership, immutable attempts/artifacts, template bindings and uncertain outcomes remain authoritative. Rollback must use a release compatible with the fresh schema and any dispatched batches, or pause new writes while its resolver remains available. Do not resume an old sender against independently re-inventoried state.

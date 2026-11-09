@@ -3,6 +3,7 @@ import { InventorySourceProofDrain } from "./inventory-source-proof-drain.ts";
 import {
   type InventorySourceProofScope,
   type InventorySourceProofSnapshot,
+  type InventorySourceProofRoute,
   InventorySourceProofWorkspace,
 } from "./inventory-source-proof-workspace.ts";
 import {
@@ -104,8 +105,26 @@ export class InventorySourceProofJobs {
       }>();
   }
 
-  async enqueue(tenant: string, scope: string, keys: readonly string[]) {
+  async enqueue(
+    tenant: string,
+    scope: string,
+    keys: readonly string[],
+    route?: Pick<InventorySourceProofRoute, "provider" | "destination">,
+  ) {
     const selected = [...keys];
+    const covers = (snapshot: InventorySourceProofSnapshot) =>
+      selected.every((key) =>
+        snapshot.contacts.some(
+          (contact) =>
+            contact.key === key &&
+            (!route ||
+              contact.routes.some(
+                (value) =>
+                  value.provider === route.provider &&
+                  value.destination === route.destination,
+              )),
+        ),
+      );
     const lease = await this.store.claim(
       tenant,
       `inventory:${scope}`,
@@ -121,11 +140,7 @@ export class InventorySourceProofJobs {
         const snapshot = JSON.parse(
           old.snapshot,
         ) as InventorySourceProofSnapshot;
-        if (
-          selected.every((key) =>
-            snapshot.contacts.some((contact) => contact.key === key),
-          )
-        ) {
+        if (covers(snapshot)) {
           const proof = await this.current(tenant, old.job_id);
           if (proof)
             return {
@@ -140,6 +155,8 @@ export class InventorySourceProofJobs {
       ).capture(tenant, scope, selected);
       if (result.kind === "held") return result;
       const snapshot = result.snapshot;
+      if (route && !covers(snapshot))
+        return { kind: "held" as const, reason: "review_unavailable" as const };
       const now = Date.now();
       const eligibleAt = Math.max(
         ...snapshot.contacts.map((c) => c.eligibleAfter),

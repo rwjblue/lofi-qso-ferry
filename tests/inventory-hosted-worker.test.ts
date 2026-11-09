@@ -6,6 +6,7 @@ import { build } from "esbuild";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { serializeAdifRecord } from "../src/adif.ts";
 import { InventoryDeliveryWorkspace } from "../src/inventory-delivery-workspace.ts";
+import { runHostedScheduled } from "../src/inventory-hosted.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
 import { InventoryQrzDispatch } from "../src/inventory-qrz-dispatch.ts";
@@ -22,10 +23,14 @@ import { InventorySourceProofDrain } from "../src/inventory-source-proof-drain.t
 import { InventorySourceProofJobs } from "../src/inventory-source-proof-jobs.ts";
 import { InventorySourceProofWorkspace } from "../src/inventory-source-proof-workspace.ts";
 import { lockRestoredDatabase } from "../src/restore.ts";
+import { canonical, sha256 } from "../src/security.ts";
 import { type Lease, Store } from "../src/store.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import { keys, seed } from "./helpers.ts";
-import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
+import {
+  applyAdditionalMigrations,
+  fixtureEnvironment,
+} from "./runtime-fixtures.ts";
 
 test("actual Worker cron drives paced inventory, comparison and historical adoption", async (t) => {
   const bundle = await build({
@@ -45,6 +50,16 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   let recoveryFixture: { adif: string | null; actions: string[] } | null = null;
   const lotwReads: [string | null, string | null][] = [];
   const readTimes: number[] = [];
+  const shadowSelection = {
+    tenant: "a",
+    sourceScope: await sha256(
+      canonical(["inventory-scope-v1", "a", "lofi", "source"]),
+    ),
+    destinationScope: await sha256(
+      canonical(["inventory-scope-v1", "a", "qrz", "7"]),
+    ),
+    recordKeys: ["q2"],
+  };
   const runtime = new Miniflare(
     convertV4MiniflareOptions({
       cf: false,
@@ -63,6 +78,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         EMAIL_CODE_SECRET: "fixture-email-secret",
         EXPORTS_ENABLED: "false",
         INVENTORY_RUNTIME_MODE: "read_only",
+        INVENTORY_QRZ_SHADOW_JSON: JSON.stringify(shadowSelection),
       },
       queueProducers: { INVENTORY_QUEUE: "inventory-fixture" },
       queueConsumers: {
@@ -521,25 +537,57 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     }
   };
   await ageQuietClocks();
-  const queuedProof = await jobs.enqueue("a", sourceScope, [
-    "q2",
-    "q3",
-    "q4",
-    "q5",
-  ]);
-  assert.equal(queuedProof.kind, "queued", JSON.stringify(queuedProof));
-  if (queuedProof.kind !== "queued") assert.fail();
-  assert.deepEqual(await jobs.enqueue("a", sourceScope, ["q2"]), {
-    kind: "existing",
-    id: queuedProof.id,
-  });
   const drain = new InventorySourceProofDrain(jobs.runs);
   assert.equal(
     await drain.observed(captured.snapshot.source, Date.now()),
     null,
   );
-  assert.equal((await jobs.load("a", sourceScope))?.phase, "collecting");
-  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  assert.equal(await jobs.load("a", sourceScope), null);
+  await db.batch([
+    store.statement(
+      "INSERT INTO templates VALUES('a','destination',?,?,1),('a','destination',?,?,1)",
+      "original",
+      JSON.stringify({
+        profile: TEMPLATE_PROFILE,
+        fields: { COMMENT: "{{ op.station }} to {{ qso.call }} at {{ now }}" },
+        fallbackNotes: false,
+      }),
+      "changed",
+      JSON.stringify({
+        profile: TEMPLATE_PROFILE,
+        fields: { COMMENT: "Changed template" },
+        fallbackNotes: false,
+      }),
+    ),
+    store.statement(
+      "INSERT INTO active_templates VALUES('a','destination','original')",
+    ),
+  ]);
+  const shadowEnv = {
+    ...fixtureEnvironment(db),
+    INVENTORY_QUEUE: await runtime.getQueueProducer("INVENTORY_QUEUE"),
+    INVENTORY_RUNTIME_MODE: "read_only",
+    INVENTORY_QRZ_SHADOW_JSON: JSON.stringify({
+      ...shadowSelection,
+      // Exercise source collection for four members. The running Queue
+      // consumer has a narrower selection and must only stage q2.
+      recordKeys: ["q1", "q2", "q3", "q4", "q5"],
+    }),
+  };
+  const enrollment = await runHostedScheduled(shadowEnv);
+  assert.equal(enrollment.mode, "inventory_read_only");
+  if (enrollment.mode !== "inventory_read_only") assert.fail();
+  assert.equal(enrollment.qrzShadow, "queued");
+  assert.equal(enrollment.sourceProofQueued, 1);
+  const enqueued = await jobs.load("a", sourceScope);
+  assert.ok(enqueued);
+  assert.deepEqual(
+    JSON.parse(enqueued.snapshot).contacts.map(
+      ({ key }: { key: string }) => key,
+    ),
+    ["q2", "q3", "q4", "q5"],
+  );
+  const queuedProof = { id: enqueued.job_id };
   const reloaded = new InventorySourceProofJobs(jobs.runs, jobs.fetcher);
   let collected: Awaited<ReturnType<typeof reloaded.load>> = null;
   for (let i = 0; i < 500; i++) {
@@ -632,28 +680,35 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       reason: "contact_outside_source_proof",
     },
   );
-  await db.batch([
-    store.statement(
-      "INSERT INTO templates VALUES('a','destination',?,?,1),('a','destination',?,?,1)",
-      "original",
-      JSON.stringify({
-        profile: TEMPLATE_PROFILE,
-        fields: { COMMENT: "{{ op.station }} to {{ qso.call }} at {{ now }}" },
-        fallbackNotes: false,
-      }),
-      "changed",
-      JSON.stringify({
-        profile: TEMPLATE_PROFILE,
-        fields: { COMMENT: "Changed template" },
-        fallbackNotes: false,
-      }),
-    ),
-    store.statement(
-      "INSERT INTO active_templates VALUES('a','destination','original')",
-    ),
-  ]);
   const qrz = new InventoryQrzPreparation(store);
   const stageArgs = ["a", queuedProof.id, qrzScope, ["q2"]] as const;
+  const stagedRows = () =>
+    db
+      .prepare(
+        "SELECT stage_id,record_key FROM inventory_qrz_attempts ORDER BY record_key",
+      )
+      .all<{ stage_id: string; record_key: string }>();
+  // Re-deliver after the fixture advances the quiet clocks. Workerd runs the
+  // same proof consumer that handles a delayed delivery in production.
+  await shadowEnv.INVENTORY_QUEUE.send({
+    kind: "inventory-source-proof",
+    version: 1,
+    tenant: "a",
+    scope: sourceScope,
+    id: queuedProof.id,
+    workVersion: enqueued.version,
+  });
+  for (let i = 0; i < 100 && !(await stagedRows()).results.length; i++)
+    await delay(50);
+  const [shadowStage, ...unexpected] = (await stagedRows()).results;
+  assert.equal(unexpected.length, 0);
+  assert.equal(shadowStage?.record_key, "q2");
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM inventory_qrz_dispatches")
+      .first("n"),
+    0,
+  );
   // A late template rebind during publication must roll back every insert.
   await db
     .prepare(
@@ -661,29 +716,32 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
        BEGIN UPDATE active_templates SET version='changed' WHERE tenant='a' AND destination='destination'; END;`,
     )
     .run();
-  assert.deepEqual(await qrz.prepare(...stageArgs, "lost-fence"), {
-    kind: "held",
-    reason: "qrz_preparation_changed",
-  });
+  assert.deepEqual(
+    await qrz.prepare("a", queuedProof.id, qrzScope, ["q3"], "lost-fence"),
+    {
+      kind: "held",
+      reason: "qrz_preparation_changed",
+    },
+  );
   assert.equal(
     await db
       .prepare("SELECT count(*) AS n FROM inventory_qrz_preparations")
       .first("n"),
-    0,
+    1,
   );
   assert.equal(
     await db
       .prepare("SELECT count(*) AS n FROM inventory_qrz_attempts")
       .first("n"),
-    0,
+    1,
   );
   await db.prepare("DROP TRIGGER fixture_qrz_rebind").run();
-  const staged = await qrz.prepare(...stageArgs, "stable-stage");
+  const staged = await qrz.prepare(...stageArgs, shadowStage.stage_id);
   if (staged.kind !== "prepared") assert.fail(staged.reason);
   const [attempt] = staged.attempts;
   const recovered = new InventoryQrzPreparation(new Store(db, keys));
   assert.deepEqual(
-    await recovered.prepare(...stageArgs, "stable-stage"),
+    await recovered.prepare(...stageArgs, shadowStage.stage_id),
     staged,
   );
   const artifact = await recovered.artifact("a", attempt.attempt_id);

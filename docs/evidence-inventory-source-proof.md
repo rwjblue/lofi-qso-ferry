@@ -248,5 +248,22 @@ possibly sent attempt and two confirmed receipts. An isolated copy of
 the real trial held four scopes and invalidated 18 ready selections.
 It preserved the staged artifact and credential ciphertext. Repeating
 the operator SQL produced the same state with zero network requests
-or uploads. Hosted enrollment and new-send scheduling, LoTW batches
-and expired-proof collection remain open.
+or uploads.
+
+## Hosted QRZ shadow preparation
+
+The [shadow coordinator](../src/inventory-qrz-shadow.ts) starts from an
+explicit managed source, verified QRZ scope and at most twenty LoFi
+keys. It uses point lookups into current clear reviews and reuses the
+source proof and preparation receipts for durable progress. Cron can
+reuse a completed proof or enroll a new one through the existing
+outbox. The queue rechecks the destination's quiet clock before
+staging and can defer the message within the proof's lifetime.
+
+With exports disabled, the native Worker fixture enrolled four clear
+contacts, excluding a historical match. The running queue consumer
+used a narrower selection and staged exactly one encrypted artifact
+after the quiet clock advanced. The original artifact was recoverable
+by its stable stage ID. There were zero dispatch claims during shadow
+preparation. Hosted new-send scheduling, LoTW batches and expired-proof
+collection remain open.

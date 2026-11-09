@@ -211,6 +211,7 @@ test("cron registers source/book selections and publishes initial jobs without v
   assert.equal(result.queued, 3);
   assert.equal(result.inventoryQueued, 2);
   assert.equal(result.comparisonQueued, 1);
+  assert.equal(result.qrzShadow, "off");
   assert.equal((await inventoryRuntime(f.store)).mode, "inventory_read_only");
   assert.equal(
     (
@@ -220,8 +221,14 @@ test("cron registers source/book selections and publishes initial jobs without v
     )?.n,
     2,
   );
-  const repeated = await runHostedScheduled(f.env);
-  assert.equal("queued" in repeated && repeated.queued, 0);
+  const repeated = await runHostedScheduled({
+    ...f.env,
+    INVENTORY_QRZ_SHADOW_JSON: "{",
+  });
+  assert.equal(repeated.mode, "inventory_read_only");
+  if (repeated.mode !== "inventory_read_only") assert.fail();
+  assert.equal(repeated.qrzShadow, "invalid");
+  assert.equal(repeated.queued, 0);
   assert.deepEqual(
     (
       await f.db

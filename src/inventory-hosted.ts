@@ -15,6 +15,11 @@ import {
   isQrzRecoveryWakeup,
   publishQrzRecoveryWakeups,
 } from "./inventory-qrz-recovery.ts";
+import {
+  configuredQrzShadow,
+  InventoryQrzShadow,
+  type InventoryShadowEnvironment,
+} from "./inventory-qrz-shadow.ts";
 import { InventoryRunner } from "./inventory-runner.ts";
 import { InventoryRuns } from "./inventory-runs.ts";
 import {
@@ -46,7 +51,7 @@ function configuredMode(env: Env) {
 
 /** Environment off pauses a handed-off database; it cannot restore its sender. */
 export async function runHostedScheduled(
-  env: Env,
+  env: InventoryShadowEnvironment,
   options: { scheduledTime?: number; legacy?: typeof runScheduledTick } = {},
 ) {
   const mode = configuredMode(env);
@@ -79,8 +84,21 @@ export async function runHostedScheduled(
     store,
     env.INVENTORY_QUEUE,
   );
+  const proofJobs = new InventorySourceProofJobs(runs);
+  const config = configuredQrzShadow(env);
+  let qrzShadow: string = config.kind;
+  if (config.kind === "configured") {
+    try {
+      qrzShadow = (
+        await new InventoryQrzShadow(proofJobs, config.selection).enroll()
+      ).kind;
+    } catch {
+      // Optional shadow work must not strand existing proof or recovery jobs.
+      qrzShadow = "failed";
+    }
+  }
   const sourceProofQueued = await publishSourceProofWakeups(
-    new InventorySourceProofJobs(runs),
+    proofJobs,
     env.INVENTORY_QUEUE,
   );
   const qrzRecoveryQueued = await publishQrzRecoveryWakeups(
@@ -102,12 +120,13 @@ export async function runHostedScheduled(
     comparisonQueued,
     sourceProofQueued,
     qrzRecoveryQueued,
+    qrzShadow,
   };
 }
 
 /** Queue handlers run managed reads and evidence work under read-only mode. */
 export async function runHostedInventoryQueue(
-  env: Env,
+  env: InventoryShadowEnvironment,
   batch: MessageBatch<unknown>,
   fetcher: typeof fetch = fetch,
 ) {
@@ -173,10 +192,13 @@ export async function runHostedInventoryQueue(
     },
   );
   const proofJobs = new InventorySourceProofJobs(runner.runs, fetcher);
+  const config = proofMessages.length ? configuredQrzShadow(env) : null;
+  const selection = config?.selection;
+  let qrzShadow: string | null = config?.kind === "invalid" ? "invalid" : null;
   const proof = await consumeSourceProofWakeups(
     proofJobs,
     proofMessages,
-    async () => {
+    async (wakeup, result) => {
       inventoryAfterProof += await publishInventoryWakeups(
         runner.runs,
         env.INVENTORY_QUEUE,
@@ -185,6 +207,18 @@ export async function runHostedInventoryQueue(
         proofJobs,
         env.INVENTORY_QUEUE,
       );
+      if (
+        selection?.tenant === wakeup.tenant &&
+        selection.sourceScope === wakeup.scope &&
+        (result.kind === "complete" || result.kind === "stale")
+      ) {
+        const staged = await new InventoryQrzShadow(proofJobs, selection).stage(
+          wakeup.id,
+        );
+        qrzShadow = staged.kind;
+        if (staged.kind === "quiet") return staged.retryAt;
+      }
+      return undefined;
     },
   );
   const recovery = await consumeQrzRecoveryWakeups(
@@ -205,6 +239,7 @@ export async function runHostedInventoryQueue(
     comparisonProcessed: comparison.processed,
     sourceProofProcessed: proof.processed,
     qrzRecoveryProcessed: recovery.processed,
+    qrzShadow,
     acknowledged:
       inventory.acknowledged +
       comparison.acknowledged +

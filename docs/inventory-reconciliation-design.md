@@ -633,6 +633,8 @@ The new planner must not call back into the old per-contact historical discovery
 
 Use bulk preparation and shared database work followed by individual serial writes under the book's delivery lease. Retain each write's fresh final neighborhood, current authorization and exact immutable request body. A duplicate response starts reconciliation and does not imply REPLACE permission.
 
+The hosted shadow accepts one exact selection through `INVENTORY_QRZ_SHADOW_JSON`. Set `tenant`, `sourceScope`, `destinationScope`, and `recordKeys` with one to twenty LoFi record IDs. The two scopes are managed inventory scope IDs. With managed inventory enabled, cron can enroll due, currently clear members for a verified book with an active template. The proof queue prepares encrypted QRZ artifacts for the selected route and keys when their source proof and destination review are current. It uses the existing LoFi read budget and runs with exports disabled. The shadow does not schedule sends. Prepared artifacts retain their reservations after expiry so they can be inspected. Removing the selection stops new shadow enrollment and staging. A previously enrolled shared proof job can finish within its original deadline.
+
 The documented [QRZ INSERT](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html) accepts one record. Treat an alternative multi-record upload protocol as a separate contract investigation. Do not assume batching preparation removes the per-record network request floor.
 
 ### LoTW

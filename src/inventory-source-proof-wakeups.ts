@@ -91,7 +91,10 @@ export async function publishSourceProofWakeups(
 export async function consumeSourceProofWakeups(
   jobs: InventorySourceProofJobs,
   messages: readonly Message<unknown>[],
-  afterProgress: () => Promise<void>,
+  afterProgress: (
+    wakeup: ProofWakeup,
+    result: Awaited<ReturnType<InventorySourceProofJobs["step"]>>,
+  ) => Promise<number | undefined>,
 ) {
   const report = {
     processed: 0,
@@ -132,7 +135,14 @@ export async function consumeSourceProofWakeups(
         report.retried++;
         continue;
       }
-      await afterProgress();
+      const retryAt = await afterProgress(wakeup, result);
+      if (retryAt !== undefined) {
+        message.retry({
+          delaySeconds: Math.max(1, Math.ceil((retryAt - Date.now()) / 1000)),
+        });
+        report.retried++;
+        continue;
+      }
       message.ack();
       report.acknowledged++;
     } catch {

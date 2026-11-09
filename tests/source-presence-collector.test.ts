@@ -107,6 +107,60 @@ function noAuthority(result: SourcePresenceResult) {
   assert.equal(result.writesAuthorized, false);
 }
 
+test("a paced collection resumes the last validated cursor under the original deadline", async () => {
+  const fixture = await input();
+  let requests = 0;
+  const paused = await collectSourcePresence(fixture, {
+    now: () => clock,
+    currentScope: async () => scope,
+    fetcher: async () => {
+      if (++requests > 1) throw new VendorDeferredError(clock + 5000);
+      return page(
+        [operation],
+        [{ ...contact, uuid: "neighbor", syncedAtMillis: 90 }],
+        { records_left: 0 },
+        { records_left: 1, next_cursor: "validated-cursor" },
+      );
+    },
+  });
+  assert.equal(paused.reason, "vendor_deferred");
+  assert.equal(paused.actualAttempts, 1);
+  assert.ok(paused.continuation);
+  const resume = {
+    ...fixture,
+    cachedWitnesses: paused.witnesses,
+    remainingRequests: paused.remainingRequests,
+    continuation: JSON.parse(JSON.stringify(paused.continuation)),
+  };
+  const observed = await collectSourcePresence(resume, {
+    now: () => clock + 5000,
+    currentScope: async () => scope,
+    fetcher: async (_url, init) => {
+      const query = JSON.parse(String(init?.body));
+      assert.equal(query.meta.sync.qsos.cursor, "validated-cursor");
+      assert.equal(query.meta.sync.qsos.syncedUntilMillis, 90);
+      return page([], [contact]);
+    },
+  });
+  assert.equal(observed.status, "observed");
+  assert.equal(observed.continuation, undefined);
+  assert.deepEqual(
+    observed.witnesses.map((w) => w.requestStartedAt),
+    [clock, clock + 5000],
+  );
+  noAuthority(observed);
+  const changed = await collectSourcePresence(
+    { ...resume, collectionDeadline: fixture.collectionDeadline - 1 },
+    {
+      now: () => clock + 5000,
+      currentScope: async () => scope,
+      fetcher: async () => assert.fail("changed collection must not dispatch"),
+    },
+  );
+  assert.equal(changed.reason, "invalid_input");
+  assert.equal(changed.actualAttempts, 0);
+});
+
 test("exact scoped cached positives avoid transport and never refresh their original time", async () => {
   const fixture = await input({ remainingRequests: 1 });
   const cachedWitnesses = fixture.targets.map((target) => ({

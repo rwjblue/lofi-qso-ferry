@@ -56,6 +56,8 @@ export interface SourcePresenceInput {
     syncedAtMillis: number;
   }[];
   cachedWitnesses?: readonly SourcePresenceWitness[];
+  /** Resume a validated window after pacing, under the original collection. */
+  continuation?: SourcePresenceContinuation;
   /** Total caller allowance remaining, including the mandatory later drain. */
   remainingRequests: number;
   /** Preserve these two values when resuming the same collection. */
@@ -96,6 +98,7 @@ export interface SourcePresenceResult {
   collectionStartedAt: number;
   collectionDeadline: number;
   retryAt?: number;
+  continuation?: SourcePresenceContinuation;
   /** Sensitive caller-only state; never serialize this in diagnostics. */
   credentials: LoFiCredentials;
   requiresFinalDrain: true;
@@ -195,6 +198,28 @@ interface Window {
   oldest?: number;
 }
 
+export interface SourcePresenceContinuation {
+  version: 1;
+  binding: string;
+  windows: (Window & { kind: SourcePresenceTarget["kind"]; oldest: number })[];
+}
+
+function validWindow(window: SourcePresenceContinuation["windows"][number]) {
+  return (
+    (window.kind === "operation" || window.kind === "qso") &&
+    stamp(window.targetStamp) &&
+    stamp(window.oldest) &&
+    window.oldest >= window.targetStamp &&
+    stamp(window.progress?.watermark) &&
+    (window.progress.watermark === window.oldest ||
+      window.progress.watermark === window.oldest + 1) &&
+    (window.progress.cursor === undefined ||
+      (typeof window.progress.cursor === "string" &&
+        window.progress.cursor.length > 0 &&
+        window.progress.cursor.length <= 16_384))
+  );
+}
+
 /**
  * Collect exact positive observations only. The caller must subsequently apply a
  * complete canonical forward drain, reload/reproject every dependency (including
@@ -216,6 +241,26 @@ export async function collectSourcePresence(
   const startedAt = input.collectionStartedAt;
   const deadline = input.collectionDeadline;
   const allowance = input.remainingRequests;
+  const supplied = input.continuation;
+  const continuation =
+    supplied &&
+    Array.isArray(supplied.windows) &&
+    supplied.windows.length <= 2 &&
+    supplied.windows.every((window) => window && typeof window === "object")
+      ? {
+          version: supplied.version,
+          binding: supplied.binding,
+          windows: supplied.windows.map((window) => ({
+            kind: window.kind,
+            targetStamp: window.targetStamp,
+            oldest: window.oldest,
+            progress: {
+              watermark: window.progress?.watermark,
+              cursor: window.progress?.cursor,
+            },
+          })),
+        }
+      : null;
   const targets = oversized
     ? []
     : input.targets.map((target) => ({ ...target }));
@@ -232,6 +277,8 @@ export async function collectSourcePresence(
   );
   const now = options.now ?? Date.now;
   const witnesses = new Map<string, SourcePresenceWitness>();
+  const windows = new Map<SourcePresenceTarget["kind"], Window>();
+  let binding: string | undefined;
   let attempts = 0;
   let retryAt: number | undefined;
   let syncRequestStartedAt: number | undefined;
@@ -372,8 +419,22 @@ export async function collectSourcePresence(
           witnesses.set(key(target), witness);
       }
     }
+    if (supplied) {
+      binding = await sha256(
+        canonical([scope, targets, contacts, startedAt, deadline]),
+      );
+      if (
+        continuation?.version !== 1 ||
+        continuation.binding !== binding ||
+        continuation.windows.some((window) => !validWindow(window)) ||
+        new Set(continuation.windows.map((window) => window.kind)).size !==
+          continuation.windows.length
+      )
+        throw new Held("invalid_input");
+      for (const { kind, ...window } of continuation.windows)
+        windows.set(kind, window);
+    }
     client = new LoFiClient(credentials, transport);
-    const windows = new Map<SourcePresenceTarget["kind"], Window>();
     while (witnesses.size < required.size) {
       await checkScope();
       if (attempts >= allowance - 1) throw new Held("request_budget");
@@ -547,6 +608,35 @@ export async function collectSourcePresence(
           ? "vendor_deferred"
           : "read_failed";
   }
+  const paused = [...windows]
+    .flatMap(([kind, window]) =>
+      window.oldest === undefined
+        ? []
+        : [
+            {
+              kind,
+              targetStamp: window.targetStamp,
+              oldest: window.oldest,
+              progress: {
+                watermark: window.progress.watermark,
+                cursor: window.progress.cursor,
+              },
+            },
+          ],
+    )
+    .filter(validWindow);
+  const resumable =
+    reason === "vendor_deferred" && paused.length
+      ? {
+          version: 1 as const,
+          binding:
+            binding ??
+            (await sha256(
+              canonical([scope, targets, contacts, startedAt, deadline]),
+            )),
+          windows: paused,
+        }
+      : undefined;
   return {
     status: reason ? "held" : "observed",
     reason,
@@ -556,6 +646,7 @@ export async function collectSourcePresence(
     collectionStartedAt: startedAt,
     collectionDeadline: deadline,
     ...(retryAt === undefined ? {} : { retryAt }),
+    ...(resumable ? { continuation: resumable } : {}),
     credentials: client?.credentialsSnapshot() ?? credentials,
     requiresFinalDrain: true,
     requiresDependencyReload: true,

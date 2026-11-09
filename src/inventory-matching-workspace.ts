@@ -271,11 +271,6 @@ export class InventoryMatchingWorkspace {
         selected.length
     )
       throw new Error("invalid_inventory_matching_selection");
-    const session = await new InventoryComparisonLookup(this.store).open(
-      tenant,
-    );
-    if (!session.active)
-      throw new Error("inventory_matching_active_generation_required");
     const stats = {
       metadataQueries: 0,
       lookupQueries: 0,
@@ -293,12 +288,10 @@ export class InventoryMatchingWorkspace {
        EXISTS(SELECT 1 FROM inventory_partition_membership m INDEXED BY inventory_unresolved_members WHERE m.tenant=d.tenant AND m.scope_id=s.scope_id AND m.facet=CASE s.provider WHEN 'lofi' THEN 'source' ELSE 'receipt' END AND m.state='unresolved') AS unresolved
        FROM comparison_domains d JOIN accounts a ON a.id=d.tenant AND a.status='active' JOIN connections c ON c.tenant=d.tenant
        LEFT JOIN inventory_scopes s ON s.tenant=c.tenant AND s.connection_id=c.id
-       LEFT JOIN comparison_builds b ON b.tenant=s.tenant AND b.scope_id=s.scope_id AND b.generation_id=?3
+       LEFT JOIN comparison_builds b ON b.tenant=s.tenant AND b.scope_id=s.scope_id AND b.generation_id=d.active_generation
        ${this.trackCoverageClocks ? "LEFT JOIN inventory_matching_coverage_clocks cv ON cv.tenant=s.tenant AND cv.scope_id=s.scope_id AND cv.facet=CASE s.provider WHEN 'lofi' THEN 'source' ELSE 'receipt' END" : ""}
-       WHERE d.tenant=?1 AND d.version=?2 AND (c.kind='lofi' OR s.provider='lofi' OR s.scope_id=?4) ORDER BY c.id,s.scope_id LIMIT 22`,
+       WHERE d.tenant=?1 AND d.active_generation IS NOT NULL AND (c.kind='lofi' OR s.provider='lofi' OR s.scope_id=?2) ORDER BY c.id,s.scope_id LIMIT 22`,
       tenant,
-      session.domainVersion,
-      session.generation,
       destination,
     );
     const selectedStatement = this.store.statement(
@@ -308,28 +301,29 @@ export class InventoryMatchingWorkspace {
        i.topology_version AS topologyVersion,coalesce(pd.topology_version,0) AS currentTopologyVersion,i.projection_version AS projectionVersion,coalesce(mv.version,0) AS membershipVersion,
        (SELECT json_object('version',p.version,'state',p.state,'reason',p.reason,'payload',p.payload_id,'scope',p.scope_id,'connection_id',p.connection_id,'encrypted_bytes',p.encrypted_bytes) FROM comparison_projections_current p WHERE p.tenant=i.tenant AND p.generation_id=i.generation_id AND p.scope_id=i.scope_id AND p.record_key=i.record_key AND p.facet=i.facet) AS projection
        FROM json_each(?1) j CROSS JOIN comparison_domains d
-       LEFT JOIN comparison_index i ON i.tenant=d.tenant AND i.generation_id=?4 AND i.scope_id=json_extract(j.value,'$.scope') AND i.record_key=json_extract(j.value,'$.key') AND i.facet='source' AND i.state!='retired'
+       LEFT JOIN comparison_index i ON i.tenant=d.tenant AND i.generation_id=d.active_generation AND i.scope_id=json_extract(j.value,'$.scope') AND i.record_key=json_extract(j.value,'$.key') AND i.facet='source' AND i.state!='retired'
        LEFT JOIN inventory_record_facets f ON f.tenant=i.tenant AND f.scope_id=i.scope_id AND f.entity_family='qso' AND f.record_key=i.record_key AND f.facet=i.facet
        LEFT JOIN projection_domains pd ON pd.tenant=i.tenant AND pd.scope_id=i.scope_id AND pd.operation_key=i.parent_key
        LEFT JOIN inventory_membership_versions mv ON mv.tenant=i.tenant AND mv.scope_id=i.scope_id AND mv.entity_family='qso' AND mv.record_key=i.record_key AND mv.facet=i.facet
-       WHERE d.tenant=?2 AND d.version=?3
+       WHERE d.tenant=?2 AND d.active_generation IS NOT NULL
        ), budget AS MATERIALIZED (
          SELECT coalesce(sum(json_extract(projection,'$.encrypted_bytes')),0) AS bytes FROM requested
        )
        SELECT r.*,b.bytes AS encryptedBytes,p.envelope FROM budget b CROSS JOIN requested r
-       LEFT JOIN comparison_projection_payloads p ON b.bytes<=?5
+       LEFT JOIN comparison_projection_payloads p ON b.bytes<=?3
         AND (p.tenant,p.scope_id,p.payload_id)=(?2,json_extract(r.projection,'$.scope'),json_extract(r.projection,'$.payload'))
        ORDER BY r.ordinal`,
       canonical(selected),
       tenant,
-      session.domainVersion,
-      session.generation,
       MAX_BYTES,
     );
-    const [header, selection] = await this.store.db.batch([
-      scopeStatement,
-      selectedStatement,
-    ]);
+    const {
+      session,
+      results: [header, selection],
+    } = await new InventoryComparisonLookup(this.store).openActiveSnapshot(
+      tenant,
+      [scopeStatement, selectedStatement],
+    );
     stats.metadataQueries += 2;
     stats.rowsRead += header.meta.rows_read + selection.meta.rows_read;
     const scopeRows = header.results as ScopeRow[];

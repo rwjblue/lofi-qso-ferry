@@ -658,6 +658,25 @@ at 39 for the empty profile and 152 for the matched profile.
 | Empty, up to four steps per delivery | 2,397 → 2,347 | 4,290 → 4,240 | 638,628 → 621,915 |
 | Matched, one step per delivery | 3,428 → 3,378 | 5,834 → 5,784 | 1,172,080 → 1,154,767 |
 
+### Matching generation snapshot
+
+Matching now reads the wrapped comparison key, scope metadata and
+selected inputs in one batch. Both input statements use the active
+generation from that snapshot. Later probes and publication still
+check the captured domain and generation.
+
+The twenty-pair fixture prepares in five D1 calls and seven SQL
+statements. On the captured personal log, both readers prepared the
+same 160 decisions, proof dependencies and input byte counts. D1
+calls fell from 51 to 43, with 59 SQL statements and 14,279 row reads
+in both runs. Preparation made zero database writes or provider
+requests.
+
+The empty 1,000-contact profile used 2,297 D1 calls for classification,
+down from 2,347. The matched profile used 3,328, down from 3,378.
+Both retained their classifications, statement counts and Queue delivery
+counts.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

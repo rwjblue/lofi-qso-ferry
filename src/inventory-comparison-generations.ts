@@ -28,6 +28,15 @@ export interface InventoryComparisonDomain {
   active_generation: string | null;
   pending_generation: string | null;
 }
+export interface InventoryComparisonWriters {
+  domain: InventoryComparisonDomain;
+  contexts: InventoryComparisonKeyContext[];
+}
+interface ComparisonWriterRow
+  extends InventoryComparisonDomain,
+    InventoryComparisonGeneration {
+  envelope: string | null;
+}
 const identity = (tenant: string, keyId: string) => ({
   tenant,
   connection: "inventory-comparison",
@@ -141,27 +150,41 @@ export class InventoryComparisonGenerations {
     return domain;
   }
 
-  async writers(tenant: string): Promise<{
-    domain: InventoryComparisonDomain;
-    contexts: InventoryComparisonKeyContext[];
-  } | null> {
-    // Capture the pointers, formats and wrapped key in one snapshot.
-    const rows = await this.store
-      .statement(
-        `SELECT d.*,g.generation_id,g.key_id,g.key_version,g.policy_version,g.bucket_ms,g.state,k.envelope
+  private writerStatement(tenant: string) {
+    return this.store.statement(
+      `SELECT d.*,g.generation_id,g.key_id,g.key_version,g.policy_version,g.bucket_ms,g.state,k.envelope
          FROM comparison_domains d JOIN index_generations g ON g.tenant=d.tenant
          AND g.generation_id IN (d.active_generation,d.pending_generation)
          LEFT JOIN inventory_comparison_keys k ON (k.tenant,k.key_id)=(g.tenant,g.key_id)
          WHERE d.tenant=?`,
+      tenant,
+    );
+  }
+
+  async writers(tenant: string) {
+    const rows = await this.writerStatement(tenant).all<ComparisonWriterRow>();
+    return this.decodeWriters(tenant, rows.results);
+  }
+
+  async writersWith(tenant: string, inputs: readonly D1PreparedStatement[]) {
+    const [keyRows, ...results] = await this.store.db.batch([
+      this.writerStatement(tenant),
+      ...inputs,
+    ]);
+    return {
+      writers: await this.decodeWriters(
         tenant,
-      )
-      .all<
-        InventoryComparisonDomain &
-          InventoryComparisonGeneration & {
-            envelope: string | null;
-          }
-      >();
-    const first = rows.results[0];
+        keyRows.results as ComparisonWriterRow[],
+      ),
+      results,
+    };
+  }
+
+  private async decodeWriters(
+    tenant: string,
+    rows: ComparisonWriterRow[],
+  ): Promise<InventoryComparisonWriters | null> {
+    const first = rows[0];
     if (!first) return null;
     if (first.envelope === null)
       throw new Error("inventory_comparison_key_missing");
@@ -169,7 +192,7 @@ export class InventoryComparisonGenerations {
       key_id: first.key_id,
       envelope: first.envelope,
     });
-    for (const row of rows.results)
+    for (const row of rows)
       if (
         row.key_id !== key.keyId ||
         row.key_version !== INVENTORY_COMPARISON_KEY_VERSION ||
@@ -185,7 +208,7 @@ export class InventoryComparisonGenerations {
         active_generation: first.active_generation,
         pending_generation: first.pending_generation,
       },
-      contexts: rows.results.map((row) => ({
+      contexts: rows.map((row) => ({
         ...key,
         generation: row.generation_id,
       })),

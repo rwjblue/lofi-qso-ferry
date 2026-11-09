@@ -299,10 +299,7 @@ test("a request-local lookup session reuses its key and rejects later domain cha
     let keyReads = 0;
     const original = f.store.statement.bind(f.store);
     f.store.statement = (sql, ...params) => {
-      if (
-        sql.startsWith("SELECT key_id,envelope FROM inventory_comparison_keys")
-      )
-        keyReads++;
+      if (/\b(?:FROM|JOIN) inventory_comparison_keys\b/.test(sql)) keyReads++;
       return original(sql, ...params);
     };
     const session = await f.lookup.open("a", { generation: f.generation });

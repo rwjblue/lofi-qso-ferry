@@ -35,14 +35,14 @@ test("twenty source/receipt pairs share one bounded snapshot without plaintext o
   try {
     const before = await f.inventory.snapshot("a", "source", "sync");
     const credential = await f.store.private("a", "source", "v1", "credential");
-    const original = f.store.statement.bind(f.store);
-    let queries = 0;
-    f.store.statement = (sql, ...params) => {
+    const meter = measureD1(f.db);
+    const store = new Store(meter.database, f.store.keys);
+    const original = store.statement.bind(store);
+    store.statement = (sql, ...params) => {
       assert.match(sql, /^(?:SELECT|WITH requested AS MATERIALIZED)\b/);
-      queries++;
       return original(sql, ...params);
     };
-    const page = await f.workspace.prepare(
+    const page = await new InventoryMatchingWorkspace(store).prepare(
       "a",
       "destination",
       f.sources.map((row) => ({ scope: "source", key: row.key })),
@@ -53,6 +53,9 @@ test("twenty source/receipt pairs share one bounded snapshot without plaintext o
     assert.equal(page.stats.decryptedBodies, 40);
     assert.equal(page.stats.bodyQueries, 1);
     assert.equal(page.stats.lookupQueries, 2);
+    assert.equal(meter.totals.calls, 5);
+    assert.equal(meter.totals.statements, 7);
+    assert.equal(meter.totals.rowsWritten, 0);
     assert.equal(page.graph.stats.predicateCalls, 20);
     const serialized = canonical(page);
     for (const text of [
@@ -65,9 +68,8 @@ test("twenty source/receipt pairs share one bounded snapshot without plaintext o
     const { digest, ...manifest } = page;
     assert.equal(digest, await sha256(canonical(manifest)));
     t.diagnostic(
-      `20 matching pairs: ${queries} complete preparation SQL reads, ${page.stats.rowsRead} data rows read, ${page.stats.decryptedBodies} shared decryptions (data row count excludes key setup)`,
+      `20 matching pairs: ${meter.totals.calls} D1 calls, ${meter.totals.statements} SQL reads, ${page.stats.rowsRead} data rows read, ${page.stats.decryptedBodies} shared decryptions (data row count excludes key setup)`,
     );
-    f.store.statement = original;
     assert.deepEqual(await f.inventory.snapshot("a", "source", "sync"), before);
     assert.deepEqual(
       await f.store.private("a", "source", "v1", "credential"),

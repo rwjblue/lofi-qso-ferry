@@ -2,6 +2,7 @@ import type { AdifRecord } from "./adif.ts";
 import {
   type InventoryComparisonDomain,
   InventoryComparisonGenerations,
+  type InventoryComparisonWriters,
 } from "./inventory-comparison-generations.ts";
 import {
   type InventoryComparisonKeyContext,
@@ -77,10 +78,27 @@ export class InventoryComparisonLookup {
   /** Request-local key reuse. Every query still checks the captured domain in
    * SQL; a session cannot survive generation/source-roster changes silently. */
   async open(tenant: string, options: { generation?: string } = {}) {
-    const requestedGeneration = options.generation;
     const writers = await new InventoryComparisonGenerations(
       this.store,
     ).writers(tenant);
+    return this.session(tenant, writers, options.generation);
+  }
+
+  async openActiveSnapshot(
+    tenant: string,
+    inputs: readonly D1PreparedStatement[],
+  ) {
+    const { writers, results } = await new InventoryComparisonGenerations(
+      this.store,
+    ).writersWith(tenant, inputs);
+    return { session: this.session(tenant, writers), results };
+  }
+
+  private session(
+    tenant: string,
+    writers: InventoryComparisonWriters | null,
+    requestedGeneration?: string,
+  ) {
     const generation = requestedGeneration ?? writers?.domain.active_generation;
     const context = writers?.contexts.find(
       (key) => key.generation === generation,

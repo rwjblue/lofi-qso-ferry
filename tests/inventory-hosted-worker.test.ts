@@ -27,7 +27,10 @@ import {
   InventoryQrzNeighborhood,
 } from "../src/inventory-qrz-neighborhood.ts";
 import { InventoryQrzPreparation } from "../src/inventory-qrz-preparation.ts";
-import { isInventorySendWakeup } from "../src/inventory-delivery-send.ts";
+import {
+  InventorySendQueue,
+  isInventorySendWakeup,
+} from "../src/inventory-delivery-send.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
 import { registerInventorySelection } from "../src/inventory-scheduler.ts";
@@ -72,6 +75,36 @@ function singleDelivery(body: unknown) {
     },
   };
   return { batch, assertAcknowledged: () => assert.ok(acknowledged) };
+}
+
+async function setFixtureProofExpiry(
+  db: D1Database,
+  proof: string,
+  expiresAt?: number,
+) {
+  const ddl = await db
+    .prepare(
+      "SELECT sql FROM sqlite_master WHERE name='inventory_source_proof_immutable'",
+    )
+    .first<string>("sql");
+  assert.ok(ddl);
+  const original = await db
+    .prepare(
+      "SELECT expires_at FROM inventory_source_proofs WHERE tenant='a' AND proof_id=?",
+    )
+    .bind(proof)
+    .first<number>("expires_at");
+  assert.ok(original);
+  await db.batch([
+    db.prepare("DROP TRIGGER inventory_source_proof_immutable"),
+    db
+      .prepare(
+        "UPDATE inventory_source_proofs SET expires_at=coalesce(?,created_at+1) WHERE tenant='a' AND proof_id=?",
+      )
+      .bind(expiresAt ?? null, proof),
+    db.prepare(ddl),
+  ]);
+  return original;
 }
 
 test("actual Worker cron drives paced inventory, comparison and historical adoption", async (t) => {
@@ -939,9 +972,62 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     },
   );
   assert.equal(freshReads, 3);
-  await db.prepare("UPDATE active_templates SET version='changed'").run();
-  assert.equal(await qrz.cancelStale("a", attempt.attempt_id), true);
-  await db.prepare("UPDATE active_templates SET version='original'").run();
+  const qrzSelectedEnv = {
+    ...shadowEnv,
+    INVENTORY_RUNTIME_MODE: "selected_qrz",
+    INVENTORY_QRZ_SHADOW_JSON: JSON.stringify(shadowSelection),
+    EXPORTS_ENABLED: "true",
+    ROLLOUT_CHECKS_PASSED: "true",
+    LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
+    QRZ_FRESH_INSERTS_ENABLED: "true",
+    ROLLOUT_QSO_IDS_JSON: JSON.stringify(["q2"]),
+    ROLLOUT_DESTINATION_IDS_JSON: JSON.stringify(["destination"]),
+    QRZ_FRESH_INSERT_EXPIRES_AT: String(Date.now() + 300_000),
+  };
+  const offlineDispatch = new InventoryQrzDispatch(store, async () =>
+    assert.fail("retirement must use only inventory state"),
+  );
+  const qrzRetirement = new InventorySendQueue(
+    qrzSelectedEnv,
+    "qrz",
+    offlineDispatch,
+  );
+  assert.equal(await qrzRetirement.retireExpired(), 0);
+  const originalExpiry = await setFixtureProofExpiry(db, queuedProof.id);
+  assert.equal(
+    await new InventorySendQueue(
+      shadowEnv,
+      "qrz",
+      offlineDispatch,
+    ).retireExpired(),
+    0,
+  );
+  await store
+    .statement(
+      "INSERT INTO inventory_qrz_send_jobs(tenant,attempt_id,hold_reason) VALUES('a',?,'qrz_neighborhood_has_candidate')",
+      attempt.attempt_id,
+    )
+    .run();
+  assert.equal(await qrzRetirement.retireExpired(), 0);
+  await store
+    .statement(
+      "UPDATE inventory_qrz_send_jobs SET hold_reason='send_turn_limit' WHERE tenant='a' AND attempt_id=?",
+      attempt.attempt_id,
+    )
+    .run();
+  assert.equal(await qrzRetirement.retireExpired(), 1);
+  assert.equal(await qrzRetirement.retireExpired(), 0);
+  assert.equal(
+    await store
+      .statement(
+        "SELECT version FROM inventory_qrz_send_jobs WHERE tenant='a' AND attempt_id=?",
+        attempt.attempt_id,
+      )
+      .first(),
+    null,
+  );
+  assert.deepEqual(await qrz.artifact("a", attempt.attempt_id), artifact);
+  await setFixtureProofExpiry(db, queuedProof.id, originalExpiry);
   const sendStage = await qrz.prepare(...stageArgs, "send-stage");
   if (sendStage.kind !== "prepared") assert.fail(sendStage.reason);
   const sendAttempt = sendStage.attempts[0].attempt_id;
@@ -1033,9 +1119,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   let failPublication = true;
   const deliveries: MessageSendRequest<unknown>[] = [];
   const sendEnv = {
-    ...shadowEnv,
-    INVENTORY_RUNTIME_MODE: "selected_qrz",
-    INVENTORY_QRZ_SHADOW_JSON: JSON.stringify(shadowSelection),
+    ...qrzSelectedEnv,
     INVENTORY_QUEUE: {
       ...shadowEnv.INVENTORY_QUEUE,
       async sendBatch(messages: Iterable<MessageSendRequest<unknown>>) {
@@ -1051,13 +1135,6 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         };
       },
     },
-    EXPORTS_ENABLED: "true",
-    ROLLOUT_CHECKS_PASSED: "true",
-    LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
-    QRZ_FRESH_INSERTS_ENABLED: "true",
-    ROLLOUT_QSO_IDS_JSON: JSON.stringify(["q2"]),
-    ROLLOUT_DESTINATION_IDS_JSON: JSON.stringify(["destination"]),
-    QRZ_FRESH_INSERT_EXPIRES_AT: String(Date.now() + 300_000),
   };
   const sendJob = () =>
     store
@@ -1287,6 +1364,13 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     remoteId: "2",
   });
   assert.equal(await qrz.cancelStale("a", sendAttempt), false);
+  await setFixtureProofExpiry(db, queuedProof.id);
+  assert.equal(
+    await qrzRetirement.retireExpired(),
+    0,
+    "a claim stays reserved",
+  );
+  await setFixtureProofExpiry(db, queuedProof.id, originalExpiry);
   await db.prepare("UPDATE accounts SET quiet_minutes=30 WHERE id='a'").run();
   await ageQuietClocks();
   const direct = await qrz.prepare(
@@ -1576,6 +1660,22 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       recordKeys: lotwKeys,
     }),
   };
+  const lotwSelectedEnv = {
+    ...lotwEnv,
+    INVENTORY_RUNTIME_MODE: "selected_lotw",
+    LOTW_FRESH_INSERT_EXPIRES_AT: String(Date.now() + 300_000),
+    EXPORTS_ENABLED: "true",
+    ROLLOUT_CHECKS_PASSED: "true",
+    LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
+    SOURCE_BOUNDARY_VERIFIED: "false",
+    LOTW_FRESH_INSERTS_ENABLED: "true",
+    ROLLOUT_QSO_IDS_JSON: JSON.stringify(lotwKeys),
+    ROLLOUT_DESTINATION_IDS_JSON: JSON.stringify(["lotw"]),
+  };
+  const partialLotwEnv = {
+    ...lotwSelectedEnv,
+    ROLLOUT_QSO_IDS_JSON: JSON.stringify(["q2"]),
+  };
   const lotwEnrollment = await runHostedScheduled(lotwEnv);
   if (lotwEnrollment.mode !== "inventory_read_only")
     assert.fail(lotwEnrollment.mode);
@@ -1681,7 +1781,44 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   );
   await db.prepare("UPDATE accounts SET quiet_minutes=31 WHERE id='a'").run();
   assert.equal(await reopenedLotw.current("a", preparedLotw.batchId), false);
-  assert.equal(await reopenedLotw.cancelStale("a", preparedLotw.batchId), true);
+  const lotwRetirement = new InventorySendQueue(
+    lotwSelectedEnv,
+    "lotw",
+    new InventoryLotwDispatch(store, async () =>
+      assert.fail("retirement must use only inventory state"),
+    ),
+  );
+  assert.equal(await lotwRetirement.retireExpired(), 0, "proof has time left");
+  await db.prepare("UPDATE accounts SET quiet_minutes=30 WHERE id='a'").run();
+  await setFixtureProofExpiry(db, lotwProof.id);
+  const partialRetirement = await runHostedScheduled(partialLotwEnv);
+  if (partialRetirement.mode !== "inventory_selected_lotw")
+    assert.fail(partialRetirement.mode);
+  assert.equal(partialRetirement.lotwExpiredRetired, 0);
+  assert.equal(partialRetirement.lotwSendFailed, 0);
+  await store
+    .statement(
+      "INSERT INTO inventory_lotw_send_jobs(tenant,batch_id,due_at) VALUES('a',?,?)",
+      preparedLotw.batchId,
+      Date.now(),
+    )
+    .run();
+  const renewal = await runHostedScheduled(lotwSelectedEnv);
+  if (renewal.mode !== "inventory_selected_lotw") assert.fail(renewal.mode);
+  assert.equal(renewal.lotwSendFailed, 0);
+  assert.equal(renewal.lotwExpiredRetired, 1);
+  assert.equal(renewal.lotwShadow, "queued");
+  assert.equal(renewal.sourceProofQueued, 1);
+  assert.equal(renewal.lotwSendQueued, 0);
+  assert.equal(
+    await store
+      .statement(
+        "SELECT version FROM inventory_lotw_send_jobs WHERE tenant='a' AND batch_id=?",
+        preparedLotw.batchId,
+      )
+      .first(),
+    null,
+  );
   assert.equal(
     await db
       .prepare(
@@ -1694,14 +1831,24 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     await reopenedLotw.artifact("a", preparedLotw.batchId),
     lotwArtifact,
   );
-  await db.prepare("UPDATE accounts SET quiet_minutes=30 WHERE id='a'").run();
+  const renewalJob = await jobs.load("a", sourceScope);
+  assert.ok(renewalJob && renewalJob.job_id !== lotwProof.id);
+  for (let i = 0; i < 500; i++) {
+    const job = await jobs.load("a", sourceScope);
+    if (job?.phase === "complete" || job?.phase === "held") break;
+    await delay(100);
+  }
+  assert.ok(await jobs.current("a", renewalJob.job_id));
+  const renewed = await jobs.load("a", sourceScope);
+  assert.equal(renewed?.phase, "complete");
+  await ageQuietClocks();
   const lotwDelivery = singleDelivery({
     kind: "inventory-source-proof",
     version: 1,
     tenant: "a",
     scope: sourceScope,
-    id: lotwProof.id,
-    workVersion: lotwJob.version,
+    id: renewed.job_id,
+    workVersion: renewed.version,
   });
   const hostedBatch = await runHostedInventoryQueue(
     lotwEnv,
@@ -1713,10 +1860,18 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   assert.equal(hostedBatch.lotwShadow, "prepared");
   assert.equal(certificateChecks, 4);
   const replacementId = await sha256(
-    canonical(["inventory-lotw-shadow-v1", lotwProof.id, lotwScope, lotwKeys]),
+    canonical([
+      "inventory-lotw-shadow-v1",
+      renewed.job_id,
+      lotwScope,
+      lotwKeys,
+    ]),
   );
   const replacement = await reopenedLotw.prepare(
-    ...lotwBatchArgs,
+    "a",
+    renewed.job_id,
+    lotwScope,
+    lotwKeys,
     replacementId,
   );
   if (replacement.kind !== "prepared") assert.fail(JSON.stringify(replacement));
@@ -1835,16 +1990,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   await db.prepare("DROP TRIGGER fixture_lotw_dispatch_rebind").run();
   const lotwSendMessages: MessageSendRequest<unknown>[] = [];
   const lotwSendEnv = {
-    ...lotwEnv,
-    INVENTORY_RUNTIME_MODE: "selected_lotw",
-    LOTW_FRESH_INSERT_EXPIRES_AT: String(Date.now() + 300_000),
-    EXPORTS_ENABLED: "true",
-    ROLLOUT_CHECKS_PASSED: "true",
-    LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
-    SOURCE_BOUNDARY_VERIFIED: "false",
-    LOTW_FRESH_INSERTS_ENABLED: "true",
-    ROLLOUT_QSO_IDS_JSON: JSON.stringify(lotwKeys),
-    ROLLOUT_DESTINATION_IDS_JSON: JSON.stringify(["lotw"]),
+    ...lotwSelectedEnv,
     INVENTORY_QUEUE: {
       ...lotwEnv.INVENTORY_QUEUE,
       async sendBatch(messages: Iterable<MessageSendRequest<unknown>>) {
@@ -1859,10 +2005,6 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         };
       },
     },
-  };
-  const partialLotwEnv = {
-    ...lotwSendEnv,
-    ROLLOUT_QSO_IDS_JSON: JSON.stringify(["q2"]),
   };
   const lotwSendJob = () =>
     store
@@ -2030,7 +2172,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     assert.fail("expected hosted LoTW readback turn");
   };
   await db.prepare("UPDATE accounts SET quiet_minutes=31 WHERE id='a'").run();
-  assert.equal(await jobs.current("a", lotwProof.id), null);
+  assert.equal(await jobs.current("a", renewed.job_id), null);
   const initialReadback = await readbackJob();
   assert.ok(initialReadback && initialReadback.due_at > Date.now());
   assert.deepEqual(
@@ -2215,6 +2357,23 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   assert.equal(
     await qrz.cancelStale("a", preparedAtSnapshot.attempt_id),
     false,
+  );
+  await setFixtureProofExpiry(db, queuedProof.id);
+  assert.equal(
+    await new InventorySendQueue(
+      {
+        ...qrzSelectedEnv,
+        INVENTORY_QRZ_SHADOW_JSON: JSON.stringify({
+          ...shadowSelection,
+          recordKeys: ["q5"],
+        }),
+        ROLLOUT_QSO_IDS_JSON: JSON.stringify(["q5"]),
+      },
+      "qrz",
+      offlineDispatch,
+    ).retireExpired(),
+    0,
+    "restore quarantine keeps even an expired unsent attempt",
   );
   assert.equal(await qrz.current("a", preparedAtSnapshot.attempt_id), false);
   assert.deepEqual(

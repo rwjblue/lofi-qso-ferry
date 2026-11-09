@@ -103,6 +103,28 @@ export async function runHostedScheduled(
     env.INVENTORY_QUEUE,
   );
   const proofJobs = new InventorySourceProofJobs(runs);
+  const sendProvider =
+    mode === "selected_qrz" ? "qrz" : mode === "selected_lotw" ? "lotw" : null;
+  const sender = sendProvider
+    ? new InventorySendQueue(
+        env,
+        sendProvider,
+        sendProvider === "qrz"
+          ? new InventoryQrzDispatch(store)
+          : new InventoryLotwDispatch(store),
+      )
+    : null;
+  const sends = {
+    qrz: { queued: 0, failed: 0, retired: 0 },
+    lotw: { queued: 0, failed: 0, retired: 0 },
+  };
+  if (sender && sendProvider) {
+    try {
+      sends[sendProvider].retired = await sender.retireExpired();
+    } catch {
+      sends[sendProvider].failed = 1;
+    }
+  }
   const shadows = { qrz: "off", lotw: "off" };
   for (const provider of inventoryShadowProviders) {
     const config = configuredInventoryShadow(env, provider);
@@ -135,24 +157,11 @@ export async function runHostedScheduled(
     "lotw",
     env.INVENTORY_QUEUE,
   );
-  const sends = {
-    qrz: { queued: 0, failed: 0 },
-    lotw: { queued: 0, failed: 0 },
-  };
-  for (const provider of inventoryShadowProviders) {
-    if (mode !== `selected_${provider}`) continue;
+  if (sender && sendProvider) {
     try {
-      const dispatch =
-        provider === "qrz"
-          ? new InventoryQrzDispatch(store)
-          : new InventoryLotwDispatch(store);
-      sends[provider].queued = await new InventorySendQueue(
-        env,
-        provider,
-        dispatch,
-      ).schedule();
+      sends[sendProvider].queued = await sender.schedule();
     } catch {
-      sends[provider].failed = 1;
+      sends[sendProvider].failed = 1;
     }
   }
   return {
@@ -176,8 +185,10 @@ export async function runHostedScheduled(
     lotwRecoveryQueued,
     qrzSendQueued: sends.qrz.queued,
     qrzSendFailed: sends.qrz.failed,
+    qrzExpiredRetired: sends.qrz.retired,
     lotwSendQueued: sends.lotw.queued,
     lotwSendFailed: sends.lotw.failed,
+    lotwExpiredRetired: sends.lotw.retired,
     qrzShadow: shadows.qrz,
     lotwShadow: shadows.lotw,
   };

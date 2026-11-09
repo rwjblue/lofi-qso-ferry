@@ -93,33 +93,49 @@ function sendWakeup(provider: Provider, value: unknown) {
     : null;
 }
 
-const allowedLotwMembers = (keys: string) => `NOT EXISTS(
- SELECT 1 FROM inventory_lotw_batch_members m WHERE (m.tenant,m.batch_id)=(c.tenant,c.batch_id)
+const allowedLotwMembers = (keys: string, batch = "c") => `NOT EXISTS(
+ SELECT 1 FROM inventory_lotw_batch_members m WHERE (m.tenant,m.batch_id)=(${batch}.tenant,${batch}.batch_id)
  AND m.record_key NOT IN(SELECT value FROM json_each(${keys})))`;
 
-const selections: Record<Provider, string> = {
-  qrz: `WITH selected AS MATERIALIZED(
- SELECT c.tenant,c.attempt_id AS id,c.expires_at,'inventory:qrz-delivery:'||a.book_identity AS lease_scope
+const reservations: Record<Provider, string> = {
+  qrz: `WITH reserved AS MATERIALIZED(
+ SELECT a.attempt_id AS id,a.stage_id,a.record_key,'inventory:qrz-delivery:'||a.book_identity AS lease_scope
  FROM json_each(?1) k CROSS JOIN inventory_scopes s CROSS JOIN inventory_scopes d
  CROSS JOIN inventory_qrz_attempts a INDEXED BY inventory_qrz_active_source
- CROSS JOIN inventory_qrz_send_candidates c
  WHERE s.tenant=?2 AND s.scope_id=?3 AND d.tenant=?2 AND d.scope_id=?4
  AND (a.tenant,a.book_identity,a.source_identity,a.record_key)=(?2,d.logical_identity,s.logical_identity,k.value)
- AND a.cancelled_at IS NULL AND (c.tenant,c.attempt_id)=(?2,a.attempt_id)
- AND (c.source_scope,c.destination,c.destination_connection)=(?3,?4,?5) AND c.expires_at<=?6
+ AND a.cancelled_at IS NULL
 )`,
-  lotw: `WITH possible AS MATERIALIZED(
- SELECT DISTINCT m.batch_id FROM json_each(?1) k CROSS JOIN inventory_scopes s
+  lotw: `WITH reserved AS MATERIALIZED(
+ SELECT DISTINCT m.batch_id AS id,'inventory:lotw-delivery' AS lease_scope
+ FROM json_each(?1) k CROSS JOIN inventory_scopes s
  CROSS JOIN inventory_lotw_batch_members m INDEXED BY inventory_lotw_active_source
  WHERE (s.tenant,s.scope_id)=(?2,?3) AND (m.tenant,m.source_identity,m.record_key)=(?2,s.logical_identity,k.value)
  AND m.cancelled_at IS NULL
-), selected AS MATERIALIZED(
- SELECT c.tenant,c.batch_id AS id,c.expires_at,'inventory:lotw-delivery' AS lease_scope
- FROM possible b CROSS JOIN inventory_lotw_send_candidates c
- WHERE (c.tenant,c.batch_id,c.source_scope,c.destination,c.destination_connection)=(?2,b.batch_id,?3,?4,?5)
- AND c.expires_at<=?6 AND ${allowedLotwMembers("?1")}
 )`,
 };
+
+const expiration = {
+  qrz: {
+    table: "inventory_qrz_attempts",
+    header: "inventory_qrz_preparations",
+    headerKey: "stage_id",
+    historyHold: "qrz_neighborhood_has_candidate",
+    inventoryMatch: `SELECT 1 FROM match_results r
+      WHERE (r.tenant,r.destination,r.source_scope,r.record_key)=(?2,?4,?3,b.record_key)
+      AND r.state='matched_existing'`,
+  },
+  lotw: {
+    table: "inventory_lotw_batches",
+    header: "inventory_lotw_batches",
+    headerKey: "batch_id",
+    historyHold: "lotw_batch_existing_history",
+    inventoryMatch: `SELECT 1 FROM inventory_lotw_batch_members m JOIN match_results r
+      ON (r.tenant,r.destination,r.source_scope,r.record_key)=(m.tenant,?4,?3,m.record_key)
+      WHERE (m.tenant,m.batch_id)=(?2,b.id) AND r.state='matched_existing'`,
+  },
+};
+
 const memberKeys: Record<Provider, string> = {
   qrz: "(SELECT json_array(a.record_key) FROM inventory_qrz_attempts a WHERE (a.tenant,a.attempt_id)=(?2,?3))",
   lotw: "(SELECT json_group_array(m.record_key) FROM inventory_lotw_batch_members m WHERE (m.tenant,m.batch_id)=(?2,?3))",
@@ -136,12 +152,58 @@ export class InventorySendQueue {
     readonly dispatch: Dispatch,
   ) {}
 
+  async retireExpired() {
+    const { provider } = this;
+    const auth = authorization(this.env, provider);
+    if (!auth) return 0;
+    const column = `${itemKey(provider)}_id`;
+    const { table, header, headerKey, historyHold, inventoryMatch } =
+      expiration[provider];
+    const completeSelection =
+      provider === "lotw" ? allowedLotwMembers("?1", "h") : "true";
+    const result = await this.dispatch.store
+      .statement(
+        `${reservations[provider]}, expired AS MATERIALIZED(
+         SELECT b.id FROM reserved b CROSS JOIN ${header} h
+         JOIN inventory_source_proofs p ON (p.tenant,p.proof_id)=(h.tenant,h.proof_id)
+         WHERE (h.tenant,h.${headerKey},h.source_scope,h.destination,h.destination_connection)
+            =(?2,b.${provider === "lotw" ? "id" : "stage_id"},?3,?4,?5)
+         AND h.committed_at IS NOT NULL AND p.expires_at<=unixepoch('subsec')*1000
+         AND ${completeSelection}
+         AND NOT EXISTS(SELECT 1 FROM inventory_restore_locks l WHERE l.tenant=?2)
+         AND NOT EXISTS(SELECT 1 FROM inventory_fresh_start_lock WHERE id=1)
+         AND NOT EXISTS(SELECT 1 FROM inventory_${provider}_dispatches d WHERE (d.tenant,d.${column})=(?2,b.id))
+         AND NOT EXISTS(SELECT 1 FROM leases l WHERE (l.tenant,l.scope)=(?2,b.lease_scope) AND l.expires_at>unixepoch('subsec')*1000)
+         AND (NOT EXISTS(SELECT 1 FROM inventory_${provider}_send_jobs j
+            WHERE (j.tenant,j.${column},j.hold_reason)=(?2,b.id,?6)) OR EXISTS(${inventoryMatch}))
+        )
+        UPDATE ${table} SET cancelled_at=CAST(unixepoch('subsec')*1000 AS INTEGER)
+        WHERE tenant=?2 AND ${column} IN(SELECT id FROM expired)
+        RETURNING 1 AS retired`,
+        canonical(auth.recordKeys),
+        auth.tenant,
+        auth.sourceScope,
+        auth.destinationScope,
+        auth.destination,
+        historyHold,
+      )
+      .all();
+    return result.results.length;
+  }
+
   async schedule() {
     const provider = this.provider;
     const auth = authorization(this.env, provider);
     if (!auth) return 0;
     const column = `${itemKey(provider)}_id`;
-    const selected = selections[provider];
+    const completeSelection =
+      provider === "lotw" ? allowedLotwMembers("?1") : "true";
+    const selected = `${reservations[provider]}, selected AS MATERIALIZED(
+     SELECT c.tenant,b.id,c.expires_at,b.lease_scope
+     FROM reserved b CROSS JOIN inventory_${provider}_send_candidates c
+     WHERE (c.tenant,c.${column},c.source_scope,c.destination,c.destination_connection)=(?2,b.id,?3,?4,?5)
+     AND c.expires_at<=?6 AND ${completeSelection}
+    )`;
     const { store } = this.dispatch;
     const now = Date.now();
     const args = [

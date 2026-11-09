@@ -106,6 +106,15 @@ selected destinations finish. The command retains the source checkpoint
 and reports incomplete source coverage. The durable write lock and
 read-only transport apply throughout.
 
+Add `--poll-due` to also run the next scheduled poll for each selection
+whose deadline has already passed when the command starts. The same
+runner as the hosted Queue uses the saved checkpoint and chooses between
+a delta and full verification. A selection's next deadline stays in the
+future after it finishes, so the invocation does not start a second poll.
+A plain continuation can finish work started by a request-limited poll.
+The coverage report includes the current run's mode alongside the state
+of the retained published selection.
+
 ### Real continuation while LoFi waited
 
 A private clone of the interrupted rehearsal, upgraded through
@@ -125,3 +134,24 @@ job version and credential envelopes. A repeat continuation made
 zero provider requests and performed zero reader or comparison turns.
 LoFi coverage is still incomplete, and the new LoTW results cover only
 the selected dates.
+
+### Real scheduled polls
+
+A private clone upgraded through migration 0107 ran the selections that
+were already due. Three LoTW requests completed two deltas and one full
+scan for a selection without a receive checkpoint. Both deltas advanced
+the local checkpoint version by three and retained the previous receive
+stamp and published full selection. A fourth LoTW selection was still
+scheduled for later. Receipt counts stayed at 706 for LoTW and 73 for QRZ.
+
+The QRZ `MODSINCE` delta held for verification after two requests and
+retained its prior checkpoint. A three-request read-only diagnostic
+verified the book and reproduced the ambiguous empty selection. A
+one-record control over the same dates without `MODSINCE` succeeded.
+The failed delta supplied no evidence of absence.
+
+The scheduled invocation made five requests in 6.5 seconds, including
+local work. Reopening verified the original copy, LoFi cursor and job,
+and all credential envelopes. A plain resume made zero provider requests
+and zero reader or comparison turns. Both the poll and the diagnostic
+used the write-locked copy and made zero uploads.

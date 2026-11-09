@@ -34,18 +34,20 @@ type Options = {
   tenant: string;
   maxRequests: number;
   maxDurationMs: number;
+  pollDueBefore?: number;
   sourcePaused?: boolean;
   continueWithoutSource?: boolean;
   progress?: (value: Counts) => Promise<void>;
 };
 
-/** Drive persisted baseline and comparison jobs without starting recurring polls. */
+/** Drive persisted jobs and optionally start polls due by a fixed cutoff. */
 export async function driveInventoryTrial(
   runs: InventoryRuns,
   transport: ReturnType<typeof createInventoryTrialTransport>,
   options: Options,
 ) {
-  const { tenant, maxRequests, maxDurationMs, progress } = options;
+  const { tenant, maxRequests, maxDurationMs, pollDueBefore, progress } =
+    options;
   const { store } = runs.inventory;
   const reader = new InventoryRunner(runs, transport.fetch, {
     scheduled: true,
@@ -69,14 +71,17 @@ export async function driveInventoryTrial(
   while (Date.now() < deadline) {
     const next = await store
       .statement(
-        `SELECT j.scope_id AS scope,j.stream_id AS stream,j.active_run_id AS run,j.work_version AS workVersion,j.next_due_at AS due,r.phase,s.provider
-         FROM inventory_stream_jobs j JOIN inventory_runs r ON r.tenant=j.tenant AND r.run_id=j.active_run_id
+        `SELECT j.scope_id AS scope,j.stream_id AS stream,w.run_id AS run,j.work_version AS workVersion,j.next_due_at AS due,r.phase,s.provider
+         FROM inventory_stream_jobs j
+         JOIN inventory_wakeups w ON (w.tenant,w.scope_id,w.stream_id,w.work_version)=(j.tenant,j.scope_id,j.stream_id,j.work_version)
+         JOIN inventory_runs r ON (r.tenant,r.run_id)=(w.tenant,w.run_id)
          JOIN inventory_scopes s ON (s.tenant,s.scope_id)=(j.tenant,j.scope_id)
-         WHERE j.tenant=?1 AND j.state='ready'
+         WHERE j.tenant=?1 AND (j.state='ready' OR j.state='idle' AND j.next_due_at<=?3)
            AND (?2=0 OR s.provider!='lofi' OR r.phase IN('quarantining','publishing'))
          ORDER BY j.next_due_at,j.scope_id,j.stream_id LIMIT 1`,
         tenant,
         Number(sourcePaused),
+        pollDueBefore ?? null,
       )
       .first<
         Omit<InventoryRunWakeup, "tenant" | "version"> & {

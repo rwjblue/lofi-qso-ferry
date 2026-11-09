@@ -3,11 +3,11 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
-import { rebuildFreshStart } from "../scripts/inventory-fresh-start-rebuild.ts";
 import {
   inventoryFreshStart,
   refreshFreshStartLoFi,
 } from "../scripts/inventory-fresh-start.ts";
+import { rebuildFreshStart } from "../scripts/inventory-fresh-start-rebuild.ts";
 import { openInventoryTrial } from "../scripts/inventory-run-trial.ts";
 import { createInventoryTrialTransport } from "../scripts/inventory-trial-transport.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
@@ -174,7 +174,7 @@ test("a fresh account copy retains credential bindings and quarantines prior uns
   }
 });
 
-test("a write-locked rebuild completes destination selections while LoFi waits for authentication", async (t) => {
+test("a write-locked rebuild can finish and poll destinations while LoFi waits for authentication", async (t) => {
   const root = await mkdtemp(`${tmpdir()}/ferry-fresh-rebuild-`);
   t.after(() => rm(root, { recursive: true, force: true }));
   const snapshot = await trialCapture(root);
@@ -189,6 +189,7 @@ test("a write-locked rebuild completes destination selections while LoFi waits f
   }
   const { directory } = await inventoryFreshStart(snapshot, root);
   const requests: string[] = [];
+  const qrzOptions: string[] = [];
   const fetcher: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
     assert.equal(init?.redirect, "error");
@@ -203,6 +204,7 @@ test("a write-locked rebuild completes destination selections while LoFi waits f
       assert.ok(form instanceof URLSearchParams);
       const action = form.get("ACTION");
       assert.ok(action === "STATUS" || action === "FETCH");
+      if (action === "FETCH") qrzOptions.push(form.get("OPTION") ?? "");
       return new Response(
         action === "STATUS"
           ? "RESULT=OK&BOOKID=7&CALLSIGN=N1RWJ&STARTDATE=2025-01-01&ENDDATE=2027-12-31"
@@ -258,6 +260,25 @@ test("a write-locked rebuild completes destination selections while LoFi waits f
       { provider: "qrz", phase: "complete", state: "ready", published: 1 },
     ],
   );
+  // Make one completed selection due without waiting for its real poll period.
+  const saved = await openInventoryTrial(directory);
+  try {
+    await saved.db.batch([
+      saved.db.prepare(
+        `UPDATE inventory_stream_jobs SET work_version=work_version+1,next_due_at=1
+         WHERE state='idle' AND scope_id IN (SELECT scope_id FROM inventory_scopes WHERE provider='qrz')`,
+      ),
+      saved.db.prepare(
+        `INSERT INTO inventory_wakeups(tenant,wakeup_id,scope_id,stream_id,run_id,work_version,not_before)
+         SELECT j.tenant,'fixture-qrz-poll',j.scope_id,j.stream_id,w.run_id,j.work_version,j.next_due_at
+         FROM inventory_stream_jobs j JOIN inventory_wakeups w
+           ON (w.tenant,w.scope_id,w.stream_id,w.work_version)=(j.tenant,j.scope_id,j.stream_id,j.work_version-1)
+         WHERE j.next_due_at=1`,
+      ),
+    ]);
+  } finally {
+    await saved.mf.dispose();
+  }
   const reopened = await rebuildFreshStart(
     { rehearsal: directory, maxRequests: 1, maxDurationMs: 1000 },
     {
@@ -270,6 +291,34 @@ test("a write-locked rebuild completes destination selections while LoFi waits f
   assert.equal(reopened.stopReason, "source_authentication_required");
   assert.equal(reopened.requests.requests, 0);
   assert.deepEqual(reopened.coverage, report.coverage);
+  qrzOptions.length = 0;
+  const polled = await rebuildFreshStart(
+    {
+      rehearsal: directory,
+      pollDue: true,
+      maxRequests: 10,
+      maxDurationMs: 30_000,
+    },
+    { fetcher },
+  );
+  assert.equal(polled.stopReason, "source_authentication_required");
+  assert.deepEqual(polled.requests.byProvider, { lofi: 0, qrz: 2, lotw: 0 });
+  assert.equal(qrzOptions.length, 1);
+  assert.match(qrzOptions[0], /MODSINCE:/);
+  assert.equal(polled.comparisonTurns, 0);
+  assert.equal(polled.destinationCredentialEnvelopesUnchanged, true);
+  assert.deepEqual(
+    polled.coverage.find((row) => row.provider === "qrz"),
+    {
+      provider: "qrz",
+      mode: "delta",
+      phase: "complete",
+      state: "ready",
+      published: 1,
+      reason: null,
+      selections: 1,
+    },
+  );
 });
 
 test("a verified same-client LoFi bearer resumes a write-locked rebuild at its accepted cursor", async (t) => {

@@ -33,6 +33,7 @@ type Selection = { connection: string; from?: string; through?: string };
 type Options = {
   rehearsal: string;
   selections?: readonly Selection[];
+  pollDue?: boolean;
   maxRequests?: number;
   maxDurationMs?: number;
 };
@@ -67,16 +68,22 @@ function selectionPlan(
   throw new Error("inventory_fresh_start_invalid_selection");
 }
 
-async function sourceReadNeedsBearer(store: Store, tenant: string) {
+async function sourceReadNeedsBearer(
+  store: Store,
+  tenant: string,
+  pollDueBefore?: number,
+) {
   const { results } = await store
     .statement(
       `SELECT DISTINCT c.* FROM inventory_stream_jobs j
-       JOIN inventory_runs r ON (r.tenant,r.run_id)=(j.tenant,j.active_run_id)
+       LEFT JOIN inventory_runs r ON (r.tenant,r.run_id)=(j.tenant,j.active_run_id)
        JOIN inventory_scopes s ON (s.tenant,s.scope_id)=(j.tenant,j.scope_id)
        JOIN connections c ON (c.tenant,c.id)=(s.tenant,s.connection_id)
-       WHERE j.tenant=? AND j.state='ready' AND s.provider='lofi'
-         AND r.phase IN('collecting','catchup') LIMIT 2`,
+       WHERE j.tenant=? AND s.provider='lofi'
+         AND (j.state='ready' AND r.phase IN('collecting','catchup')
+           OR j.state='idle' AND j.next_due_at<=?) LIMIT 2`,
       tenant,
+      pollDueBefore ?? null,
     )
     .all<Connection>();
   if (results.length > 1)
@@ -128,6 +135,7 @@ export async function rebuildFreshStart(
   if (!Array.isArray(selections) || selections.length > 32)
     throw new Error("inventory_fresh_start_selection_bound");
   const started = Date.now();
+  const pollDueBefore = options.pollDue ? started : undefined;
   const f = await openInventoryTrial(directory);
   try {
     const runtime = await requireFreshStartLock(f.store);
@@ -186,7 +194,8 @@ export async function rebuildFreshStart(
       {
         ...bounds,
         tenant,
-        sourcePaused: await sourceReadNeedsBearer(store, tenant),
+        pollDueBefore,
+        sourcePaused: await sourceReadNeedsBearer(store, tenant, pollDueBefore),
         continueWithoutSource: true,
         async progress(counts) {
           const progress = {
@@ -209,20 +218,22 @@ export async function rebuildFreshStart(
       throw new Error("inventory_fresh_start_destination_credentials_changed");
     const coverage = await f.store
       .statement(
-        `SELECT s.provider,r.phase,c.state,
+        `SELECT s.provider,r.mode,r.phase,c.state,
                 c.state='ready' AND c.published_config_version=s.config_version AS published,
                 j.reason,count(*) AS selections
          FROM inventory_stream_jobs j
          JOIN inventory_scopes s ON (s.tenant,s.scope_id)=(j.tenant,j.scope_id)
          JOIN inventory_coverage c
            ON (c.tenant,c.scope_id,c.stream_id)=(j.tenant,j.scope_id,j.stream_id)
-         JOIN inventory_runs r ON (r.tenant,r.run_id)=(j.tenant,coalesce(j.active_run_id,c.published_run_id))
-         WHERE j.tenant=? GROUP BY s.provider,r.phase,c.state,published,j.reason
-         ORDER BY s.provider,r.phase,c.state,published,j.reason`,
+         LEFT JOIN inventory_wakeups w ON (w.tenant,w.scope_id,w.stream_id,w.work_version)=(j.tenant,j.scope_id,j.stream_id,j.work_version)
+         JOIN inventory_runs r ON (r.tenant,r.run_id)=(j.tenant,coalesce(j.active_run_id,w.run_id,c.published_run_id))
+         WHERE j.tenant=? GROUP BY s.provider,r.mode,r.phase,c.state,published,j.reason
+         ORDER BY s.provider,r.mode,r.phase,c.state,published,j.reason`,
         tenant,
       )
       .all<{
         provider: Connection["kind"];
+        mode: "full" | "delta";
         phase: string;
         state: string;
         published: number | null;
@@ -274,6 +285,7 @@ if (
       options: {
         rehearsal: { type: "string" },
         plan: { type: "string" },
+        "poll-due": { type: "boolean" },
         "max-requests": { type: "string", default: "120" },
         "max-minutes": { type: "string", default: "20" },
       },
@@ -286,6 +298,7 @@ if (
         selections: values.plan
           ? JSON.parse(await readFile(values.plan, "utf8"))
           : undefined,
+        pollDue: values["poll-due"],
         maxRequests: Number(values["max-requests"]),
         maxDurationMs: Number(values["max-minutes"]) * 60_000,
       },

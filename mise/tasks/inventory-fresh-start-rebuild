@@ -2,6 +2,7 @@
 #MISE description="Continue a write-locked inventory rebuild with read-only vendor access"
 #USAGE flag "--rehearsal <directory>" help="Closed private account rehearsal"
 #USAGE flag "--plan <file>" help="JSON array of explicit linked connection selections"
+#USAGE flag "--poll-due" help="Also run the next poll for each selection due at startup"
 #USAGE flag "--max-requests <count>" help="Maximum provider requests for this invocation"
 #USAGE flag "--max-minutes <minutes>" help="Maximum baseline and comparison work time"
 set -euo pipefail

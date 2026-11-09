@@ -7,11 +7,16 @@ import {
   inventoryFreshStart,
   refreshFreshStartLoFi,
 } from "../scripts/inventory-fresh-start.ts";
-import { rebuildFreshStart } from "../scripts/inventory-fresh-start-rebuild.ts";
+import {
+  rebuildFreshStart,
+  resumeHeldQrzCover,
+} from "../scripts/inventory-fresh-start-rebuild.ts";
 import { openInventoryTrial } from "../scripts/inventory-run-trial.ts";
 import { createInventoryTrialTransport } from "../scripts/inventory-trial-transport.ts";
+import { serializeAdifRecord } from "../src/adif.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { InventoryQrzDispatch } from "../src/inventory-qrz-dispatch.ts";
+import { planInventoryRun } from "../src/inventory-run-plans.ts";
 import { InventoryRunner } from "../src/inventory-runner.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
@@ -319,6 +324,214 @@ test("a write-locked rebuild can finish and poll destinations while LoFi waits f
       selections: 1,
     },
   );
+});
+
+test("a held QRZ covering delta resumes its saved cursor on a write-locked rebuild", async (t) => {
+  const root = await mkdtemp(`${tmpdir()}/ferry-qrz-cover-`);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const snapshot = await trialCapture(root);
+  const captured = await openInventoryTrial(snapshot);
+  try {
+    await applyMigration(captured.db, "0006_account_templates.sql");
+    await captured.db
+      .prepare("UPDATE connections SET remote_identity='7' WHERE kind='qrz'")
+      .run();
+  } finally {
+    await captured.mf.dispose();
+  }
+  const { directory } = await inventoryFreshStart(snapshot, root);
+  let covering = false;
+  let held = false;
+  const fetcher: typeof fetch = async (_input, init) => {
+    const form = init?.body;
+    assert.ok(form instanceof URLSearchParams);
+    if (form.get("ACTION") === "STATUS")
+      return new Response(
+        "RESULT=OK&BOOKID=7&CALLSIGN=N1RWJ&STARTDATE=2025-01-01&ENDDATE=2027-12-31",
+      );
+    assert.equal(form.get("ACTION"), "FETCH");
+    const option = form.get("OPTION") ?? "";
+    if (covering && option.includes("MODSINCE:"))
+      return new Response("RESULT=FAIL&COUNT=0");
+    if (covering && option.includes("AFTERLOGID:3") && !held)
+      return new Response("RESULT=AUTH");
+    if (held) {
+      assert.match(option, /AFTERLOGID:3/);
+      assert.doesNotMatch(option, /MODSINCE:/);
+    }
+    const ids = held
+      ? ["3"]
+      : covering
+        ? ["1", "2"]
+        : option.includes("MODSINCE:")
+          ? []
+          : ["1"];
+    return new Response(
+      new URLSearchParams({
+        RESULT: "OK",
+        COUNT: String(ids.length),
+        ADIF: ids
+          .map((id) =>
+            serializeAdifRecord({
+              CALL: "W1AW",
+              STATION_CALLSIGN: "N1RWJ",
+              QSO_DATE: "20261108",
+              TIME_ON: "130000",
+              BAND: "20m",
+              MODE: "CW",
+              APP_QRZLOG_LOGID: id,
+            }),
+          )
+          .join(""),
+      }),
+    );
+  };
+  const f = await openInventoryTrial(directory);
+  let deltaId: string;
+  try {
+    const link = await f.store.connection("trial", "qrz");
+    assert.ok(link);
+    const plan = {
+      provider: "qrz",
+      book: {
+        bookId: "7",
+        stationCallsign: "N1RWJ",
+        startDate: "2025-01-01",
+        endDate: "2027-12-31",
+      },
+      between: ["2026-11-01", "2026-11-30"],
+      pageSize: 2,
+    } satisfies Parameters<typeof registerInventorySelection>[3];
+    const selection = await registerInventorySelection(
+      f.store,
+      await inventoryRuntime(f.store),
+      link,
+      plan,
+    );
+    assert.equal((await startInventorySelections(f.store)).started, 1);
+    const baseline = await f.db
+      .prepare(
+        "SELECT active_run_id FROM inventory_stream_jobs WHERE tenant='trial'",
+      )
+      .first<string>("active_run_id");
+    assert.ok(baseline);
+    const runs = new InventoryRuns(new InventoryIngestion(f.store));
+    const transport = createInventoryTrialTransport(fetcher, {
+      maxRequests: 12,
+    });
+    const runner = new InventoryRunner(runs, transport.fetch, {
+      scheduled: true,
+    });
+    const wakeup = async (run: string) => {
+      const state = await runs.load("trial", run);
+      assert.ok(state);
+      return {
+        version: 1 as const,
+        tenant: "trial",
+        scope: selection.scope,
+        stream: selection.stream,
+        run,
+        workVersion: state.jobVersion,
+      };
+    };
+    for (let i = 0; ; i++) {
+      assert.ok(i < 8);
+      if ((await runner.step(await wakeup(baseline))).kind === "complete")
+        break;
+    }
+    const stream = () =>
+      runs.inventory.snapshot("trial", selection.scope, selection.stream);
+    const before = await stream();
+    assert.ok(before);
+    const lease = await f.store.claim(
+      "trial",
+      `inventory:${selection.scope}`,
+      Date.now(),
+      90_000,
+    );
+    assert.ok(lease);
+    try {
+      deltaId = (
+        await runs.begin({
+          stream: before,
+          lease,
+          definition: await planInventoryRun(before, plan, { mode: "delta" }),
+        })
+      ).id;
+    } finally {
+      await f.store.release(lease);
+    }
+    covering = true;
+    assert.equal((await runner.step(await wakeup(deltaId))).kind, "advanced");
+    assert.equal((await runner.step(await wakeup(deltaId))).kind, "held");
+    const heldRun = await runs.load("trial", deltaId);
+    assert.ok(heldRun);
+    const heldStream = await stream();
+    assert.deepEqual(heldStream?.checkpoint, before.checkpoint);
+    assert.ok(link.credential_version);
+    const setCredential = (version: string) =>
+      f.db
+        .prepare(
+          "UPDATE connections SET credential_version=? WHERE tenant='trial' AND id='qrz'",
+        )
+        .bind(version)
+        .run();
+    await (
+      await f.store.putPrivate("trial", "qrz", "rotated", "credential", {
+        apiKey: "fixture-rotation",
+      })
+    ).run();
+    await setCredential("rotated");
+    await assert.rejects(
+      resumeHeldQrzCover(runs, "trial", deltaId),
+      /inventory_fresh_start_qrz_cover_rearm_refused/,
+    );
+    await setCredential(link.credential_version);
+    await assert.rejects(
+      f.db
+        .prepare(
+          "UPDATE inventory_runs SET phase='collecting',version=version+1 WHERE run_id=?",
+        )
+        .bind(deltaId)
+        .run(),
+      /inventory run version changed/,
+    );
+    await f.db
+      .prepare(
+        "CREATE TRIGGER reject_cover_rearm BEFORE INSERT ON inventory_wakeups WHEN NEW.wakeup_id LIKE 'qrz-cover-rearm:%' BEGIN SELECT RAISE(ABORT,'test wakeup failure'); END",
+      )
+      .run();
+    await assert.rejects(
+      resumeHeldQrzCover(runs, "trial", deltaId),
+      /inventory_fresh_start_qrz_cover_rearm_refused/,
+    );
+    assert.deepEqual(await runs.load("trial", deltaId), heldRun);
+    assert.deepEqual(await stream(), heldStream);
+    assert.equal(
+      await f.db
+        .prepare("SELECT count(*) AS n FROM inventory_qrz_cover_rearms")
+        .first("n"),
+      0,
+    );
+    await f.db.prepare("DROP TRIGGER reject_cover_rearm").run();
+  } finally {
+    await f.mf.dispose();
+  }
+  held = true;
+  const report = await rebuildFreshStart(
+    {
+      rehearsal: directory,
+      resumeQrzCover: deltaId,
+      maxRequests: 4,
+      maxDurationMs: 10_000,
+    },
+    { fetcher },
+  );
+  assert.deepEqual(report.requests.byProvider, { lofi: 0, qrz: 2, lotw: 0 });
+  assert.equal(report.coverage[0]?.state, "ready");
+  assert.equal(report.coverage[0]?.mode, "delta");
+  assert.equal(report.records[0]?.records, 3);
+  assert.equal(report.uploads, 0);
 });
 
 test("a verified same-client LoFi bearer resumes a write-locked rebuild at its accepted cursor", async (t) => {

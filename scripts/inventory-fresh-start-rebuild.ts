@@ -33,6 +33,7 @@ type Selection = { connection: string; from?: string; through?: string };
 type Options = {
   rehearsal: string;
   selections?: readonly Selection[];
+  resumeQrzCover?: string;
   pollDue?: boolean;
   maxRequests?: number;
   maxDurationMs?: number;
@@ -121,6 +122,58 @@ async function assertNoDispatch(store: Store) {
   if (results.length) throw new Error("inventory_fresh_start_dispatch_present");
 }
 
+/** Requeue a held covering delta without changing its cursor or checkpoint. */
+export async function resumeHeldQrzCover(
+  runs: InventoryRuns,
+  tenant: string,
+  runId: string,
+) {
+  const run = await runs.load(tenant, runId);
+  if (
+    run?.phase !== "held" ||
+    run.jobState !== "held" ||
+    run.activeRun !== runId
+  )
+    throw new Error("inventory_fresh_start_qrz_cover_not_held");
+  const { store } = runs.inventory;
+  const lease = await store.claim(
+    tenant,
+    `inventory:${run.scope}`,
+    Date.now(),
+    90_000,
+  );
+  if (!lease) throw new Error("inventory_fresh_start_qrz_cover_busy");
+  try {
+    await store
+      .statement(
+        `INSERT INTO inventory_qrz_cover_rearms(tenant,run_id,run_version,job_version,lease_token,lease_fence,requested_at) VALUES(?,?,?,?,?,?,?)`,
+        tenant,
+        runId,
+        run.version,
+        run.jobVersion,
+        lease.token,
+        lease.fence,
+        Date.now(),
+      )
+      .run();
+  } catch {
+    // The receipt and outbox commit together, including on a lost response.
+    const saved = await store
+      .statement(
+        "SELECT 1 FROM inventory_qrz_cover_rearms WHERE (tenant,run_id,run_version)=(?,?,?)",
+        tenant,
+        runId,
+        run.version,
+      )
+      .first()
+      .catch(() => null);
+    if (!saved)
+      throw new Error("inventory_fresh_start_qrz_cover_rearm_refused");
+  } finally {
+    await store.release(lease);
+  }
+}
+
 /** Enroll explicitly selected links or resume the rehearsal's existing baselines. */
 export async function rebuildFreshStart(
   options: Options,
@@ -186,29 +239,28 @@ export async function rebuildFreshStart(
       maxRequests: bounds.maxRequests,
       minLoFiIntervalMs: dependencies.fetcher ? 0 : 20_000,
     });
-    const driven = await driveInventoryTrial(
-      new InventoryRuns(
-        new InventoryIngestion(store, new InventoryComparisonPages(store)),
-      ),
-      transport,
-      {
-        ...bounds,
-        tenant,
-        pollDueBefore,
-        sourcePaused: await sourceReadNeedsBearer(store, tenant, pollDueBefore),
-        continueWithoutSource: true,
-        async progress(counts) {
-          const progress = {
-            ...counts,
-            elapsedMs: Date.now() - started,
-            requests: transport.metrics,
-            database: { ...meter.totals },
-          };
-          await privateJson(directory, "fresh-rebuild-progress.json", progress);
-          dependencies.progress?.(progress);
-        },
-      },
+    const runs = new InventoryRuns(
+      new InventoryIngestion(store, new InventoryComparisonPages(store)),
     );
+    if (options.resumeQrzCover !== undefined)
+      await resumeHeldQrzCover(runs, tenant, options.resumeQrzCover);
+    const driven = await driveInventoryTrial(runs, transport, {
+      ...bounds,
+      tenant,
+      pollDueBefore,
+      sourcePaused: await sourceReadNeedsBearer(store, tenant, pollDueBefore),
+      continueWithoutSource: true,
+      async progress(counts) {
+        const progress = {
+          ...counts,
+          elapsedMs: Date.now() - started,
+          requests: transport.metrics,
+          database: { ...meter.totals },
+        };
+        await privateJson(directory, "fresh-rebuild-progress.json", progress);
+        dependencies.progress?.(progress);
+      },
+    });
     await requireFreshStartLock(f.store);
     await assertNoDispatch(f.store);
     if (
@@ -285,6 +337,7 @@ if (
       options: {
         rehearsal: { type: "string" },
         plan: { type: "string" },
+        "resume-qrz-cover": { type: "string" },
         "poll-due": { type: "boolean" },
         "max-requests": { type: "string", default: "120" },
         "max-minutes": { type: "string", default: "20" },
@@ -298,6 +351,7 @@ if (
         selections: values.plan
           ? JSON.parse(await readFile(values.plan, "utf8"))
           : undefined,
+        resumeQrzCover: values["resume-qrz-cover"],
         pollDue: values["poll-due"],
         maxRequests: Number(values["max-requests"]),
         maxDurationMs: Number(values["max-minutes"]) * 60_000,

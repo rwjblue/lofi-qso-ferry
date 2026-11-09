@@ -115,6 +115,14 @@ A plain continuation can finish work started by a request-limited poll.
 The coverage report includes the current run's mode alongside the state
 of the retained published selection.
 
+With migration 0108 applied, use `--resume-qrz-cover <run-id>` to requeue
+a held QRZ covering delta in a write-locked rehearsal. Use the held
+run's ID from the private local database. The operation verifies the
+committed hold receipt, current lease and link, and the saved cursor and
+checkpoint. It requeues the same run and leaves coverage collecting
+until the normal terminal publication. Once requeued, a plain
+continuation can finish the saved run.
+
 ### Real continuation while LoFi waited
 
 A private clone of the interrupted rehearsal, upgraded through
@@ -244,6 +252,12 @@ after an invalid response and its retry. Reopening counted 1,126
 accepted observations, retained the previous committed checkpoint and
 full selection, and verified unchanged source and credential envelopes
 with zero delivery attempts.
+
+A private clone of that held run passed the migration 0108 resume guard.
+The rearm retained all eight accepted pages, the exact resume state and
+committed checkpoint, and the full selection. It advanced the job and
+coverage versions, and the reader rejected the old wakeup without
+contacting QRZ.
 
 Wire inspection found that the numeric LOGID tag was present in the
 malformed response. A preceding `X_HAM2K_SOLAR` field's declared length

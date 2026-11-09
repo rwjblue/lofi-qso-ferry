@@ -205,6 +205,7 @@ export async function runHostedScheduled(
       sends[provider].failed = 1;
     }
   }
+  const inventoryWakeupsPruned = await runs.pruneWakeups().catch(() => null);
   let matchProofsCollected = 0;
   let matchProofCollectionFailed = 0;
   try {
@@ -260,6 +261,7 @@ export async function runHostedScheduled(
       sends.qrz.queued +
       sends.lotw.queued,
     inventoryQueued,
+    inventoryWakeupsPruned,
     comparisonQueued,
     sourceProofQueued,
     qrzRecoveryQueued,

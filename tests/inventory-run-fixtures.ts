@@ -19,6 +19,7 @@ export async function inventoryRunFixture(
   else {
     await applyMigration(fixture.db, "0039_inventory_ingestion.sql");
     await applyMigration(fixture.db, "0040_inventory_runs.sql");
+    await applyMigration(fixture.db, "0143_inventory_wakeup_delivery.sql");
   }
   const inventory = new InventoryIngestion(
     fixture.store,

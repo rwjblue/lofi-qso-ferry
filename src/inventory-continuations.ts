@@ -35,6 +35,7 @@ export async function publishInventoryWakeups(
     options.limit ?? 100,
     Math.max(1, now - recoverAfterMs),
     options.scopePolicies ?? false,
+    now,
   );
   if (!rows.length) return 0;
   await queue.sendBatch(

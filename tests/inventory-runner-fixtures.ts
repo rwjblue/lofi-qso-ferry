@@ -39,6 +39,7 @@ export const contact: AdifRecord = {
 export async function inventoryRunnerFixture(
   t: TestContext,
   provider: "lofi" | "qrz" | "lotw" = "lofi",
+  options: { installWakeupDelivery?: boolean } = {},
 ) {
   const f = await database();
   t.after(() => f.mf.dispose());
@@ -50,6 +51,8 @@ export async function inventoryRunnerFixture(
     "0041_inventory_vendor_admission.sql",
   ])
     await applyMigration(f.db, name);
+  if (options.installWakeupDelivery !== false)
+    await applyMigration(f.db, "0143_inventory_wakeup_delivery.sql");
   const connection = provider === "lofi" ? "source" : "destination";
   const config =
     provider === "lofi"

@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { measureD1 } from "../scripts/inventory-benchmark-metrics.ts";
 import {
   consumeInventoryWakeups,
   publishInventoryWakeups,
 } from "../src/inventory-continuations.ts";
+import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { planInventoryRun } from "../src/inventory-run-plans.ts";
 import {
   InventoryRunner,
   type InventoryRunWakeup,
 } from "../src/inventory-runner.ts";
+import { InventoryRuns } from "../src/inventory-runs.ts";
+import { Store } from "../src/store.ts";
+import { applyMigration } from "./helpers.ts";
 import { inventoryRunnerFixture } from "./inventory-runner-fixtures.ts";
 
 function queue() {
@@ -82,6 +87,47 @@ test("outbox batches are durable, contain only versioned identities and recover 
     q.sent[1].body,
     "cron recovers the same current work fence",
   );
+});
+
+test("the wakeup migration backfills current work without scanning future publications", async (t) => {
+  const f = await inventoryRunnerFixture(t, "lofi", {
+    installWakeupDelivery: false,
+  });
+  const run = await f.begin();
+  const now = Date.now();
+  const future = now + 900_000;
+  await f.db.batch([
+    f.db
+      .prepare(
+        `WITH RECURSIVE samples(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM samples WHERE n<1000)
+       INSERT INTO inventory_streams(tenant,scope_id,stream_id,query_binding)
+       SELECT 'a',?,'future-'||n,'fixture' FROM samples`,
+      )
+      .bind(f.scope),
+    f.db
+      .prepare(
+        `INSERT INTO inventory_stream_jobs(tenant,scope_id,stream_id,work_version,next_due_at)
+       SELECT tenant,scope_id,stream_id,1,? FROM inventory_streams WHERE stream_id LIKE 'future-%'`,
+      )
+      .bind(future),
+    f.db
+      .prepare(
+        `INSERT INTO inventory_wakeups(tenant,wakeup_id,scope_id,stream_id,run_id,work_version,not_before,published_at)
+       SELECT tenant,stream_id,scope_id,stream_id,?,work_version,next_due_at,?
+       FROM inventory_stream_jobs WHERE stream_id LIKE 'future-%'`,
+      )
+      .bind(run.id, now - 600_000),
+  ]);
+  await applyMigration(f.db, "0143_inventory_wakeup_delivery.sql");
+  const q = queue();
+  assert.equal(await publishInventoryWakeups(f.runs, q.binding), 1);
+  const meter = measureD1(f.db);
+  const runs = new InventoryRuns(
+    new InventoryIngestion(new Store(meter.database, f.store.keys)),
+  );
+  assert.equal(await publishInventoryWakeups(runs, q.binding), 0);
+  assert.ok(meter.totals.rowsRead < 25, JSON.stringify(meter.totals));
+  assert.equal(meter.totals.rowsWritten, 0);
 });
 
 test("a lost Queue send acknowledgement republishes the identical work without advancing inventory", async (t) => {
@@ -208,12 +254,49 @@ test("completed runs start incremental work under the current job fence and reje
   if (next.kind !== "started") assert.fail();
   assert.equal(requests, 2, "starting the new run performs no HTTP");
   assert.equal((await f.runs.load("a", next.run))?.mode, "delta");
+  const pruneAt = Date.now() + 2 * 86_400_000;
+  const predecessor = () =>
+    f.db
+      .prepare(
+        "SELECT 1 AS present FROM inventory_wakeups WHERE (tenant,scope_id,stream_id,work_version)=('a',?,'scan',?)",
+      )
+      .bind(f.scope, wakeup.workVersion)
+      .first("present");
+  const queued = await f.db
+    .prepare(
+      "SELECT count(*) FROM inventory_wakeups WHERE tenant='a' AND scope_id=?",
+    )
+    .bind(f.scope)
+    .first<number>("count(*)");
+  assert.equal(
+    queued,
+    2,
+    "publication retains only current work and its proof pin",
+  );
+  assert.equal(await predecessor(), 1, "keep the active run predecessor");
+  await f.db
+    .prepare(`INSERT INTO inventory_wakeups(tenant,wakeup_id,scope_id,stream_id,run_id,work_version,not_before)
+      VALUES('a','fixture-history',?,'scan',?,0,1)`)
+    .bind(f.scope, first.id)
+    .run();
+  assert.equal(await f.runs.pruneWakeups(pruneAt), 1, "prune a legacy wakeup");
+  assert.equal(
+    await predecessor(),
+    1,
+    "the periodic collector also keeps the pin",
+  );
   assert.deepEqual(await runner.step(wakeup), {
     kind: "skipped",
     reason: "stale",
   });
   await runner.step(await f.wakeup(next.run));
   await f.finish(runner, next.run);
+  await f.runs.pruneWakeups(pruneAt);
+  assert.equal(
+    await predecessor(),
+    1,
+    "keep the latest source delta predecessor",
+  );
   assert.equal(requests, 3);
   const current = await f.due(next.run);
   assert.deepEqual(await runner.step({ ...current, run: first.id }), {

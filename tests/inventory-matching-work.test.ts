@@ -6,8 +6,8 @@ import {
   InventoryMatchingResults,
   type InventoryMatchingWorkClaim,
 } from "../src/inventory-matching-results.ts";
-import { Store } from "../src/store.ts";
 import { InventoryMatchingWork } from "../src/inventory-matching-work.ts";
+import { Store } from "../src/store.ts";
 import { observation } from "./inventory-context-fixtures.ts";
 import { receipt, sourceContact } from "./inventory-matching-fixtures.ts";
 import { matchingWorkFixture } from "./inventory-matching-work-fixtures.ts";
@@ -173,6 +173,42 @@ test("durable turns process twenty keys then resume the remainder without changi
       )?.n,
       0,
     );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("a contended destination lease returns no work and preserves its holder", async () => {
+  const f = await captured();
+  try {
+    const db = new Proxy(f.db, {
+      get(target, property) {
+        if (property === "batch")
+          return async (statements: D1PreparedStatement[]) => {
+            const results = await target.batch(statements);
+            assert.deepEqual(
+              results.map((result) => result.results),
+              [[], []],
+            );
+            return results;
+          };
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const work = new InventoryMatchingWork(new Store(db, f.store.keys));
+    assert.deepEqual(await work.step("a"), { kind: "deferred" });
+    assert.equal((await counts(f))?.done, 0);
+    assert.deepEqual(
+      await f.db
+        .prepare("SELECT * FROM leases WHERE tenant=? AND scope=?")
+        .bind(f.lease.tenant, f.lease.scope)
+        .first(),
+      f.lease,
+    );
+    await f.store.release(f.lease);
+    assert.equal((await f.work.step("a")).kind, "matched");
+    assert.equal((await counts(f))?.done, 1);
   } finally {
     await f.mf.dispose();
   }

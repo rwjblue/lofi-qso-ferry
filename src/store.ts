@@ -307,7 +307,7 @@ export class Store {
     scope: string,
     now = Date.now(),
     ttl = 60_000,
-    guard?: SqlGuard,
+    { guard, token = randomToken() }: { guard?: SqlGuard; token?: string } = {},
   ) {
     const input = guard
       ? `SELECT ?,?,?,1,? WHERE ${guard.sql}`
@@ -316,7 +316,7 @@ export class Store {
       `INSERT INTO leases ${input} ON CONFLICT(tenant,scope) DO UPDATE SET token=excluded.token,fence=leases.fence+1,expires_at=excluded.expires_at WHERE leases.expires_at<=? RETURNING *`,
       tenant,
       scope,
-      randomToken(),
+      token,
       now + ttl,
       ...(guard?.params ?? []),
       now,

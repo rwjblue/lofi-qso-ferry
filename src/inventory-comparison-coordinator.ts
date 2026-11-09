@@ -371,8 +371,10 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
         Date.now(),
         60000,
         {
-          sql: `EXISTS(SELECT 1 FROM accounts a WHERE ${eligible})`,
-          params: [tenant],
+          guard: {
+            sql: `EXISTS(SELECT 1 FROM accounts a WHERE ${eligible})`,
+            params: [tenant],
+          },
         },
       ),
       readControl(),
@@ -458,9 +460,11 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
         Date.now(),
         60_000,
         {
-          sql: `EXISTS(SELECT 1 ${from} WHERE ${authority}
+          guard: {
+            sql: `EXISTS(SELECT 1 ${from} WHERE ${authority}
           AND w.not_before<=unixepoch('subsec')*1000 AND ${eligible})`,
-          params: [...params],
+            params: [...params],
+          },
         },
       ),
       readWakeup(),

@@ -531,6 +531,27 @@ coverage.
 | Empty, up to four steps per delivery | 2,497 → 2,447 | 4,290 | 39 |
 | Matched, one step per delivery | 3,528 → 3,478 | 5,834 | 152 |
 
+### Matching work admission
+
+One native batch claims the destination lease and reads up to 20 due
+work rows under its token. A contested claim returns neither a lease nor
+work rows. The existing holder can release its lease and the next turn
+can publish the pending work. Matching still uses the same native
+publication and release guards.
+
+On two write-locked copies of the captured personal log, both runners
+republished the same 160 QRZ and LoTW classifications with identical
+reasons and selected receipt identities. Eight cohort publications and
+an idle check used 107 D1 calls before batching and 99 after. Both used
+217 statements and wrote 13,410 rows. The updated runner read eight
+additional lease rows. Credentials, checkpoints, coverage and historical
+associations passed the audit. The replay made zero provider requests.
+
+| 1,000-contact profile | D1 calls before → after | SQL statements | Queue deliveries |
+| --- | ---: | ---: | ---: |
+| Empty, up to four steps per delivery | 2,447 → 2,397 | 4,290 | 39 |
+| Matched, one step per delivery | 3,478 → 3,428 | 5,834 | 152 |
+
 ### 20,000-contact local pipeline
 
 The build before matching metadata batching ran 20,000 normalized

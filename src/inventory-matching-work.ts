@@ -3,8 +3,8 @@ import {
   type InventoryMatchingWorkClaim,
 } from "./inventory-matching-results.ts";
 import { InventoryMatchingWorkspace } from "./inventory-matching-workspace.ts";
-import { canonical } from "./security.ts";
-import type { Store } from "./store.ts";
+import { canonical, randomToken } from "./security.ts";
+import type { Lease, Store } from "./store.ts";
 
 const identifier = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 512;
@@ -77,28 +77,33 @@ SELECT w.generation_id,w.destination,w.source_scope,w.source_config_version,w.de
       )
       .first<Head>();
     if (!head) return { kind: "idle" as const };
-    const lease = await this.store.claim(
-      tenant,
-      `matching:${head.destination}`,
-      Date.now(),
-      60000,
-    );
+    const scope = `matching:${head.destination}`;
+    const now = Date.now();
+    const token = randomToken();
+    const [claimed, rows] = await this.store.db.batch([
+      this.store.claimStatement(tenant, scope, now, 60_000, { token }),
+      this.store.statement(
+        `SELECT w.source_scope AS scope,w.record_key AS key,w.work_version AS workVersion,w.completed_version AS completedVersion,w.source_config_version AS sourceConfigVersion,w.destination_config_version AS destinationConfigVersion,w.due_at AS dueAt
+         FROM leases l CROSS JOIN matching_work w INDEXED BY matching_work_scope_pending
+         WHERE l.tenant=?1 AND l.scope=?8 AND l.token=?9 AND l.expires_at>unixepoch('subsec')*1000
+         AND w.tenant=l.tenant AND w.generation_id=?2 AND w.destination=?3 AND w.source_scope=?4 AND w.source_config_version=?5 AND w.destination_config_version=?6 AND w.completed_version<w.work_version AND w.due_at<=?7
+         ORDER BY w.due_at,w.record_key LIMIT 20`,
+        tenant,
+        head.generation_id,
+        head.destination,
+        head.source_scope,
+        head.source_config_version,
+        head.destination_config_version,
+        now,
+        scope,
+        token,
+      ),
+    ]);
+    const lease = claimed.results[0] as Lease | undefined;
     if (!lease) return { kind: "deferred" as const };
     try {
-      const rows = await this.store
-        .statement(
-          `SELECT source_scope AS scope,record_key AS key,work_version AS workVersion,completed_version AS completedVersion,source_config_version AS sourceConfigVersion,destination_config_version AS destinationConfigVersion,due_at AS dueAt FROM matching_work INDEXED BY matching_work_scope_pending WHERE tenant=? AND generation_id=? AND destination=? AND source_scope=? AND source_config_version=? AND destination_config_version=? AND completed_version<work_version AND due_at<=? ORDER BY due_at,record_key LIMIT 20`,
-          tenant,
-          head.generation_id,
-          head.destination,
-          head.source_scope,
-          head.source_config_version,
-          head.destination_config_version,
-          Date.now(),
-        )
-        .all<InventoryMatchingWorkClaim>();
-      if (!rows.results.length) return { kind: "idle" as const };
-      let work = rows.results;
+      let work = rows.results as InventoryMatchingWorkClaim[];
+      if (!work.length) return { kind: "idle" as const };
       for (;;) {
         try {
           const page = await new InventoryMatchingWorkspace(this.store).prepare(

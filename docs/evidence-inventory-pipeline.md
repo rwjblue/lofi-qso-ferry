@@ -162,17 +162,17 @@ Both arms used the schema through migration 0117, the same 1,000-contact
 fixture with an empty QRZ selection, and a Queue drain after every
 source page. Both published 1,000 current absence classifications.
 
-| Native work                      | Before | With deferral |
-| -------------------------------- | -----: | ------------: |
-| Source backfill D1 calls         |  2,628 |            94 |
-| Source backfill SQL statements   |  3,748 |           164 |
-| Source backfill Queue turns      |    103 |             4 |
-| Total D1 calls                   |  8,112 |         4,279 |
-| Total SQL statements             | 11,052 |         5,684 |
-| Total Queue turns                |    364 |           165 |
-| Encrypted projection payloads    |  2,000 |         1,000 |
-| Match sets                       |    100 |            50 |
-| Allocated growth                 | 18,280,448 bytes | 15,376,384 bytes |
+| Native work                    |           Before |    With deferral |
+| ------------------------------ | ---------------: | ---------------: |
+| Source backfill D1 calls       |            2,628 |               94 |
+| Source backfill SQL statements |            3,748 |              164 |
+| Source backfill Queue turns    |              103 |                4 |
+| Total D1 calls                 |            8,112 |            4,279 |
+| Total SQL statements           |           11,052 |            5,684 |
+| Total Queue turns              |              364 |              165 |
+| Encrypted projection payloads  |            2,000 |            1,000 |
+| Match sets                     |              100 |               50 |
+| Allocated growth               | 18,280,448 bytes | 15,376,384 bytes |
 
 Deferral delays provisional source results during the first scan.
 The local benchmark counts database and Queue work and excludes vendor
@@ -250,10 +250,10 @@ The backfill figures include provisional comparison work while source
 coverage was collecting. The completion stage includes verification
 and replacement of those provisional results.
 
-| Local stage | D1 calls | SQL statements | Rows read | Rows written | Queue turns | Elapsed |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Source backfill with provisional comparison | 779,100 | 1,003,160 | 107,434,845 | 16,525,513 | 36,405 | 6,640.9 s |
-| Source completion and classification | 1,373,081 | 1,732,401 | 284,233,071 | 19,529,297 | 70,998 | 10,107.0 s |
+| Local stage                                 |  D1 calls | SQL statements |   Rows read | Rows written | Queue turns |    Elapsed |
+| ------------------------------------------- | --------: | -------------: | ----------: | -----------: | ----------: | ---------: |
+| Source backfill with provisional comparison |   779,100 |      1,003,160 | 107,434,845 |   16,525,513 |      36,405 |  6,640.9 s |
+| Source completion and classification        | 1,373,081 |      1,732,401 | 284,233,071 |   19,529,297 |      70,998 | 10,107.0 s |
 
 The completion stage drained before the original final query lost its
 D1 connection. A read-only audit of the closed 3.81 GB SQLite file
@@ -276,11 +276,11 @@ delivery. Source coverage was ready after 203.5 seconds of local
 backfill and verification. Classification then ran 30,003 comparison
 steps across 7,501 deliveries, with at most 74 D1 calls in a delivery.
 
-| Local stage | D1 calls | SQL statements | Rows read | Rows written | Elapsed |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Source backfill | 1,615 | 9,675 | 43,284,543 | 9,066,675 | 198.6 s |
-| Source verification | 25 | 75 | 1,212,459 | 82 | 5.0 s |
-| Classification | 452,531 | 840,036 | 124,384,630 | 15,423,363 | 4,339.6 s |
+| Local stage         | D1 calls | SQL statements |   Rows read | Rows written |   Elapsed |
+| ------------------- | -------: | -------------: | ----------: | -----------: | --------: |
+| Source backfill     |    1,615 |          9,675 |  43,284,543 |    9,066,675 |   198.6 s |
+| Source verification |       25 |             75 |   1,212,459 |           82 |     5.0 s |
+| Classification      |  452,531 |        840,036 | 124,384,630 |   15,423,363 | 4,339.6 s |
 
 The paged native D1 audit verified all 200,000 current absences in
 157 pages and 48.8 seconds. The final database allocated 3.21 GB.
@@ -338,7 +338,7 @@ coverage.
 | Matching after an idle sweep     |              153 |    4,408 |          5,558 |   658,862 |       77,606 |
 | Shared lease and control read    |              153 |    4,102 |          5,252 |   659,578 |       77,606 |
 | Combined projection selection    |              153 |    4,052 |          5,202 |   659,146 |       77,606 |
-| Wrapped key in writer snapshot    |              153 |    3,952 |          5,102 |   659,154 |       77,606 |
+| Wrapped key in writer snapshot   |              153 |    3,952 |          5,102 |   659,154 |       77,606 |
 
 The runs had different concurrent local workloads. The measurements
 compare database and Queue work.
@@ -397,9 +397,9 @@ remote records agreed for all 400 classifications. Credential and
 coverage audits passed with zero external requests or writes.
 
 | Captured preparation | Body queries before → after | Total D1 calls before → after | Rows read before → after |
-| -------------------- | -------------------------: | ----------------------------: | -----------------------: |
-| LoTW                 |                    36 → 18 |                       94 → 76 |          21,227 → 21,861 |
-| QRZ                  |                    40 → 20 |                       99 → 79 |          19,109 → 19,753 |
+| -------------------- | --------------------------: | ----------------------------: | -----------------------: |
+| LoTW                 |                     36 → 18 |                       94 → 76 |          21,227 → 21,861 |
+| QRZ                  |                     40 → 20 |                       99 → 79 |          19,109 → 19,753 |
 
 In the 1,000-contact synthetic matched fixture, the source classification
 stage used 4,738 D1 calls before the change and 4,588 after. Rows read
@@ -485,9 +485,9 @@ Both 1,000-contact synthetic profiles used one durable step per Queue
 delivery. The tables measure classification after source coverage.
 
 | Destination | Turns | D1 calls before → after | SQL statements before → after |
-| --- | ---: | ---: | ---: |
-| Empty | 153 | 3,498 → 3,192 | 5,252 → 5,099 |
-| Matched | 152 | 4,184 → 3,880 | 6,338 → 6,186 |
+| ----------- | ----: | ----------------------: | ----------------------------: |
+| Empty       |   153 |           3,498 → 3,192 |                 5,252 → 5,099 |
+| Matched     |   152 |           4,184 → 3,880 |                 6,338 → 6,186 |
 
 With the hosted four-step budget, the empty profile classified all
 1,000 contacts in 39 deliveries and used 2,964 D1 calls. Its largest
@@ -510,10 +510,10 @@ own progress. The worker publishes the last continuation before
 acknowledging the delivery. A replacement-lease fixture verifies
 that the original delivery retries and leaves the successor intact.
 
-| 1,000-contact profile | Steps | Deliveries | D1 calls before → after | SQL statements before → after |
-| --- | ---: | ---: | ---: | ---: |
-| Empty, up to four steps per delivery | 153 | 39 | 2,964 → 2,697 | 4,871 → 4,490 |
-| Matched, one step per delivery | 152 | 152 | 3,880 → 3,728 | 6,186 → 6,034 |
+| 1,000-contact profile                | Steps | Deliveries | D1 calls before → after | SQL statements before → after |
+| ------------------------------------ | ----: | ---------: | ----------------------: | ----------------------------: |
+| Empty, up to four steps per delivery |   153 |         39 |           2,964 → 2,697 |                 4,871 → 4,490 |
+| Matched, one step per delivery       |   152 |        152 |           3,880 → 3,728 |                 6,186 → 6,034 |
 
 The four-step fixture peaked at 86 D1 calls in one delivery. A paired
 replay on private copies of the captured log republished the same
@@ -539,19 +539,19 @@ bindings, credential envelopes, checkpoints and coverage. Preparation
 made zero writes or provider requests.
 
 | Captured inputs | Records | D1 calls before → after | Rows read before → after |
-| --- | ---: | ---: | ---: |
-| LoFi | 200 | 60 → 20 | 6,442 → 11,396 |
-| LoTW | 100 | 20 → 10 | 850 → 1,505 |
-| QRZ | 100 | 20 → 10 | 850 → 1,505 |
+| --------------- | ------: | ----------------------: | -----------------------: |
+| LoFi            |     200 |                 60 → 20 |           6,442 → 11,396 |
+| LoTW            |     100 |                 20 → 10 |              850 → 1,505 |
+| QRZ             |     100 |                 20 → 10 |              850 → 1,505 |
 
 Both 1,000-contact pipeline fixtures retained their classifications
 and Queue delivery counts. The figures cover the classification stage
 after source coverage.
 
-| Destination | D1 calls before → after | Rows read before → after |
-| --- | ---: | ---: |
-| Empty, up to four steps per delivery | 2,697 → 2,497 | 650,123 → 660,116 |
-| Matched, one step per delivery | 3,728 → 3,528 | 1,223,724 → 1,233,373 |
+| Destination                          | D1 calls before → after | Rows read before → after |
+| ------------------------------------ | ----------------------: | -----------------------: |
+| Empty, up to four steps per delivery |           2,697 → 2,497 |        650,123 → 660,116 |
+| Matched, one step per delivery       |           3,728 → 3,528 |    1,223,724 → 1,233,373 |
 
 The byte-bound fixture recorded zero ciphertext rows for an oversized
 cohort and one for a smaller eligible cohort.
@@ -570,18 +570,18 @@ bindings, credential envelopes, checkpoints and coverage. It made zero
 database writes during preparation and zero provider requests.
 
 | Captured inputs | Records | D1 calls before → after | SQL statements | Rows read |
-| --- | ---: | ---: | ---: | ---: |
-| LoTW | 80 | 32 → 28 | 32 | 8,881 |
-| QRZ | 80 | 35 → 31 | 35 | 8,118 |
+| --------------- | ------: | ----------------------: | -------------: | --------: |
+| LoTW            |      80 |                 32 → 28 |             32 |     8,881 |
+| QRZ             |      80 |                 35 → 31 |             35 |     8,118 |
 
 The native 1,000-contact profiles retained all classifications and
 their delivery counts. The figures cover classification after source
 coverage.
 
-| Destination | D1 calls before → after | SQL statements | Queue deliveries |
-| --- | ---: | ---: | ---: |
-| Empty, up to four steps per delivery | 2,497 → 2,447 | 4,290 | 39 |
-| Matched, one step per delivery | 3,528 → 3,478 | 5,834 | 152 |
+| Destination                          | D1 calls before → after | SQL statements | Queue deliveries |
+| ------------------------------------ | ----------------------: | -------------: | ---------------: |
+| Empty, up to four steps per delivery |           2,497 → 2,447 |          4,290 |               39 |
+| Matched, one step per delivery       |           3,528 → 3,478 |          5,834 |              152 |
 
 ### Matching work admission
 
@@ -599,10 +599,10 @@ an idle check used 107 D1 calls before batching and 99 after. Both used
 additional lease rows. Credentials, checkpoints, coverage and historical
 associations passed the audit. The replay made zero provider requests.
 
-| 1,000-contact profile | D1 calls before → after | SQL statements | Queue deliveries |
-| --- | ---: | ---: | ---: |
-| Empty, up to four steps per delivery | 2,447 → 2,397 | 4,290 | 39 |
-| Matched, one step per delivery | 3,478 → 3,428 | 5,834 | 152 |
+| 1,000-contact profile                | D1 calls before → after | SQL statements | Queue deliveries |
+| ------------------------------------ | ----------------------: | -------------: | ---------------: |
+| Empty, up to four steps per delivery |           2,447 → 2,397 |          4,290 |               39 |
+| Matched, one step per delivery       |           3,478 → 3,428 |          5,834 |              152 |
 
 ### Adoption checks during result publication
 
@@ -647,12 +647,12 @@ same 751 deliveries. The largest delivery used 80 D1 calls. The
 instrumented classification stage took 514.1 seconds and recorded
 13,197,007 rows read and 1,542,363 rows written.
 
-| Statement family | Executions | Rows read |
-| --- | ---: | ---: |
-| Match result upsert and triggers | 1,000 | 2,257,334 |
-| Match admission guard | 1,000 | 2,097,672 |
-| Match set commit and triggers | 1,000 | 1,560,888 |
-| Delivery review publication | 1,000 | 1,188,972 |
+| Statement family                 | Executions | Rows read |
+| -------------------------------- | ---------: | --------: |
+| Match result upsert and triggers |      1,000 | 2,257,334 |
+| Match admission guard            |      1,000 | 2,097,672 |
+| Match set commit and triggers    |      1,000 | 1,560,888 |
+| Delivery review publication      |      1,000 | 1,188,972 |
 
 Native SQL time was 48.4 seconds across classification. Timing also
 includes workerd binding overhead, Queue coordination and application
@@ -684,12 +684,12 @@ The run through migration 0125 finished in 508.9 seconds. The daily
 burst used 100 successful LoFi responses and one simulated 429. LoTW
 and QRZ made their fixture reads during baseline setup.
 
-| Local stage | D1 calls | SQL statements | Rows read | Rows written | Elapsed |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Enrollment | 5,524 | 11,526 | 87,433 | 21,007 | 37.0 s |
-| Ready baselines | 29,158 | 65,446 | 667,451 | 66,594 | 180.3 s |
-| Delta burst with interleaved comparison | 10,149 | 24,826 | 2,870,646 | 660,264 | 76.2 s |
-| Remaining classification | 34,875 | 64,973 | 9,874,500 | 1,199,956 | 214.6 s |
+| Local stage                             | D1 calls | SQL statements | Rows read | Rows written | Elapsed |
+| --------------------------------------- | -------: | -------------: | --------: | -----------: | ------: |
+| Enrollment                              |    5,524 |         11,526 |    87,433 |       21,007 |  37.0 s |
+| Ready baselines                         |   29,158 |         65,446 |   667,451 |       66,594 | 180.3 s |
+| Delta burst with interleaved comparison |   10,149 |         24,826 | 2,870,646 |      660,264 |  76.2 s |
+| Remaining classification                |   34,875 |         64,973 | 9,874,500 |    1,199,956 | 214.6 s |
 
 The audit verified 10,000 source contacts and all 20,000 current
 absences, split evenly between LoTW and QRZ. All 300 selections were
@@ -723,10 +723,10 @@ The two 1,000-contact profiles verified all current classifications
 with the same calls, statements, writes and Queue deliveries. The
 matched profile also benefits when adoption rechecks the proof.
 
-| Destination | Classification rows read before → after |
-| --- | ---: |
-| Empty, up to four steps per delivery | 656,787 → 638,628 |
-| Matched, one step per delivery | 1,232,740 → 1,172,080 |
+| Destination                          | Classification rows read before → after |
+| ------------------------------------ | --------------------------------------: |
+| Empty, up to four steps per delivery |                       656,787 → 638,628 |
+| Matched, one step per delivery       |                   1,232,740 → 1,172,080 |
 
 ### Bucket dependency publication
 
@@ -785,10 +785,10 @@ Both 1,000-contact profiles verified all current classifications and
 saved one call and statement per matching cohort. Delivery counts stayed
 at 39 for the empty profile and 152 for the matched profile.
 
-| Destination | D1 calls before → after | SQL statements before → after | Rows read before → after |
-| --- | ---: | ---: | ---: |
-| Empty, up to four steps per delivery | 2,397 → 2,347 | 4,290 → 4,240 | 638,628 → 621,915 |
-| Matched, one step per delivery | 3,428 → 3,378 | 5,834 → 5,784 | 1,172,080 → 1,154,767 |
+| Destination                          | D1 calls before → after | SQL statements before → after | Rows read before → after |
+| ------------------------------------ | ----------------------: | ----------------------------: | -----------------------: |
+| Empty, up to four steps per delivery |           2,397 → 2,347 |                 4,290 → 4,240 |        638,628 → 621,915 |
+| Matched, one step per delivery       |           3,428 → 3,378 |                 5,834 → 5,784 |    1,172,080 → 1,154,767 |
 
 ### Matching generation snapshot
 

@@ -12,14 +12,14 @@ recovery are separate states.
 
 ## Local development
 
-~~~sh
+```sh
 mise trust
 mise install
 mise run setup
 mise run check
 mise run demo
 mise exec -- npm run dev -- --test-scheduled
-~~~
+```
 
 Open http://localhost:8787. Local signup uses the browser-bound mailbox
 and a discoverable passkey. The demo uses isolated data and synthetic
@@ -35,10 +35,10 @@ coverage, destination matches, review holds and delivery activity.
 An administrator can issue an invitation with the existing authenticated
 Cloudflare CLI. Preview with the dry-run flag.
 
-~~~sh
+```sh
 mise run invite -- --dry-run person@example.com
 mise run invite -- person@example.com
-~~~
+```
 
 [Authentication](docs/authentication.md) · [Admin console](docs/admin.md)
 

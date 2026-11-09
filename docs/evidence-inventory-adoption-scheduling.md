@@ -118,10 +118,10 @@ pending QRZ adoptions in 211 productive turns. Both finished with
 requests or upload attempts. Credential envelopes, checkpoints and
 current classifications passed the audit.
 
-| Native adoption worker | D1 calls | SQL statements | Rows read | Rows written |
-| --- | ---: | ---: | ---: | ---: |
-| Separate metadata reads | 3,588 | 5,065 | 1,067,086 | 65,651 |
-| Consolidated metadata | 2,955 | 4,643 | 1,072,507 | 65,651 |
+| Native adoption worker  | D1 calls | SQL statements | Rows read | Rows written |
+| ----------------------- | -------: | -------------: | --------: | -----------: |
+| Separate metadata reads |    3,588 |          5,065 | 1,067,086 |       65,651 |
+| Consolidated metadata   |    2,955 |          4,643 | 1,072,507 |       65,651 |
 
 Reading the proof generation with each selected record raised row reads
 by about 0.5%. The full 1,000-contact matched pipeline saved 150 D1
@@ -202,11 +202,11 @@ before measuring the two workers. Each measured turn includes its
 own work selection, lease acquisition and release, preparation, and
 guarded publication.
 
-| Worker turn | D1 calls | SQL statements | Rows read | Rows written |
-| --- | ---: | ---: | ---: | ---: |
-| Matching | 9 | 25 | 13,661 | 1,807 |
-| Historical adoption | 12 → 10 | 21 → 20 | 5,791 → 5,731 | 448 |
-| Total | 21 → 19 | 46 → 45 | 19,452 → 19,392 | 2,255 |
+| Worker turn         | D1 calls | SQL statements |       Rows read | Rows written |
+| ------------------- | -------: | -------------: | --------------: | -----------: |
+| Matching            |        9 |             25 |          13,661 |        1,807 |
+| Historical adoption |  12 → 10 |        21 → 20 |   5,791 → 5,731 |          448 |
+| Total               |  21 → 19 |        46 → 45 | 19,452 → 19,392 |        2,255 |
 
 All 20 results were current matches, with 20 durable associations and
 20 ownership records. Both work queues drained. The fixture made zero

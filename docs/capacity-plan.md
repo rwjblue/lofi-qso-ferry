@@ -4,13 +4,13 @@ Measure provider reads, preparation and matching, upload requests and
 readback independently. Record elapsed time, SQL statements, D1 binding
 calls, read and write rows, payload bytes and allocated storage.
 
-| Profile | Observed boundary |
-| --- | --- |
-| 1,000-contact page | Set-based ingest and encrypted publication |
-| Personal replay | 4,251 source contacts and two captured destinations |
-| 200,000-contact source | Synthetic native classification with one empty destination |
-| 100 accounts | One synthetic 10,000-contact burst after baseline setup |
-| 100-contact LoTW file | Native signing, guarded submission and partial simulated readback |
+| Profile                | Observed boundary                                                 |
+| ---------------------- | ----------------------------------------------------------------- |
+| 1,000-contact page     | Set-based ingest and encrypted publication                        |
+| Personal replay        | 4,251 source contacts and two captured destinations               |
+| 200,000-contact source | Synthetic native classification with one empty destination        |
+| 100 accounts           | One synthetic 10,000-contact burst after baseline setup           |
+| 100-contact LoTW file  | Native signing, guarded submission and partial simulated readback |
 
 [Ingestion evidence](evidence-inventory-ingestion.md) ·
 [Personal replay](evidence-inventory-fresh-start.md) ·

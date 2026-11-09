@@ -147,6 +147,22 @@ timestamp. The 706 LoTW receipts across four ready selections and 73
 QRZ receipts in one ready selection matched the starting copy. These
 selections bound the destination classifications.
 
+#### Live scheduled LoFi delta
+
+When the saved poll became due, a copy of the write-locked rehearsal
+completed one live LoFi sync request and advanced its source
+checkpoint from 14 to 17. The 804-byte response took three reader
+turns and zero comparison turns. The invocation used 59 D1 calls and
+122 SQL statements in 6.8 seconds.
+
+A read-only reopen verified ready source coverage and matched all
+5,494 retained inventory body hashes and record states, 8,682 current
+decisions, 634 historical associations, and all four credential
+envelopes against the completed baseline. The copy retained the
+destination coverage and recorded zero attempts or dispatches.
+An immediate second invocation performed zero reader turns and zero
+requests, and preserved the next poll deadline.
+
 ### Restart a refused LoFi cursor
 
 Restore the same-client bearer and resume the saved run first. If

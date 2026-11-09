@@ -620,7 +620,8 @@ under the book lease. A successful canonical personal-log trial reached
 that boundary with zero uploads. Native QRZ dispatch now reserves one
 INSERT with an immutable may-send claim. Its read-only resolver can
 settle an exact receipt after the original source proof expires.
-Hosted enrollment, scheduling and restore quarantine remain separate.
+Cron and Queue schedule readback for unsettled claims with exports
+disabled. Hosted enrollment and new-send scheduling remain separate.
 
 Load source data, routing, credentials, templates, ownership and match results for a bounded cohort. Reuse the source-proof coordinator's shared collection and final canonical drain while retaining each member's original generation, proof identity and expiry. Stage immutable per-QSO attempts with the existing individually guarded cohort transaction.
 
@@ -715,7 +716,7 @@ At deployment cutover, pause the previous sender before allowing the replacement
 
 After the replacement starts submitting, its new durable ownership, immutable attempts/artifacts, template bindings and uncertain outcomes remain authoritative. Rollback must use a release compatible with the fresh schema and any dispatched batches, or pause new writes while its resolver remains available. Do not resume an old sender against independently re-inventoried state.
 
-Define new-format restore quarantine in both the programmatic path and `ops/lock-restored.sql`. Restoring invalidates inventory/write freshness, disables dispatch, clears leases and puts unresolved batches/members into reconciliation-required state. Validate populated single-member/multi-member restore and repeated quarantine. Old-schema backup import and mixed-generation recovery are not required.
+Both the programmatic path and `ops/lock-restored.sql` now lock native QRZ state. The durable restore marker invalidates inventory and write freshness, clears leases, and preserves ownership and unsettled attempts for reconciliation. A prepared artifact may have been sent after the restored snapshot, so it also retains its reservation. The [restore trial](evidence-inventory-source-proof.md#hosted-qrz-recovery-and-restore) exercises populated QRZ state and repeated quarantine. Extend the same boundary to LoTW batch members when batch submission is implemented.
 
 ## Cost and throughput model
 

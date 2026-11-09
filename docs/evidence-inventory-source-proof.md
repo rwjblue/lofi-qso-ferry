@@ -221,5 +221,32 @@ and then an exact observation after the source proof became stale.
 It also verified that closed exports, a candidate, a denied budget and
 a template rebind block dispatch. The upgrade on an isolated copy of
 the live trial preserved its artifact and credential envelopes with
-zero network requests. Hosted dispatch and recovery scheduling, restore
-quarantine, LoTW signing and expired-proof collection remain open.
+zero network requests.
+
+## Hosted QRZ recovery and restore
+
+[Migration 0096](../migrations/0096_inventory_qrz_recovery.sql) creates
+recovery work in the reservation transaction. Cron publishes due work
+and the Queue checks the version under the book lease. Each recovery
+turn records its successor before HTTP. After six turns, an unsettled
+claim stays reserved and automatic readback stops. The Worker fixture
+recovered a failed publication, discarded an old work version, and
+resolved a simulated lost response after an empty readback. Exports
+were disabled for all hosted recovery reads.
+
+[Migration 0097](../migrations/0097_inventory_restore_quarantine.sql)
+attaches native quarantine to the account lock shared by the operator
+SQL and the programmatic restore path. It invalidates scope freshness,
+retires active proof work, clears leases and fences queued recovery.
+Confirmed receipts remain authoritative. Prepared snapshot attempts and
+possibly sent attempts keep their artifacts and identity reservations
+under the durable restore lock. Repeating the lock preserves its
+versions, including any legacy context cursor already invalidated.
+
+The Workerd fixture locked a database with a prepared attempt, a
+possibly sent attempt and two confirmed receipts. An isolated copy of
+the real trial held four scopes and invalidated 18 ready selections.
+It preserved the staged artifact and credential ciphertext. Repeating
+the operator SQL produced the same state with zero network requests
+or uploads. Hosted enrollment and new-send scheduling, LoTW batches
+and expired-proof collection remain open.

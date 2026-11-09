@@ -76,6 +76,7 @@ export default { async fetch(_request: Request, env: Env) {
     "0039_inventory_ingestion.sql",
     "0040_inventory_runs.sql",
     "0041_inventory_vendor_admission.sql",
+    "0143_inventory_wakeup_delivery.sql",
   ])
     await applyMigration(db, name);
   const store = new Store(db, keys);

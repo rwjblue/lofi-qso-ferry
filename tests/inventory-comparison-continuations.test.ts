@@ -7,7 +7,7 @@ import {
 } from "../src/inventory-comparison-continuations.ts";
 import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
 import { activateInventoryRuntime } from "../src/inventory-runtime.ts";
-import { Store } from "../src/store.ts";
+import { type Lease, Store } from "../src/store.ts";
 import { applyMigration } from "./helpers.ts";
 import { comparisonWakeupsFixture } from "./inventory-comparison-wakeups-fixtures.ts";
 import { sourceContact } from "./inventory-matching-fixtures.ts";
@@ -88,6 +88,13 @@ test("comparison turns publish their continuation before acknowledging Queue del
 test("one wakeup advances four durable comparison steps and publishes only the final frame", async () => {
   const f = await fixture();
   try {
+    const lease = () =>
+      f.db
+        .prepare(
+          "SELECT fence,expires_at FROM leases WHERE tenant='a' AND scope='inventory-comparison'",
+        )
+        .first<{ fence: number; expires_at: number }>();
+    const initialFence = (await lease())?.fence ?? 0;
     await publishComparisonWakeups(f.store, f.queue);
     const first = f.sent.shift()!;
     const delivery = batch([first.body], f.trace);
@@ -100,6 +107,7 @@ test("one wakeup advances four durable comparison steps and publishes only the f
     assert.equal(report.processed, 1);
     assert.equal(report.steps, 4);
     assert.equal(report.queued, 1);
+    assert.deepEqual(await lease(), { fence: initialFence + 1, expires_at: 0 });
     assert.deepEqual(f.trace, ["send", "send", "ack"]);
     assert.deepEqual(delivery.outcomes, [["ack"]]);
     assert.equal(f.sent.length, 1);
@@ -118,6 +126,75 @@ test("one wakeup advances four durable comparison steps and publishes only the f
         work_version: final.workVersion,
       },
     );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("a replacement lease between steps stops the delivery and preserves the successor", async () => {
+  const f = await fixture();
+  try {
+    await publishComparisonWakeups(f.store, f.queue);
+    const wakeup = f.sent.shift()!.body;
+    let successor: Lease | undefined;
+    const store = new (class extends Store {
+      override statement(sql: string, ...params: (string | number | null)[]) {
+        const bound = super.statement(sql, ...params);
+        if (!sql.includes("AS lease_current")) return bound;
+        return new Proxy(bound, {
+          get(target, property, receiver) {
+            if (property === "first")
+              return async () => {
+                assert.equal(successor, undefined);
+                await f.db
+                  .prepare(
+                    "UPDATE leases SET expires_at=0 WHERE tenant='a' AND scope='inventory-comparison'",
+                  )
+                  .run();
+                successor =
+                  (await f.store.claim("a", "inventory-comparison")) ??
+                  undefined;
+                assert.ok(successor);
+                return target.first();
+              };
+            const value = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      }
+    })(f.db, f.store.keys);
+    const delivery = batch([wakeup]);
+    const interrupted = await consumeComparisonWakeups(
+      store,
+      delivery.value,
+      f.queue,
+      { maxStepsPerWakeup: 4 },
+    );
+    assert.ok(successor);
+    assert.equal(interrupted.steps, 1);
+    assert.equal(interrupted.retried, 1);
+    assert.equal(interrupted.failed, 0);
+    assert.equal(interrupted.queued, 0);
+    assert.deepEqual(delivery.outcomes, [[1]]);
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT * FROM leases WHERE tenant='a' AND scope='inventory-comparison'",
+        )
+        .first(),
+      successor,
+    );
+    await f.store.release(successor);
+    const retry = batch([wakeup], [], 2);
+    const resumed = await consumeComparisonWakeups(
+      f.store,
+      retry.value,
+      f.queue,
+      { maxStepsPerWakeup: 4 },
+    );
+    assert.equal(resumed.steps, 1);
+    assert.equal(resumed.queued, 1);
+    assert.deepEqual(retry.outcomes, [["ack"]]);
   } finally {
     await f.mf.dispose();
   }

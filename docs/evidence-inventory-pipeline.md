@@ -449,6 +449,28 @@ to 369 and statements from 577 to 560. The audit verified credential
 envelopes, checkpoints, coverage and historical associations. The replay
 made zero external requests and uploads.
 
+### One coordinator lease per comparison delivery
+
+The Queue consumer claims the lease with its first wakeup snapshot.
+Later steps reread the durable wakeup, control and generation and
+check the same lease before advancing. Each step still commits its
+own progress. The worker publishes the last continuation before
+acknowledging the delivery. A replacement-lease fixture verifies
+that the original delivery retries and leaves the successor intact.
+
+| 1,000-contact profile | Steps | Deliveries | D1 calls before → after | SQL statements before → after |
+| --- | ---: | ---: | ---: | ---: |
+| Empty, up to four steps per delivery | 153 | 39 | 2,964 → 2,697 | 4,871 → 4,490 |
+| Matched, one step per delivery | 152 | 152 | 3,880 → 3,728 | 6,186 → 6,034 |
+
+The four-step fixture peaked at 86 D1 calls in one delivery. A paired
+replay on private copies of the captured log republished the same
+160 QRZ and LoTW classifications in 17 steps and five deliveries.
+D1 calls fell from 397 to 368. The states, reasons and selected records
+agreed for all 160 results. Receipt coverage, checkpoints, linked
+credentials and historical associations passed the audit. The replay
+made zero provider calls and uploads.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

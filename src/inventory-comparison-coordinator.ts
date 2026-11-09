@@ -31,6 +31,21 @@ interface Control {
 }
 type ControlSnapshot = Control &
   Pick<InventoryComparisonDomain, "active_generation" | "pending_generation">;
+export interface ComparisonWakeupHint {
+  tenant: string;
+  runtimeVersion: number;
+  wakeupVersion: number;
+  controlVersion: number;
+  workVersion: number;
+}
+type WakeupControl = ControlSnapshot & {
+  not_before: number;
+  eligible: number;
+  lease_current?: number;
+};
+export const MAX_COMPARISON_STEPS_PER_WAKEUP = 4;
+const eligibleAccount =
+  "a.status='active' AND EXISTS(SELECT 1 FROM inventory_scopes s WHERE s.tenant=a.id)";
 const phases = [
   "build",
   "operation",
@@ -340,8 +355,7 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
   async step(tenant: string) {
     if (!identifier(tenant))
       throw new Error("invalid_comparison_coordinator_tenant");
-    const eligible =
-      "a.id=? AND a.status='active' AND EXISTS(SELECT 1 FROM inventory_scopes s WHERE s.tenant=a.id)";
+    const eligible = `a.id=? AND ${eligibleAccount}`;
     const readControl = () =>
       this.store.statement(
         `SELECT c.*,d.active_generation,d.pending_generation
@@ -384,118 +398,220 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
         ]);
         current = initialized.results[0];
       }
-      if (!current?.version || current.phase_count !== phases.length)
+      if (!current?.version)
         throw new Error("comparison_coordinator_unavailable");
-      let control: Control = current;
-      if (
-        control.next_due_at > 0 &&
-        control.next_due_at <= Date.now() &&
-        control.idle_turns === control.phase_count &&
-        control.work_version === control.observed_version
-      ) {
-        const resumed = await this.store
-          .statement(
-            `UPDATE inventory_comparison_coordinators SET version=version+1,observed_version=work_version,idle_turns=0,next_due_at=0,updated_at=? WHERE tenant=? AND version=? AND work_version=? AND EXISTS(SELECT 1 FROM leases l WHERE l.tenant=? AND l.scope='inventory-comparison' AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000) RETURNING *`,
-            Date.now(),
-            tenant,
-            control.version,
-            control.work_version,
-            tenant,
-            lease.token,
-            lease.fence,
-          )
-          .first<Control>();
-        if (!resumed) return { kind: "deferred" as const, more: true };
-        control = resumed;
-      }
-      const pendingGeneration = current.pending_generation;
-      if (!current.active_generation && !pendingGeneration) {
-        const domain = await new InventoryComparisonGenerations(
-          this.store,
-        ).begin(tenant);
-        const saved = await this.finish(tenant, control, lease, {
-          progress: true,
-          nextPhase: 0,
-        });
-        return {
-          kind: saved ? ("initialized" as const) : ("deferred" as const),
-          more: true,
-          generation: domain.pending_generation,
-        };
-      }
-      const maintenance = matchingMaintenance(this.store);
-      for (;;) {
-        let cursor = control.phase;
-        let checked = 0;
-        let phase: (typeof phases)[number];
-        let result: Awaited<
-          ReturnType<InventoryComparisonCoordinator["checkPhase"]>
-        >;
-        do {
-          phase = phases[cursor];
-          result = await this.checkPhase(
-            tenant,
-            control,
-            lease,
-            phase,
-            pendingGeneration,
-            maintenance,
-          );
-          checked++;
-          cursor = (cursor + 1) % phases.length;
-        } while (
-          !result.progress &&
-          !result.deferred &&
-          phase !== "match" &&
-          cursor !== matchPhase
-        );
-        const {
-          progress,
-          deferred,
-          build,
-          records,
-          pageId,
-          nextDueAt,
-          activity,
-        } = result;
-        const saved = await this.finish(tenant, control, lease, {
-          progress: progress || deferred,
-          nextPhase: cursor,
-          checked,
-          build,
-          nextDueAt,
-        });
-        // Keep the durable match boundary and use the same lease for the
-        // following match turn when the preceding sweep found no work.
-        if (
-          saved &&
-          cursor === matchPhase &&
-          !progress &&
-          !deferred &&
-          saved.idle_turns < phases.length
-        ) {
-          control = saved;
-          continue;
-        }
-        return {
-          kind:
-            !saved || deferred
-              ? ("deferred" as const)
-              : progress
-                ? ("advanced" as const)
-                : pendingGeneration
-                  ? ("waiting" as const)
-                  : ("idle" as const),
-          phase,
-          ...(activity ? { activity } : {}),
-          records,
-          pageId,
-          more: !saved || deferred || saved.idle_turns < phases.length,
-          nextDueAt: saved?.next_due_at ?? 0,
-        };
-      }
+      return await this.advance(tenant, current, lease);
     } finally {
       await this.store.release(lease);
+    }
+  }
+
+  /** A delivery shares the lease and re-admits every turn against the live outbox. */
+  async stepWakeup(
+    hint: ComparisonWakeupHint,
+    options: { maxSteps: number; deadline: number; onStep?: () => void },
+  ) {
+    if (
+      !Number.isSafeInteger(options.maxSteps) ||
+      options.maxSteps < 1 ||
+      options.maxSteps > MAX_COMPARISON_STEPS_PER_WAKEUP
+    )
+      throw new Error("invalid_comparison_queue_turn_limit");
+    const {
+      tenant,
+      runtimeVersion,
+      wakeupVersion,
+      controlVersion,
+      workVersion,
+    } = hint;
+    const from = `FROM inventory_runtime r CROSS JOIN inventory_comparison_wakeups w
+      CROSS JOIN inventory_comparison_coordinators c`;
+    const authority = `r.id=1 AND r.mode='inventory_read_only' AND w.tenant=? AND r.version=?
+      AND w.version>=? AND w.control_version>=? AND w.work_version>=? AND w.not_before IS NOT NULL
+      AND c.tenant=w.tenant AND c.version=w.control_version AND c.work_version=w.work_version`;
+    const params = [
+      tenant,
+      runtimeVersion,
+      wakeupVersion,
+      controlVersion,
+      workVersion,
+    ] as const;
+    const eligible = `EXISTS(SELECT 1 FROM accounts a WHERE a.id=w.tenant AND ${eligibleAccount})`;
+    const readWakeup = (lease?: Lease) =>
+      this.store.statement(
+        `SELECT c.*,d.active_generation,d.pending_generation,w.not_before,${eligible} AS eligible
+           ${
+             lease
+               ? `,EXISTS(SELECT 1 FROM leases l WHERE l.tenant=w.tenant AND l.scope='inventory-comparison'
+             AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000) AS lease_current`
+               : ""
+           }
+         ${from} LEFT JOIN comparison_domains d ON d.tenant=c.tenant
+         WHERE ${authority}`,
+        ...(lease ? [lease.token, lease.fence] : []),
+        ...params,
+      );
+    const [claimed, loaded] = await this.store.db.batch([
+      this.store.claimStatement(
+        tenant,
+        "inventory-comparison",
+        Date.now(),
+        60_000,
+        {
+          sql: `EXISTS(SELECT 1 ${from} WHERE ${authority}
+          AND w.not_before<=unixepoch('subsec')*1000 AND ${eligible})`,
+          params: [...params],
+        },
+      ),
+      readWakeup(),
+    ]);
+    const lease = claimed.results[0] as Lease | undefined;
+    let frame = loaded.results[0] as WakeupControl | null | undefined;
+    try {
+      for (let step = 1; ; step++) {
+        if (!frame) return { kind: "stale" as const };
+        if (frame.not_before > Date.now())
+          return { kind: "deferred" as const, retryAt: frame.not_before };
+        if (!frame.eligible) {
+          options.onStep?.();
+          return {
+            kind: "completed" as const,
+            turn: { kind: "idle" as const, more: false },
+          };
+        }
+        if (!lease || frame.lease_current === 0)
+          return { kind: "deferred" as const, retryAt: Date.now() + 1000 };
+        const turn = await this.advance(tenant, frame, lease);
+        if (turn.kind === "deferred")
+          return { kind: "deferred" as const, retryAt: Date.now() + 1000 };
+        options.onStep?.();
+        if (
+          !turn.more ||
+          step >= options.maxSteps ||
+          Date.now() >= options.deadline
+        )
+          return { kind: "completed" as const, turn };
+        frame = await readWakeup(lease).first<WakeupControl>();
+      }
+    } finally {
+      if (lease) await this.store.release(lease);
+    }
+  }
+
+  private async advance(
+    tenant: string,
+    current: ControlSnapshot,
+    lease: Lease,
+  ) {
+    if (current.phase_count !== phases.length)
+      throw new Error("comparison_coordinator_unavailable");
+    let control: Control = current;
+    if (
+      control.next_due_at > 0 &&
+      control.next_due_at <= Date.now() &&
+      control.idle_turns === control.phase_count &&
+      control.work_version === control.observed_version
+    ) {
+      const resumed = await this.store
+        .statement(
+          `UPDATE inventory_comparison_coordinators SET version=version+1,observed_version=work_version,idle_turns=0,next_due_at=0,updated_at=? WHERE tenant=? AND version=? AND work_version=? AND EXISTS(SELECT 1 FROM leases l WHERE l.tenant=? AND l.scope='inventory-comparison' AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000) RETURNING *`,
+          Date.now(),
+          tenant,
+          control.version,
+          control.work_version,
+          tenant,
+          lease.token,
+          lease.fence,
+        )
+        .first<Control>();
+      if (!resumed) return { kind: "deferred" as const, more: true };
+      control = resumed;
+    }
+    const pendingGeneration = current.pending_generation;
+    if (!current.active_generation && !pendingGeneration) {
+      const domain = await new InventoryComparisonGenerations(this.store).begin(
+        tenant,
+      );
+      const saved = await this.finish(tenant, control, lease, {
+        progress: true,
+        nextPhase: 0,
+      });
+      return {
+        kind: saved ? ("initialized" as const) : ("deferred" as const),
+        more: true,
+        generation: domain.pending_generation,
+      };
+    }
+    const maintenance = matchingMaintenance(this.store);
+    for (;;) {
+      let cursor = control.phase;
+      let checked = 0;
+      let phase: (typeof phases)[number];
+      let result: Awaited<
+        ReturnType<InventoryComparisonCoordinator["checkPhase"]>
+      >;
+      do {
+        phase = phases[cursor];
+        result = await this.checkPhase(
+          tenant,
+          control,
+          lease,
+          phase,
+          pendingGeneration,
+          maintenance,
+        );
+        checked++;
+        cursor = (cursor + 1) % phases.length;
+      } while (
+        !result.progress &&
+        !result.deferred &&
+        phase !== "match" &&
+        cursor !== matchPhase
+      );
+      const {
+        progress,
+        deferred,
+        build,
+        records,
+        pageId,
+        nextDueAt,
+        activity,
+      } = result;
+      const saved = await this.finish(tenant, control, lease, {
+        progress: progress || deferred,
+        nextPhase: cursor,
+        checked,
+        build,
+        nextDueAt,
+      });
+      // Keep the durable match boundary and use the same lease for the
+      // following match turn when the preceding sweep found no work.
+      if (
+        saved &&
+        cursor === matchPhase &&
+        !progress &&
+        !deferred &&
+        saved.idle_turns < phases.length
+      ) {
+        control = saved;
+        continue;
+      }
+      return {
+        kind:
+          !saved || deferred
+            ? ("deferred" as const)
+            : progress
+              ? ("advanced" as const)
+              : pendingGeneration
+                ? ("waiting" as const)
+                : ("idle" as const),
+        phase,
+        ...(activity ? { activity } : {}),
+        records,
+        pageId,
+        more: !saved || deferred || saved.idle_turns < phases.length,
+        nextDueAt: saved?.next_due_at ?? 0,
+      };
     }
   }
 }

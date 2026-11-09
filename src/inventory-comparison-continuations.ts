@@ -1,21 +1,22 @@
-import { InventoryComparisonCoordinator } from "./inventory-comparison-coordinator.ts";
+import {
+  type ComparisonWakeupHint,
+  InventoryComparisonCoordinator,
+  MAX_COMPARISON_STEPS_PER_WAKEUP,
+} from "./inventory-comparison-coordinator.ts";
 import {
   COMPARISON_QUEUE_HORIZON_MS,
   InventoryComparisonWakeups,
 } from "./inventory-comparison-wakeups.ts";
 import type { Store } from "./store.ts";
 
-export interface ComparisonQueueMessage {
+export interface ComparisonQueueMessage extends ComparisonWakeupHint {
   kind: "comparison";
   version: 1;
-  tenant: string;
-  runtimeVersion: number;
-  wakeupVersion: number;
-  controlVersion: number;
-  workVersion: number;
 }
 type ComparisonQueue = Pick<Queue<ComparisonQueueMessage>, "sendBatch">;
-export const MAX_COMPARISON_STEPS_PER_WAKEUP = 4;
+
+export { MAX_COMPARISON_STEPS_PER_WAKEUP };
+
 const COMPARISON_WAKEUP_SLICE_MS = 5_000;
 const identifier = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 512;
@@ -95,36 +96,10 @@ export async function stepComparisonWakeup(
   store: Store,
   input: ComparisonQueueMessage,
 ) {
-  const wakeup = comparisonQueueMessage(input);
-  const current = await store
-    .statement(
-      `SELECT w.*,r.version AS runtime_version FROM inventory_runtime r CROSS JOIN inventory_comparison_wakeups w CROSS JOIN inventory_comparison_coordinators c WHERE r.id=1 AND r.mode='inventory_read_only' AND w.tenant=? AND c.tenant=w.tenant AND c.version=w.control_version AND c.work_version=w.work_version`,
-      wakeup.tenant,
-    )
-    .first<{
-      version: number;
-      control_version: number;
-      work_version: number;
-      not_before: number | null;
-      runtime_version: number;
-    }>();
-  if (
-    !current ||
-    current.runtime_version !== wakeup.runtimeVersion ||
-    current.not_before === null ||
-    wakeup.wakeupVersion > current.version ||
-    wakeup.controlVersion > current.control_version ||
-    wakeup.workVersion > current.work_version
-  )
-    return { kind: "stale" as const };
-  if (current.not_before > Date.now())
-    return { kind: "deferred" as const, retryAt: current.not_before };
-  const turn = await new InventoryComparisonCoordinator(store).step(
-    wakeup.tenant,
+  return new InventoryComparisonCoordinator(store).stepWakeup(
+    comparisonQueueMessage(input),
+    { maxSteps: 1, deadline: Date.now() },
   );
-  if (turn.kind === "deferred")
-    return { kind: "deferred" as const, retryAt: Date.now() + 1000 };
-  return { kind: "completed" as const, turn };
 }
 
 export async function consumeComparisonWakeups(
@@ -155,6 +130,7 @@ export async function consumeComparisonWakeups(
     queued: 0,
   };
   const completed: Message<unknown>[] = [];
+  const coordinator = new InventoryComparisonCoordinator(store);
   for (const message of batch.messages) {
     let wakeup: ComparisonQueueMessage;
     try {
@@ -172,18 +148,13 @@ export async function consumeComparisonWakeups(
     }
     report.processed++;
     try {
-      const deadline = Date.now() + COMPARISON_WAKEUP_SLICE_MS;
-      const stepLimit = message.attempts > 1 ? 1 : maxStepsPerWakeup;
-      let result: Awaited<ReturnType<typeof stepComparisonWakeup>>;
-      // Each step re-admits the original hint against the current durable
-      // frame. Publish the last frame once before acknowledging the message.
-      for (let step = 1; ; step++) {
-        result = await stepComparisonWakeup(store, wakeup);
-        if (result.kind !== "completed") break;
-        report.steps++;
-        if (!result.turn.more || step >= stepLimit || Date.now() >= deadline)
-          break;
-      }
+      const result = await coordinator.stepWakeup(wakeup, {
+        maxSteps: message.attempts > 1 ? 1 : maxStepsPerWakeup,
+        deadline: Date.now() + COMPARISON_WAKEUP_SLICE_MS,
+        onStep: () => {
+          report.steps++;
+        },
+      });
       if (result.kind === "deferred") {
         message.retry({
           delaySeconds: Math.max(

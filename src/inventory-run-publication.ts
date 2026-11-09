@@ -64,6 +64,8 @@ export type InventoryRunPublication =
         | "vendor_deferred"
         | "read_unavailable"
         | "qrz_cover_retry"
+        | "qrz_cover_retry_2"
+        | "qrz_cover_retry_3"
         | "scope_changed"
         | "verification_required"
         | "unsupported"

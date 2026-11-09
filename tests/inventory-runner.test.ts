@@ -577,6 +577,10 @@ test("a multi-page QRZ delta fallback resumes and retains full coverage and olde
   );
 
   persistFailure = true;
+  // Begin the next verification in a new vendor window.
+  await f.db
+    .prepare("UPDATE vendor_requests SET window_start=0 WHERE vendor='qrz'")
+    .run();
   const failed = await f.begin("delta");
   const beforeFailure = (await f.inventory.snapshot("a", f.scope, "scan"))
     ?.checkpoint;
@@ -584,11 +588,26 @@ test("a multi-page QRZ delta fallback resumes and retains full coverage and olde
     (await reopened.step(await f.wakeup(failed.id))).kind,
     "advanced",
   );
-  assert.equal(
-    (await reopened.step(await f.wakeup(failed.id))).kind,
-    "deferred",
-  );
-  assert.equal((await reopened.step(await f.due(failed.id))).kind, "held");
+  const failedCursor = (await f.inventory.snapshot("a", f.scope, "scan"))
+    ?.resume;
+  let wakeup = await f.wakeup(failed.id);
+  for (const [reason, delay] of [
+    ["qrz_cover_retry", 60_000],
+    ["qrz_cover_retry_2", 120_000],
+    ["qrz_cover_retry_3", 240_000],
+  ] as const) {
+    const started = Date.now();
+    const result = await reopened.step(wakeup);
+    assert.equal(result.kind, "deferred");
+    assert.ok(result.nextDueAt >= started + delay);
+    assert.equal((await f.runs.load("a", failed.id))?.reason, reason);
+    assert.deepEqual(
+      (await f.inventory.snapshot("a", f.scope, "scan"))?.resume,
+      failedCursor,
+    );
+    wakeup = await f.due(failed.id);
+  }
+  assert.equal((await reopened.step(wakeup)).kind, "held");
   assert.deepEqual(
     (await f.inventory.snapshot("a", f.scope, "scan"))?.checkpoint,
     beforeFailure,

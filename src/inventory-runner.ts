@@ -38,6 +38,11 @@ import type { Lease } from "./store.ts";
 import { vendorFetch } from "./vendor-requests.ts";
 
 const QRZ_COVERING_POLL_MS = 24 * 60 * 60_000;
+const QRZ_COVERING_RETRIES = [
+  { reason: "qrz_cover_retry", delayMs: 60_000 },
+  { reason: "qrz_cover_retry_2", delayMs: 120_000 },
+  { reason: "qrz_cover_retry_3", delayMs: 240_000 },
+] as const;
 
 /** Queue payloads carry identity and a fence, never credentials or raw pages. */
 export interface InventoryRunWakeup {
@@ -221,7 +226,10 @@ export class InventoryRunner {
         canonical(result.binding) === canonical(binding(context)),
         "inventory_read_binding_changed",
       );
-      const coverRetry = context.run.reason === "qrz_cover_retry";
+      const coverRetryIndex = QRZ_COVERING_RETRIES.findIndex(
+        ({ reason }) => reason === context.run.reason,
+      );
+      const coverRetry = QRZ_COVERING_RETRIES[coverRetryIndex]?.reason;
       if (result.kind === "deferred")
         return await this.published(
           context,
@@ -230,7 +238,7 @@ export class InventoryRunner {
               context,
               lease,
               result.retryAt,
-              coverRetry ? "qrz_cover_retry" : "vendor_deferred",
+              coverRetry ?? "vendor_deferred",
             ),
           ),
           "deferred",
@@ -244,17 +252,18 @@ export class InventoryRunner {
               context,
               lease,
               Date.now() + 60_000,
-              coverRetry ? "qrz_cover_retry" : "read_unavailable",
+              coverRetry ?? "read_unavailable",
             ),
           ),
           "deferred",
           result.usage,
         );
+      const nextCoverRetry = QRZ_COVERING_RETRIES[coverRetryIndex + 1];
       if (
         query.provider === "qrz" &&
         (context.stream.resume as QrzInventoryResume | null)
           ?.coveringDateSelection === true &&
-        !coverRetry &&
+        nextCoverRetry &&
         result.kind === "blocked" &&
         (result.code === "invalid_response" ||
           result.code === "ambiguous_empty")
@@ -265,8 +274,8 @@ export class InventoryRunner {
             await this.runs.prepareDefer(
               context,
               lease,
-              Date.now() + 60_000,
-              "qrz_cover_retry",
+              Date.now() + nextCoverRetry.delayMs,
+              nextCoverRetry.reason,
             ),
           ),
           "deferred",

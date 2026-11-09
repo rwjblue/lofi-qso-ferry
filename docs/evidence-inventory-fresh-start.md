@@ -183,12 +183,13 @@ a book with more than 4,000 receipts, so a full page is still followed
 by a terminal read. The existing smaller-page replay can recover an
 ambiguous tail without treating the failed response as completion.
 
-An ambiguous or invalid response during a covering read gets one delayed
-retry at the same cursor. A successful page clears the retry marker.
-Persistent ambiguity leaves the run held. Only terminal publication
-advances the committed checkpoint. After a multi-page recovery, the
-next scheduled poll is at least 24 hours later, so an idle selection
-that requires a covering scan uses at most one scheduled scan per day.
+An ambiguous or invalid response during a covering read can retry at the
+same cursor after one, two and four minutes. A successful page clears
+the retry marker. Vendor deferrals retain it. Persistent ambiguity
+leaves the run held. Only terminal publication advances the committed
+checkpoint. After a multi-page recovery, the next scheduled poll is at
+least 24 hours later, so an idle selection that requires a covering
+scan uses at most one scheduled scan per day.
 
 A native replay of the full captured book accepted 4,252 unchanged
 receipts in 18 covering pages and restored ready coverage on the retained
@@ -243,6 +244,19 @@ after an invalid response and its retry. Reopening counted 1,126
 accepted observations, retained the previous committed checkpoint and
 full selection, and verified unchanged source and credential envelopes
 with zero delivery attempts.
+
+Wire inspection found that the numeric LOGID tag was present in the
+malformed response. A preceding `X_HAM2K_SOLAR` field's declared length
+extended into that tag. A valid response for the same receipt had a
+consistent field length. The reader requires a successful retry to
+advance and keeps the counted-field parser and LOGID checks in place.
+
+A separate captured-book replay injected six invalid responses at one
+cursor, covering the original and smaller request in each failed turn.
+The one-, two- and four-minute retries retained the prior checkpoint. A
+valid response at the same cursor resumed the scan, and all 4,252 receipts
+completed across 18 pages. The replay used 46 local responses and
+simulated both the retry delays and vendor window.
 
 ### Full QRZ catch-up verification
 

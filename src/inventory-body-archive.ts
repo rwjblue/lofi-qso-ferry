@@ -16,7 +16,7 @@ export interface InventoryBodyLocation {
 }
 
 interface ArchivePointer {
-  archive: { version: 1; digest: string; bytes: number };
+  archive: { version: 1; digest: string; bytes: number; replayOnly?: true };
 }
 
 const encoder = new TextEncoder();
@@ -40,7 +40,8 @@ function pointer(value: Envelope | ArchivePointer) {
     !/^[A-Za-z0-9_-]{43}$/.test(archived.digest) ||
     !Number.isSafeInteger(archived.bytes) ||
     archived.bytes < 1 ||
-    archived.bytes > INVENTORY_ARCHIVE_MAX_BODY_BYTES
+    archived.bytes > INVENTORY_ARCHIVE_MAX_BODY_BYTES ||
+    (archived.replayOnly !== undefined && archived.replayOnly !== true)
   )
     throw new Error("invalid_inventory_body_archive_pointer");
   return archived;
@@ -54,7 +55,7 @@ async function objectKey(location: InventoryBodyLocation, digest: string) {
 }
 
 export async function archiveInventoryBody(
-  archive: InventoryBodyArchive,
+  archive: InventoryBodyArchive | undefined,
   location: InventoryBodyLocation,
   encrypted: string,
 ) {
@@ -67,12 +68,22 @@ export async function archiveInventoryBody(
   )
     throw new Error("invalid_inventory_body_archive_input");
   const digest = await sha256(encrypted);
-  const written = await archive.put(
-    await objectKey(location, digest),
-    encrypted,
-  );
-  if (written === null) throw new Error("inventory_body_archive_write_failed");
-  return canonical({ archive: { version: 1, digest, bytes } });
+  if (archive) {
+    const written = await archive.put(
+      await objectKey(location, digest),
+      encrypted,
+    );
+    if (written === null)
+      throw new Error("inventory_body_archive_write_failed");
+  }
+  return canonical({
+    archive: {
+      version: 1,
+      digest,
+      bytes,
+      ...(!archive && { replayOnly: true }),
+    },
+  });
 }
 
 /** Open either an inline envelope or an immutable cold object with the same
@@ -88,9 +99,11 @@ export async function openInventoryBody<T>(
   if (archived) {
     if (expectedBytes !== undefined && expectedBytes !== archived.bytes)
       throw new Error("inventory_body_archive_size_changed");
-    const object = await store.inventoryBodyArchive?.get(
-      await objectKey(location, archived.digest),
-    );
+    const object = archived.replayOnly
+      ? null
+      : await store.inventoryBodyArchive?.get(
+          await objectKey(location, archived.digest),
+        );
     if (!object) {
       await requestInventoryBodyReplay(store, location, stored);
       throw new InventoryBodyArchiveUnavailable(location);

@@ -41,10 +41,11 @@ LoFi uses its separate read budget and sync hints.
 
 The administrator's settled-state age defaults to 90 days. Native
 cleanup preserves current unresolved work, durable ownership and
-attempt evidence. Optional encrypted cold storage uses an operator
-binding. Keep the archive consistent with its D1 backup. An unavailable
-source body can request isolated replay of the linked source while
-ordinary checkpoints remain independent.
+attempt evidence. Aged settled source bodies can cool to compact D1
+replay markers. If the operator supplies an `INVENTORY_BODY_ARCHIVE`
+binding, Ferry writes the encrypted body there before cooling. Keep
+that archive consistent with its D1 backup. An unavailable body queues
+isolated replay while ordinary checkpoints remain independent.
 
 Rotate credentials and encryption keys with the old key material
 available through verification. The Worker retains previous keys long

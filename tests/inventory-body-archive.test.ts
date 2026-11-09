@@ -12,6 +12,7 @@ import { InventoryMatchingResults } from "../src/inventory-matching-results.ts";
 import { lofiInventoryObservations } from "../src/inventory-observations.ts";
 import { collectInventoryColdBodies } from "../src/inventory-payload-retention.ts";
 import { InventoryProjectionWorkspace } from "../src/inventory-projection-workspace.ts";
+import { updateInventoryRetentionPolicy } from "../src/inventory-retention-policy.ts";
 import { canonical, seal, sha256 } from "../src/security.ts";
 import { Store } from "../src/store.ts";
 import { applyMigration, database } from "./helpers.ts";
@@ -112,6 +113,7 @@ test("settled cold ciphertext moves after object persistence and reopens under n
     ]);
     await applyMigration(f.db, "0135_inventory_cold_bodies.sql");
     await applyMigration(f.db, "0136_inventory_cold_body_replay.sql");
+    await applyMigration(f.db, "0137_inventory_replay_cooling.sql");
     const bodies = new Map<string, string>();
     let allowWrites = false;
     const archive: InventoryBodyArchive = {
@@ -139,7 +141,6 @@ test("settled cold ciphertext moves after object persistence and reopens under n
           .all<{ record_key: string; cold: number; bytes: number }>()
       ).results;
     const before = await storage();
-    assert.equal(await collectInventoryColdBodies(f.store), 0);
     await assert.rejects(
       collectInventoryColdBodies(store),
       /fixture archive failed/,
@@ -309,6 +310,57 @@ test("settled cold ciphertext moves after object persistence and reopens under n
     assert.deepEqual(await stepInventoryBodyReplay(store, replay), {
       kind: "idle",
     });
+
+    await updateInventoryRetentionPolicy(f.db, 89);
+    assert.equal(await collectInventoryColdBodies(f.store), 0);
+    assert.equal((await storage())[1].cold, 0);
+    await f.db
+      .prepare(
+        "UPDATE inventory_body_replay_requests SET requested_at=?1,restored_at=?1 WHERE state='restored'",
+      )
+      .bind(aged)
+      .run();
+    await updateInventoryRetentionPolicy(f.db, 88);
+    assert.equal(await collectInventoryColdBodies(f.store), 1);
+    assert.equal(bodies.size, 0);
+    assert.equal((await storage())[1].cold, 1);
+    assert.equal(
+      await f.db
+        .prepare(
+          "SELECT json_extract(envelope,'$.archive.replayOnly') AS replay FROM inventory_payloads WHERE cold=1",
+        )
+        .first("replay"),
+      1,
+    );
+    await assert.rejects(
+      f.inventory.body("a", "source", "qso", "q0", "source"),
+      InventoryBodyArchiveUnavailable,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5100));
+    const replayOnly: typeof fetch = async (input, init) => {
+      assert.equal(new URL(String(input)).pathname, "/v1/sync");
+      const payload = JSON.parse(String(init?.body));
+      assert.equal(payload.meta.sync.qsos.cursor, undefined);
+      return Response.json({
+        account: { uuid: "source" },
+        operations: [],
+        qsos: [record],
+        meta: { operations: { records_left: 0 }, qsos: { records_left: 0 } },
+      });
+    };
+    assert.deepEqual(await stepInventoryBodyReplay(f.store, replayOnly), {
+      kind: "complete",
+      restored: 1,
+    });
+    assert.deepEqual(
+      await intake.snapshot("a", "source", "sync"),
+      normalCursor,
+    );
+    assert.deepEqual(
+      await f.inventory.body("a", "source", "qso", "q0", "source"),
+      original,
+    );
+    assert.equal((await storage())[1].cold, 0);
   } finally {
     await runtime.mf.dispose();
   }

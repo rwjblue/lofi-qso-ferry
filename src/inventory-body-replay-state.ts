@@ -18,7 +18,7 @@ export async function requestInventoryBodyReplay(
        AND f.entity_family='qso' AND f.facet='source'
        AND NOT EXISTS(SELECT 1 FROM inventory_restore_locks x WHERE x.tenant=p.tenant)
        ON CONFLICT(tenant,scope_id,payload_id) DO UPDATE SET
-         record_key=excluded.record_key,body_hash=excluded.body_hash,marker=excluded.marker,requested_at=excluded.requested_at,cursor_id=NULL,state='pending'
+         record_key=excluded.record_key,body_hash=excluded.body_hash,marker=excluded.marker,requested_at=excluded.requested_at,cursor_id=NULL,state='pending',restored_at=NULL
        WHERE inventory_body_replay_requests.marker!=excluded.marker`,
       location.tenant,
       location.scope,

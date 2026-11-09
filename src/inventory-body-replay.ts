@@ -315,7 +315,7 @@ async function replayPage(
         target.marker,
       ),
       store.statement(
-        `UPDATE inventory_body_replay_requests SET state='restored' WHERE (tenant,scope_id,payload_id,cursor_id,state)=(?,?,?,?,'pending')`,
+        `UPDATE inventory_body_replay_requests SET state='restored',restored_at=CAST(unixepoch('subsec')*1000 AS INTEGER) WHERE (tenant,scope_id,payload_id,cursor_id,state)=(?,?,?,?,'pending')`,
         tenant,
         scope,
         target.payload_id,

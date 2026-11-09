@@ -16,11 +16,10 @@ interface ColdBodyKey {
   payload_id: string;
 }
 
-/** Write each encrypted object before swapping its current D1 representation.
- * An interrupted or competing pass can retry the content-addressed object. */
+/** Cool settled source bodies to replay pointers. With object storage, persist
+ * each encrypted object before swapping its current D1 representation. */
 export async function collectInventoryColdBodies(store: Store) {
   const archive = store.inventoryBodyArchive;
-  if (!archive) return 0;
   const clock = Date.now();
   const state = await store
     .statement(
@@ -47,7 +46,7 @@ export async function collectInventoryColdBodies(store: Store) {
            AND (p.created_at,p.tenant,p.scope_id,p.payload_id)>(?1,?2,?3,?4)
          ORDER BY p.created_at,p.tenant,p.scope_id,p.payload_id LIMIT ?6
        )
-       SELECT p.*,EXISTS(SELECT 1 FROM inventory_coolable_bodies b
+       SELECT p.*,EXISTS(SELECT 1 FROM inventory_replay_coolable_bodies b
          WHERE (b.tenant,b.scope_id,b.payload_id)=(p.tenant,p.scope_id,p.payload_id)) AS eligible
        FROM candidates p ORDER BY p.created_at,p.tenant,p.scope_id,p.payload_id`,
       start?.created_at ?? 0,
@@ -98,7 +97,7 @@ export async function collectInventoryColdBodies(store: Store) {
           `UPDATE inventory_payloads SET envelope=?1,cold=1
            WHERE (tenant,scope_id,payload_id)=(?2,?3,?4) AND cold=0 AND envelope=?5
            AND EXISTS(SELECT 1 FROM inventory_cold_body_census s WHERE s.singleton=1 AND s.version=?6)
-           AND EXISTS(SELECT 1 FROM inventory_coolable_bodies b WHERE (b.tenant,b.scope_id,b.payload_id)=(?2,?3,?4))`,
+           AND EXISTS(SELECT 1 FROM inventory_replay_coolable_bodies b WHERE (b.tenant,b.scope_id,b.payload_id)=(?2,?3,?4))`,
           pointer,
           body.tenant,
           body.scope_id,

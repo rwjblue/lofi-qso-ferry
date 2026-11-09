@@ -330,8 +330,8 @@ test("operator cooling period ages historical proof dependencies while preservin
     for (const name of migrations.sort())
       if (
         /^\d+.*\.sql$/.test(name) &&
-        !name.startsWith("0001_") &&
-        name < "0129_"
+        !/^(?:0001|0129|0130)_/.test(name) &&
+        name < "0135_"
       )
         await applyMigration(runtime.db, name);
     const f = await matchingFixture({}, runtime, "current");

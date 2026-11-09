@@ -13,6 +13,7 @@ export type InventoryScanPlan =
       book: QrzBook;
       between: [string, string];
       pageSize?: number;
+      repeatSelectionCatchup?: true;
     }
   | { provider: "lotw"; selection: Omit<LotwQuery, "receivedSince"> };
 
@@ -30,6 +31,7 @@ export type InventoryRunQuery =
       selection: QrzInventorySelection;
       catchupSelection?: QrzInventorySelection;
       pageSize: number;
+      repeatSelectionCatchup?: true;
     }
   | { version: 1; provider: "lotw"; query: LotwQuery };
 
@@ -98,11 +100,19 @@ export function inventoryRunQuery(value: unknown): InventoryRunQuery {
       between[0] >= String(book.startDate) &&
         between[1] <= String(book.endDate),
     );
+    requireValue(
+      query.repeatSelectionCatchup === undefined ||
+        (query.repeatSelectionCatchup === true &&
+          Date.parse(between[1]) - Date.parse(between[0]) <= 34 * 86400000),
+    );
     if (query.catchupSelection !== undefined) {
       const catchup = object(query.catchupSelection);
       requireValue(
         canonical(catchup.between) === canonical(selection.between) &&
-          date(catchup.modifiedSince),
+          (query.repeatSelectionCatchup === true
+            ? selection.modifiedSince === undefined &&
+              catchup.modifiedSince === undefined
+            : date(catchup.modifiedSince)),
       );
     }
   } else if (query.provider === "lotw") {
@@ -222,11 +232,16 @@ export async function planInventoryRun(
       provider: "qrz",
       book: plan.book,
       selection,
+      ...(plan.repeatSelectionCatchup && { repeatSelectionCatchup: true }),
       ...(mode === "full"
         ? {
             catchupSelection: {
               between: plan.between,
-              modifiedSince: qrzModifiedLowerBound(now),
+              // A narrow historical scan can repeat its verified selection
+              // when a modification-only response cannot establish absence.
+              ...(plan.repeatSelectionCatchup
+                ? {}
+                : { modifiedSince: qrzModifiedLowerBound(now) }),
             },
           }
         : {}),

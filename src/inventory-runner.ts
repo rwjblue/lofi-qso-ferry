@@ -350,6 +350,7 @@ export class InventoryRunner {
               book: query.book,
               between: query.selection.between,
               pageSize: query.pageSize,
+              repeatSelectionCatchup: query.repeatSelectionCatchup,
             }
           : {
               provider: query.provider,

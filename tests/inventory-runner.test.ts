@@ -206,6 +206,45 @@ test("QRZ catch-up resets LOGID and next incremental run resets it again", async
   assert.equal(coverage?.published_run_id, run.id);
 });
 
+test("narrow QRZ verification can repeat the complete selection for catch-up", async (t) => {
+  const f = await fixture(t, "qrz");
+  if (f.plan.provider !== "qrz") assert.fail();
+  f.plan.repeatSelectionCatchup = true;
+  f.plan.pageSize = 3;
+  const run = await f.begin();
+  const options: string[] = [];
+  const fetcher: typeof fetch = async (_input, init) => {
+    const body = init?.body as URLSearchParams;
+    if (body.get("ACTION") === "STATUS") return status();
+    assert.equal(body.get("ACTION"), "FETCH");
+    options.push(body.get("OPTION") ?? "");
+    return qrz(
+      options.length === 1
+        ? [contact]
+        : [contact, { ...contact, APP_QRZLOG_LOGID: "2" }],
+    );
+  };
+  const reader = new InventoryRunner(f.runs, fetcher);
+  assert.equal((await reader.step(await f.wakeup(run.id))).kind, "advanced");
+  assert.equal((await f.runs.load("a", run.id))?.phase, "catchup");
+  const reopened = new InventoryRunner(new InventoryRuns(f.inventory), fetcher);
+  await f.finish(reopened, run.id);
+  assert.equal(options.length, 2);
+  assert.equal(options[0], options[1]);
+  assert.match(options[0], /BETWEEN:2026-11-01\+2026-11-14/);
+  assert.doesNotMatch(options[0], /MODSINCE/);
+  assert.equal(
+    await f.db
+      .prepare("SELECT count(*) AS n FROM inventory_records")
+      .first("n"),
+    2,
+  );
+  assert.equal(
+    await f.db.prepare("SELECT state FROM inventory_coverage").first("state"),
+    "ready",
+  );
+});
+
 test("LoTW runner keeps receipt checkpoints scoped and does not advance on an empty delta", async (t) => {
   const f = await fixture(t, "lotw");
   const run = await f.begin();

@@ -47,7 +47,14 @@ export async function registerInventorySelection(
     plan.provider === "lofi"
       ? { provider: plan.provider }
       : plan.provider === "qrz"
-        ? { provider: plan.provider, book: plan.book, between: plan.between }
+        ? {
+            provider: plan.provider,
+            book: plan.book,
+            between: plan.between,
+            ...(plan.repeatSelectionCatchup && {
+              repeatSelectionCatchup: true,
+            }),
+          }
         : plan;
   const queryBinding = await sha256(
     canonical(["inventory-selection-v1", selection]),

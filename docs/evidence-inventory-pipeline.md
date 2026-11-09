@@ -233,6 +233,7 @@ coverage.
 | Matching after an idle sweep     |              153 |    4,408 |          5,558 |   658,862 |       77,606 |
 | Shared lease and control read    |              153 |    4,102 |          5,252 |   659,578 |       77,606 |
 | Combined projection selection    |              153 |    4,052 |          5,202 |   659,146 |       77,606 |
+| Wrapped key in writer snapshot    |              153 |    3,952 |          5,102 |   659,154 |       77,606 |
 
 The runs had different concurrent local workloads. The measurements
 compare database and Queue work.
@@ -242,6 +243,10 @@ one query. An SQLite plan from the large benchmark used the ordered
 pending-work index for the 20-contact page. The sort covered one
 head per eligible scope. Native tests also verified that retained
 retired and disabled work did not increase selector reads.
+
+The writer lookup also reads the wrapped comparison key in the same
+snapshot as the generation pointers and format. Key identity and
+rewrapping tests passed, along with the existing publication fences.
 
 ## Recovery and boundedness
 

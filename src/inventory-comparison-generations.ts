@@ -1,10 +1,10 @@
 import { HISTORICAL_CANDIDATE_POLICY_VERSION } from "./historical-matching.ts";
 import {
-  importInventoryComparisonKey,
   INVENTORY_COMPARISON_BUCKET_MS,
   INVENTORY_COMPARISON_KEY_VERSION,
   type InventoryComparisonKey,
   type InventoryComparisonKeyContext,
+  importInventoryComparisonKey,
 } from "./inventory-comparison-keys.ts";
 import { type Envelope, open, randomToken, rewrap, seal } from "./security.ts";
 import type { Store } from "./store.ts";
@@ -145,17 +145,30 @@ export class InventoryComparisonGenerations {
     domain: InventoryComparisonDomain;
     contexts: InventoryComparisonKeyContext[];
   } | null> {
-    // One SQL snapshot pins both pointers and each generation's exact format.
+    // Capture the pointers, formats and wrapped key in one snapshot.
     const rows = await this.store
       .statement(
-        `SELECT d.*,g.generation_id,g.key_id,g.key_version,g.policy_version,g.bucket_ms,g.state
+        `SELECT d.*,g.generation_id,g.key_id,g.key_version,g.policy_version,g.bucket_ms,g.state,k.envelope
          FROM comparison_domains d JOIN index_generations g ON g.tenant=d.tenant
-         AND g.generation_id IN (d.active_generation,d.pending_generation) WHERE d.tenant=?`,
+         AND g.generation_id IN (d.active_generation,d.pending_generation)
+         LEFT JOIN inventory_comparison_keys k ON (k.tenant,k.key_id)=(g.tenant,g.key_id)
+         WHERE d.tenant=?`,
         tenant,
       )
-      .all<InventoryComparisonDomain & InventoryComparisonGeneration>();
-    if (!rows.results.length) return null;
-    const key = await this.key(tenant);
+      .all<
+        InventoryComparisonDomain &
+          InventoryComparisonGeneration & {
+            envelope: string | null;
+          }
+      >();
+    const first = rows.results[0];
+    if (!first) return null;
+    if (first.envelope === null)
+      throw new Error("inventory_comparison_key_missing");
+    const key = await this.decode(tenant, {
+      key_id: first.key_id,
+      envelope: first.envelope,
+    });
     for (const row of rows.results)
       if (
         row.key_id !== key.keyId ||
@@ -164,7 +177,6 @@ export class InventoryComparisonGenerations {
         row.bucket_ms !== INVENTORY_COMPARISON_BUCKET_MS
       )
         throw new Error("inventory_comparison_format_unsupported");
-    const first = rows.results[0];
     return {
       domain: {
         tenant,

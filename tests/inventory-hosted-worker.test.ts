@@ -7,6 +7,7 @@ import { serializeAdifRecord } from "../src/adif.ts";
 import { InventoryDeliveryWorkspace } from "../src/inventory-delivery-workspace.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
+import { InventoryQrzDispatch } from "../src/inventory-qrz-dispatch.ts";
 import { InventoryQrzNeighborhood } from "../src/inventory-qrz-neighborhood.ts";
 import { InventoryQrzPreparation } from "../src/inventory-qrz-preparation.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
@@ -15,7 +16,7 @@ import { registerInventorySelection } from "../src/inventory-scheduler.ts";
 import { InventorySourceProofDrain } from "../src/inventory-source-proof-drain.ts";
 import { InventorySourceProofJobs } from "../src/inventory-source-proof-jobs.ts";
 import { InventorySourceProofWorkspace } from "../src/inventory-source-proof-workspace.ts";
-import { Store } from "../src/store.ts";
+import { type Lease, Store } from "../src/store.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import { keys, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
@@ -153,6 +154,16 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
                     band: "20m",
                     mode: "CW",
                   },
+                  {
+                    uuid: "q3",
+                    operation: "op",
+                    syncedAtMillis: 102,
+                    startAtMillis: Date.parse("2026-11-08T13:42:00Z"),
+                    their: { call: "W3AW" },
+                    our: { grid: "FN31" },
+                    band: "20m",
+                    mode: "CW",
+                  },
                 ]
               : [],
           meta: {
@@ -266,7 +277,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         )
         .first<{ n: number }>()
     )?.n,
-    3,
+    4,
   );
   assert.equal(
     (
@@ -276,7 +287,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         )
         .first<{ n: number }>()
     )?.n,
-    3,
+    4,
   );
   for (const table of [
     "source_work",
@@ -370,17 +381,20 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         "SELECT count(*) AS n FROM match_results_current WHERE state='absent_at_inventory'",
       )
       .first(),
-    { n: 1 },
+    { n: 2 },
   );
   assert.deepEqual(
     (
       await db
         .prepare(
-          "SELECT provider,record_key,decision FROM inventory_delivery_review_current",
+          "SELECT provider,record_key,decision FROM inventory_delivery_review_current ORDER BY record_key",
         )
         .all()
     ).results,
-    [{ provider: "qrz", record_key: "q2", decision: "source_proof_required" }],
+    [
+      { provider: "qrz", record_key: "q2", decision: "source_proof_required" },
+      { provider: "qrz", record_key: "q3", decision: "source_proof_required" },
+    ],
   );
   const sourceScope = await db
     .prepare("SELECT scope_id FROM inventory_scopes WHERE provider='lofi'")
@@ -434,7 +448,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
           "inventory_match_result_update",
           "inventory_delivery_review_result_update",
         ],
-        "UPDATE match_results SET next_eligible_at=? WHERE record_key='q2'",
+        "UPDATE match_results SET next_eligible_at=? WHERE record_key IN('q2','q3')",
       ],
     ] as const) {
       const ddl = await Promise.all(
@@ -458,7 +472,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     }
   };
   await ageQuietClocks();
-  const queuedProof = await jobs.enqueue("a", sourceScope, ["q2"]);
+  const queuedProof = await jobs.enqueue("a", sourceScope, ["q2", "q3"]);
   assert.equal(queuedProof.kind, "queued", JSON.stringify(queuedProof));
   if (queuedProof.kind !== "queued") assert.fail();
   assert.deepEqual(await jobs.enqueue("a", sourceScope, ["q2"]), {
@@ -763,6 +777,218 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     },
   );
   assert.equal(freshReads, 3);
+  await db.prepare("UPDATE active_templates SET version='changed'").run();
+  assert.equal(await qrz.cancelStale("a", attempt.attempt_id), true);
+  await db.prepare("UPDATE active_templates SET version='original'").run();
+  const sendStage = await qrz.prepare(...stageArgs, "send-stage");
+  if (sendStage.kind !== "prepared") assert.fail(sendStage.reason);
+  const sendAttempt = sendStage.attempts[0].attempt_id;
+  const sendArtifact = await qrz.artifact("a", sendAttempt);
+  assert.ok(sendArtifact);
+  let dispatchReads = 0;
+  let inserts = 0;
+  const writes: {
+    adif: string | null;
+    fields: string[];
+    unsettled: unknown;
+  }[] = [];
+  let sendMode: "candidate" | "budget" | "lost" | "readback" = "candidate";
+  const writeGates = () => ({
+    exportsEnabled: true,
+    liveWriteAuthorized: true,
+    sourceBoundaryVerified: false,
+    qrzFreshInsertsEnabled: true,
+    allowedQsoIds: ["q2"],
+    allowedDestinationIds: ["destination"],
+  });
+  const vendor: typeof fetch = async (_input, init) => {
+    const form = init?.body;
+    assert.ok(form instanceof URLSearchParams);
+    const action = form.get("ACTION");
+    if (action === "INSERT") {
+      inserts++;
+      writes.push({
+        adif: form.get("ADIF"),
+        fields: [...form.keys()],
+        unsettled: await db
+          .prepare(
+            "SELECT count(*) AS n FROM inventory_qrz_dispatch_pending WHERE attempt_id=?",
+          )
+          .bind(sendAttempt)
+          .first("n"),
+      });
+      throw new Error("fixture lost the response");
+    }
+    dispatchReads++;
+    if (action === "STATUS")
+      return new Response(
+        "RESULT=OK&BOOKID=7&CALLSIGN=N1RWJ&STARTDATE=2025-01-01&ENDDATE=2027-12-31",
+      );
+    assert.equal(action, "FETCH");
+    if (sendMode === "budget")
+      await db
+        .prepare(
+          "UPDATE vendor_requests SET cooldown_until=? WHERE vendor='qrz'",
+        )
+        .bind(Date.now() + 60_000)
+        .run();
+    if (sendMode === "candidate" || sendMode === "readback")
+      return new Response(
+        `RESULT=OK&COUNT=1&ADIF=${serializeAdifRecord({
+          ...sendArtifact.record,
+          APP_QRZLOG_LOGID: "002",
+        })}`,
+      );
+    return new Response("RESULT=OK&COUNT=0&ADIF=");
+  };
+  const dispatch = new InventoryQrzDispatch(store, vendor);
+  assert.deepEqual(
+    await dispatch.send("a", sendAttempt, () => ({
+      ...writeGates(),
+      exportsEnabled: false,
+    })),
+    { kind: "held", reason: "qrz_exports_disabled" },
+  );
+  assert.equal(dispatchReads, 0);
+  assert.deepEqual(await dispatch.send("a", sendAttempt, writeGates), {
+    kind: "held",
+    reason: "qrz_neighborhood_has_candidate",
+  });
+  sendMode = "budget";
+  assert.equal(
+    (await dispatch.send("a", sendAttempt, writeGates)).kind,
+    "deferred",
+  );
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM inventory_qrz_dispatches")
+      .first("n"),
+    0,
+  );
+  assert.equal(inserts, 0);
+  await db
+    .prepare("UPDATE vendor_requests SET cooldown_until=0 WHERE vendor='qrz'")
+    .run();
+  sendMode = "lost";
+  await db
+    .prepare(
+      `CREATE TRIGGER fixture_qrz_dispatch_race BEFORE INSERT ON inventory_qrz_dispatch_guards
+       BEGIN UPDATE active_templates SET version='changed' WHERE tenant='a' AND destination='destination'; END;`,
+    )
+    .run();
+  assert.deepEqual(await dispatch.send("a", sendAttempt, writeGates), {
+    kind: "held",
+    reason: "dispatch_authority_changed",
+  });
+  assert.equal(inserts, 0);
+  await db.prepare("DROP TRIGGER fixture_qrz_dispatch_race").run();
+  class StoppedWorker extends Store {
+    strandedLease?: Lease;
+    override async release(lease: Lease) {
+      this.strandedLease = lease;
+    }
+  }
+  const stopped = new StoppedWorker(db, keys);
+  assert.deepEqual(
+    await new InventoryQrzDispatch(stopped, vendor).send(
+      "a",
+      sendAttempt,
+      writeGates,
+    ),
+    {
+      kind: "uncertain",
+    },
+  );
+  assert.equal(inserts, 1);
+  assert.deepEqual(writes, [
+    {
+      adif: sendArtifact.adif,
+      fields: ["KEY", "ACTION", "ADIF"],
+      unsettled: 1,
+    },
+  ]);
+  assert.equal(await qrz.cancelStale("a", sendAttempt), false);
+  const restarted = new InventoryQrzDispatch(new Store(db, keys), vendor);
+  const beforeRecovery = dispatchReads;
+  assert.deepEqual(await restarted.send("a", sendAttempt, writeGates), {
+    kind: "uncertain",
+  });
+  assert.equal(dispatchReads, beforeRecovery);
+  assert.deepEqual(await restarted.reconcile("a", sendAttempt), {
+    kind: "uncertain",
+  });
+  assert.equal(dispatchReads, beforeRecovery);
+  assert.ok(stopped.strandedLease);
+  await store.release(stopped.strandedLease);
+  assert.deepEqual(await restarted.reconcile("a", sendAttempt), {
+    kind: "uncertain",
+  });
+  assert.equal(dispatchReads, beforeRecovery + 2);
+  await db.prepare("UPDATE accounts SET quiet_minutes=31 WHERE id='a'").run();
+  assert.equal(await reloaded.current("a", queuedProof.id), null);
+  sendMode = "readback";
+  assert.deepEqual(await restarted.reconcile("a", sendAttempt), {
+    kind: "observed",
+    remoteId: "2",
+  });
+  assert.equal(inserts, 1);
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM inventory_qrz_dispatch_pending")
+      .first("n"),
+    0,
+  );
+  assert.deepEqual(await restarted.send("a", sendAttempt, writeGates), {
+    kind: "observed",
+    remoteId: "2",
+  });
+  assert.equal(await qrz.cancelStale("a", sendAttempt), false);
+  await db.prepare("UPDATE accounts SET quiet_minutes=30 WHERE id='a'").run();
+  await ageQuietClocks();
+  const direct = await qrz.prepare(
+    "a",
+    queuedProof.id,
+    qrzScope,
+    ["q3"],
+    "direct",
+  );
+  if (direct.kind !== "prepared") assert.fail(direct.reason);
+  const directAttempt = direct.attempts[0].attempt_id;
+  const directArtifact = await qrz.artifact("a", directAttempt);
+  assert.ok(directArtifact);
+  const sentAdif: (string | null)[] = [];
+  const directSend = new InventoryQrzDispatch(store, async (_input, init) => {
+    const form = init?.body;
+    assert.ok(form instanceof URLSearchParams);
+    if (form.get("ACTION") === "FETCH")
+      return new Response("RESULT=OK&COUNT=0&ADIF=");
+    assert.equal(form.get("ACTION"), "INSERT");
+    sentAdif.push(form.get("ADIF"));
+    return new Response("RESULT=OK&COUNT=1&LOGID=0003");
+  });
+  const directGates = () => ({ ...writeGates(), allowedQsoIds: ["q3"] });
+  assert.deepEqual(await directSend.send("a", directAttempt, directGates), {
+    kind: "delivered",
+    remoteId: "3",
+  });
+  assert.deepEqual(await directSend.reconcile("a", directAttempt), {
+    kind: "delivered",
+    remoteId: "3",
+  });
+  assert.deepEqual(sentAdif, [directArtifact.adif]);
+  assert.deepEqual(
+    (
+      await db
+        .prepare(
+          "SELECT record_key,remote_id FROM inventory_qrz_delivery_owners ORDER BY record_key",
+        )
+        .all()
+    ).results,
+    [
+      { record_key: "q2", remote_id: "2" },
+      { record_key: "q3", remote_id: "3" },
+    ],
+  );
   assert.deepEqual(
     await db
       .prepare(
@@ -891,7 +1117,6 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     },
   );
   assert.equal(await qrz.current("a", attempt.attempt_id), false);
-  assert.equal(await qrz.cancelStale("a", attempt.attempt_id), true);
   assert.equal(await qrz.cancelStale("a", attempt.attempt_id), false);
   assert.deepEqual(await recovered.artifact("a", attempt.attempt_id), artifact);
   await db.prepare("UPDATE accounts SET quiet_minutes=31 WHERE id='a'").run();

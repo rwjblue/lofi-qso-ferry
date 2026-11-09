@@ -9,7 +9,8 @@ import {
   vendorFetch,
 } from "./vendor-requests.ts";
 
-const LEASE_PREFIX = "inventory:qrz-delivery:";
+export const inventoryQrzBookLeaseScope = (book: string) =>
+  `inventory:qrz-delivery:${book}`;
 const READ_WINDOW_MS = 60_000;
 const AUTHORITY_CHANGED = "inventory QRZ neighborhood authority changed";
 interface Authority {
@@ -19,6 +20,39 @@ interface Authority {
   request_hash: string;
   lease_expires_at: number;
   proof_expires_at: number;
+}
+export function inventoryQrzReadAdmission(
+  store: Store,
+  attempt: string,
+  lease: Lease,
+  recovery?: { connection: string; credential: string; config: string },
+): VendorAdmission {
+  return async (reservation) => {
+    const id = crypto.randomUUID();
+    const results = await store.db.batch<{
+      window_start: number;
+      cooldown_until: number;
+    }>([
+      store.statement(
+        `INSERT INTO inventory_qrz_neighborhood_guards(id,tenant,attempt_id,lease_token,lease_fence,recovery_connection,recovery_credential,recovery_config)
+         VALUES(?,?,?,?,?,?,?,?)`,
+        id,
+        lease.tenant,
+        attempt,
+        lease.token,
+        lease.fence,
+        recovery?.connection ?? null,
+        recovery?.credential ?? null,
+        recovery?.config ?? null,
+      ),
+      reservation,
+      store.statement(
+        "DELETE FROM inventory_qrz_neighborhood_guards WHERE id=?",
+        id,
+      ),
+    ]);
+    return results[1].results[0] ?? null;
+  };
 }
 
 /** Observe the exact staged artifact under the same book lease needed for
@@ -42,7 +76,7 @@ export class InventoryQrzNeighborhood {
     return row
       ? this.store.claim(
           tenant,
-          LEASE_PREFIX + row.book_identity,
+          inventoryQrzBookLeaseScope(row.book_identity),
           Date.now(),
           90_000,
         )
@@ -89,28 +123,10 @@ export class InventoryQrzNeighborhood {
     );
     if (expiresAt <= startedAt) return stale;
     let authorityChanged = false;
+    const guarded = inventoryQrzReadAdmission(this.store, attempt, lease);
     const admit: VendorAdmission = async (reservation) => {
-      const id = crypto.randomUUID();
       try {
-        const results = await this.store.db.batch<{
-          window_start: number;
-          cooldown_until: number;
-        }>([
-          this.store.statement(
-            "INSERT INTO inventory_qrz_neighborhood_guards(id,tenant,attempt_id,lease_token,lease_fence) VALUES(?,?,?,?,?)",
-            id,
-            tenant,
-            attempt,
-            token,
-            fence,
-          ),
-          reservation,
-          this.store.statement(
-            "DELETE FROM inventory_qrz_neighborhood_guards WHERE id=?",
-            id,
-          ),
-        ]);
-        return results[1].results[0] ?? null;
+        return await guarded(reservation);
       } catch (error) {
         authorityChanged =
           error instanceof Error && error.message.includes(AUTHORITY_CHANGED);

@@ -1738,6 +1738,8 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   await ageQuietClocks();
   let certificateChecks = 0;
   let crlStatus = "Revoked";
+  let skewAfterCertificate = false;
+  let signingClockOffset = 0;
   const certificateFetch: typeof fetch = async (input, init) => {
     assert.equal(
       String(input),
@@ -1747,9 +1749,16 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     assert.equal(init?.redirect, "manual");
     assert.equal(init?.body, undefined);
     certificateChecks++;
+    if (skewAfterCertificate) signingClockOffset = 30_000;
     return new Response(`<Status>${crlStatus}</Status>`);
   };
-  const prepareLotw = new InventoryLotwPreparation(store, certificateFetch);
+  const prepareLotw = new InventoryLotwPreparation(
+    store,
+    function (this: typeof globalThis, input, init) {
+      assert.equal(this, globalThis);
+      return certificateFetch(input, init);
+    },
+  );
   const lotwBatchArgs = ["a", lotwProof.id, lotwScope, lotwKeys] as const;
   assert.deepEqual(await prepareLotw.prepare(...lotwBatchArgs, "revoked"), {
     kind: "held",
@@ -1773,10 +1782,20 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     { batches: 0, members: 0 },
   );
   await db.prepare("DROP TRIGGER fixture_lotw_rebind").run();
-  const preparedLotw = await prepareLotw.prepare(
-    ...lotwBatchArgs,
-    "two-contacts",
+  skewAfterCertificate = true;
+  const realNow = Date.now;
+  const signingClock = t.mock.method(
+    Date,
+    "now",
+    () => realNow() + signingClockOffset,
   );
+  const preparedLotw = await prepareLotw
+    .prepare(...lotwBatchArgs, "two-contacts")
+    .finally(() => {
+      signingClock.mock.restore();
+      skewAfterCertificate = false;
+    });
+  assert.equal(signingClockOffset, 30_000);
   if (preparedLotw.kind !== "prepared")
     assert.fail(JSON.stringify(preparedLotw));
   assert.equal(

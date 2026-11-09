@@ -138,7 +138,7 @@ export class InventoryLotwPreparation {
         init?.redirect !== "manual"
       )
         throw new Error("inventory_lotw_certificate_transport_blocked");
-      return this.fetcher(input, init);
+      return this.fetcher.call(globalThis, input, init);
     };
     return new LotwClient(null, {
       fetcher: vendorFetch(this.store, "lotw", readOnly, { priority }),
@@ -325,9 +325,11 @@ export class InventoryLotwPreparation {
     try {
       await this.store.db.batch([
         this.store.statement(
+          // Commit uses the D1 clock. Preserve the earlier certificate check
+          // time and keep the stored preparation time within that clock.
           `INSERT INTO inventory_lotw_batches(tenant,batch_id,proof_id,source_scope,destination,source_identity,book_identity,destination_connection,destination_config,credential_version,
             ownership_version,key_id,certificate_version,certificate_hash,certificate_checked_at,certificate_valid_until,signing_configuration,station_hash,input_digest,manifest_hash,wire_hash,wire_bytes,envelope,prepared_at,member_count)
-           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,min(?,CAST(unixepoch('subsec')*1000 AS INTEGER)),?)`,
           tenant,
           batchId,
           proofId,

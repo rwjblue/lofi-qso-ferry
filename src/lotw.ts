@@ -11,6 +11,7 @@ import { VendorDeferredError } from "./vendor-requests.ts";
 const QUERY_ENDPOINT = "https://lotw.arrl.org/lotwuser/lotwreport.adi";
 const UPLOAD_ENDPOINT = "https://lotw.arrl.org/lotw/upload";
 const MAX_RESPONSE = 2 * 1024 * 1024;
+const LARGE_ACCOUNT_RESPONSE = 4 * 1024 * 1024;
 export class LotwLoginError extends Error {
   constructor(readonly reason: "credentials" | "unavailable") {
     super(
@@ -166,10 +167,13 @@ export async function boundedResponse(
     cancelBestEffort(reader);
   }
 }
-export function parseLotwReport(input: string): LotwReport {
+export function parseLotwReport(
+  input: string,
+  limit = MAX_RESPONSE,
+): LotwReport {
   if (!/<EOH>/i.test(input) || !/<APP_LOTW_EOF>\s*$/i.test(input))
     throw new Error("Incomplete or non-ADIF LoTW report");
-  const document = parseAdif(input.replace(/<APP_LOTW_EOF>\s*$/i, ""));
+  const document = parseAdif(input.replace(/<APP_LOTW_EOF>\s*$/i, ""), limit);
   if (
     document.header.PROGRAMID?.toUpperCase() !== "LOTW" ||
     !/^\d+$/.test(document.header.APP_LOTW_NUMREC ?? "") ||
@@ -287,10 +291,16 @@ export class LotwClient {
   }
 
   /** Account receipt deltas require a receive timestamp and carry no date coverage. */
-  async queryReceivedSince(receivedSince: string): Promise<LotwReport> {
+  async queryReceivedSince(
+    receivedSince: string,
+    largeReport = false,
+  ): Promise<LotwReport> {
     if (!validLotwReceiveTime(receivedSince))
       throw new Error("Invalid LoTW receive checkpoint");
-    const report = await this.readReport({ qso_qsorxsince: receivedSince });
+    const report = await this.readReport(
+      { qso_qsorxsince: receivedSince },
+      largeReport ? LARGE_ACCOUNT_RESPONSE : MAX_RESPONSE,
+    );
     const through = report.receivedThrough;
     if (
       report.records.length &&
@@ -309,6 +319,7 @@ export class LotwClient {
 
   private async readReport(
     filters: Record<string, string>,
+    limit = MAX_RESPONSE,
   ): Promise<LotwReport> {
     if (!this.credentials)
       throw new Error("LoTW query credentials are not configured");
@@ -344,7 +355,7 @@ export class LotwClient {
         throw new LotwLoginError("credentials");
       throw new Error("LoTW query unavailable; coverage remains incomplete");
     }
-    const body = await boundedResponse(response);
+    const body = await boundedResponse(response, limit);
     // ARRL documents HTML failure responses. Only explicit authentication
     // failures identify rejected credentials; maintenance HTML is unavailable.
     if (
@@ -354,7 +365,7 @@ export class LotwClient {
       )
     )
       throw new LotwLoginError("credentials");
-    return parseLotwReport(body);
+    return parseLotwReport(body, limit);
   }
   async certificateStatus(serial: string): Promise<CertificateStatus> {
     if (!/^\d{1,50}$/.test(serial)) return "unknown";

@@ -42,8 +42,17 @@ export function serializeAdifRecord(record: AdifRecord): string {
   }
   return `${result}<EOR>`;
 }
-export function parseAdif(input: string): AdifDocument {
-  if (input.length > MAX_DOCUMENT) throw new Error("ADIF document too large");
+export function parseAdif(
+  input: string,
+  maxDocument = MAX_DOCUMENT,
+): AdifDocument {
+  if (
+    !Number.isSafeInteger(maxDocument) ||
+    maxDocument < 1 ||
+    maxDocument > 2 * MAX_DOCUMENT
+  )
+    throw new Error("Invalid ADIF document limit");
+  if (input.length > maxDocument) throw new Error("ADIF document too large");
   const header: AdifRecord = Object.create(null);
   const records: AdifRecord[] = [];
   let record: AdifRecord = Object.create(null);

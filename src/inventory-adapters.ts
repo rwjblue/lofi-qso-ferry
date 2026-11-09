@@ -176,6 +176,7 @@ export interface LotwInventoryRequest {
   binding: InventoryQueryBinding;
   query: LotwQuery | LotwAccountReceiptQuery;
   purpose?: "receipt" | "confirmation";
+  largeAccountReport?: true;
 }
 
 class ReadStopped extends Error {
@@ -1082,6 +1083,10 @@ export function createLotwInventoryAdapter(credentials: {
           );
           const query = input.query;
           const accountDelta = "kind" in query;
+          requireValue(
+            input.largeAccountReport === undefined ||
+              (accountDelta && input.largeAccountReport === true),
+          );
           if (accountDelta) {
             requireValue(
               query.kind === "account_received" &&
@@ -1107,7 +1112,10 @@ export function createLotwInventoryAdapter(credentials: {
           }
           const client = new LotwClient(saved, { fetcher: budget.fetch });
           const report = accountDelta
-            ? await client.queryReceivedSince(query.receivedSince)
+            ? await client.queryReceivedSince(
+                query.receivedSince,
+                input.largeAccountReport,
+              )
             : await client.query(query);
           if (
             !accountDelta &&
@@ -1188,17 +1196,18 @@ export function createLotwInventoryAdapter(credentials: {
                 recovery: "retry",
               };
           }
-          if (
+          const recordOverflow =
             budget?.stopped === "record_budget" ||
             (error instanceof Error &&
-              error.message ===
-                "Vendor response exceeds bounded partition; split the date range")
-          )
+              error.message === "Too many ADIF records");
+          const bodyOverflow =
+            error instanceof Error &&
+            error.message ===
+              "Vendor response exceeds bounded partition; split the date range";
+          if (recordOverflow || bodyOverflow)
             return splitLotw(
               input.query,
-              budget?.stopped === "record_budget"
-                ? "record_budget"
-                : "response_budget",
+              recordOverflow ? "record_budget" : "response_budget",
             );
           return undefined;
         },

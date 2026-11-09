@@ -263,6 +263,31 @@ test("query requests all accepted records, own detail and explicit replay bounda
   );
 });
 
+test("LoTW account reports honor the two-MiB and expanded four-MiB bounds", async () => {
+  const received = "2026-10-22 13:00:00";
+  const base = report([{ ...record, APP_LOTW_RXQSO: received }]);
+  let body = " ".repeat(2 * 1024 * 1024) + base;
+  const client = new LotwClient(
+    { username: "fixture", password: "fixture" },
+    {
+      fetcher: async () => new Response(body),
+    },
+  );
+  await assert.rejects(
+    client.queryReceivedSince(received),
+    /bounded partition/,
+  );
+  assert.equal(
+    (await client.queryReceivedSince(received, true)).records.length,
+    1,
+  );
+  body = " ".repeat(4 * 1024 * 1024) + base;
+  await assert.rejects(
+    client.queryReceivedSince(received, true),
+    /bounded partition/,
+  );
+});
+
 test("every LoTW query record must satisfy every requested scope filter", async (t) => {
   const query = {
     startDate: "2026-10-22",

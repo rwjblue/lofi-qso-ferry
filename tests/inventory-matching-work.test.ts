@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { measureD1 } from "../scripts/inventory-benchmark-metrics.ts";
 import { InventoryComparisonBuilds } from "../src/inventory-comparison-builds.ts";
 import { InventoryComparisonGenerations } from "../src/inventory-comparison-generations.ts";
 import {
@@ -72,14 +73,20 @@ async function retainedWork(
 test("one native twenty-result publication completes exactly its claimed work and replays safely", async (t) => {
   const f = await captured(20);
   try {
-    const result = await f.matches.publish(
+    const claims = f.claims.map((row) => ({ ...row, resultVersion: 0 }));
+    const meter = measureD1(f.db);
+    const matches = new InventoryMatchingResults(
+      new Store(meter.database, f.store.keys),
+    );
+    const result = await matches.publish(
       f.page,
       f.lease,
       "twenty-work",
-      f.claims,
+      claims,
     );
     assert.equal(result.records, 20);
     assert.equal(result.statements, 14);
+    assert.equal(meter.totals.calls, 1);
     t.diagnostic(
       `20 work completions: ${result.statements} statements, ${result.rowsRead} rows read, ${result.rowsWritten} rows written`,
     );
@@ -89,15 +96,13 @@ test("one native twenty-result publication completes exactly its claimed work an
       20,
     );
     assert.equal(
-      (await f.matches.publish(f.page, f.lease, "twenty-work", f.claims))
-        .recovered,
+      (await matches.publish(f.page, f.lease, "twenty-work", claims)).recovered,
       true,
     );
     await f.work.enqueue("a", f.generation, "destination", f.selected);
     assert.equal((await counts(f))?.done, 0);
     assert.equal(
-      (await f.matches.publish(f.page, f.lease, "twenty-work", f.claims))
-        .recovered,
+      (await matches.publish(f.page, f.lease, "twenty-work", claims)).recovered,
       true,
     );
     assert.equal(
@@ -106,11 +111,11 @@ test("one native twenty-result publication completes exactly its claimed work an
       "old receipt must not complete newer work",
     );
     await assert.rejects(
-      f.matches.publish(
+      matches.publish(
         f.page,
         f.lease,
         "twenty-work",
-        f.claims.map((row) => ({
+        claims.map((row) => ({
           ...row,
           workVersion: 2,
           completedVersion: 1,
@@ -233,6 +238,19 @@ test("new invalidation rejects a captured completion and bare result publication
     );
     await f.matches.publish(f.page, f.lease, "bare-result");
     assert.equal((await counts(f))?.done, 0);
+    await assert.rejects(
+      f.matches.publish(
+        f.page,
+        f.lease,
+        "stale-result-version",
+        f.claims.map((row) => ({
+          ...row,
+          workVersion: row.workVersion + 1,
+          resultVersion: 0,
+        })),
+      ),
+      /inventory match result requirements incomplete/,
+    );
     await assert.rejects(
       f.db
         .prepare(

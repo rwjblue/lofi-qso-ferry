@@ -715,6 +715,21 @@ matching turns. Binding calls fell from 333 to 316. Both runs executed
 remote receipts, historical associations, coverage and credentials
 agreed. The copies made zero vendor requests and uploads.
 
+### Matching publication versions
+
+Scheduled matching captures result versions with its bounded work claim.
+Native admission still rejects changed versions and rolls back the
+whole publication. A failed publication can recover a matching commit
+receipt. Direct publications and older claims without result versions
+use the existing preflight.
+
+On the same captured log, the coordinator republished 160 decisions
+across eight matching cohorts in 17 turns. Claiming the versions reduced
+binding calls from 316 to 308, SQL statements from 548 to 540, and row
+reads from 126,370 to 126,194. Both runs wrote 14,046 rows. Per-contact
+decisions, selected receipts, historical associations, coverage and
+credentials agreed. The copies made zero vendor requests and uploads.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

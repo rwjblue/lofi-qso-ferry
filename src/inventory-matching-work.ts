@@ -83,8 +83,9 @@ SELECT w.generation_id,w.destination,w.source_scope,w.source_config_version,w.de
     const [claimed, rows] = await this.store.db.batch([
       this.store.claimStatement(tenant, scope, now, 60_000, { token }),
       this.store.statement(
-        `SELECT w.source_scope AS scope,w.record_key AS key,w.work_version AS workVersion,w.completed_version AS completedVersion,w.source_config_version AS sourceConfigVersion,w.destination_config_version AS destinationConfigVersion,w.due_at AS dueAt
+        `SELECT w.source_scope AS scope,w.record_key AS key,w.work_version AS workVersion,w.completed_version AS completedVersion,w.source_config_version AS sourceConfigVersion,w.destination_config_version AS destinationConfigVersion,w.due_at AS dueAt,coalesce(r.version,0) AS resultVersion
          FROM leases l CROSS JOIN matching_work w INDEXED BY matching_work_scope_pending
+         LEFT JOIN match_results r ON (r.tenant,r.destination,r.source_scope,r.record_key)=(w.tenant,w.destination,w.source_scope,w.record_key)
          WHERE l.tenant=?1 AND l.scope=?8 AND l.token=?9 AND l.expires_at>unixepoch('subsec')*1000
          AND w.tenant=l.tenant AND w.generation_id=?2 AND w.destination=?3 AND w.source_scope=?4 AND w.source_config_version=?5 AND w.destination_config_version=?6 AND w.completed_version<w.work_version AND w.due_at<=?7
          ORDER BY w.due_at,w.record_key LIMIT 20`,

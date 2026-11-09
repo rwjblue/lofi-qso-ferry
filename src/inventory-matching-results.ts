@@ -32,6 +32,7 @@ export interface InventoryMatchingWorkClaim {
   sourceConfigVersion: number;
   destinationConfigVersion: number;
   dueAt: number;
+  resultVersion?: number;
 }
 const refKey = (row: { scope: string; key: string; facet: string }) =>
   canonical([row.scope, row.key, row.facet]);
@@ -57,19 +58,14 @@ function recoveredMatch(receipt: MatchReceipt, id: string, digest: string) {
  * proof, delivery attempt or vendor write is created by matching publication. */
 export class InventoryMatchingResults {
   constructor(readonly store: Store) {}
-  private async recover(
-    page: PreparedInventoryMatchingSnapshot,
-    id: string,
-    digest = page.digest,
-  ) {
-    const receipt = await this.store
+  private receipt(tenant: string, id: string) {
+    return this.store
       .statement(
         "SELECT input_digest,row_count,state FROM inventory_match_sets WHERE tenant=? AND set_id=?",
-        page.tenant,
+        tenant,
         id,
       )
       .first<MatchReceipt>();
-    return receipt ? recoveredMatch(receipt, id, digest) : null;
   }
   async publish(
     page: PreparedInventoryMatchingSnapshot,
@@ -114,16 +110,27 @@ export class InventoryMatchingResults {
             row.completedVersion < 0 ||
             row.sourceConfigVersion < 1 ||
             row.destinationConfigVersion < 1 ||
-            row.dueAt < 0,
+            row.dueAt < 0 ||
+            (row.resultVersion !== undefined &&
+              (!Number.isSafeInteger(row.resultVersion) ||
+                row.resultVersion < 0)),
         ))
     )
       throw new Error("invalid_inventory_matching_work_claim");
     const inputDigest = work
       ? await sha256(canonical({ matchingDigest: page.digest, work }))
       : page.digest;
-    const basis = await this.store
-      .statement(
-        `WITH receipt AS MATERIALIZED (
+    const versionByKey = new Map(
+      work?.map((row) => [
+        refKey({ ...row, facet: "source" }),
+        row.resultVersion,
+      ]),
+    );
+    // Direct publications and retained work manifests use the existing preflight.
+    if (!work?.every((row) => row.resultVersion !== undefined)) {
+      const basis = await this.store
+        .statement(
+          `WITH receipt AS MATERIALIZED (
            SELECT input_digest,row_count,state FROM inventory_match_sets WHERE tenant=?2 AND set_id=?4
          )
          SELECT 'receipt' AS kind,NULL AS ordinal,NULL AS version,input_digest,row_count,state FROM receipt
@@ -131,17 +138,21 @@ export class InventoryMatchingResults {
          SELECT 'version',CAST(j.key AS INTEGER),coalesce(r.version,0),NULL,NULL,NULL
          FROM json_each(CASE WHEN EXISTS(SELECT 1 FROM receipt) THEN '[]' ELSE ?1 END) j
          LEFT JOIN match_results r ON r.tenant=?2 AND r.destination=?3 AND r.source_scope=json_extract(j.value,'$.scope') AND r.record_key=json_extract(j.value,'$.key')`,
-        page.selected.length <= MATCH_RESULT_LIMIT
-          ? canonical(page.selected)
-          : "[]",
-        page.tenant,
-        page.destination,
-        id,
-      )
-      .all<MatchPublicationBasis>();
-    const first = basis.results[0];
-    if (first?.kind === "receipt")
-      return recoveredMatch(first, id, inputDigest);
+          page.selected.length <= MATCH_RESULT_LIMIT
+            ? canonical(page.selected)
+            : "[]",
+          page.tenant,
+          page.destination,
+          id,
+        )
+        .all<MatchPublicationBasis>();
+      const first = basis.results[0];
+      if (first?.kind === "receipt")
+        return recoveredMatch(first, id, inputDigest);
+      for (const row of basis.results)
+        if (row.kind === "version")
+          versionByKey.set(refKey(page.selected[row.ordinal]), row.version);
+    }
     if (
       page.formatVersion !== 1 ||
       page.results.length < 1 ||
@@ -168,10 +179,6 @@ export class InventoryMatchingResults {
       )
     )
       throw new Error("invalid_inventory_matching_manifest");
-    const versionByKey = new Map<string, number>();
-    for (const row of basis.results)
-      if (row.kind === "version")
-        versionByKey.set(refKey(page.selected[row.ordinal]), row.version);
     const rows = page.results.map((row) => ({
       ...row,
       expectedVersion: versionByKey.get(refKey(row.source)),
@@ -330,10 +337,8 @@ export class InventoryMatchingResults {
     try {
       results = await this.store.db.batch(plan);
     } catch (error) {
-      const recovered = await this.recover(page, id, inputDigest).catch(
-        () => null,
-      );
-      if (recovered) return recovered;
+      const receipt = await this.receipt(page.tenant, id).catch(() => null);
+      if (receipt) return recoveredMatch(receipt, id, inputDigest);
       throw error;
     }
     return {

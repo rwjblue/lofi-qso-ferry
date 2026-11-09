@@ -1,4 +1,5 @@
 import type { AdifRecord } from "./adif.ts";
+import { adifInstant } from "./qrz.ts";
 import { canonical, sha256 } from "./security.ts";
 import { lotwIdentityMode } from "./signing.ts";
 
@@ -74,4 +75,50 @@ export function reconcileQrzAttempt(
         "No unique observation of the exact transmitted revision; do not resend blindly",
     };
   return { state: "observed", remoteId: exact[0].APP_QRZLOG_LOGID };
+}
+
+export interface DestinationIdentityClaim {
+  vendor: "qrz" | "lotw";
+  hash: string;
+}
+/** Exact outbound seconds, never a rounded timestamp or a narrative/location key. */
+export async function destinationIdentityClaim(
+  vendor: DestinationIdentityClaim["vendor"],
+  record: AdifRecord,
+): Promise<DestinationIdentityClaim> {
+  if (
+    !/^[0-9]{6}$/.test(record.TIME_ON ?? "") ||
+    ["STATION_CALLSIGN", "CALL", "BAND", "MODE"].some(
+      (field) => !record[field] || !/^[\x20-\x7e]+$/.test(record[field]),
+    )
+  )
+    throw new Error("Invalid outbound destination identity");
+  adifInstant(record);
+  const mode =
+    vendor === "lotw"
+      ? lotwIdentityMode(record.MODE, record.SUBMODE || record.APP_LOTW_MODE)
+      : record.MODE;
+  const identity = Object.fromEntries(
+    [
+      "STATION_CALLSIGN",
+      "CALL",
+      "QSO_DATE",
+      "TIME_ON",
+      "BAND",
+      "MODE",
+      ...(vendor === "qrz" ? ["SUBMODE"] : []),
+      "PROP_MODE",
+      "SAT_NAME",
+    ].map((field) => [
+      field,
+      (field === "MODE" ? mode : (record[field] ?? "")).toUpperCase(),
+    ]),
+  );
+  return { vendor, hash: await sha256(canonical(identity)) };
+}
+
+export function historicalQrzLogId(value: string): string {
+  if (!value || value.length > 64 || /[^0-9]/.test(value))
+    throw new Error("Invalid historical QRZ LOGID");
+  return value.replace(/^0+(?=[0-9])/, "");
 }

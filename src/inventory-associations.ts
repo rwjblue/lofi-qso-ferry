@@ -1,4 +1,4 @@
-import { historicalQrzLogId } from "./historical-associations.ts";
+import { historicalQrzLogId } from "./destination-receipts.ts";
 import {
   type HistoricalVendor,
   historicalCandidates,

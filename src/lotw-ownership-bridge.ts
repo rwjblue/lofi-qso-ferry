@@ -1,8 +1,11 @@
 import type { AdifRecord } from "./adif.ts";
+import {
+  canonicalLotwIdentity,
+  lotwRemoteIdentity,
+} from "./destination-receipts.ts";
 import { historicalCandidates } from "./historical-matching.ts";
 import { lookupLotwHistoricalOwnership } from "./lotw-historical-associations.ts";
 import { prepareLotwOwnershipEvidence } from "./lotw-ownership.ts";
-import { canonicalLotwIdentity, lotwRemoteIdentity } from "./reconcile.ts";
 import { canonical, randomToken, sha256 } from "./security.ts";
 import type { Lease, LedgerKey, LotwIdentityEvidence, Store } from "./store.ts";
 

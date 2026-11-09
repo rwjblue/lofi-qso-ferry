@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { contactReconciliationAdif } from "../src/delivery.ts";
+import { contactReconciliationAdif } from "../src/contact-adif.ts";
+import { historicalOperatingDetails } from "../src/historical-operating-details.ts";
 import type { SourceRecord } from "../src/lofi.ts";
 import { projectContact, sourceFingerprint } from "../src/projection.ts";
-import { classifyHistory } from "../src/reconcile.ts";
 
 const qso = (frequency: number | string, band: string): SourceRecord => ({
   uuid: "qso-frequency",
@@ -27,19 +27,10 @@ test("decimal kHz projection avoids invented precision in LoTW historical matchi
     assert.equal(contact.frequencyMHz, Number(expected));
     const projected = contactReconciliationAdif(contact);
     assert.equal(projected.FREQ, expected);
-    const outcome = classifyHistory(
-      projected,
-      [{ ...projected, FREQ: Number(expected).toFixed(5) }],
-      {
-        destination: "lotw",
-        capturedGeneration: contact.generation,
-        currentGeneration: contact.generation,
-        readAccess: true,
-        inventoryComplete: true,
-        catchupComplete: true,
-        freshCheckComplete: true,
-      },
-    );
+    const outcome = historicalOperatingDetails("lotw", projected, {
+      ...projected,
+      FREQ: Number(expected).toFixed(5),
+    });
     assert.equal(outcome.state, "adopted_existing");
     assert.equal(record.freq, frequency);
     assert.equal(contact.context.qso.freq, frequency);
@@ -85,7 +76,7 @@ test("decimal unit conversion preserves supported band boundaries and meaningful
   }
 });
 
-test("actual sub-ten-Hz source precision remains visible and held by LoTW history", async () => {
+test("sub-ten-Hz source precision is preserved while rounded LoTW history matches", async () => {
   for (const [frequency, band, expected] of [
     [7032.111, "40m", "7.032111"],
     [14074.001, "20m", "14.074001"],
@@ -94,25 +85,10 @@ test("actual sub-ten-Hz source precision remains visible and held by LoTW histor
     const contact = await projectContact(qso(frequency, band), null);
     const projected = contactReconciliationAdif(contact);
     assert.equal(projected.FREQ, expected);
-    const outcome = classifyHistory(
-      projected,
-      [{ ...projected, FREQ: Number(expected).toFixed(5) }],
-      {
-        destination: "lotw",
-        capturedGeneration: contact.generation,
-        currentGeneration: contact.generation,
-        readAccess: true,
-        inventoryComplete: true,
-        catchupComplete: true,
-        freshCheckComplete: true,
-      },
-    );
-    assert.equal(outcome.state, "history_ambiguous");
-    assert.equal(
-      outcome.reason,
-      "LoTW query cannot establish the transmitted precision of FREQ",
-    );
-    assert.equal(outcome.remote, undefined);
+    const observed = { ...projected, FREQ: Number(expected).toFixed(5) };
+    const outcome = historicalOperatingDetails("lotw", projected, observed);
+    assert.deepEqual(outcome, { state: "adopted_existing", record: observed });
+    assert.equal(projected.FREQ, expected);
   }
 });
 

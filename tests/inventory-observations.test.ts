@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AdifRecord } from "../src/adif.ts";
+import { lotwRemoteIdentity } from "../src/destination-receipts.ts";
 import {
   InventoryObservationError,
   lofiInventoryObservations,
@@ -9,7 +10,6 @@ import {
 } from "../src/inventory-observations.ts";
 import type { SourceRecord } from "../src/lofi.ts";
 import { projectContact, sourceFingerprint } from "../src/projection.ts";
-import { lotwRemoteIdentity } from "../src/reconcile.ts";
 import { canonical, sha256 } from "../src/security.ts";
 
 const at = Date.parse("2026-11-07T13:05:12.123Z");

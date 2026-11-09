@@ -1,6 +1,6 @@
 import { parseAdif, serializeAdifRecord } from "./adif.ts";
 import { structuredContactAdif } from "./contact-adif.ts";
-import { destinationIdentityClaim } from "./identity-claims.ts";
+import { destinationIdentityClaim } from "./destination-receipts.ts";
 import { INVENTORY_QRZ_BATCH_LIMIT } from "./inventory-delivery-limits.ts";
 import { InventoryDeliveryWorkspace } from "./inventory-delivery-workspace.ts";
 import { inventoryJsonChunks } from "./inventory-ingestion.ts";

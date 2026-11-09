@@ -1,7 +1,10 @@
 import type { AdifRecord } from "./adif.ts";
+import {
+  canonicalLotwIdentity,
+  lotwRemoteIdentity,
+} from "./destination-receipts.ts";
 import { historicalCandidates } from "./historical-matching.ts";
 import type { IdentityGuard } from "./identity-claims.ts";
-import { canonicalLotwIdentity, lotwRemoteIdentity } from "./reconcile.ts";
 import {
   b64,
   canonical,

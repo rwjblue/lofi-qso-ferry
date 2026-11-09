@@ -1,53 +1,14 @@
 import type { AdifRecord } from "./adif.ts";
-import { adifInstant } from "./qrz.ts";
-import { canonical, sha256 } from "./security.ts";
-import { lotwIdentityMode } from "./signing.ts";
+import {
+  type DestinationIdentityClaim,
+  destinationIdentityClaim,
+} from "./destination-receipts.ts";
 import { attemptSourceExportProofGuard } from "./source-export-proofs.ts";
 import type { Lease, LedgerKey, Store } from "./store.ts";
 
-export interface DestinationIdentityClaim {
-  vendor: "qrz" | "lotw";
-  hash: string;
-}
 export interface IdentityGuard {
   sql: string;
   params: (string | number | null)[];
-}
-
-/** Exact outbound seconds, never a rounded timestamp or a narrative/location key. */
-export async function destinationIdentityClaim(
-  vendor: DestinationIdentityClaim["vendor"],
-  record: AdifRecord,
-): Promise<DestinationIdentityClaim> {
-  if (
-    !/^[0-9]{6}$/.test(record.TIME_ON ?? "") ||
-    ["STATION_CALLSIGN", "CALL", "BAND", "MODE"].some(
-      (field) => !record[field] || !/^[\x20-\x7e]+$/.test(record[field]),
-    )
-  )
-    throw new Error("Invalid outbound destination identity");
-  adifInstant(record);
-  const mode =
-    vendor === "lotw"
-      ? lotwIdentityMode(record.MODE, record.SUBMODE || record.APP_LOTW_MODE)
-      : record.MODE;
-  const identity = Object.fromEntries(
-    [
-      "STATION_CALLSIGN",
-      "CALL",
-      "QSO_DATE",
-      "TIME_ON",
-      "BAND",
-      "MODE",
-      ...(vendor === "qrz" ? ["SUBMODE"] : []),
-      "PROP_MODE",
-      "SAT_NAME",
-    ].map((field) => [
-      field,
-      (field === "MODE" ? mode : (record[field] ?? "")).toUpperCase(),
-    ]),
-  );
-  return { vendor, hash: await sha256(canonical(identity)) };
 }
 
 /** Missing claims may be acquired; a different source UUID is never equivalent. */
@@ -196,3 +157,8 @@ export async function bindLegacyQrzIdentity(
   ]);
   return rows[1].results.length === 1;
 }
+
+export {
+  type DestinationIdentityClaim,
+  destinationIdentityClaim,
+} from "./destination-receipts.ts";

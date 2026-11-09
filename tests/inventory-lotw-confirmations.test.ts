@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type AdifRecord, serializeAdifRecord } from "../src/adif.ts";
+import { lotwRemoteIdentity } from "../src/destination-receipts.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import {
   inventoryLotwConfirmation,
   pollInventoryLotwConfirmations,
 } from "../src/inventory-lotw-confirmations.ts";
 import { lotwInventoryObservations } from "../src/inventory-observations.ts";
-import { lotwRemoteIdentity } from "../src/reconcile.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
 
 const target = {

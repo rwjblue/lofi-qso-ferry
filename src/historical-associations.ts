@@ -1,3 +1,4 @@
+import { historicalQrzLogId } from "./destination-receipts.ts";
 import type { IdentityGuard } from "./identity-claims.ts";
 import type { LedgerKey, Store } from "./store.ts";
 
@@ -5,12 +6,6 @@ export interface HistoricalAssociationIdentity {
   vendor: "qrz";
   bookIdentity: string;
   remoteId: string;
-}
-
-export function historicalQrzLogId(value: string): string {
-  if (!value || value.length > 64 || /[^0-9]/.test(value))
-    throw new Error("Invalid historical QRZ LOGID");
-  return value.replace(/^0+(?=[0-9])/, "");
 }
 
 /** Availability is not evidence of a match; callers supply complete source and inventory proof. */
@@ -98,3 +93,5 @@ export function clearHistoricalAssociationLegacyReservation(
     id,
   );
 }
+
+export { historicalQrzLogId } from "./destination-receipts.ts";

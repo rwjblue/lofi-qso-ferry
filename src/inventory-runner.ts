@@ -200,7 +200,6 @@ export class InventoryRunner {
         const schedule = await this.schedulePolicy(context.run);
         const qrzCoveredMultiplePages =
           query.provider === "qrz" &&
-          context.run.mode === "delta" &&
           (context.stream.resume as QrzInventoryResume | null)
             ?.coveringDateSelection === true;
         const next =
@@ -569,8 +568,8 @@ export class InventoryRunner {
             ? { resume: context.stream.resume as QrzInventoryResume }
             : {}),
           pageSize: query.pageSize,
-          ...(context.run.mode === "delta"
-            ? { verifyAmbiguousDelta: true }
+          ...(context.run.mode === "delta" || context.run.phase === "catchup"
+            ? { verifyAmbiguousModifiedSelection: true }
             : {}),
         },
       );

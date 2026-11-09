@@ -165,7 +165,7 @@ export interface QrzInventoryRequest {
   resume?: QrzInventoryResume;
   pageSize?: number;
   /** Allow a covering date read to verify an ambiguous modified selection. */
-  verifyAmbiguousDelta?: true;
+  verifyAmbiguousModifiedSelection?: true;
 }
 export interface LotwInventoryRequest {
   binding: InventoryQueryBinding;
@@ -817,7 +817,7 @@ function withinQrzScope(
 function validateQrzResume(
   resume: QrzInventoryResume | undefined,
   queryKey: string,
-  canVerifyDelta: boolean,
+  canVerifyModifiedSelection: boolean,
 ) {
   if (!resume) return;
   requireValue(
@@ -843,7 +843,7 @@ function validateQrzResume(
   const previous = resume.previousFullPage;
   requireValue(
     resume.coveringDateSelection === undefined ||
-      (canVerifyDelta &&
+      (canVerifyModifiedSelection &&
         resume.coveringDateSelection === true &&
         previous !== undefined),
   );
@@ -886,10 +886,10 @@ export function createQrzInventoryAdapter(
             requestedLimit <= 250,
         );
         const queryKey = qrzSelectionKey(input.binding, book, input.selection);
-        const canVerifyDelta =
-          input.verifyAmbiguousDelta === true &&
+        const canVerifyModifiedSelection =
+          input.verifyAmbiguousModifiedSelection === true &&
           input.selection.modifiedSince !== undefined;
-        validateQrzResume(input.resume, queryKey, canVerifyDelta);
+        validateQrzResume(input.resume, queryKey, canVerifyModifiedSelection);
         // A recovery's smaller effective MAX persists even when core continues
         // supplying the run's original configured page size.
         let limit = input.resume?.pageSize ?? requestedLimit;
@@ -921,7 +921,7 @@ export function createQrzInventoryAdapter(
             if (page.nextAfterLogId === null) throw error;
           } else if (error.detail !== "ambiguous_empty_selection") {
             throw error;
-          } else if (canVerifyDelta && !input.resume) {
+          } else if (canVerifyModifiedSelection && !input.resume) {
             // A successful scan over the same dates covers the modified
             // selection. Use a separate effective cursor from the first page.
             covering = true;

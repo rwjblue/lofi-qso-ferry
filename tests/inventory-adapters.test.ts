@@ -518,7 +518,7 @@ test("QRZ delta fallback distinguishes positive, incomplete and contradictory da
   ] as const) {
     const options: string[] = [];
     const request = qrzRequest({
-      verifyAmbiguousDelta: true,
+      verifyAmbiguousModifiedSelection: true,
       pageSize: 2,
       selection: {
         between: ["2026-11-01", "2026-11-14"],
@@ -569,7 +569,7 @@ test("QRZ delta fallback distinguishes positive, incomplete and contradictory da
         ),
         {
           ...request,
-          verifyAmbiguousDelta: undefined,
+          verifyAmbiguousModifiedSelection: undefined,
           resume: result.progress.resume as QrzInventoryResume,
         },
       );
@@ -1165,7 +1165,7 @@ test("QRZ covering verification reduces MAX at the same cursor after an invalid 
     return pages(input, init);
   };
   const request = qrzRequest({
-    verifyAmbiguousDelta: true,
+    verifyAmbiguousModifiedSelection: true,
     selection: {
       between: ["2026-11-01", "2026-11-14"],
       modifiedSince: "2026-11-07",

@@ -215,3 +215,16 @@ On an invalid LOGID during a covering scan, the reader retries once at
 the same cursor with half the page size, down to 32 records. Only a full,
 valid smaller page can save the new size and cursor. An incomplete
 smaller result supplies no evidence for finishing the selection.
+
+### Full QRZ catch-up verification
+
+A full run can use the same covering scan when its `MODSINCE` catch-up
+returns an ambiguous first page. The reader keeps the original book and
+date selection and completes the normal quarantine and publication steps
+before advancing the checkpoint or publishing a new coverage epoch.
+
+A captured-book replay completed both the full census and covering
+catch-up for 4,252 receipts. It accepted 36 pages with no changed receipt
+bodies, published a new ready coverage epoch, and scheduled the next poll
+one day later. The replay used 74 local responses with simulated vendor
+windows and made zero provider requests or uploads.

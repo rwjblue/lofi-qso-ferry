@@ -245,6 +245,82 @@ test("narrow QRZ verification can repeat the complete selection for catch-up", a
   );
 });
 
+test("QRZ full catch-up verifies an ambiguous modified selection before publishing coverage", async (t) => {
+  const f = await fixture(t, "qrz");
+  assert.ok(f.plan.provider === "qrz");
+  f.plan.pageSize = 3;
+  const run = await f.begin();
+  const current = Array.from({ length: 4 }, (_, i) => ({
+    ...contact,
+    APP_QRZLOG_LOGID: String(i + 1),
+  }));
+  const options: string[] = [];
+  const fetcher: typeof fetch = async (_input, init) => {
+    const form = init?.body as URLSearchParams;
+    if (form.get("ACTION") === "STATUS") return status();
+    assert.equal(form.get("ACTION"), "FETCH");
+    const option = form.get("OPTION") ?? "";
+    options.push(option);
+    if (options.length === 1) return qrz([contact]);
+    if (option.includes("MODSINCE:"))
+      return new Response("RESULT=FAIL&COUNT=0");
+    const after = Number(/AFTERLOGID:(\d+)/.exec(option)?.[1]);
+    return qrz(
+      current
+        .filter((row) => Number(row.APP_QRZLOG_LOGID) >= after)
+        .slice(0, 3),
+    );
+  };
+  const reader = new InventoryRunner(f.runs, fetcher);
+  const baseline = await reader.step(await f.wakeup(run.id));
+  assert.equal(baseline.kind, "advanced");
+  assert.equal(baseline.phase, "catchup");
+  const checkpoint = (await f.inventory.snapshot("a", f.scope, "scan"))
+    ?.checkpoint;
+  const cover = await reader.step(await f.wakeup(run.id));
+  assert.equal(cover.kind, "advanced");
+  assert.equal(cover.phase, "catchup");
+  assert.equal(cover.usage?.requests, 3);
+  const reopened = new InventoryRunner(new InventoryRuns(f.inventory), fetcher);
+  const terminal = await reopened.step(await f.wakeup(run.id));
+  assert.equal(terminal.kind, "advanced");
+  assert.equal(terminal.phase, "quarantining");
+  assert.deepEqual(
+    (await f.inventory.snapshot("a", f.scope, "scan"))?.checkpoint,
+    checkpoint,
+  );
+  assert.equal(
+    (await f.runs.coverage("a", f.scope, "scan", "receipt", run.partition))
+      ?.state,
+    "collecting",
+  );
+  assert.equal(options.length, 4);
+  assert.match(options[1], /AFTERLOGID:0.*MODSINCE:/);
+  assert.equal(options[2], options[0]);
+  assert.match(options[3], /AFTERLOGID:4/);
+  assert.doesNotMatch(options[3], /MODSINCE:/);
+  const completedAfter = Date.now();
+  const completed = await f.finish(reopened, run.id);
+  assert.ok(completed.nextDueAt >= completedAfter + 86_400_000);
+  const coverage = await f.runs.coverage(
+    "a",
+    f.scope,
+    "scan",
+    "receipt",
+    run.partition,
+  );
+  assert.equal(coverage?.published_run_id, run.id);
+  assert.equal(coverage?.state, "ready");
+  assert.equal(
+    await f.db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_partition_membership WHERE state='present'",
+      )
+      .first("n"),
+    4,
+  );
+});
+
 test("LoTW runner keeps receipt checkpoints scoped and does not advance on an empty delta", async (t) => {
   const f = await fixture(t, "lotw");
   const run = await f.begin();

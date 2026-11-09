@@ -5,6 +5,7 @@
 #USAGE flag "--restart-lofi-source <run-id>" help="Replace a refused LoFi cursor with a full source scan"
 #USAGE flag "--resume-qrz-cover <run-id>" help="Requeue an eligible held QRZ covering delta"
 #USAGE flag "--resume-lotw-account <run-id>" help="Retry a held LoTW account delta with a larger report bound"
+#USAGE flag "--lofi-only" help="Drive reads for existing LoFi selections only"
 #USAGE flag "--poll-due" help="Also run the next poll for each selection due at startup"
 #USAGE flag "--max-requests <count>" help="Maximum provider requests for this invocation"
 #USAGE flag "--max-minutes <minutes>" help="Maximum baseline and comparison work time"

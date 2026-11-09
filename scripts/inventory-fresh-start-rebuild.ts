@@ -45,6 +45,7 @@ type Options = {
   restartLofiSource?: string;
   resumeQrzCover?: string;
   resumeLotwAccount?: string;
+  lofiOnly?: boolean;
   pollDue?: boolean;
   maxRequests?: number;
   maxDurationMs?: number;
@@ -314,6 +315,13 @@ export async function rebuildFreshStart(
   const selections = options.selections ?? [];
   if (!Array.isArray(selections) || selections.length > 32)
     throw new Error("inventory_fresh_start_selection_bound");
+  if (
+    options.lofiOnly &&
+    (selections.length ||
+      options.resumeQrzCover !== undefined ||
+      options.resumeLotwAccount !== undefined)
+  )
+    throw new Error("inventory_fresh_start_lofi_only_conflict");
   const started = Date.now();
   const pollDueBefore = options.pollDue ? started : undefined;
   const f = await openInventoryTrial(directory);
@@ -352,17 +360,23 @@ export async function rebuildFreshStart(
         selectionPlan(link, selection),
       );
     }
-    const lotwDatedPollsRestored = options.pollDue
-      ? await restoreLotwDatedPolls(store, tenant)
-      : 0;
-    const start = await startInventorySelections(store, 32);
-    if (start.failed)
-      throw new Error("inventory_fresh_start_enrollment_failed");
+    const lotwDatedPollsRestored =
+      options.pollDue && !options.lofiOnly
+        ? await restoreLotwDatedPolls(store, tenant)
+        : 0;
+    if (!options.lofiOnly) {
+      const start = await startInventorySelections(store, 32);
+      if (start.failed)
+        throw new Error("inventory_fresh_start_enrollment_failed");
+    }
     if (
       !(await store
         .statement(
-          "SELECT 1 FROM inventory_stream_jobs WHERE tenant=? LIMIT 1",
+          `SELECT 1 FROM inventory_stream_jobs j
+           JOIN inventory_scopes s USING(tenant,scope_id)
+           WHERE j.tenant=? AND (?=0 OR s.provider='lofi') LIMIT 1`,
           tenant,
+          Number(options.lofiOnly === true),
         )
         .first())
     )
@@ -384,6 +398,7 @@ export async function rebuildFreshStart(
       ...bounds,
       tenant,
       pollDueBefore,
+      lofiOnly: options.lofiOnly,
       sourcePaused: await sourceReadNeedsBearer(store, tenant, pollDueBefore),
       continueWithoutSource: true,
       async progress(counts) {
@@ -442,11 +457,15 @@ export async function rebuildFreshStart(
       stopReason:
         ["quiescent", "comparison_parked"].includes(driven.stopReason) &&
         coverage.results.some(
-          (row) => row.phase === "held" && row.reason !== "overflow_split",
+          (row) =>
+            (!options.lofiOnly || row.provider === "lofi") &&
+            row.phase === "held" &&
+            row.reason !== "overflow_split",
         )
           ? "selection_held"
           : driven.stopReason,
       requests: transport.metrics,
+      readScope: options.lofiOnly ? "lofi" : "account",
       lotwDatedPollsRestored,
       coverage: coverage.results,
       records: records.results,
@@ -477,6 +496,7 @@ if (
         "restart-lofi-source": { type: "string" },
         "resume-qrz-cover": { type: "string" },
         "resume-lotw-account": { type: "string" },
+        "lofi-only": { type: "boolean" },
         "poll-due": { type: "boolean" },
         "max-requests": { type: "string", default: "120" },
         "max-minutes": { type: "string", default: "20" },
@@ -493,6 +513,7 @@ if (
         restartLofiSource: values["restart-lofi-source"],
         resumeQrzCover: values["resume-qrz-cover"],
         resumeLotwAccount: values["resume-lotw-account"],
+        lofiOnly: values["lofi-only"],
         pollDue: values["poll-due"],
         maxRequests: Number(values["max-requests"]),
         maxDurationMs: Number(values["max-minutes"]) * 60_000,

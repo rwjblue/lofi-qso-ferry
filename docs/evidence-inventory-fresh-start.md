@@ -96,7 +96,7 @@ source scan on the same linked selection.
 
 ```sh
 mise run inventory-fresh-start-rebuild -- \
-  --rehearsal /path/to/closed-rehearsal --restart-lofi-source RUN_ID
+  --rehearsal /path/to/closed-rehearsal --lofi-only --restart-lofi-source RUN_ID
 ```
 
 The restart requires the durable write lock and an available bearer.
@@ -156,6 +156,29 @@ future after it finishes, so the invocation does not start a second poll.
 A plain continuation can finish work started by a request-limited poll.
 The coverage report includes the current run's mode alongside the state
 of the retained published selection.
+
+For a LoFi-only live continuation, select the existing source with
+`--lofi-only`. Once the backfill has published coverage, add
+`--poll-due` when the next LoFi poll is due.
+
+```sh
+mise run inventory-fresh-start-rebuild -- \
+  --rehearsal /path/to/closed-rehearsal --lofi-only --poll-due
+```
+
+This mode limits remote reads to LoFi and lets local comparison use
+the account's existing destination inventory. The report identifies
+the selected read scope and gives per-provider requests, coverage,
+comparison turns and elapsed time.
+
+In a private replay upgraded through migration 0114, one simulated
+LoFi response combined captured boundary records with newer records.
+The delta advanced the checkpoint, added 90 active contacts and
+kept coverage ready. It took three reader turns and 93 comparison
+turns in 13.5 seconds. Three due QRZ and LoTW selections were skipped
+and their jobs and inventory matched the starting copy. An immediate
+second invocation made zero requests. The replay used captured bodies
+and made zero external requests.
 
 With migration 0108 applied, use `--resume-qrz-cover <run-id>` to requeue
 a held QRZ covering delta in a write-locked rehearsal. Use the held

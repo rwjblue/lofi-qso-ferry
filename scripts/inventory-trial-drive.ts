@@ -35,6 +35,7 @@ type Options = {
   maxRequests: number;
   maxDurationMs: number;
   pollDueBefore?: number;
+  lofiOnly?: boolean;
   sourcePaused?: boolean;
   continueWithoutSource?: boolean;
   progress?: (value: Counts) => Promise<void>;
@@ -46,8 +47,14 @@ export async function driveInventoryTrial(
   transport: ReturnType<typeof createInventoryTrialTransport>,
   options: Options,
 ) {
-  const { tenant, maxRequests, maxDurationMs, pollDueBefore, progress } =
-    options;
+  const {
+    tenant,
+    maxRequests,
+    maxDurationMs,
+    pollDueBefore,
+    lofiOnly,
+    progress,
+  } = options;
   const { store } = runs.inventory;
   const reader = new InventoryRunner(runs, transport.fetch, {
     scheduled: true,
@@ -78,10 +85,12 @@ export async function driveInventoryTrial(
          JOIN inventory_scopes s ON (s.tenant,s.scope_id)=(j.tenant,j.scope_id)
          WHERE j.tenant=?1 AND (j.state='ready' OR j.state='idle' AND j.next_due_at<=?3)
            AND (?2=0 OR s.provider!='lofi' OR r.phase IN('quarantining','publishing'))
+           AND (?4=0 OR s.provider='lofi')
          ORDER BY j.next_due_at,j.scope_id,j.stream_id LIMIT 1`,
         tenant,
         Number(sourcePaused),
         pollDueBefore ?? null,
+        Number(lofiOnly === true),
       )
       .first<
         Omit<InventoryRunWakeup, "tenant" | "version"> & {

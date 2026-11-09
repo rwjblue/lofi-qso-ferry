@@ -304,6 +304,23 @@ test("a write-locked rebuild can finish and poll destinations while LoFi waits f
   assert.equal(reopened.stopReason, "source_authentication_required");
   assert.equal(reopened.requests.requests, 0);
   assert.deepEqual(reopened.coverage, report.coverage);
+  const sourceOnly = await rebuildFreshStart(
+    {
+      rehearsal: directory,
+      lofiOnly: true,
+      pollDue: true,
+      maxRequests: 1,
+      maxDurationMs: 1000,
+    },
+    {
+      fetcher: async () =>
+        assert.fail("a LoFi-only continuation cannot poll the due QRZ book"),
+    },
+  );
+  assert.equal(sourceOnly.stopReason, "source_authentication_required");
+  assert.equal(sourceOnly.readScope, "lofi");
+  assert.equal(sourceOnly.requests.requests, 0);
+  assert.deepEqual(sourceOnly.coverage, report.coverage);
   qrzOptions.length = 0;
   const polled = await rebuildFreshStart(
     {

@@ -15,7 +15,10 @@ import {
   QRZ_AMBIGUOUS_EMPTY_RETRY_DELAY,
 } from "../src/history-inventory.ts";
 import { Store } from "../src/store.ts";
-import { VendorDeferredError } from "../src/vendor-requests.ts";
+import {
+  VENDOR_POLICIES,
+  VendorDeferredError,
+} from "../src/vendor-requests.ts";
 import { database, seed } from "./helpers.ts";
 
 const record: AdifRecord = {
@@ -1151,9 +1154,15 @@ test("partial history, shared request-budget deferrals, and missing read credent
         query: { username: "synthetic", password: "synthetic" },
       })
     ).run();
-    const window = Math.floor(now / 300000) * 300000;
+    const { windowMs, background } = VENDOR_POLICIES.lotw;
+    const window = Math.floor(now / windowMs) * windowMs;
     await store
-      .statement("INSERT INTO vendor_requests VALUES('lotw',?,8,8,0)", window)
+      .statement(
+        "INSERT INTO vendor_requests VALUES('lotw',?,?,?,0)",
+        window,
+        background,
+        background,
+      )
       .run();
     await assert.rejects(
       historyCandidates(store, input, {

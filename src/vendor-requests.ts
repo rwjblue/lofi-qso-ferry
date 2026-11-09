@@ -8,12 +8,12 @@ export interface VendorPolicy {
   background: number;
 }
 
-/** Application limits, deliberately smaller for work that can wait. */
+/** Application limits. LoFi reserves a separate foreground allowance. */
 export const VENDOR_POLICIES: Readonly<Record<Vendor, Readonly<VendorPolicy>>> =
   {
     lofi: { windowMs: 300_000, total: 24, background: 4 },
-    qrz: { windowMs: 300_000, total: 120, background: 24 },
-    lotw: { windowMs: 300_000, total: 40, background: 8 },
+    qrz: { windowMs: 60_000, total: 60, background: 60 },
+    lotw: { windowMs: 60_000, total: 60, background: 60 },
   };
 
 export class VendorDeferredError extends Error {

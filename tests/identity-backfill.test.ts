@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type AdifRecord, serializeAdifRecord } from "../src/adif.ts";
+import { createFailureDiagnostics } from "../src/failure-diagnostics.ts";
 import { backfillLegacyQrzIdentity } from "../src/identity-backfill.ts";
 import { destinationIdentityClaim } from "../src/identity-claims.ts";
-import { createFailureDiagnostics } from "../src/failure-diagnostics.ts";
 import { tick } from "../src/service.ts";
 import type { Store } from "../src/store.ts";
+import { VENDOR_POLICIES } from "../src/vendor-requests.ts";
 import { database, seed } from "./helpers.ts";
 import {
   applyAdditionalMigrations,
@@ -355,10 +356,13 @@ test("legacy QRZ background budget and read errors are bounded, redacted and do 
       },
     });
     assert.equal(failure.errors, 1);
+    const { windowMs, background } = VENDOR_POLICIES.qrz;
     await h.store
       .statement(
-        "UPDATE vendor_requests SET background_requests=24,requests=24,window_start=? WHERE vendor='qrz'",
-        Math.floor((NOW + RETRY) / RETRY) * RETRY,
+        "UPDATE vendor_requests SET background_requests=?,requests=?,window_start=? WHERE vendor='qrz'",
+        background,
+        background,
+        Math.floor((NOW + RETRY) / windowMs) * windowMs,
       )
       .run();
     const budget = await backfillLegacyQrzIdentity(h.store, {

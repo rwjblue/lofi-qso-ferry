@@ -10,7 +10,10 @@ import {
   historyCandidatesBatch,
 } from "../src/history-inventory.ts";
 import { QrzError } from "../src/qrz.ts";
-import { VendorDeferredError } from "../src/vendor-requests.ts";
+import {
+  VENDOR_POLICIES,
+  VendorDeferredError,
+} from "../src/vendor-requests.ts";
 import { applyMigration, database, seed } from "./helpers.ts";
 
 const record: AdifRecord = {
@@ -304,13 +307,17 @@ test("an actual LoTW malformed report is shared as a pending retry without chang
 for (const cause of ["auth", "vendor_cooldown", "budget"] as const) {
   test(`${cause} retains its existing classification without a partition retry marker`, async (t) => {
     const h = await fixture(t);
-    if (cause === "budget")
+    if (cause === "budget") {
+      const { windowMs, background } = VENDOR_POLICIES.qrz;
       await h.store
         .statement(
-          "INSERT INTO vendor_requests VALUES('qrz',?,24,24,0)",
-          Math.floor(h.now / 300_000) * 300_000,
+          "INSERT INTO vendor_requests VALUES('qrz',?,?,?,0)",
+          Math.floor(h.now / windowMs) * windowMs,
+          background,
+          background,
         )
         .run();
+    }
     let calls = 0;
     const fetcher = async () => {
       calls++;

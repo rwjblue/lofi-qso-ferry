@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { VendorPolicy } from "../src/vendor-requests.ts";
 import {
+  VENDOR_POLICIES,
   VendorDeferredError,
   vendorFetch,
   vendorRequestsAvailable,
@@ -82,52 +83,77 @@ test("availability hints honor priority, cooldown and rollover without reserving
         .first<number>("n"),
       0,
     );
-    await h.store
-      .statement("INSERT INTO vendor_requests VALUES('qrz',0,24,24,0)")
-      .run();
-    assert.equal(
-      await vendorRequestsAvailable(h.store, "qrz", "background", 100),
-      false,
-    );
-    assert(await vendorRequestsAvailable(h.store, "qrz", "live", 100));
-    await h.store
-      .statement(
-        "UPDATE vendor_requests SET cooldown_until=600000 WHERE vendor='qrz'",
-      )
-      .run();
-    assert.equal(
-      await vendorRequestsAvailable(h.store, "qrz", "live", 300000),
-      false,
-    );
-    await h.store
-      .statement(
-        "UPDATE vendor_requests SET requests=120,cooldown_until=0 WHERE vendor='qrz'",
-      )
-      .run();
-    assert.equal(
-      await vendorRequestsAvailable(h.store, "qrz", "live", 100),
-      false,
-    );
-    assert(await vendorRequestsAvailable(h.store, "qrz", "background", 300000));
-    // A previously positive hint cannot authorize a request after another
-    // invocation consumes the new window's allowance.
-    await h.store
-      .statement(
-        "UPDATE vendor_requests SET window_start=300000 WHERE vendor='qrz'",
-      )
-      .run();
-    await assert.rejects(
-      vendorFetch(
-        h.store,
-        "qrz",
-        async () => assert.fail("Exhausted quota reached transport"),
-        {
-          priority: "background",
-          now: 300000,
-        },
-      )(endpoint),
-      VendorDeferredError,
-    );
+    assert.deepEqual(VENDOR_POLICIES.lofi, {
+      windowMs: 300_000,
+      total: 24,
+      background: 4,
+    });
+    for (const vendor of ["qrz", "lotw"] as const) {
+      assert.deepEqual(VENDOR_POLICIES[vendor], {
+        windowMs: 60_000,
+        total: 60,
+        background: 60,
+      });
+      // A persisted five-minute window begins on a minute boundary. Preserve
+      // its count for that first minute and preserve cooldown across rollover.
+      await h.store
+        .statement(
+          "INSERT INTO vendor_requests VALUES(?,300000,59,59,0)",
+          vendor,
+        )
+        .run();
+      await vendorFetch(h.store, vendor, async () => new Response("ok"), {
+        priority: "background",
+        now: 300_100,
+      })(endpoint);
+      assert.equal(
+        await vendorRequestsAvailable(h.store, vendor, "live", 300_100),
+        false,
+      );
+      assert.equal(
+        await vendorRequestsAvailable(h.store, vendor, "background", 300_100),
+        false,
+      );
+      await assert.rejects(
+        vendorFetch(
+          h.store,
+          vendor,
+          async () => assert.fail("Exhausted quota reached transport"),
+          {
+            priority: "background",
+            now: 300_100,
+          },
+        )(endpoint),
+        (error) =>
+          error instanceof VendorDeferredError && error.retryAt === 360_000,
+      );
+      await h.store
+        .statement(
+          "UPDATE vendor_requests SET cooldown_until=410000 WHERE vendor=?",
+          vendor,
+        )
+        .run();
+      assert.equal(
+        await vendorRequestsAvailable(h.store, vendor, "live", 360_000),
+        false,
+      );
+      assert(
+        await vendorRequestsAvailable(h.store, vendor, "background", 410_000),
+      );
+      await vendorFetch(h.store, vendor, async () => new Response("ok"), {
+        priority: "background",
+        now: 410_000,
+      })(endpoint);
+      assert.deepEqual(
+        await h.store
+          .statement(
+            "SELECT window_start,requests,background_requests FROM vendor_requests WHERE vendor=?",
+            vendor,
+          )
+          .first(),
+        { window_start: 360_000, requests: 1, background_requests: 1 },
+      );
+    }
   } finally {
     await h.mf.dispose();
   }

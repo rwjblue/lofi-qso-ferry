@@ -152,12 +152,21 @@ async function changedHistoricalGrids(
       `WITH requested AS MATERIALIZED (
          SELECT CAST(j.key AS INTEGER) AS ordinal,p.scope_id,p.payload_id,p.connection_id,p.encrypted_bytes
          FROM json_each(?1) j CROSS JOIN inventory_historical_associations a
+         LEFT JOIN inventory_lotw_grid_updates u ON ?3='lotw'
+           AND (u.tenant,u.association_id,u.source_payload)=(a.tenant,a.id,(
+             SELECT source_payload FROM inventory_lotw_grid_updates
+             WHERE (tenant,association_id)=(a.tenant,a.id) AND state='observed'
+             ORDER BY claimed_at DESC,source_payload DESC LIMIT 1
+           ))
          CROSS JOIN comparison_projection_payloads p
          WHERE (a.tenant,a.provider,a.book_identity,a.source_identity,a.record_key)=
            (?2,?3,?4,json_extract(j.value,'$[0]'),json_extract(j.value,'$[1]'))
-           AND a.source_payload!=json_extract(j.value,'$[2]')
-           AND a.remote_record_key=json_extract(j.value,'$[3]')
-           AND (p.tenant,p.scope_id,p.payload_id)=(a.tenant,a.source_scope,a.source_payload)
+           AND coalesce(u.source_payload,a.source_payload)!=json_extract(j.value,'$[2]')
+           AND (a.remote_record_key=json_extract(j.value,'$[3]') OR (?3='lotw'
+             AND a.remote_record_key GLOB 'lotw-variant-v1:*'
+             AND substr(a.remote_record_key,1,60)=substr(json_extract(j.value,'$[3]'),1,60)))
+           AND (p.tenant,p.scope_id,p.payload_id)=
+             (a.tenant,coalesce(u.source_scope,a.source_scope),coalesce(u.source_payload,a.source_payload))
        ), budget AS MATERIALIZED (SELECT sum(encrypted_bytes) AS bytes FROM requested)
        SELECT r.ordinal,r.payload_id,r.connection_id,r.encrypted_bytes,p.envelope
        FROM budget b CROSS JOIN requested r
@@ -881,9 +890,9 @@ export class InventoryMatchingWorkspace {
           reason:
             details.state === "adopted_existing"
               ? null
-              : details.state === "history_mismatch"
-                ? "operating_details_differ"
-                : "operating_details_unavailable",
+              : details.state === "missing_current_identity"
+                ? "remote_identity_unavailable"
+                : details.code,
         };
       },
     );

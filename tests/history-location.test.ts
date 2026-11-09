@@ -65,6 +65,7 @@ for (const [field, maximum] of [
           ]),
           {
             state: "history_ambiguous",
+            code: `historical_${field.toLowerCase()}_unavailable`,
             reason: `Operating location ${field} is invalid or unavailable`,
           },
           `${field}: ${JSON.stringify([local, observed])}`,
@@ -76,6 +77,7 @@ for (const [field, maximum] of [
   test(`${field} distinguishes missing evidence from valid unequal zones`, () => {
     assert.deepEqual(matchQrzHistory({ ...source, [field]: "1" }, [remote]), {
       state: "history_ambiguous",
+      code: `historical_${field.toLowerCase()}_unavailable`,
       reason: `Operating location ${field} is invalid or unavailable`,
     });
     assert.deepEqual(
@@ -84,6 +86,7 @@ for (const [field, maximum] of [
       ]),
       {
         state: "history_mismatch",
+        code: `historical_${field.toLowerCase()}_differs`,
         reason: `Operating location ${field} differs or is absent`,
       },
     );
@@ -106,18 +109,34 @@ test("numeric zone normalization leaves unrelated history conflicts intact", () 
     ["MY_CNTY", "CT,Hartford", "CT,Tolland"],
     ["FREQ", "14.074", "14.075"],
   ]) {
-    assert.equal(
-      matchQrzHistory({ ...expected, [field]: local }, [
-        { ...observed, [field]: actual },
-      ]).state,
-      "history_mismatch",
-      field,
-    );
+    const result = matchQrzHistory({ ...expected, [field]: local }, [
+      { ...observed, [field]: actual },
+    ]);
+    assert.equal(result.state, "history_mismatch", field);
+    assert.equal(result.code, `historical_${field.toLowerCase()}_differs`);
   }
   assert.equal(
     matchQrzHistory(expected, [observed, observed]).state,
     "history_ambiguous",
   );
+});
+
+test("the first blocking field determines the primary historical reason", () => {
+  const expected = { ...source, FREQ: "14.074", MY_LAT: "N041 00.000" };
+  const observed = { ...remote, FREQ: "14.075", MY_LAT: "N042 00.000" };
+  const result = matchQrzHistory(expected, [observed]);
+  assert.equal(result.state, "history_mismatch");
+  assert.equal(result.code, "historical_freq_differs");
+
+  const latitudeOnly = matchQrzHistory(expected, [
+    { ...observed, FREQ: "14.074" },
+  ]);
+  assert.equal(latitudeOnly.state, "history_mismatch");
+  assert.equal(latitudeOnly.code, "historical_my_lat_differs");
+
+  const noFrequency = matchQrzHistory(expected, [{ ...observed, FREQ: "" }]);
+  assert.equal(noFrequency.state, "history_ambiguous");
+  assert.equal(noFrequency.code, "historical_freq_unavailable");
 });
 
 test("numeric zone normalization does not relax time or mode identity", () => {
@@ -127,6 +146,7 @@ test("numeric zone normalization does not relax time or mode identity", () => {
   assert.equal(sameQrzIdentity(expected, minute), false);
   assert.deepEqual(matchQrzHistory(expected, [minute]), {
     state: "history_ambiguous",
+    code: "historical_remote_time_precision",
     reason:
       "Destination history has minute-only TIME_ON precision; source includes seconds and requires association review",
   });

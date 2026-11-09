@@ -749,9 +749,35 @@ export function sameQrzIdentity(left: AdifRecord, right: AdifRecord): boolean {
       (left[field] ?? "").toUpperCase() === (right[field] ?? "").toUpperCase(),
   );
 }
+const historicalFrequencyFields = ["FREQ", "FREQ_RX"] as const;
+const historicalLocationFields = [
+  "MY_GRIDSQUARE",
+  "MY_STATE",
+  "MY_CNTY",
+  "MY_DXCC",
+  "MY_LAT",
+  "MY_LON",
+  "MY_CQ_ZONE",
+  "MY_ITU_ZONE",
+  "MY_IOTA",
+] as const;
+type HistoricalOperatingField =
+  | (typeof historicalFrequencyFields)[number]
+  | (typeof historicalLocationFields)[number];
+type HistoricalOperatingIssue = "differs" | "unavailable";
+type HistoricalMatchCode =
+  | `historical_${Lowercase<HistoricalOperatingField>}_${HistoricalOperatingIssue}`
+  | "historical_source_location_unavailable"
+  | "historical_remote_time_precision"
+  | "historical_exact_identity_unavailable";
+
 export type QrzMatch =
   | { state: "missing_current_identity" }
-  | { state: "history_ambiguous" | "history_mismatch"; reason: string }
+  | {
+      state: "history_ambiguous" | "history_mismatch";
+      code: HistoricalMatchCode;
+      reason: string;
+    }
   | { state: "adopted_existing"; record: AdifRecord };
 function normalizedFrequency(value: string): string | null {
   if (
@@ -782,6 +808,7 @@ export function matchQrzHistory(
   )
     return {
       state: "history_ambiguous",
+      code: "historical_source_location_unavailable",
       reason: "Source operating location evidence is unavailable",
     };
   const exact = candidates.filter((record) => sameQrzIdentity(source, record));
@@ -796,11 +823,13 @@ export function matchQrzHistory(
     )
       return {
         state: "history_ambiguous",
+        code: "historical_remote_time_precision",
         reason:
           "Destination history has minute-only TIME_ON precision; source includes seconds and requires association review",
       };
     return {
       state: "history_ambiguous",
+      code: "historical_exact_identity_unavailable",
       reason: "No unique exact identity, including time precision and mode",
     };
   }
@@ -843,7 +872,7 @@ function operatingEvidenceMismatch(
   source: AdifRecord,
   remote: AdifRecord,
 ): Extract<QrzMatch, { reason: string }> | null {
-  for (const field of ["FREQ", "FREQ_RX"])
+  for (const field of historicalFrequencyFields)
     if (source[field]) {
       const local = normalizedFrequency(source[field]);
       const observed = remote[field]
@@ -852,25 +881,17 @@ function operatingEvidenceMismatch(
       if (!local || !observed)
         return {
           state: "history_ambiguous",
+          code: historicalFieldCode(field, "unavailable"),
           reason: `Frequency evidence ${field} is invalid or unavailable`,
         };
       if (local !== observed)
         return {
           state: "history_mismatch",
+          code: historicalFieldCode(field, "differs"),
           reason: `Operating frequency ${field} differs`,
         };
     }
-  for (const field of [
-    "MY_GRIDSQUARE",
-    "MY_STATE",
-    "MY_CNTY",
-    "MY_DXCC",
-    "MY_LAT",
-    "MY_LON",
-    "MY_CQ_ZONE",
-    "MY_ITU_ZONE",
-    "MY_IOTA",
-  ]) {
+  for (const field of historicalLocationFields) {
     if (field === "MY_CQ_ZONE" || field === "MY_ITU_ZONE") {
       if (!Object.hasOwn(source, field)) continue;
       const maximum = field === "MY_CQ_ZONE" ? 40 : 90;
@@ -879,11 +900,13 @@ function operatingEvidenceMismatch(
       if (local === null || observed === null)
         return {
           state: "history_ambiguous",
+          code: historicalFieldCode(field, "unavailable"),
           reason: `Operating location ${field} is invalid or unavailable`,
         };
       if (local !== observed)
         return {
           state: "history_mismatch",
+          code: historicalFieldCode(field, "differs"),
           reason: `Operating location ${field} differs or is absent`,
         };
       continue;
@@ -895,8 +918,20 @@ function operatingEvidenceMismatch(
     )
       return {
         state: remote[field] ? "history_mismatch" : "history_ambiguous",
+        code: historicalFieldCode(
+          field,
+          remote[field] ? "differs" : "unavailable",
+        ),
         reason: `Operating location ${field} differs or is absent`,
       };
   }
   return null;
+}
+
+function historicalFieldCode(
+  field: HistoricalOperatingField,
+  issue: HistoricalOperatingIssue,
+): HistoricalMatchCode {
+  const normalized = field.toLowerCase() as Lowercase<HistoricalOperatingField>;
+  return `historical_${normalized}_${issue}`;
 }

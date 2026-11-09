@@ -418,6 +418,15 @@ test("managed delivery sends 100 LoTW members, recovers partial receipts, and ad
   assert.equal(staged.sourceProofProcessed, 1);
   assert.equal(staged.lotwSendQueued, 1);
   assert.equal(staged.failed, 0);
+  assert.deepEqual(
+    await proofJobs.enqueue("a", sourceScope, [recordKeys[0]], {
+      provider: "lotw",
+      destination: destinationScope,
+      purpose: "lotw_grid_correction",
+    }),
+    { kind: "held", reason: "review_unavailable" },
+    "a fresh-delivery proof does not authorize a correction",
+  );
   assert.deepEqual(await planner.stage("a", sourceScope, job.job_id), {
     kind: "idle",
   });

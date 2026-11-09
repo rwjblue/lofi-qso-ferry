@@ -13,6 +13,7 @@ import {
   type InventoryReceipt,
 } from "./inventory-ingestion.ts";
 import { lofiRecurringDueAt } from "./inventory-lofi-schedule.ts";
+import { retireVerifiedLotwVariants } from "./inventory-lotw-grid-supersession.ts";
 import { lotwRecurringDueAt } from "./inventory-lotw-schedule.ts";
 import {
   inventoryReadAdmission,
@@ -367,7 +368,24 @@ export class InventoryRunner {
             )
           : 0;
       let receipt: InventoryReceipt;
+      const completeDatedLotw =
+        this.options.scheduled &&
+        query.provider === "lotw" &&
+        context.run.mode === "full" &&
+        context.run.phase === "collecting" &&
+        observedComplete &&
+        !("kind" in query.query) &&
+        query.query.receivedSince === undefined;
       try {
+        const observations = completeDatedLotw
+          ? await retireVerifiedLotwVariants(
+              store,
+              context.run.tenant,
+              context.run.scope,
+              result.requestStartedAt,
+              result.observations,
+            )
+          : result.observations;
         const forwardBirth =
           this.options.scheduled &&
           query.provider === "lofi" &&
@@ -385,7 +403,7 @@ export class InventoryRunner {
             )
             .first()) !== null;
         const prepared = await this.runs.preparePage(context, lease, {
-          observations: result.observations,
+          observations,
           requestStartedAt: result.requestStartedAt,
           requestBinding: result.binding.queryBinding,
           nextResume,
@@ -411,7 +429,7 @@ export class InventoryRunner {
       } catch (error) {
         if (
           query.provider === "lotw" &&
-          "kind" in query.query &&
+          ("kind" in query.query || completeDatedLotw) &&
           error instanceof InventoryIngestionError &&
           [
             "inventory_page_too_large",

@@ -172,6 +172,11 @@ export async function inventoryDashboardSummary(
          GROUP BY s.provider,w.hold_reason
        UNION ALL SELECT provider,'deliveries',state,reason,count(*),min(updated_at),min(dueAt)
          FROM delivery GROUP BY provider,state,reason
+       UNION ALL SELECT 'lotw','deliveries','lotw_grid_update_'||u.state,u.reason,
+         count(*),min(coalesce(u.checked_at,u.claimed_at)),
+         min(CASE WHEN u.state IN('uncertain','submitted','deferred') THEN u.due_at END)
+         FROM inventory_lotw_grid_updates u WHERE 1 ${filter("u")}
+         GROUP BY u.state,u.reason
        ORDER BY provider,section,state,reason`,
       )
       .bind(...args),

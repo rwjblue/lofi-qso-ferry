@@ -31,6 +31,16 @@ check and sends individual INSERTs. LoTW sends a signed compatible
 cohort and resolves individual receipts. An uncertain claim stays
 reserved until exact readback or explicit reconciliation settles it.
 
+Set `LOTW_GRID_CORRECTIONS_ENABLED=true` to allow automatic grid
+corrections in managed mode with the existing LoTW write gates and
+rollout scope. This applies to a subsequent change in the LoFi grid
+of an adopted contact. The correction uses a new signed file with the
+same remote identity. Ferry currently limits automation to single-grid
+US and Canadian station locations it can reconstruct from the LoTW
+report. A claimed update goes to readback even if the upload response
+was lost. The LoTW dashboard displays correction outcomes, and
+`inventory_lotw_grid_updates` retains their status and reason codes.
+
 Ferry allows 60 requests per minute per provider for QRZ and LoTW.
 Provider throttling can extend the shared cooldown. Distinguish local
 budget waits from provider cooldown in admin before adjusting pacing.

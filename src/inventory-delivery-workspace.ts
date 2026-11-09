@@ -111,6 +111,7 @@ export class InventoryDeliveryWorkspace {
         review.projection_payload !== contact.projectionPayload ||
         !contact.routes.some(
           (route) =>
+            route.purpose === undefined &&
             route.provider === review.provider &&
             route.destination === destination,
         )

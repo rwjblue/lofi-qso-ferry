@@ -1,7 +1,7 @@
 import type { InventoryRuns } from "./inventory-runs.ts";
 import { InventorySourceProofDrain } from "./inventory-source-proof-drain.ts";
 import {
-  type InventorySourceProofRoute,
+  type InventorySourceProofRequest,
   type InventorySourceProofScope,
   type InventorySourceProofSnapshot,
   InventorySourceProofWorkspace,
@@ -44,6 +44,13 @@ const PROOF_ATTEMPTS = 4;
 const leaseSql = `EXISTS(SELECT 1 FROM leases l WHERE l.tenant=? AND l.scope=? AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000)`;
 const leaseArgs = ({ tenant, scope, token, fence }: Lease) =>
   [tenant, scope, token, fence] as const;
+const sameRoute = (
+  left: InventorySourceProofRequest,
+  right: InventorySourceProofRequest,
+) =>
+  left.provider === right.provider &&
+  left.destination === right.destination &&
+  left.purpose === right.purpose;
 
 /** Durable collection, canonical drain, and proof publication. */
 export class InventorySourceProofJobs {
@@ -109,7 +116,7 @@ export class InventorySourceProofJobs {
     tenant: string,
     scope: string,
     keys: readonly string[],
-    route?: Pick<InventorySourceProofRoute, "provider" | "destination">,
+    route?: InventorySourceProofRequest,
   ) {
     const selected = [...keys];
     const covers = (snapshot: InventorySourceProofSnapshot) =>
@@ -117,12 +124,9 @@ export class InventorySourceProofJobs {
         snapshot.contacts.some(
           (contact) =>
             contact.key === key &&
-            (!route ||
-              contact.routes.some(
-                (value) =>
-                  value.provider === route.provider &&
-                  value.destination === route.destination,
-              )),
+            contact.routes.some((value) =>
+              route ? sameRoute(value, route) : value.purpose === undefined,
+            ),
         ),
       );
     const lease = await this.store.claim(
@@ -152,7 +156,7 @@ export class InventorySourceProofJobs {
       }
       const result = await new InventorySourceProofWorkspace(
         this.store,
-      ).capture(tenant, scope, selected);
+      ).capture(tenant, scope, selected, Date.now(), route);
       if (result.kind === "held") return result;
       const snapshot = result.snapshot;
       if (route && !covers(snapshot))
@@ -395,12 +399,17 @@ export class InventorySourceProofJobs {
     const receipt = await drain.observed(snapshot.source, finishedAt);
     if (!receipt || receipt.run_id !== runId)
       return this.hold(job, lease, "drain_unqualified");
+    const route = snapshot.contacts[0]?.routes.find(
+      (route) => route.purpose === "lotw_grid_correction",
+    );
     const refreshed = await new InventorySourceProofWorkspace(
       this.store,
     ).capture(
       job.tenant,
       job.scope_id,
       snapshot.contacts.map(({ key }) => key),
+      now,
+      route,
     );
     if (
       refreshed.kind !== "captured" ||
@@ -416,11 +425,7 @@ export class InventorySourceProofJobs {
           original.projectionPayload !== current.projectionPayload ||
           original.topologyVersion !== current.topologyVersion ||
           !original.routes.some((route) =>
-            current.routes.some(
-              (value) =>
-                route.provider === value.provider &&
-                route.destination === value.destination,
-            ),
+            current.routes.some((value) => sameRoute(route, value)),
           )
         );
       })

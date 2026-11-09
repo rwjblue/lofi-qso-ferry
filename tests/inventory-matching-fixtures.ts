@@ -68,6 +68,7 @@ export async function matchingFixture(
       "0061_inventory_matching_coverage_clocks.sql",
       "0065_inventory_matching_coverage_recovery.sql",
       "0051_inventory_historical_ownership.sql",
+      "0140_inventory_lotw_grid_updates.sql",
     ])
       await applyMigration(f.db, name);
   const provider = options.provider ?? "qrz";

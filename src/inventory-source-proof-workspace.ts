@@ -33,9 +33,14 @@ export interface InventorySourceProofScope {
 export interface InventorySourceProofRoute {
   provider: "qrz" | "lotw";
   destination: string;
+  purpose?: "lotw_grid_correction";
   result_set: string;
   result_version: number;
 }
+export type InventorySourceProofRequest = Pick<
+  InventorySourceProofRoute,
+  "provider" | "destination" | "purpose"
+>;
 interface ReviewedContact extends InventorySourceProofRoute {
   record_key: string;
   projection_version: number;
@@ -95,8 +100,10 @@ export class InventorySourceProofWorkspace {
     scope: string,
     contactKeys: readonly string[],
     now = Date.now(),
+    route?: InventorySourceProofRequest,
   ) {
     const keys = [...contactKeys].sort();
+    const correction = route?.purpose === "lotw_grid_correction";
     if (
       !identifier(tenant) ||
       !identifier(scope) ||
@@ -104,7 +111,9 @@ export class InventorySourceProofWorkspace {
       keys.length > INVENTORY_LOTW_BATCH_LIMIT ||
       keys.some((key) => !identifier(key)) ||
       new Set(keys).size !== keys.length ||
-      !stamp(now)
+      !stamp(now) ||
+      (correction &&
+        (route.provider !== "lotw" || !identifier(route.destination)))
     )
       throw new Error("invalid_inventory_source_proof_selection");
     const selected = canonical(keys);
@@ -115,8 +124,24 @@ export class InventorySourceProofWorkspace {
           tenant,
           scope,
         ),
-        this.store.statement(
-          `WITH chosen AS MATERIALIZED(
+        correction
+          ? this.store.statement(
+              `SELECT b.record_key,b.destination,'lotw' AS provider,b.result_set,b.result_version,
+                  b.projection_version,b.projection_payload,p.topology_version,
+                  max(b.derived_at,p.derived_at)+s.quiet_minutes*60000 AS eligible_after
+           FROM json_each(?1) x CROSS JOIN inventory_lotw_grid_correction_candidates b
+           JOIN inventory_source_proof_scope s ON (s.tenant,s.scope_id,s.generation_id)=(b.tenant,b.source_scope,b.generation_id)
+           JOIN comparison_projections p ON (p.tenant,p.generation_id,p.scope_id,p.record_key,p.facet,p.version,p.payload_id,p.state)
+             =(b.tenant,b.generation_id,b.source_scope,b.record_key,'source',b.projection_version,b.projection_payload,'ready')
+           WHERE (b.tenant,b.source_scope,b.destination,b.record_key)=(?2,?3,?4,x.value)
+           ORDER BY b.record_key LIMIT ${INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT + 1}`,
+              selected,
+              tenant,
+              scope,
+              route.destination,
+            )
+          : this.store.statement(
+              `WITH chosen AS MATERIALIZED(
            SELECT b.record_key,b.destination,b.provider,b.result_set,b.result_version,
                   b.projection_version,b.projection_payload,p.topology_version,
                   max(b.proof_not_before,p.derived_at+s.quiet_minutes*60000) AS eligible_after
@@ -132,10 +157,10 @@ export class InventorySourceProofWorkspace {
            WHERE NOT EXISTS(SELECT 1 FROM inventory_match_stale_sets stale WHERE stale.tenant=?2 AND stale.set_id=c.result_set)
          )
          SELECT c.* FROM chosen c JOIN valid v USING(result_set) ORDER BY c.record_key,c.destination`,
-          selected,
-          tenant,
-          scope,
-        ),
+              selected,
+              tenant,
+              scope,
+            ),
         this.store.statement(
           `WITH source AS MATERIALIZED(SELECT * FROM inventory_source_proof_scope WHERE tenant=?2 AND scope_id=?3),
          parents AS MATERIALIZED(
@@ -288,6 +313,7 @@ export class InventorySourceProofWorkspace {
           ({ provider, destination, result_set, result_version }) => ({
             provider,
             destination,
+            ...(correction ? { purpose: "lotw_grid_correction" as const } : {}),
             result_set,
             result_version,
           }),

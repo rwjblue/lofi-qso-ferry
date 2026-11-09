@@ -18,13 +18,16 @@ import {
   publishInventoryRecoveryWakeups,
 } from "./inventory-delivery-recovery.ts";
 import {
-  type InventoryDeliveryEnvironment,
   InventorySendQueue,
   isInventorySendWakeup,
 } from "./inventory-delivery-send.ts";
 import { InventoryIngestion } from "./inventory-ingestion.ts";
 import { runLotwConfirmationSchedule } from "./inventory-lotw-confirmation-schedule.ts";
 import { InventoryLotwDispatch } from "./inventory-lotw-dispatch.ts";
+import {
+  InventoryLotwGridUpdates,
+  type LotwGridUpdateEnvironment,
+} from "./inventory-lotw-grid-updates.ts";
 import { InventoryLotwReadback } from "./inventory-lotw-readback.ts";
 import { collectInventoryMatchProofs } from "./inventory-match-retention.ts";
 import {
@@ -69,7 +72,7 @@ const hostedMode = {
   managed: "inventory_managed",
 } as const;
 
-type InventoryHostedEnvironment = InventoryDeliveryEnvironment & {
+type InventoryHostedEnvironment = LotwGridUpdateEnvironment & {
   INVENTORY_BODY_ARCHIVE?: InventoryBodyArchive;
 };
 
@@ -126,6 +129,13 @@ export async function runHostedScheduled(
     env.INVENTORY_QUEUE,
   );
   const proofJobs = new InventorySourceProofJobs(runs);
+  const lotwGridUpdates = await new InventoryLotwGridUpdates(
+    store,
+    proofJobs,
+    options.inventoryFetch,
+  )
+    .step(env)
+    .catch(() => ({ failed: true as const }));
   const sendProviders = inventoryShadowProviders.filter(
     (provider) => mode === "managed" || mode === `selected_${provider}`,
   );
@@ -237,6 +247,7 @@ export async function runHostedScheduled(
     calendarRegistration,
     lotwAccountRegistration,
     lotwConfirmations,
+    lotwGridUpdates,
     overflowRegistration,
     lotwDatedPollsRestored,
     starts,

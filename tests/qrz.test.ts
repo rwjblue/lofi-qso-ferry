@@ -333,6 +333,7 @@ test("a single compatible minute-only history record gets a precision review rea
     assert.equal(sameQrzIdentity(current, minuteOnly), false);
     assert.deepEqual(matchQrzHistory(current, [minuteOnly]), {
       state: "history_ambiguous",
+      code: "historical_remote_time_precision",
       reason:
         "Destination history has minute-only TIME_ON precision; source includes seconds and requires association review",
     });
@@ -362,6 +363,7 @@ test("time precision review does not hide competing, invalid or otherwise confli
     const match = matchQrzHistory(current, [...candidates]);
     assert.equal(match.state, "history_ambiguous");
     assert("reason" in match);
+    assert.equal(match.code, "historical_exact_identity_unavailable");
     assert.equal(
       match.reason,
       "No unique exact identity, including time precision and mode",

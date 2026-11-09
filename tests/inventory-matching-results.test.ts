@@ -391,7 +391,7 @@ test("operating-detail differences and missing location remain distinct from a h
     assert.equal(
       (await f.matches.current("a", "destination", f.selected)).results[0]
         .reason,
-      "operating_details_differ",
+      "historical_freq_differs",
     );
   } finally {
     await f.mf.dispose();
@@ -402,14 +402,14 @@ test("operating-detail differences and missing location remain distinct from a h
   try {
     assert.equal(
       missing.page.results[0].reason,
-      "operating_details_unavailable",
+      "historical_source_location_unavailable",
     );
     await missing.matches.publish(missing.page, missing.lease);
-    assert.equal(
-      (await missing.matches.current("a", "destination", missing.selected))
-        .results[0].state,
-      "incomplete",
-    );
+    const {
+      results: [result],
+    } = await missing.matches.current("a", "destination", missing.selected);
+    assert.equal(result.state, "incomplete");
+    assert.equal(result.reason, "historical_source_location_unavailable");
   } finally {
     await missing.mf.dispose();
   }

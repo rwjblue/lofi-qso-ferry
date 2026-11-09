@@ -48,6 +48,14 @@ test("friendly labels preserve distinctions between pending, paused and unverifi
     inventoryStatusLabel("projection_mismatch"),
     "Operating details differ",
   );
+  assert.equal(
+    inventoryStatusLabel("historical_freq_rx_unavailable"),
+    "Receive frequency unavailable",
+  );
+  assert.equal(
+    inventoryStatusLabel("historical_my_lat_differs"),
+    "Station latitude differs",
+  );
   assert.equal(inventoryStatusLabel("submitted"), "Submitted to LoTW");
   assert.equal(inventoryStatusLabel("observed"), "Receipt verified");
 });

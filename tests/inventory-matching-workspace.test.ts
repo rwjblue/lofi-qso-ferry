@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { measureD1 } from "../scripts/inventory-benchmark-metrics.ts";
+import type { AdifRecord } from "../src/adif.ts";
 import { InventoryAssociations } from "../src/inventory-associations.ts";
+import { retireVerifiedLotwVariants } from "../src/inventory-lotw-grid-supersession.ts";
 import { InventoryMatchingResults } from "../src/inventory-matching-results.ts";
 import { InventoryMatchingWorkspace } from "../src/inventory-matching-workspace.ts";
+import { lotwInventoryObservations } from "../src/inventory-observations.ts";
 import {
   type InventoryProjectionBody,
   InventoryProjectionWorkspace,
@@ -279,6 +282,117 @@ test("only a real post-adoption grid change becomes a comparison review", async 
     );
     await edit(4, "EM00");
     await compare("matched_existing", null);
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("LoTW grid comparisons use the last observed correction across receipt revisions", async () => {
+  const original = { ...(receipt().body as AdifRecord), MY_GRIDSQUARE: "EM00" };
+  const [oldRemote] = await lotwInventoryObservations([original]);
+  const [verifiedRemote] = await lotwInventoryObservations([
+    { ...original, MY_GRIDSQUARE: "FN32", QSL_RCVD: "N" },
+  ]);
+  const [newRemote] = await lotwInventoryObservations([
+    { ...original, MY_GRIDSQUARE: "FN32", QSL_RCVD: "Y" },
+  ]);
+  assert.notEqual(oldRemote.key, newRemote.key);
+  assert.notEqual(verifiedRemote.key, newRemote.key);
+  const f = await matchingFixture({ provider: "lotw", receipts: [oldRemote] });
+  try {
+    const selected = [{ scope: "source", key: "q0" }];
+    const matches = new InventoryMatchingResults(f.store);
+    const compare = async () => {
+      await matches.match("a", "destination", selected);
+      const { results } = await matches.current("a", "destination", selected);
+      return results[0];
+    };
+    const edit = async (order: number, grid: string) => {
+      const source = sourceContact("q0");
+      source.order = order;
+      source.revision = String(order);
+      source.body = { ...(source.body as object), our: { grid } };
+      await f.full([observation("op", "operation"), source]);
+      await f.project("source");
+    };
+    const observeCorrection = async (
+      set: string,
+      prior: string,
+      verified: typeof verifiedRemote,
+      claimedAt: number,
+    ) => {
+      await f.db
+        .prepare(
+          `INSERT INTO inventory_lotw_grid_updates(tenant,association_id,source_scope,source_payload,state,due_at,claimed_at,checked_at,envelope,destination_scope,prior_remote_key,verified_remote_key,verified_projection_hash)
+         SELECT a.tenant,a.id,p.scope_id,p.payload_id,'observed',0,?,?,'{}',a.destination_scope,?,?,?
+         FROM inventory_historical_associations a JOIN inventory_match_records p
+           ON p.tenant=a.tenant AND p.scope_id=a.source_scope AND p.record_key=a.record_key AND p.facet='source'
+         WHERE a.tenant='a' AND p.set_id=?`,
+        )
+        .bind(
+          claimedAt,
+          claimedAt + 1,
+          prior,
+          verified.key,
+          await sha256(canonical(verified.semantic)),
+          set,
+        )
+        .run();
+    };
+
+    assert.equal((await compare()).state, "matched_existing");
+    assert.equal(
+      (
+        await new InventoryAssociations(f.store).adopt(
+          "a",
+          "destination",
+          selected,
+        )
+      ).records,
+      1,
+    );
+    await edit(2, "FN32");
+    const corrected = await compare();
+    assert.equal(corrected.reason, "historical_grid_changed");
+    await observeCorrection(corrected.set_id, oldRemote.key, verifiedRemote, 1);
+    const supersede = (rows: (typeof oldRemote)[], startedAt = 3) =>
+      retireVerifiedLotwVariants(f.store, "a", "destination", startedAt, rows);
+    assert.equal((await supersede([newRemote], 1)).length, 1);
+    assert.deepEqual(await supersede([oldRemote, newRemote]), [
+      oldRemote,
+      newRemote,
+    ]);
+    const observations = await supersede([newRemote]);
+    assert.deepEqual(
+      observations.map(({ key, status }) => [key, status]),
+      [
+        [newRemote.key, "active"],
+        [oldRemote.key, "deleted"],
+      ],
+    );
+    await f.fullReceipt(observations);
+    await f.project("destination");
+    assert.equal((await compare()).state, "matched_existing");
+
+    await edit(3, "FN31");
+    const reverted = await compare();
+    assert.equal(reverted.remote_key, newRemote.key);
+    assert.equal(reverted.reason, "historical_grid_changed");
+
+    const [secondRemote] = await lotwInventoryObservations([
+      { ...original, MY_GRIDSQUARE: "FN31", QSL_RCVD: "Y" },
+    ]);
+    await observeCorrection(reverted.set_id, newRemote.key, secondRemote, 3);
+    const again = await supersede([secondRemote], 5);
+    assert.deepEqual(
+      new Set(
+        again.filter((row) => row.status === "deleted").map((row) => row.key),
+      ),
+      new Set([oldRemote.key, newRemote.key]),
+    );
+    await f.fullReceipt(again);
+    await f.project("destination");
+    assert.equal((await compare()).state, "matched_existing");
   } finally {
     await f.mf.dispose();
   }

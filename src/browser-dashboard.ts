@@ -38,7 +38,16 @@ const inventoryLabels: Record<string, string> = {
   forward_check: "New contact · final destination check required",
   forward_destination_candidate: "Possible existing destination contact",
   held: "On hold",
+  historical_exact_identity_unavailable: "Exact contact identity unavailable",
   historical_grid_changed: "LoFi grid changed after this contact was matched",
+  lotw_grid_update_attention: "Grid update needs attention",
+  lotw_grid_update_deferred: "Grid update on hold",
+  lotw_grid_update_observed: "Grid update verified",
+  lotw_grid_update_submitted: "Grid update submitted",
+  lotw_grid_update_uncertain: "Grid update awaiting readback",
+  historical_remote_time_precision:
+    "Destination time is recorded to the minute",
+  historical_source_location_unavailable: "LoFi station location unavailable",
   incomplete: "Waiting for comparison evidence",
   matched_existing: "Matched existing",
   observed: "Receipt verified",
@@ -60,8 +69,26 @@ const inventoryLabels: Record<string, string> = {
   waiting: "Waiting",
 };
 
+const historicalFieldLabels: Record<string, string> = {
+  freq: "Transmit frequency",
+  freq_rx: "Receive frequency",
+  my_gridsquare: "Station grid",
+  my_state: "Station state or province",
+  my_cnty: "Station county",
+  my_dxcc: "Station DXCC entity",
+  my_lat: "Station latitude",
+  my_lon: "Station longitude",
+  my_cq_zone: "Station CQ zone",
+  my_itu_zone: "Station ITU zone",
+  my_iota: "Station IOTA reference",
+};
+
 export function inventoryStatusLabel(state: string): string {
-  return inventoryLabels[state] ?? state.replaceAll("_", " ");
+  const label = inventoryLabels[state];
+  if (label) return label;
+  const historical = /^historical_([a-z_]+)_(differs|unavailable)$/.exec(state);
+  const field = historical && historicalFieldLabels[historical[1]];
+  return field ? `${field} ${historical[2]}` : state.replaceAll("_", " ");
 }
 
 export function connectionGroups(connections: ConnectionSummary[]) {

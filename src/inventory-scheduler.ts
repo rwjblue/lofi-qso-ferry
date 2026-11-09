@@ -1,6 +1,7 @@
 import { InventoryIngestion } from "./inventory-ingestion.ts";
 import {
   type InventoryScanPlan,
+  inventoryRunQuery,
   planInventoryRun,
 } from "./inventory-run-plans.ts";
 import { InventoryRuns } from "./inventory-runs.ts";
@@ -8,6 +9,7 @@ import {
   bindInventoryScopeRuntime,
   type InventoryRuntime,
 } from "./inventory-runtime.ts";
+import { splitLotwQuery } from "./lotw.ts";
 import { canonical, sha256 } from "./security.ts";
 import type { Connection, Store } from "./store.ts";
 
@@ -308,6 +310,108 @@ export async function registerSourceCalendarSelections(
       progress.last_month,
     )
     .run();
+  return report;
+}
+
+/** Recover committed overflow holds without retrying their parent reports. */
+export async function registerOverflowSelections(
+  store: Store,
+  runtime: InventoryRuntime,
+  limit = 8,
+) {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 16)
+    throw new Error("invalid_inventory_schedule_limit");
+  const rows = (
+    await store
+      .statement(
+        `SELECT c.*,r.run_id,r.fixed_query,r.scope_id,r.stream_id,r.config_version,j.work_version,
+                 p.poll_period_ms,p.verification_period_ms
+         FROM inventory_stream_jobs j
+         JOIN inventory_scopes s ON s.tenant=j.tenant AND s.scope_id=j.scope_id
+         JOIN inventory_runs r ON r.tenant=j.tenant AND r.run_id=j.active_run_id
+         JOIN inventory_scheduled_selections p ON p.tenant=j.tenant AND p.scope_id=j.scope_id AND p.stream_id=j.stream_id
+         JOIN connections c ON c.tenant=s.tenant AND c.id=s.connection_id
+         JOIN accounts a ON a.id=c.tenant
+         JOIN private_data credential ON credential.tenant=c.tenant AND credential.connection=c.id AND credential.id=c.credential_version AND credential.kind='credential'
+         WHERE j.state='held' AND j.reason='overflow' AND r.phase='held' AND r.reason='overflow'
+           AND s.provider='lotw' AND s.state='observing' AND s.runtime_version=? AND p.runtime_version=s.runtime_version
+           AND r.config_version=s.config_version AND p.config_version=s.config_version
+           AND c.kind='lotw' AND c.status='active' AND c.remote_identity=s.logical_identity AND a.status='active'
+           AND credential.revoked_at IS NULL AND (credential.expires_at IS NULL OR credential.expires_at>unixepoch('subsec')*1000)
+           AND json_extract(c.config,'$.readAccess')=1
+           AND json_extract(r.fixed_query,'$.query.startDate')<json_extract(r.fixed_query,'$.query.endDate')
+         ORDER BY j.tenant,j.scope_id,j.stream_id LIMIT ?`,
+        runtime.version,
+        limit,
+      )
+      .all<
+        Connection & {
+          run_id: string;
+          fixed_query: string;
+          scope_id: string;
+          stream_id: string;
+          config_version: number;
+          work_version: number;
+          poll_period_ms: number;
+          verification_period_ms: number;
+        }
+      >()
+  ).results;
+  const report = { split: 0, failed: 0 };
+  for (const row of rows) {
+    try {
+      const query = inventoryRunQuery(JSON.parse(row.fixed_query));
+      if (query.provider !== "lotw") throw new Error("invalid_lotw_split");
+      const { receivedSince: _lower, ...selection } = query.query;
+      const children = splitLotwQuery(selection);
+      if (!children) throw new Error("invalid_lotw_split");
+      const policy = {
+        pollPeriodMs: row.poll_period_ms,
+        verificationPeriodMs: row.verification_period_ms,
+      };
+      const left = await registerInventorySelection(
+        store,
+        runtime,
+        row,
+        { provider: "lotw", selection: children[0] },
+        policy,
+      );
+      const right = await registerInventorySelection(
+        store,
+        runtime,
+        row,
+        { provider: "lotw", selection: children[1] },
+        policy,
+      );
+      if (left.scope !== row.scope_id || right.scope !== row.scope_id)
+        throw new Error("invalid_lotw_split");
+      // A crash between registrations leaves the parent eligible. A competing
+      // cron or a scope change cannot acknowledge it with stale children.
+      const finished = await store
+        .statement(
+          `UPDATE inventory_stream_jobs AS j SET work_version=work_version+1,reason='overflow_split'
+           WHERE (j.tenant,j.scope_id,j.stream_id,j.active_run_id,j.work_version)=(?,?,?,?,?)
+             AND j.state='held' AND j.reason='overflow'
+             AND EXISTS(SELECT 1 FROM inventory_scopes s
+               JOIN inventory_runtime v ON v.mode='inventory_read_only' AND v.version=s.runtime_version
+               JOIN inventory_scheduled_selections l ON l.tenant=s.tenant AND l.scope_id=s.scope_id AND l.stream_id=? AND l.config_version=s.config_version AND l.runtime_version=s.runtime_version
+               JOIN inventory_scheduled_selections r ON r.tenant=s.tenant AND r.scope_id=s.scope_id AND r.stream_id=? AND r.config_version=s.config_version AND r.runtime_version=s.runtime_version
+               WHERE s.tenant=j.tenant AND s.scope_id=j.scope_id AND s.state='observing' AND s.config_version=?)`,
+          row.tenant,
+          row.scope_id,
+          row.stream_id,
+          row.run_id,
+          row.work_version,
+          left.stream,
+          right.stream,
+          row.config_version,
+        )
+        .run();
+      report.split += finished.meta.changes;
+    } catch {
+      report.failed++;
+    }
+  }
   return report;
 }
 

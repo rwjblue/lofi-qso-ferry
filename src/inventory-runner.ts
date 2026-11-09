@@ -239,7 +239,13 @@ export class InventoryRunner {
         );
       if (result.kind !== "page") {
         const reason: InventoryRunReason =
-          result.kind === "split"
+          result.kind === "split" ||
+          (query.provider === "lotw" &&
+            result.kind === "blocked" &&
+            result.recovery === "review" &&
+            ["response_budget", "record_budget", "deadline"].includes(
+              result.code,
+            ))
             ? "overflow"
             : result.kind === "unsupported"
               ? "unsupported"

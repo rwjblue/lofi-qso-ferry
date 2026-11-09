@@ -17,6 +17,7 @@ import {
 } from "./inventory-runtime.ts";
 import {
   registerKnownInventoryConnections,
+  registerOverflowSelections,
   registerSourceCalendarSelections,
   startInventorySelections,
 } from "./inventory-scheduler.ts";
@@ -53,6 +54,7 @@ export async function runHostedScheduled(
     store,
     runtime,
   );
+  const overflowRegistration = await registerOverflowSelections(store, runtime);
   const starts = await startInventorySelections(store);
   const runs = new InventoryRuns(
     new InventoryIngestion(store, new InventoryComparisonPages(store)),
@@ -69,6 +71,7 @@ export async function runHostedScheduled(
     mode: "inventory_read_only" as const,
     registration,
     calendarRegistration,
+    overflowRegistration,
     starts,
     queued: inventoryQueued + comparisonQueued,
     inventoryQueued,

@@ -13,7 +13,12 @@ import {
   type SourceRecord,
   type SyncState,
 } from "./lofi.ts";
-import { LotwClient, LotwLoginError, type LotwQuery } from "./lotw.ts";
+import {
+  LotwClient,
+  LotwLoginError,
+  type LotwQuery,
+  splitLotwQuery,
+} from "./lotw.ts";
 import { type QrzBook, QrzClient, QrzError, type QrzPage } from "./qrz.ts";
 import { canonical } from "./security.ts";
 import { VendorDeferredError } from "./vendor-requests.ts";
@@ -222,6 +227,8 @@ class ReadBudget {
     records: 0,
   };
   stopped: InventoryReadCode | null = null;
+  lastResponseStatus: number | null = null;
+  bodyDeadlineWithProgress = false;
   readonly controller = new AbortController();
   private readonly timer: ReturnType<typeof setTimeout>;
   private readonly onAbort = () => this.stop("aborted");
@@ -307,6 +314,7 @@ class ReadBudget {
       this.context.transport.call(globalThis, input, { ...init, signal }),
       signal,
     );
+    this.lastResponseStatus = response.status;
     this.check();
     if (
       response.redirected ||
@@ -345,6 +353,16 @@ class ReadBudget {
           }
           chunks.push(value);
         }
+      } catch (error) {
+        this.bodyDeadlineWithProgress =
+          response.status === 200 &&
+          length > 0 &&
+          !this.context.signal?.aborted &&
+          (this.stopped === "deadline" ||
+            (requestSignal?.aborted === true &&
+              requestSignal.reason instanceof DOMException &&
+              requestSignal.reason.name === "TimeoutError"));
+        throw error;
       } finally {
         try {
           void reader.cancel().catch(() => undefined);
@@ -954,24 +972,12 @@ export function createQrzInventoryAdapter(
 
 function splitLotw(
   query: LotwQuery,
-  code: "response_budget" | "record_budget" = "response_budget",
+  code: "response_budget" | "record_budget" | "deadline" = "response_budget",
 ): ReadOutcome {
-  const start = Date.parse(query.startDate);
-  const end = Date.parse(query.endDate);
-  if (!validDate(query.startDate) || !validDate(query.endDate) || end <= start)
-    return { kind: "blocked", code, recovery: "review" };
-  const day = 86400000;
-  const middle = start + Math.floor((end - start) / day / 2) * day;
-  return {
-    kind: "split",
-    partitions: [
-      { ...query, endDate: new Date(middle).toISOString().slice(0, 10) },
-      {
-        ...query,
-        startDate: new Date(middle + day).toISOString().slice(0, 10),
-      },
-    ],
-  };
+  const partitions = splitLotwQuery(query);
+  return partitions
+    ? { kind: "split", partitions }
+    : { kind: "blocked", code, recovery: "review" };
 }
 export function createLotwInventoryAdapter(credentials: {
   username: string;
@@ -1078,8 +1084,19 @@ export function createLotwInventoryAdapter(credentials: {
           };
         },
         (error, budget, input) => {
+          if (budget?.bodyDeadlineWithProgress)
+            return splitLotw(input.query, "deadline");
+          if (budget?.stopped === "response_budget") {
+            if (budget.lastResponseStatus === 200)
+              return splitLotw(input.query);
+            if ((budget.lastResponseStatus ?? 0) >= 500)
+              return {
+                kind: "blocked",
+                code: "vendor_unavailable",
+                recovery: "retry",
+              };
+          }
           if (
-            budget?.stopped === "response_budget" ||
             budget?.stopped === "record_budget" ||
             (error instanceof Error &&
               error.message ===

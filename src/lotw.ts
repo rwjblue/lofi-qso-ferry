@@ -40,6 +40,29 @@ export interface LotwQuery {
   receivedSince?: string;
   workedCallsign?: string;
 }
+
+/** Split an inclusive range into two disjoint selections with the same filters. */
+export function splitLotwQuery(
+  query: LotwQuery,
+): [LotwQuery, LotwQuery] | null {
+  if (
+    !validDate(query.startDate) ||
+    !validDate(query.endDate) ||
+    query.endDate <= query.startDate
+  )
+    return null;
+  const start = Date.parse(query.startDate);
+  const end = Date.parse(query.endDate);
+  const day = 86_400_000;
+  const middle = start + Math.floor((end - start) / day / 2) * day;
+  return [
+    { ...query, endDate: new Date(middle).toISOString().slice(0, 10) },
+    {
+      ...query,
+      startDate: new Date(middle + day).toISOString().slice(0, 10),
+    },
+  ];
+}
 export type SubmissionResult = {
   state: "submitted" | "rejected" | "uncertain";
   code: string;

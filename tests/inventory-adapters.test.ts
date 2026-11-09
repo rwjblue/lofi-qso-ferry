@@ -679,6 +679,15 @@ test("LoTW oversized byte/record selections split inclusive date ranges without 
   assert.equal(daily.kind, "blocked");
   if (daily.kind !== "blocked") assert.fail();
   assert.equal(daily.recovery, "review");
+  const errorPage = await adapter.readStep(
+    context(async () => new Response("x".repeat(1001), { status: 503 }), {
+      maxResponseBytes: 1000,
+    }),
+    { binding, query },
+  );
+  assert.equal(errorPage.kind, "blocked");
+  if (errorPage.kind !== "blocked") assert.fail();
+  assert.equal(errorPage.recovery, "retry");
 });
 
 test("LoTW scope contradictions and unsupported exact identities produce fixed holds", async () => {
@@ -698,6 +707,43 @@ test("LoTW scope contradictions and unsupported exact identities produce fixed h
     assert.equal(result.code, code);
     assert.equal("observations" in result, false);
     assert.ok(!JSON.stringify(result).includes("password"));
+  }
+});
+
+test("LoTW splits a timed-out report body with progress and defers a stalled connection", async () => {
+  const adapter = createLotwInventoryAdapter({
+    username: "user",
+    password: "password",
+  });
+  const response = (status: number, progress: boolean) =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          if (progress)
+            controller.enqueue(new TextEncoder().encode("<PROGRAMID:4>LoTW"));
+        },
+      }),
+      { status },
+    );
+  const result = await adapter.readStep(
+    context(async () => response(200, true), { deadlineAt: now + 20 }),
+    { binding, query },
+  );
+  assert.equal(result.kind, "split");
+  assert.ok(result.usage.responseBytes > 0);
+  assert.equal("observations" in result, false);
+  for (const transport of [
+    async () => new Promise<Response>(() => {}),
+    async () => response(200, false),
+    async () => response(503, true),
+  ]) {
+    const stalled = await adapter.readStep(
+      context(transport, { deadlineAt: now + 20 }),
+      { binding, query },
+    );
+    assert.equal(stalled.kind, "deferred");
+    if (stalled.kind !== "deferred") assert.fail();
+    assert.equal(stalled.code, "deadline");
   }
 });
 

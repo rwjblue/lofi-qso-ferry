@@ -4,6 +4,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { serializeAdifRecord } from "../src/adif.ts";
+import { inventoryRuntime } from "../src/inventory-runtime.ts";
+import { registerInventorySelection } from "../src/inventory-scheduler.ts";
 import { Store } from "../src/store.ts";
 import { keys, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
@@ -23,7 +25,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   let reads = 0;
   let qrzReads = 0;
   let qrzStatuses = 0;
-  let lotwReads = 0;
+  const lotwReads: [string | null, string | null][] = [];
   const readTimes: number[] = [];
   const runtime = new Miniflare(
     convertV4MiniflareOptions({
@@ -56,13 +58,15 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       outboundService: async (request) => {
         const url = new URL(request.url);
         if (url.hostname === "lotw.arrl.org") {
-          lotwReads++;
           assert.equal(request.method, "GET");
-          assert.equal(url.searchParams.get("qso_startdate"), "2026-11-01");
-          assert.equal(url.searchParams.get("qso_enddate"), "2026-11-30");
+          const start = url.searchParams.get("qso_startdate");
+          const end = url.searchParams.get("qso_enddate");
+          lotwReads.push([start, end]);
           assert.equal(url.searchParams.get("qso_qsorxsince"), "1900-01-01");
           assert.equal(url.searchParams.get("qso_owncall"), null);
           assert.equal(url.searchParams.get("qso_callsign"), null);
+          if (start === "2026-11-01" && end === "2026-11-30")
+            return new Response("x".repeat(2 * 1024 * 1024 + 1));
           return new Response(
             "<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>0<EOH><APP_LOTW_EOF>",
           );
@@ -404,9 +408,51 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         "SELECT r.phase FROM inventory_runs r JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.scope_id WHERE s.provider='lotw'",
       )
       .first<string>("phase");
-    if (lotwPhase === "complete") break;
+    if (lotwPhase === "held") break;
     await delay(50);
   }
-  assert.equal(lotwPhase, "complete");
-  assert.equal(lotwReads, 1);
+  assert.equal(lotwPhase, "held");
+  assert.deepEqual(lotwReads, [["2026-11-01", "2026-11-30"]]);
+  const link = await store.connection("a", "lotw");
+  assert.ok(link);
+  // Simulate interruption after persisting the first half.
+  await registerInventorySelection(store, await inventoryRuntime(store), link, {
+    provider: "lotw",
+    selection: { startDate: "2026-11-01", endDate: "2026-11-15" },
+  });
+  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  let completeChildren: number | null = null;
+  for (let i = 0; i < 120; i++) {
+    completeChildren = await db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_runs r JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.scope_id WHERE s.provider='lotw' AND r.phase='complete' AND r.mode='full'",
+      )
+      .first<number>("n");
+    if (completeChildren === 2) break;
+    await delay(50);
+  }
+  assert.equal(completeChildren, 2);
+  assert.deepEqual(lotwReads.toSorted(), [
+    ["2026-11-01", "2026-11-15"],
+    ["2026-11-01", "2026-11-30"],
+    ["2026-11-16", "2026-11-30"],
+  ]);
+  assert.deepEqual(
+    await db
+      .prepare(
+        "SELECT j.state,j.reason,c.state AS coverage FROM inventory_stream_jobs j JOIN inventory_coverage c USING(tenant,scope_id,stream_id) WHERE j.reason='overflow_split'",
+      )
+      .first(),
+    { state: "held", reason: "overflow_split", coverage: "held" },
+  );
+  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  assert.equal(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_scheduled_selections p JOIN inventory_scopes s USING(tenant,scope_id) WHERE s.provider='lotw'",
+      )
+      .first("n"),
+    3,
+  );
+  assert.equal(lotwReads.length, 3);
 });

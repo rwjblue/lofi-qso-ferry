@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { serializeAdifRecord } from "../src/adif.ts";
+import { InventoryDeliveryWorkspace } from "../src/inventory-delivery-workspace.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
@@ -419,38 +420,41 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   );
   assert.equal((await jobs.enqueue("a", sourceScope, ["q2"])).kind, "quiet");
   // Move the fixture's due clocks back while preserving its published inputs.
-  for (const [triggers, update] of [
-    [
-      ["comparison_projection_version"],
-      "UPDATE comparison_projections SET derived_at=? WHERE facet='source'",
-    ],
-    [
+  const ageQuietClocks = async () => {
+    for (const [triggers, update] of [
       [
-        "inventory_match_result_update",
-        "inventory_delivery_review_result_update",
+        ["comparison_projection_version"],
+        "UPDATE comparison_projections SET derived_at=? WHERE facet='source'",
       ],
-      "UPDATE match_results SET next_eligible_at=? WHERE record_key='q2'",
-    ],
-  ] as const) {
-    const ddl = await Promise.all(
-      triggers.map((trigger) =>
-        db
-          .prepare(
-            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
-          )
-          .bind(trigger)
-          .first<string>("sql"),
-      ),
-    );
-    await db.batch([
-      ...triggers.map((trigger) => db.prepare(`DROP TRIGGER ${trigger}`)),
-      db.prepare(update).bind(Date.now() - 3_600_000),
-      ...ddl.map((sql: string | null) => {
-        assert.ok(sql);
-        return db.prepare(sql);
-      }),
-    ]);
-  }
+      [
+        [
+          "inventory_match_result_update",
+          "inventory_delivery_review_result_update",
+        ],
+        "UPDATE match_results SET next_eligible_at=? WHERE record_key='q2'",
+      ],
+    ] as const) {
+      const ddl = await Promise.all(
+        triggers.map((trigger) =>
+          db
+            .prepare(
+              "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+            )
+            .bind(trigger)
+            .first<string>("sql"),
+        ),
+      );
+      await db.batch([
+        ...triggers.map((trigger) => db.prepare(`DROP TRIGGER ${trigger}`)),
+        db.prepare(update).bind(Date.now() - 3_600_000),
+        ...ddl.map((sql: string | null) => {
+          assert.ok(sql);
+          return db.prepare(sql);
+        }),
+      ]);
+    }
+  };
+  await ageQuietClocks();
   const queuedProof = await jobs.enqueue("a", sourceScope, ["q2"]);
   assert.equal(queuedProof.kind, "queued", JSON.stringify(queuedProof));
   if (queuedProof.kind !== "queued") assert.fail();
@@ -527,6 +531,35 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   assert.deepEqual(
     await db.prepare("SELECT count(*) AS n FROM attempts").first(),
     { n: 0 },
+  );
+  const qrzScope = await db
+    .prepare("SELECT scope_id FROM inventory_scopes WHERE provider='qrz'")
+    .first<string>("scope_id");
+  assert.ok(qrzScope);
+  const delivery = new InventoryDeliveryWorkspace(store);
+  let preparation = await delivery.capture("a", queuedProof.id, qrzScope, [
+    "q2",
+  ]);
+  for (let i = 0; i < 100 && preparation.kind !== "captured"; i++) {
+    if (preparation.reason === "destination_review_quiet")
+      await ageQuietClocks();
+    else if (preparation.reason === "destination_review_stale") await delay(50);
+    else break;
+    preparation = await delivery.capture("a", queuedProof.id, qrzScope, ["q2"]);
+  }
+  assert.equal(preparation.kind, "captured", JSON.stringify(preparation));
+  if (preparation.kind !== "captured") assert.fail();
+  assert.equal(preparation.stats.dependencies, 2);
+  assert.equal(preparation.members[0].contact.call, "W2AW");
+  assert.equal(preparation.members[0].contact.stationCall, "N1RWJ");
+  assert.equal(preparation.members[0].contact.operationId, "op");
+  assert.equal(preparation.members[0].review.provider, "qrz");
+  assert.deepEqual(
+    await delivery.capture("a", queuedProof.id, qrzScope, ["q1"]),
+    {
+      kind: "held",
+      reason: "contact_outside_source_proof",
+    },
   );
   assert.deepEqual(
     await db
@@ -648,6 +681,20 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     await reloaded.current("a", queuedProof.id),
     "destination ownership does not change source evidence",
   );
+  assert.deepEqual(
+    await delivery.capture("a", queuedProof.id, qrzScope, ["q2"]),
+    {
+      kind: "held",
+      reason: "destination_review_stale",
+    },
+  );
   await db.prepare("UPDATE accounts SET quiet_minutes=31 WHERE id='a'").run();
   assert.equal(await reloaded.current("a", queuedProof.id), null);
+  assert.deepEqual(
+    await delivery.capture("a", queuedProof.id, qrzScope, ["q2"]),
+    {
+      kind: "held",
+      reason: "source_proof_stale",
+    },
+  );
 });

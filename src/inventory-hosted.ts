@@ -1,33 +1,34 @@
-import { InventoryComparisonPages } from "./inventory-comparison-pages.ts";
 import {
   consumeComparisonWakeups,
   isComparisonMessage,
   publishComparisonWakeups,
 } from "./inventory-comparison-continuations.ts";
+import { InventoryComparisonPages } from "./inventory-comparison-pages.ts";
+import {
+  consumeInventoryWakeups,
+  publishInventoryWakeups,
+} from "./inventory-continuations.ts";
 import {
   consumeInventoryRecoveryWakeups,
   isInventoryRecoveryWakeup,
   publishInventoryRecoveryWakeups,
 } from "./inventory-delivery-recovery.ts";
 import {
-  consumeInventoryWakeups,
-  publishInventoryWakeups,
-} from "./inventory-continuations.ts";
+  type InventoryDeliveryEnvironment,
+  InventorySendQueue,
+  isInventorySendWakeup,
+} from "./inventory-delivery-send.ts";
 import { InventoryIngestion } from "./inventory-ingestion.ts";
+import { InventoryLotwDispatch } from "./inventory-lotw-dispatch.ts";
 import { InventoryLotwReadback } from "./inventory-lotw-readback.ts";
 import { collectInventoryMatchProof } from "./inventory-match-retention.ts";
+import { collectInventoryPayloads } from "./inventory-payload-retention.ts";
 import {
   configuredInventoryShadow,
   InventoryPreparationShadow,
   inventoryShadowProviders,
 } from "./inventory-preparation-shadow.ts";
 import { InventoryQrzDispatch } from "./inventory-qrz-dispatch.ts";
-import {
-  type InventoryDeliveryEnvironment,
-  InventorySendQueue,
-  isInventorySendWakeup,
-} from "./inventory-delivery-send.ts";
-import { InventoryLotwDispatch } from "./inventory-lotw-dispatch.ts";
 import { InventoryRunner } from "./inventory-runner.ts";
 import { InventoryRuns } from "./inventory-runs.ts";
 import {
@@ -172,6 +173,13 @@ export async function runHostedScheduled(
   } catch {
     matchProofCollectionFailed = 1;
   }
+  let rawPayloadsCollected = 0;
+  let rawPayloadCollectionFailed = 0;
+  try {
+    rawPayloadsCollected = await collectInventoryPayloads(store);
+  } catch {
+    rawPayloadCollectionFailed = 1;
+  }
   return {
     mode: hostedMode[mode],
     registration,
@@ -199,6 +207,8 @@ export async function runHostedScheduled(
     lotwExpiredRetired: sends.lotw.retired,
     matchProofsCollected,
     matchProofCollectionFailed,
+    rawPayloadsCollected,
+    rawPayloadCollectionFailed,
     qrzShadow: shadows.qrz,
     lotwShadow: shadows.lotw,
   };

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { isComparisonMessage } from "../src/inventory-comparison-continuations.ts";
 import {
   runHostedInventoryQueue,
   runHostedScheduled,
 } from "../src/inventory-hosted.ts";
-import { isComparisonMessage } from "../src/inventory-comparison-continuations.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { planInventoryRun } from "../src/inventory-run-plans.ts";
 import {
@@ -207,6 +207,8 @@ test("cron registers source/book selections and publishes initial jobs without v
   assert.equal(result.mode, "inventory_read_only");
   if (result.mode !== "inventory_read_only") assert.fail();
   assert.equal(result.registration.registered, 2);
+  assert.equal(result.rawPayloadsCollected, 0);
+  assert.equal(result.rawPayloadCollectionFailed, 0);
   assert.equal(result.starts.started, 2);
   assert.equal(result.queued, 3);
   assert.equal(result.inventoryQueued, 2);

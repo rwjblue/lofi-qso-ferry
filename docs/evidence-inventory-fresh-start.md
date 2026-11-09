@@ -324,8 +324,36 @@ envelopes stayed intact, with zero provider calls or uploads.
 The unchanged-body control still used 1,066 comparison statements for
 coverage recovery with no receipt projections. The changed refresh added
 4,252 encrypted raw envelopes in each arm, totaling 7,360,855 bytes
-before database overhead. Superseded raw receipt retention is a separate
-storage task.
+before database overhead.
+
+### Superseded raw payload retention
+
+Migration 0109 queued 8,504 unreferenced QRZ bodies on a private copy of
+the normalized replay. None was eligible immediately. After advancing the
+queue deadlines in the copy to simulate the seven-day grace period, 34
+collection turns removed all 8,504 bodies. Each turn removed at most 256.
+The collection used 35 SQL statements including the final empty check,
+with 85,284 rows read and 17,008 written.
+
+The deleted envelopes totaled 14,719,954 bytes. SQLite gained 21,381,120
+bytes of reusable pages at the same allocated file size. The 4,252
+current QRZ bodies and all current LoFi and LoTW bodies were preserved.
+Reopening verified identical current ciphertext, linked credentials,
+checkpoints, coverage, matching results and ownership evidence, with no
+foreign-key violations or provider requests.
+
+A synthetic scale check used 100 accounts, 200,000 current facet bodies
+and 200,000 superseded bodies with small fixture envelopes. Half the
+accounts were quarantined. One tick removed 256 eligible bodies with
+2,863 rows read and 512 written. A tick with only quarantined accounts
+due read 255 rows and wrote none. The check covers queue traversal at
+this row count. The captured copy supplies the envelope sizes above.
+
+After raw collection, match tokens and their indexes occupied 86.45 MB
+in the captured copy. The 945 superseded proofs in the separate match
+retirement queue accounted for 191,024 of the 366,408 tokens. All 945
+were still within their grace period. This was a copy used for several
+replays, so these counts measure that backlog.
 
 ### Full QRZ catch-up verification
 

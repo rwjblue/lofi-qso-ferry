@@ -16,7 +16,10 @@ import {
   inventoryMatchingGraph,
 } from "./inventory-matching-graph.ts";
 import type { InventoryProjectionBody } from "./inventory-projection-workspace.ts";
-import { InventoryProjections } from "./inventory-projections.ts";
+import {
+  InventoryProjections,
+  openInventoryProjectionBody,
+} from "./inventory-projections.ts";
 import { inventoryRunQuery } from "./inventory-run-plans.ts";
 import { canonical, sha256 } from "./security.ts";
 import type { Store } from "./store.ts";
@@ -107,6 +110,8 @@ interface SelectedRow {
   projectionVersion: number;
   membershipVersion: number;
   projection: string | null;
+  encryptedBytes: number;
+  envelope: string | null;
 }
 const referenceKey = (row: InventoryMatchingReference) =>
   canonical([row.scope, row.key, row.facet]);
@@ -297,20 +302,29 @@ export class InventoryMatchingWorkspace {
       destination,
     );
     const selectedStatement = this.store.statement(
-      `SELECT CAST(j.key AS INTEGER) AS ordinal,i.record_key AS key,i.key_class AS keyClass,i.bucket_hash AS hash,
+      `WITH requested AS MATERIALIZED (
+       SELECT CAST(j.key AS INTEGER) AS ordinal,i.record_key AS key,i.key_class AS keyClass,i.bucket_hash AS hash,
        i.semantic_version AS semanticVersion,f.semantic_version AS currentSemanticVersion,i.config_version AS configVersion,i.parent_key AS parent,
        i.topology_version AS topologyVersion,coalesce(pd.topology_version,0) AS currentTopologyVersion,i.projection_version AS projectionVersion,coalesce(mv.version,0) AS membershipVersion,
-       (SELECT json_object('version',p.version,'state',p.state,'reason',p.reason,'payload',p.payload_id) FROM comparison_projections_current p WHERE p.tenant=i.tenant AND p.generation_id=i.generation_id AND p.scope_id=i.scope_id AND p.record_key=i.record_key AND p.facet=i.facet) AS projection
+       (SELECT json_object('version',p.version,'state',p.state,'reason',p.reason,'payload',p.payload_id,'scope',p.scope_id,'connection_id',p.connection_id,'encrypted_bytes',p.encrypted_bytes) FROM comparison_projections_current p WHERE p.tenant=i.tenant AND p.generation_id=i.generation_id AND p.scope_id=i.scope_id AND p.record_key=i.record_key AND p.facet=i.facet) AS projection
        FROM json_each(?1) j CROSS JOIN comparison_domains d
        LEFT JOIN comparison_index i ON i.tenant=d.tenant AND i.generation_id=?4 AND i.scope_id=json_extract(j.value,'$.scope') AND i.record_key=json_extract(j.value,'$.key') AND i.facet='source' AND i.state!='retired'
        LEFT JOIN inventory_record_facets f ON f.tenant=i.tenant AND f.scope_id=i.scope_id AND f.entity_family='qso' AND f.record_key=i.record_key AND f.facet=i.facet
        LEFT JOIN projection_domains pd ON pd.tenant=i.tenant AND pd.scope_id=i.scope_id AND pd.operation_key=i.parent_key
        LEFT JOIN inventory_membership_versions mv ON mv.tenant=i.tenant AND mv.scope_id=i.scope_id AND mv.entity_family='qso' AND mv.record_key=i.record_key AND mv.facet=i.facet
-       WHERE d.tenant=?2 AND d.version=?3 ORDER BY ordinal`,
+       WHERE d.tenant=?2 AND d.version=?3
+       ), budget AS MATERIALIZED (
+         SELECT coalesce(sum(json_extract(projection,'$.encrypted_bytes')),0) AS bytes FROM requested
+       )
+       SELECT r.*,b.bytes AS encryptedBytes,p.envelope FROM budget b CROSS JOIN requested r
+       LEFT JOIN comparison_projection_payloads p ON b.bytes<=?5
+        AND (p.tenant,p.scope_id,p.payload_id)=(?2,json_extract(r.projection,'$.scope'),json_extract(r.projection,'$.payload'))
+       ORDER BY r.ordinal`,
       canonical(selected),
       tenant,
       session.domainVersion,
       session.generation,
+      MAX_BYTES,
     );
     const [header, selection] = await this.store.db.batch([
       scopeStatement,
@@ -338,6 +352,9 @@ export class InventoryMatchingWorkspace {
     const selectedRows = selection.results as SelectedRow[];
     if (selectedRows.length !== selected.length)
       throw new Error("inventory_matching_snapshot_changed");
+    stats.encryptedInputBytes = selectedRows[0].encryptedBytes;
+    if (stats.encryptedInputBytes > MAX_BYTES)
+      throw new Error("inventory_projection_read_byte_bound");
     const records = new Map<string, InventoryMatchingRecordSnapshot>();
     const add = (
       reference: InventoryMatchingReference,
@@ -357,18 +374,28 @@ export class InventoryMatchingWorkspace {
       key: row.key,
       facet: "source" as const,
     }));
-    for (const row of selectedRows) {
-      const { ordinal, projection, key, ...metadata } = row;
+    const bodies = new Map<string, InventoryProjectionBody | null>();
+    for (const {
+      ordinal,
+      projection,
+      key,
+      encryptedBytes: _,
+      envelope,
+      ...metadata
+    } of selectedRows) {
+      const reference = selectedReferences[ordinal];
       const current = projection
         ? (JSON.parse(projection) as {
             version: number;
             state: "ready" | "held" | "excluded";
             reason: string | null;
             payload: string;
+            connection_id: string;
+            encrypted_bytes: number;
           })
         : null;
       add(
-        selectedReferences[ordinal],
+        reference,
         key
           ? {
               key,
@@ -386,8 +413,21 @@ export class InventoryMatchingWorkspace {
             }
           : null,
       );
+      let body: InventoryProjectionBody | null = null;
+      if (current && envelope !== null) {
+        const opened = await openInventoryProjectionBody(
+          tenant,
+          current.payload,
+          { ...current, envelope },
+          this.store.keys,
+          MAX_BYTES - stats.plaintextBytes,
+        );
+        stats.plaintextBytes += opened.plaintextBytes;
+        stats.decryptedBodies++;
+        body = opened.body;
+      }
+      bodies.set(referenceKey(reference), body);
     }
-    const bodies = new Map<string, InventoryProjectionBody | null>();
     const load = async () => {
       const references = [...records.values()].filter(
         (row) => !bodies.has(referenceKey(row.reference)),
@@ -421,7 +461,6 @@ export class InventoryMatchingWorkspace {
         bodies.set(referenceKey(row.reference), null);
       for (const row of loaded.items) bodies.set(referenceKey(row), row.body);
     };
-    await load();
     const windows = selectedReferences.flatMap((row) => {
       const body = bodies.get(referenceKey(row));
       const range = body && interval(body);

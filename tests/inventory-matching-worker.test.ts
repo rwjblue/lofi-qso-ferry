@@ -98,7 +98,7 @@ export default {async fetch(request,env){
   assert.equal(result.readOnly, 20);
   assert.equal(result.activeLease, 0);
   assert.equal(result.publication.preparation.decryptedBodies, 40);
-  assert.equal(result.publication.preparation.bodyQueries, 2);
+  assert.equal(result.publication.preparation.bodyQueries, 1);
   assert.equal(result.publication.preparation.lookupQueries, 2);
   assert.equal(result.plaintextLeaked, false);
   assert.equal(outbound, 0);

@@ -631,6 +631,33 @@ matched profile also benefits when adoption rechecks the proof.
 | Empty, up to four steps per delivery | 656,787 → 638,628 |
 | Matched, one step per delivery | 1,232,740 → 1,172,080 |
 
+### Selected source projection snapshot
+
+The selected-record snapshot also admits its source projection bodies.
+SQLite sums the encrypted sizes before returning ciphertext. The shared
+decoder verifies the envelope size, encryption binding, body state and
+remaining plaintext budget. Candidate reads spend the remaining cohort
+budget, and the native publication checks the same dependencies.
+
+The native twenty-pair fixture prepares in seven SQL statements with
+forty decryptions and 2,271 data rows read. That row count excludes
+comparison key setup.
+
+On the captured personal log, both readers prepared the same 160 QRZ
+and LoTW decisions, dependency records and byte totals. The updated
+reader used 51 D1 calls and 59 statements, down from 59 and 67, and
+14,279 row reads, down from 16,999. The preparation made zero database
+writes or provider requests.
+
+Both 1,000-contact profiles verified all current classifications and
+saved one call and statement per matching cohort. Delivery counts stayed
+at 39 for the empty profile and 152 for the matched profile.
+
+| Destination | D1 calls before → after | SQL statements before → after | Rows read before → after |
+| --- | ---: | ---: | ---: |
+| Empty, up to four steps per delivery | 2,397 → 2,347 | 4,290 → 4,240 | 638,628 → 621,915 |
+| Matched, one step per delivery | 3,428 → 3,378 | 5,834 → 5,784 | 1,172,080 → 1,154,767 |
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

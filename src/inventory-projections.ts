@@ -6,7 +6,7 @@ import {
   inventoryProjectionIdentity,
   type PreparedInventoryProjections,
 } from "./inventory-projection-workspace.ts";
-import { canonical, type Envelope, open } from "./security.ts";
+import { canonical, type Envelope, type Keyring, open } from "./security.ts";
 import type { Lease, Store } from "./store.ts";
 
 interface ProjectionReceipt {
@@ -25,7 +25,6 @@ export interface InventoryProjectionRead {
   payload: string;
 }
 interface ProjectionReadMetadata {
-  ordinal: number;
   connection_id: string;
   encrypted_bytes: number;
   state: "ready" | "held" | "excluded";
@@ -38,6 +37,28 @@ const leaseScope = (generation: string, scope: string) =>
   `projection:${generation}:${scope}`;
 function identifier(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 512;
+}
+
+export async function openInventoryProjectionBody(
+  tenant: string,
+  payload: string,
+  row: ProjectionReadMetadata & { envelope: string },
+  keys: Keyring,
+  remainingBytes: number,
+) {
+  if (encoder.encode(row.envelope).byteLength !== row.encrypted_bytes)
+    throw new Error("inventory_projection_read_size_mismatch");
+  const body = await open<InventoryProjectionBody>(
+    JSON.parse(row.envelope) as Envelope,
+    inventoryProjectionIdentity(tenant, row.connection_id, payload),
+    keys,
+  );
+  const plaintextBytes = encoder.encode(canonical(body)).byteLength;
+  if (plaintextBytes > remainingBytes)
+    throw new Error("inventory_projection_read_byte_bound");
+  if (body.version !== 1 || body.state !== row.state)
+    throw new Error("inventory_projection_body_changed");
+  return { body, plaintextBytes };
 }
 
 /** Publishes derived availability only. No observation, coverage or write proof
@@ -327,7 +348,9 @@ export class InventoryProjections {
         generation,
         maxBytes,
       )
-      .all<ProjectionReadMetadata & { envelope: string | null }>();
+      .all<
+        ProjectionReadMetadata & { ordinal: number; envelope: string | null }
+      >();
     stats.queries++;
     stats.rowsRead += payloads.meta.rows_read;
     stats.encryptedInputBytes = payloads.results.reduce(
@@ -339,22 +362,14 @@ export class InventoryProjections {
     for (const row of payloads.results) {
       if (row.envelope === null) continue;
       const reference = references[row.ordinal];
-      if (encoder.encode(row.envelope).byteLength !== row.encrypted_bytes)
-        throw new Error("inventory_projection_read_size_mismatch");
-      const body = await open<InventoryProjectionBody>(
-        JSON.parse(row.envelope) as Envelope,
-        inventoryProjectionIdentity(
-          tenant,
-          row.connection_id,
-          reference.payload,
-        ),
+      const { body, plaintextBytes } = await openInventoryProjectionBody(
+        tenant,
+        reference.payload,
+        { ...row, envelope: row.envelope },
         this.store.keys,
+        maxBytes - stats.plaintextBytes,
       );
-      stats.plaintextBytes += encoder.encode(canonical(body)).byteLength;
-      if (stats.plaintextBytes > maxBytes)
-        throw new Error("inventory_projection_read_byte_bound");
-      if (body.version !== 1 || body.state !== row.state)
-        throw new Error("inventory_projection_body_changed");
+      stats.plaintextBytes += plaintextBytes;
       stats.decryptedBodies++;
       items.push({ ...reference, body });
     }

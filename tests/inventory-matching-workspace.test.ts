@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { measureD1 } from "../scripts/inventory-benchmark-metrics.ts";
+import { InventoryMatchingWorkspace } from "../src/inventory-matching-workspace.ts";
 import {
   type InventoryProjectionBody,
   InventoryProjectionWorkspace,
@@ -13,6 +15,7 @@ import {
   seal,
   sha256,
 } from "../src/security.ts";
+import { Store } from "../src/store.ts";
 import { observation } from "./inventory-context-fixtures.ts";
 import {
   matchingFixture,
@@ -48,7 +51,7 @@ test("twenty source/receipt pairs share one bounded snapshot without plaintext o
     assert.ok(page.graph.results.every((row) => row.state === "unique"));
     assert.equal(page.records.length, 40);
     assert.equal(page.stats.decryptedBodies, 40);
-    assert.equal(page.stats.bodyQueries, 2);
+    assert.equal(page.stats.bodyQueries, 1);
     assert.equal(page.stats.lookupQueries, 2);
     assert.equal(page.graph.stats.predicateCalls, 20);
     const serialized = canonical(page);
@@ -241,7 +244,7 @@ test("dense candidate unions request a split rather than returning a truncated s
 
 test("source and receipt loads consume one shared byte budget before later ciphertext is loaded", async () => {
   const f = await matchingFixture({
-    sources: Array.from({ length: 7 }, (_, i) =>
+    sources: Array.from({ length: 10 }, (_, i) =>
       sourceContact(`q${i}`, "13:00:00", `W${i}AW`),
     ),
     receipts: Array.from({ length: 7 }, (_, i) =>
@@ -249,10 +252,7 @@ test("source and receipt loads consume one shared byte budget before later ciphe
     ),
   });
   try {
-    for (const [scope, padding] of [
-      ["source", 350_000],
-      ["destination", 150_000],
-    ] as const) {
+    const pad = async (scope: string, padding: number) => {
       const keys =
         scope === "source"
           ? f.sources.map((row) => row.key)
@@ -296,36 +296,37 @@ test("source and receipt loads consume one shared byte budget before later ciphe
       } finally {
         await f.store.release(lease);
       }
-    }
-    const original = f.store.statement.bind(f.store);
-    const loaded: number[] = [];
-    f.store.statement = (sql, ...params) => {
-      const statement = original(sql, ...params);
-      if (!sql.includes("comparison_projection_payloads p")) return statement;
-      return new Proxy(statement, {
-        get(target, property) {
-          if (property !== "all") return Reflect.get(target, property);
-          return async () => {
-            const result = await target.all<{ envelope: string | null }>();
-            loaded.push(result.results.filter((row) => row.envelope).length);
-            return result;
-          };
-        },
-      });
     };
+    await pad("source", 350_000);
+    await pad("destination", 150_000);
+    const loaded: number[] = [];
+    const meter = measureD1(f.db, ({ results }) => {
+      const rows = results as { ordinal?: number; envelope?: string | null }[];
+      if (rows[0]?.ordinal !== undefined && Object.hasOwn(rows[0], "envelope"))
+        loaded.push(rows.filter((row) => row.envelope).length);
+    });
+    const workspace = new InventoryMatchingWorkspace(
+      new Store(meter.database, f.store.keys),
+    );
+    const selected = f.sources.map((row) => ({
+      scope: "source",
+      key: row.key,
+    }));
     await assert.rejects(
-      f.workspace.prepare(
-        "a",
-        "destination",
-        f.sources.map((row) => ({ scope: "source", key: row.key })),
-      ),
+      workspace.prepare("a", "destination", selected.slice(0, 7)),
       /inventory_projection_read_byte_bound/,
     );
     assert.deepEqual(
       loaded,
-      [f.sources.length, 0],
+      [7, 0],
       "only source ciphertext can be loaded before the remaining receipt budget is rejected",
     );
+    loaded.length = 0;
+    await assert.rejects(
+      workspace.prepare("a", "destination", selected),
+      /inventory_projection_read_byte_bound/,
+    );
+    assert.deepEqual(loaded, [0], "an oversized source returns no ciphertext");
   } finally {
     await f.mf.dispose();
   }

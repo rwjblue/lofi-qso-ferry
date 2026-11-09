@@ -12,6 +12,7 @@ import {
   InventoryIngestionError,
   type InventoryReceipt,
 } from "./inventory-ingestion.ts";
+import { lotwRecurringDueAt } from "./inventory-lotw-schedule.ts";
 import {
   inventoryReadAdmission,
   inventoryReadGuardStatements,
@@ -210,14 +211,35 @@ export class InventoryRunner {
           query.provider === "qrz" &&
           (context.stream.resume as QrzInventoryResume | null)
             ?.coveringDateSelection === true;
-        const next =
-          Date.now() +
+        const now = Date.now();
+        let next =
+          now +
           Math.max(
             schedule?.poll_period_ms ?? 300_000,
             schedule?.verify_only ? schedule.verification_period_ms : 0,
             pacing?.checkPeriodMs ?? 0,
             qrzCoveredMultiplePages ? QRZ_COVERING_POLL_MS : 0,
           );
+        if (
+          query.provider === "lotw" &&
+          schedule &&
+          ("kind" in query.query || schedule.verify_only)
+        ) {
+          const { tenant, scope, streamId, mode } = context.run;
+          next = await lotwRecurringDueAt(
+            now,
+            [tenant, scope, streamId],
+            schedule.poll_period_ms,
+            schedule.verify_only
+              ? {
+                  periodMs: schedule.verification_period_ms,
+                  ...(mode === "delta" && {
+                    existingDeadline: schedule.next_full_at,
+                  }),
+                }
+              : undefined,
+          );
+        }
         return await this.published(
           context,
           await this.runs.inventory.publish(

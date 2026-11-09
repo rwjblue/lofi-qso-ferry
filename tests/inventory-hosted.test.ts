@@ -8,6 +8,7 @@ import {
   runHostedScheduled,
 } from "../src/inventory-hosted.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
+import { lotwRecurringDueAt } from "../src/inventory-lotw-schedule.ts";
 import {
   inventoryRunQuery,
   planInventoryRun,
@@ -863,6 +864,34 @@ test("scheduled recurrence respects poll policy and switches to full verificatio
   assert.equal((await runs.load("a", verification.run))?.mode, "full");
 });
 
+test("LoTW recurring phases keep their cadence and honor an existing verification deadline", async () => {
+  const now = Date.parse("2026-11-09T00:00:00Z");
+  const hour = 3_600_000;
+  const period = 2 * hour;
+  const identity = ["tenant", "scope", "account-feed"] as const;
+  const first = await lotwRecurringDueAt(now, identity, period);
+  assert.ok(first >= now + hour && first < now + 3 * hour);
+  assert.equal(
+    await lotwRecurringDueAt(first + 30_000, identity, period),
+    first + period,
+  );
+  assert.notEqual(
+    await lotwRecurringDueAt(now, ["other", "other", "account-feed"], period),
+    first,
+  );
+  const weekly = 7 * 24 * hour;
+  const latest = now + 900_000;
+  const verification = { periodMs: weekly, existingDeadline: latest };
+  assert.equal(
+    await lotwRecurringDueAt(now, identity, 600_000, verification),
+    latest,
+  );
+  assert.equal(
+    await lotwRecurringDueAt(latest + 1, identity, 600_000, verification),
+    latest + 1,
+  );
+});
+
 test("LoTW account deltas keep their checkpoint through overflow, dated fallback and rearm", async (t) => {
   const f = await fixture(t);
   await f.db
@@ -1032,7 +1061,8 @@ test("LoTW account deltas keep their checkpoint through overflow, dated fallback
   assert.equal((await runner.step(await f.due(first))).kind, "advanced");
   assert.deepEqual((await snapshot())?.checkpoint, {});
   const done = await finish(first);
-  assert.ok(done.nextDueAt >= Date.now() + 7_190_000);
+  assert.ok(done.nextDueAt >= Date.now() + 3_590_000);
+  assert.ok(done.nextDueAt <= Date.now() + 10_800_000);
   const checkpoint = { selection: plan.selection, receivedThrough: through };
   assert.deepEqual((await snapshot())?.checkpoint, checkpoint);
   assert.deepEqual(await coverage(selected.stream), {
@@ -1062,7 +1092,8 @@ test("LoTW account deltas keep their checkpoint through overflow, dated fallback
   assert.ok(verify.kind === "started");
   assert.equal((await runs.load("a", verify.run))?.mode, "full");
   const verified = await finish(verify.run);
-  assert.ok(verified.nextDueAt > Date.now() + 6 * 86_400_000);
+  assert.ok(verified.nextDueAt >= Date.now() + 3_590_000);
+  assert.ok(verified.nextDueAt <= Date.now() + 7 * 86_400_000);
   const verifiedCoverage = await coverage(dated.stream);
   assert.equal(await restoreLotwDatedPolls(f.store), 0);
 

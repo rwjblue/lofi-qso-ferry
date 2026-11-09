@@ -53,7 +53,7 @@ test("twenty source/receipt pairs share one bounded snapshot without plaintext o
     assert.equal(page.stats.decryptedBodies, 40);
     assert.equal(page.stats.bodyQueries, 1);
     assert.equal(page.stats.lookupQueries, 2);
-    assert.equal(meter.totals.calls, 5);
+    assert.equal(meter.totals.calls, 4);
     assert.equal(meter.totals.statements, 7);
     assert.equal(meter.totals.rowsWritten, 0);
     assert.equal(page.graph.stats.predicateCalls, 20);
@@ -223,6 +223,7 @@ test("an operation change keeps the selected source pending until its new contex
     assert.equal(page.graph.results[0].reason, "source_unavailable");
     assert.equal(page.records[0].candidate?.state, "pending");
     assert.equal(page.stats.decryptedBodies, 0);
+    assert.equal(page.stats.lookupQueries, 0);
   } finally {
     await f.mf.dispose();
   }

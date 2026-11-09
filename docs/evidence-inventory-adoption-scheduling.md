@@ -215,6 +215,24 @@ calls exclude enrollment, coordinator turns, Queue transport and the
 final audit. They exceed the proposed six-call full-cohort target by
 13, with adoption accounting for more than half of the calls.
 
+The same fixture through migration 0125 measured 9 matching calls
+before batching the coverage read with the forward probe and 8 after.
+Matching still used 25 SQL statements, read 12,938 rows and wrote
+1,807. Historical adoption still used 10 calls and 20 statements.
+The two turns now use 18 calls for 20 matched contacts, with the same
+20 current matches, associations and ownership records and zero
+attempts or dispatches. The reverse probe still waits for the forward
+candidates and their bodies. A selection with no forward probes reads
+coverage directly.
+
+On two local copies of the captured personal log through migration
+0125, the coordinator recomputed the same 160 QRZ and LoTW decisions
+in 17 turns, including eight review turns. Calls fell from 300 to 292,
+with 540 SQL statements, 121,684 rows read and 14,046 rows written in
+both runs. All 1,112 stored reviews and 1,657 checked reverse
+dependencies matched. Credentials and inventory were identical, and
+the replay made zero provider requests or uploads.
+
 ### Coalesced idle coordinator phases
 
 The coordinator now checks consecutive idle phases under one lease and

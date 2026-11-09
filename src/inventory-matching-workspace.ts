@@ -7,7 +7,6 @@ import {
   type InventoryComparisonCandidate,
   InventoryComparisonLookup,
   type InventoryComparisonProbe,
-  type InventoryComparisonRequest,
 } from "./inventory-comparison-lookup.ts";
 import {
   type InventoryMatchingInput,
@@ -460,20 +459,43 @@ export class InventoryMatchingWorkspace {
       const range = body && interval(body);
       return range ? [range] : [];
     });
-    const coverageRows = await this.store
-      .statement(
-        `SELECT cv.scope_id AS scope,cv.stream_id AS stream,cv.facet,cv.partition_id AS partition,cv.version,cv.epoch,cv.state,cv.kind,cv.published_config_version AS configVersion,
+    const coverageStatement = this.store.statement(
+      `SELECT cv.scope_id AS scope,cv.stream_id AS stream,cv.facet,cv.partition_id AS partition,cv.version,cv.epoch,cv.state,cv.kind,cv.published_config_version AS configVersion,
        r.run_id AS run,r.config_version AS runConfigVersion,r.mode,r.requires_catchup AS catchup,r.phase,cv.completed_at AS completedAt,r.required_streams AS requiredStreams,r.fixed_query AS query
        FROM comparison_domains d CROSS JOIN inventory_coverage cv JOIN inventory_scopes s ON s.tenant=cv.tenant AND s.scope_id=cv.scope_id
        LEFT JOIN inventory_runs r ON r.tenant=cv.tenant AND r.run_id=cv.published_run_id
        WHERE d.tenant=?1 AND d.version=?2 AND cv.tenant=d.tenant AND ((s.provider='lofi' AND cv.facet='source') OR (cv.scope_id=?3 AND cv.facet='receipt' AND EXISTS(SELECT 1 FROM json_each(?4) w WHERE coalesce(json_extract(r.fixed_query,'$.selection.between[0]'),json_extract(r.fixed_query,'$.query.startDate'))<=json_extract(w.value,'$.end') AND coalesce(json_extract(r.fixed_query,'$.selection.between[1]'),json_extract(r.fixed_query,'$.query.endDate'))>=json_extract(w.value,'$.start'))))
        ORDER BY cv.scope_id,cv.stream_id,cv.partition_id LIMIT 257`,
-        tenant,
-        session.domainVersion,
-        destination,
-        canonical(windows),
-      )
-      .all<CoverageRow>();
+      tenant,
+      session.domainVersion,
+      destination,
+      canonical(windows),
+    );
+    const forwardRequests = selectedReferences.flatMap((reference, i) => {
+      const body = bodies.get(referenceKey(reference));
+      const keys = body && historicalCandidateKeys(body.record);
+      return body?.state === "ready" && keys?.workedCall && keys.time
+        ? [
+            {
+              subject: reference,
+              request: {
+                id: `forward:${i}`,
+                scope: destination,
+                record: body.record,
+              },
+            },
+          ]
+        : [];
+    });
+    const forwardSnapshot = forwardRequests.length
+      ? await session.probeWith<CoverageRow>(
+          forwardRequests.map((row) => row.request),
+          coverageStatement,
+        )
+      : null;
+    const coverageRows = forwardSnapshot
+      ? forwardSnapshot.input
+      : await coverageStatement.all<CoverageRow>();
     stats.metadataQueries++;
     stats.rowsRead += coverageRows.meta.rows_read;
     if (coverageRows.results.length > 256)
@@ -489,54 +511,33 @@ export class InventoryMatchingWorkspace {
       !!scope &&
       coverageRows.results.some((row) => fullSource(row, scope));
     const lookups: InventoryMatchingLookupSnapshot[] = [];
-    const runProbes = async (
+    const recordProbes = (
       direction: "forward" | "reverse",
-      requests: {
+      batch: {
         subject: InventoryMatchingReference;
-        request: InventoryComparisonRequest;
       }[],
+      result: Awaited<ReturnType<typeof session.probe>>,
     ) => {
-      for (let offset = 0; offset < requests.length; offset += 20) {
-        const batch = requests.slice(offset, offset + 20);
-        const result = await session.probe(batch.map((row) => row.request));
-        stats.lookupQueries++;
-        stats.rowsRead += result.rowsRead;
-        for (let i = 0; i < batch.length; i++) {
-          const probe = result.observations[i];
-          if (probe.state === "overflow")
-            throw new Error("inventory_matching_candidate_split_required");
-          lookups.push({ direction, subject: batch[i].subject, probe });
-          for (const candidate of probe.candidates)
-            add(
-              {
-                scope: probe.scope,
-                key: candidate.key,
-                facet: candidate.facet,
-              },
-              candidate,
-            );
-        }
+      stats.lookupQueries++;
+      stats.rowsRead += result.rowsRead;
+      for (let i = 0; i < batch.length; i++) {
+        const probe = result.observations[i];
+        if (probe.state === "overflow")
+          throw new Error("inventory_matching_candidate_split_required");
+        lookups.push({ direction, subject: batch[i].subject, probe });
+        for (const candidate of probe.candidates)
+          add(
+            {
+              scope: probe.scope,
+              key: candidate.key,
+              facet: candidate.facet,
+            },
+            candidate,
+          );
       }
     };
-    await runProbes(
-      "forward",
-      selectedReferences.flatMap((reference, i) => {
-        const body = bodies.get(referenceKey(reference));
-        const keys = body && historicalCandidateKeys(body.record);
-        return body?.state === "ready" && keys?.workedCall && keys.time
-          ? [
-              {
-                subject: reference,
-                request: {
-                  id: `forward:${i}`,
-                  scope: destination,
-                  record: body.record,
-                },
-              },
-            ]
-          : [];
-      }),
-    );
+    if (forwardSnapshot)
+      recordProbes("forward", forwardRequests, forwardSnapshot.probes);
     await load();
     const remoteReferences = [...records.values()]
       .filter((row) => row.reference.facet === "receipt")
@@ -563,7 +564,14 @@ export class InventoryMatchingWorkspace {
     });
     if (reverseRequests.length > 128)
       throw new Error("inventory_matching_probe_split_required");
-    await runProbes("reverse", reverseRequests);
+    for (let offset = 0; offset < reverseRequests.length; offset += 20) {
+      const batch = reverseRequests.slice(offset, offset + 20);
+      recordProbes(
+        "reverse",
+        batch,
+        await session.probe(batch.map((row) => row.request)),
+      );
+    }
     await load();
     const inputs: InventoryMatchingInput[] = [...records.values()].map(
       ({ reference }) => {

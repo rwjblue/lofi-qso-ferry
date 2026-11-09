@@ -112,8 +112,21 @@ export class InventoryComparisonLookup {
       active: writers.domain.active_generation === context.generation,
       coverageDays: (scope: string, dates: readonly string[]) =>
         inventoryCoverageDays(context, scope, dates),
-      probe: (requests: InventoryComparisonRequest[]) =>
-        this.collect(tenant, requests, writers.domain, context),
+      probe: async (requests: InventoryComparisonRequest[]) =>
+        (await this.collect(tenant, requests, writers.domain, context)).probes,
+      probeWith: async <T>(
+        requests: InventoryComparisonRequest[],
+        statement: D1PreparedStatement,
+      ) => {
+        const { probes, input } = await this.collect(
+          tenant,
+          requests,
+          writers.domain,
+          context,
+          statement,
+        );
+        return { probes, input: input as D1Result<T> };
+      },
     });
   }
   async probe(
@@ -144,6 +157,7 @@ export class InventoryComparisonLookup {
     requests: InventoryComparisonRequest[],
     domain: InventoryComparisonDomain,
     context: InventoryComparisonKeyContext,
+    companion?: D1PreparedStatement,
   ) {
     requests = this.requests(tenant, requests);
     const probes = await Promise.all(
@@ -156,9 +170,8 @@ export class InventoryComparisonLookup {
     // Limit the total returned candidate metadata as well as every individual
     // equality probe. One extra row proves overflow; no truncated set is usable.
     const candidateLimit = Math.min(512, Math.floor(1024 / requests.length));
-    const result = await this.store
-      .statement(
-        `SELECT CAST(j.key AS INTEGER) AS ordinal,s.config_version,s.state AS scope_state,c.status AS connection_state,a.status AS account_state,
+    const statement = this.store.statement(
+      `SELECT CAST(j.key AS INTEGER) AS ordinal,s.config_version,s.state AS scope_state,c.status AS connection_state,a.status AS account_state,
        b.config_version AS build_config_version,b.complete,g.state AS generation_state,
        (SELECT json_group_array(json_object('key',q.record_key,'facet',q.facet,'keyClass',q.key_class,'hash',q.bucket_hash,'state',CASE WHEN q.current_projection_version IS NULL THEN 'pending' ELSE q.state END,
         'semanticVersion',q.semantic_version,'currentSemanticVersion',q.current_semantic_version,'configVersion',q.config_version,
@@ -184,18 +197,21 @@ export class InventoryComparisonLookup {
        LEFT JOIN connections c ON c.tenant=s.tenant AND c.id=s.connection_id
        LEFT JOIN comparison_builds b ON b.tenant=s.tenant AND b.generation_id=g.generation_id AND b.scope_id=s.scope_id
        WHERE d.tenant=?2 AND d.version=?3`,
-        canonical(probes),
-        tenant,
-        domain.version,
-        context.generation,
-        candidateLimit + 1,
-      )
-      .all<ProbeRow>();
-    if (result.results.length !== requests.length)
+      canonical(probes),
+      tenant,
+      domain.version,
+      context.generation,
+      candidateLimit + 1,
+    );
+    const [result, input] = companion
+      ? await this.store.db.batch([statement, companion])
+      : [await statement.all<ProbeRow>()];
+    const rows = result.results as ProbeRow[];
+    if (rows.length !== requests.length)
       throw new Error("inventory_comparison_generation_changed");
-    if (encoder.encode(canonical(result.results)).byteLength > 2 * 1024 * 1024)
+    if (encoder.encode(canonical(rows)).byteLength > 2 * 1024 * 1024)
       throw new Error("inventory_comparison_lookup_too_large");
-    const observations: InventoryComparisonProbe[] = result.results
+    const observations: InventoryComparisonProbe[] = rows
       .sort((a, b) => a.ordinal - b.ordinal)
       .map((row) => {
         const request = requests[row.ordinal];
@@ -238,13 +254,16 @@ export class InventoryComparisonLookup {
         };
       });
     return {
-      generation: context.generation,
-      domainVersion: domain.version,
-      sourceSetVersion: domain.source_set_version,
-      active: domain.active_generation === context.generation,
-      observations,
-      candidateLimit,
-      rowsRead: result.meta.rows_read,
+      probes: {
+        generation: context.generation,
+        domainVersion: domain.version,
+        sourceSetVersion: domain.source_set_version,
+        active: domain.active_generation === context.generation,
+        observations,
+        candidateLimit,
+        rowsRead: result.meta.rows_read,
+      },
+      input,
     };
   }
 }

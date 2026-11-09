@@ -72,9 +72,10 @@ Rejected bearers and mismatched accounts failed verification. The
 original snapshot and the rehearsal's destination credentials kept
 their ciphertext. The fixture used a simulated provider.
 
-A local census examined 58 private captures. The 55 with the same
-client all held the rejected bearer. The real rehearsal still needs
-a current same-client bearer before its next LoFi read.
+A read-only census examined 95 private captures. Of the 92 with the
+same client, 89 held the rejected bearer and three had no bearer.
+The real rehearsal still needs a current same-client bearer before
+its next LoFi read.
 
 ## Run or continue a locked rebuild
 
@@ -484,3 +485,25 @@ in 42 D1 page-publication statements. That batch reported 337,034 rows
 read and 157,145 rows written. The local read and terminal publication
 took 2.4 seconds, excluding fixture assembly and the separate
 comparison queue. The replay made zero external requests and uploads.
+
+### Hosted LoTW account enrollment
+
+With `INVENTORY_LOTW_ACCOUNT_FEEDS=true`, cron enrolls up to eight
+account feeds per tick after dated calendar registration. Each link
+needs current query access and at least one unfiltered dated plan. The
+first receive cursor uses the oldest eligible plan creation time with
+at most one hour of lookback. A bounded registration cursor lets later
+accounts proceed when a link fails registration.
+
+The native fixture verifies opt-in enrollment, idempotence, a nonempty
+first report and read-access restoration. Restoring access starts a new
+positive-only run on the same stream at its last committed receive
+timestamp. A changed timestamp fails native admission. The old wakeup
+is stale.
+
+On a private write-locked copy, the scheduler enrolled one feed beside
+15 existing dated selections. A repeat enrollment found no work. The
+first native account poll completed in one live request and returned
+zero receipts for the one-hour lookback. It published positive-only
+coverage and preserved the other stream jobs, checkpoints, coverage and
+credential envelopes. The trial made zero uploads.

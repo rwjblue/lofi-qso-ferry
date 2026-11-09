@@ -9,6 +9,7 @@ import {
 } from "../scripts/inventory-fresh-start.ts";
 import {
   rebuildFreshStart,
+  restartHeldLoFiSource,
   resumeHeldQrzCover,
 } from "../scripts/inventory-fresh-start-rebuild.ts";
 import { openInventoryTrial } from "../scripts/inventory-run-trial.ts";
@@ -768,4 +769,189 @@ test("a verified same-client LoFi bearer resumes a write-locked rebuild at its a
   } finally {
     await original.mf.dispose();
   }
+});
+
+test("a refused LoFi cursor can restart only its locked source selection", async (t) => {
+  const root = await mkdtemp(`${tmpdir()}/ferry-fresh-cursor-`);
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const original = await trialCapture(root);
+  const captured = await openInventoryTrial(original);
+  try {
+    await applyMigration(captured.db, "0006_account_templates.sql");
+  } finally {
+    await captured.mf.dispose();
+  }
+  const { directory } = await inventoryFreshStart(original, root);
+  const f = await openInventoryTrial(directory);
+  t.after(() => f.mf.dispose());
+  const source = await f.store.connection("trial", "lofi");
+  assert.ok(source);
+  const registered = await registerInventorySelection(
+    f.store,
+    await inventoryRuntime(f.store),
+    source,
+    { provider: "lofi", pageSize: 1000 },
+  );
+  assert.equal((await startInventorySelections(f.store)).started, 1);
+  const priorId = await f.db
+    .prepare("SELECT active_run_id FROM inventory_stream_jobs")
+    .first<string>("active_run_id");
+  assert.ok(priorId);
+  const runs = new InventoryRuns(new InventoryIngestion(f.store));
+  const snapshot = () =>
+    runs.inventory.snapshot("trial", registered.scope, registered.stream);
+  const credentialEnvelopes = async () =>
+    (
+      await f.db
+        .prepare(
+          "SELECT * FROM private_data WHERE kind='credential' ORDER BY tenant,connection,id",
+        )
+        .all()
+    ).results;
+  const due = async (id: string) => {
+    const previous = await runs.load("trial", id);
+    assert.ok(previous);
+    const at = Date.now();
+    await f.db.batch([
+      f.db.prepare("DELETE FROM inventory_read_pacing"),
+      f.db
+        .prepare(
+          "UPDATE inventory_stream_jobs SET work_version=work_version+1,next_due_at=? WHERE tenant='trial' AND scope_id=? AND stream_id=?",
+        )
+        .bind(at, registered.scope, registered.stream),
+      f.db
+        .prepare(
+          "INSERT INTO inventory_wakeups(tenant,wakeup_id,scope_id,stream_id,run_id,work_version,not_before) VALUES('trial',?,?,?,?,?,?)",
+        )
+        .bind(
+          crypto.randomUUID(),
+          registered.scope,
+          registered.stream,
+          id,
+          previous.jobVersion + 1,
+          at,
+        ),
+    ]);
+    return {
+      version: 1 as const,
+      tenant: "trial",
+      scope: registered.scope,
+      stream: registered.stream,
+      run: id,
+      workVersion: previous.jobVersion + 1,
+    };
+  };
+  const qso = (uuid: string) => ({
+    uuid,
+    syncedAtMillis: 100,
+    startAtMillis: 100,
+  });
+  const page = (qsos: ReturnType<typeof qso>[], cursor?: string) =>
+    Response.json({
+      account: { uuid: "source" },
+      operations: [],
+      qsos,
+      meta: {
+        operations: { records_left: 0 },
+        qsos: cursor
+          ? { records_left: 1, next_cursor: cursor }
+          : { records_left: 0 },
+      },
+      ...(cursor === "refused" && { errors: { qsos: { cursor: "expired" } } }),
+    });
+  await assert.rejects(
+    restartHeldLoFiSource(runs, "trial", priorId),
+    /lofi_cursor_not_held/,
+  );
+  const first = new InventoryRunner(
+    runs,
+    async () => page([qso("q1")], "accepted-cursor"),
+    { scheduled: true },
+  );
+  assert.equal((await first.step(await due(priorId))).kind, "advanced");
+  const refusing = new InventoryRunner(
+    runs,
+    async (_input, init) => {
+      assert.equal(
+        JSON.parse(String(init?.body)).meta.sync.qsos.cursor,
+        "accepted-cursor",
+      );
+      return page([], "refused");
+    },
+    { scheduled: true },
+  );
+  const oldWakeup = await due(priorId);
+  assert.equal((await refusing.step(oldWakeup)).kind, "held");
+  const held = await snapshot();
+  assert.match(JSON.stringify(held?.resume), /accepted-cursor/);
+  assert.equal((await runs.load("trial", priorId))?.reason, "cursor_refused");
+
+  const session = await openSourceCredentials(f.store, source);
+  await session.persistTokenState({ ...session.credentials, token: undefined });
+  await assert.rejects(
+    restartHeldLoFiSource(runs, "trial", priorId),
+    /lofi_bearer_unavailable/,
+  );
+  assert.equal((await snapshot())?.version, held?.version);
+  const missing = await openSourceCredentials(f.store, source);
+  await missing.persistRenewal(session.credentials);
+  const envelopes = await credentialEnvelopes();
+  const replacement = await restartHeldLoFiSource(runs, "trial", priorId);
+  assert.notEqual(replacement.id, priorId);
+  assert.equal(replacement.mode, "full");
+  assert.equal(replacement.scope, registered.scope);
+  assert.equal(replacement.streamId, registered.stream);
+  assert.equal(
+    (await restartHeldLoFiSource(runs, "trial", priorId)).id,
+    replacement.id,
+  );
+  assert.equal(
+    await f.db.prepare("SELECT count(*) AS n FROM inventory_runs").first("n"),
+    2,
+  );
+  assert.deepEqual((await snapshot())?.checkpoint, held?.checkpoint);
+  assert.doesNotMatch(
+    JSON.stringify((await snapshot())?.resume),
+    /accepted-cursor/,
+  );
+  assert.equal(
+    await f.db
+      .prepare("SELECT count(*) AS n FROM inventory_records")
+      .first("n"),
+    1,
+  );
+
+  const restarted = new InventoryRunner(
+    runs,
+    async (_input, init) => {
+      const request = JSON.parse(String(init?.body)).meta.sync;
+      assert.equal(request.qsos.cursor, undefined);
+      assert.equal(request.qsos.anyClient, true);
+      return page([qso("q1"), qso("q2")]);
+    },
+    { scheduled: true },
+  );
+  assert.deepEqual(await restarted.step(oldWakeup), {
+    kind: "skipped",
+    reason: "stale",
+  });
+  for (let turn = 0; turn < 6; turn++) {
+    const result = await restarted.step(await due(replacement.id));
+    if (result.kind === "complete") break;
+    assert.equal(result.kind, "advanced");
+  }
+  assert.equal((await runs.load("trial", replacement.id))?.phase, "complete");
+  assert.deepEqual(await credentialEnvelopes(), envelopes);
+  assert.deepEqual(
+    await f.db
+      .prepare("SELECT state,kind,epoch FROM inventory_coverage")
+      .first(),
+    { state: "ready", kind: "observed_selection", epoch: 1 },
+  );
+  assert.equal(
+    await f.db
+      .prepare("SELECT count(*) AS n FROM inventory_records")
+      .first("n"),
+    2,
+  );
 });

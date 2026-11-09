@@ -3,7 +3,10 @@ import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { InventoryComparisonPages } from "../src/inventory-comparison-pages.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
-import type { InventoryScanPlan } from "../src/inventory-run-plans.ts";
+import {
+  type InventoryScanPlan,
+  planInventoryRun,
+} from "../src/inventory-run-plans.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import {
   registerInventorySelection,
@@ -11,7 +14,7 @@ import {
   startInventorySelections,
 } from "../src/inventory-scheduler.ts";
 import type { QrzBook } from "../src/qrz.ts";
-import { canonical } from "../src/security.ts";
+import { canonical, sha256 } from "../src/security.ts";
 import { openSourceCredentials } from "../src/source-credentials.ts";
 import { type Connection, Store } from "../src/store.ts";
 import { measureD1 } from "./inventory-benchmark-metrics.ts";
@@ -39,6 +42,7 @@ type Selection = {
 type Options = {
   rehearsal: string;
   selections?: readonly Selection[];
+  restartLofiSource?: string;
   resumeQrzCover?: string;
   resumeLotwAccount?: string;
   pollDue?: boolean;
@@ -214,6 +218,89 @@ export function resumeHeldLotwAccount(
   return resumeHeldRun(runs, tenant, runId, "lotw_account");
 }
 
+/** Replace a refused source cursor with a full scan of the same linked account. */
+export async function restartHeldLoFiSource(
+  runs: InventoryRuns,
+  tenant: string,
+  runId: string,
+) {
+  const { store } = runs.inventory;
+  await requireFreshStartLock(store);
+  const prior = await runs.load(tenant, runId);
+  if (
+    prior?.facet !== "source" ||
+    prior.phase !== "held" ||
+    prior.reason !== "cursor_refused"
+  )
+    throw new Error("inventory_fresh_start_lofi_cursor_not_held");
+  const id = await sha256(
+    canonical(["inventory-fresh-start-lofi-restart-v1", tenant, runId]),
+  );
+  // The replacement ID is stable across retries after its native begin receipt.
+  const replacement = await runs.load(tenant, id);
+  if (replacement) {
+    if (
+      replacement.scope !== prior.scope ||
+      replacement.streamId !== prior.streamId ||
+      replacement.mode !== "full"
+    )
+      throw new Error("inventory_fresh_start_lofi_restart_conflict");
+    return replacement;
+  }
+  if (prior.jobState !== "held" || prior.activeRun !== runId)
+    throw new Error("inventory_fresh_start_lofi_cursor_not_held");
+  const lease = await store.claim(
+    tenant,
+    `inventory:${prior.scope}`,
+    Date.now(),
+    90_000,
+  );
+  if (!lease) throw new Error("inventory_fresh_start_lofi_restart_busy");
+  try {
+    const saved = await store
+      .statement(
+        `SELECT p.plan FROM inventory_scheduled_selections p
+       JOIN inventory_stream_jobs j USING(tenant,scope_id,stream_id)
+       WHERE (p.tenant,p.scope_id,p.stream_id,p.config_version)=(?,?,?,?)
+        AND j.state='held' AND j.reason='cursor_refused' AND (j.active_run_id,j.work_version)=(?,?)`,
+        tenant,
+        prior.scope,
+        prior.streamId,
+        prior.configVersion,
+        runId,
+        prior.jobVersion,
+      )
+      .first<string>("plan");
+    const stream = await runs.inventory.snapshot(
+      tenant,
+      prior.scope,
+      prior.streamId,
+    );
+    if (
+      !saved ||
+      stream?.provider !== "lofi" ||
+      stream.version !== prior.expectedStreamVersion ||
+      stream.configVersion !== prior.configVersion
+    )
+      throw new Error("inventory_fresh_start_lofi_cursor_not_held");
+    const link = await store.connection(tenant, stream.connection);
+    if (!link || link.credential_version !== stream.credentialVersion)
+      throw new Error("inventory_fresh_start_lofi_cursor_not_held");
+    if (!(await openSourceCredentials(store, link)).credentials.token)
+      throw new Error("inventory_fresh_start_lofi_bearer_unavailable");
+    const plan = JSON.parse(saved) as InventoryScanPlan;
+    return await runs.begin({
+      stream,
+      lease,
+      definition: await planInventoryRun(stream, plan, { id, mode: "full" }),
+      expectedJobVersion: prior.jobVersion,
+      replaceHeld: true,
+    });
+  } finally {
+    await store.release(lease);
+  }
+}
+
 /** Enroll explicitly selected links or resume the rehearsal's existing baselines. */
 export async function rebuildFreshStart(
   options: Options,
@@ -287,6 +374,8 @@ export async function rebuildFreshStart(
     const runs = new InventoryRuns(
       new InventoryIngestion(store, new InventoryComparisonPages(store)),
     );
+    if (options.restartLofiSource !== undefined)
+      await restartHeldLoFiSource(runs, tenant, options.restartLofiSource);
     if (options.resumeQrzCover !== undefined)
       await resumeHeldQrzCover(runs, tenant, options.resumeQrzCover);
     if (options.resumeLotwAccount !== undefined)
@@ -385,6 +474,7 @@ if (
       options: {
         rehearsal: { type: "string" },
         plan: { type: "string" },
+        "restart-lofi-source": { type: "string" },
         "resume-qrz-cover": { type: "string" },
         "resume-lotw-account": { type: "string" },
         "poll-due": { type: "boolean" },
@@ -400,6 +490,7 @@ if (
         selections: values.plan
           ? JSON.parse(await readFile(values.plan, "utf8"))
           : undefined,
+        restartLofiSource: values["restart-lofi-source"],
         resumeQrzCover: values["resume-qrz-cover"],
         resumeLotwAccount: values["resume-lotw-account"],
         pollDue: values["poll-due"],

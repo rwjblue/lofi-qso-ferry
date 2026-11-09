@@ -2,6 +2,7 @@
 #MISE description="Continue a write-locked inventory rebuild with read-only vendor access"
 #USAGE flag "--rehearsal <directory>" help="Closed private account rehearsal"
 #USAGE flag "--plan <file>" help="JSON array of explicit linked connection selections"
+#USAGE flag "--restart-lofi-source <run-id>" help="Replace a refused LoFi cursor with a full source scan"
 #USAGE flag "--resume-qrz-cover <run-id>" help="Requeue an eligible held QRZ covering delta"
 #USAGE flag "--resume-lotw-account <run-id>" help="Retry a held LoTW account delta with a larger report bound"
 #USAGE flag "--poll-due" help="Also run the next poll for each selection due at startup"

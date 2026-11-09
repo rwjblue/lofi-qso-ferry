@@ -74,8 +74,8 @@ their ciphertext. The fixture used a simulated provider.
 
 A read-only census examined 95 private captures. Of the 92 with the
 same client, 89 held the rejected bearer and three had no bearer.
-The real rehearsal still needs a current same-client bearer before
-its next LoFi read.
+The later [live continuation](#live-lofi-continuation-through-migration-0124)
+obtained a newer bearer from the active Ferry link.
 
 A private copy of the later QRZ recovery rehearsal was upgraded
 through migration 0114. It retained the exact LoFi run and cursor,
@@ -102,8 +102,50 @@ simulated forward response replayed an operation and a QSO at their
 respective watermark boundaries. The delta preserved the published
 coverage and active count, scheduled the next poll, and made no
 destination reads. Both steps made zero external requests and
-created zero dispatches. Live authentication and full live bootstrap
-timing are still open.
+created zero dispatches.
+
+### Live LoFi continuation through migration 0124
+
+A SELECT against the active Ferry link for the same LoFi account
+returned an encrypted credential for the same client and a newer
+bearer. The operator's protected key opened the credential in memory.
+One read-only LoFi account request verified the bearer before storing
+it in a separate write-locked copy. The recovery wrote the bearer
+only into that local copy.
+
+LoFi accepted the saved cursor. The same run finished with ready
+source coverage and advanced its checkpoint from 8 to 14. The copy
+retained 4,341 active ordinary contacts, up from 1,949, and 4,715
+canonical source bodies across operations, events and ordinary
+contacts, including deleted records.
+
+Four live LoFi sync reads transferred 2,321,024 bytes. Source coverage
+published 22.2 seconds after verification. The full continuation,
+including local comparison, reached quiescence in 459.2 seconds after
+six reader turns and 2,933 comparison turns. It used 45,229 D1 calls,
+80,461 SQL statements and 216.7 MB of allocated database space. The
+initial account verification was a separate read.
+
+| Current result | LoTW | QRZ |
+| --- | ---: | ---: |
+| Matched existing | 561 | 73 |
+| Absent within ready inventory | 465 | 54 |
+| Incomplete | 3,306 | 4,209 |
+| Ambiguous | 4 | 0 |
+| Excluded | 5 | 5 |
+
+A read-only reopen checked all 8,682 current decisions and 634
+historical associations. The matching and adoption queues drained,
+foreign keys passed, and the copy recorded zero attempts, dispatches
+and uploads. The incomplete results were 7,509 `forward_incomplete`
+and six `source_unavailable`.
+
+The audit matched the original account, passkey and template records
+and the LoTW and QRZ credential envelopes. Connection and credential
+identities matched. The LoFi link recorded its successful-poll
+timestamp. The 706 LoTW receipts across four ready selections and 73
+QRZ receipts in one ready selection matched the starting copy. These
+selections bound the destination classifications.
 
 ### Restart a refused LoFi cursor
 
@@ -276,7 +318,8 @@ encrypted records matched the starting copy, including its 1,949 active
 contacts. The source-only preflight returned
 `source_authentication_required` without making a request. The
 destination poll made zero LoFi requests and zero uploads. The
-write-locked copy is ready for a current same-client bearer.
+write-locked copy later supplied the saved cursor for the
+[live LoFi continuation](#live-lofi-continuation-through-migration-0124).
 
 ### QRZ delta recovery
 
@@ -741,9 +784,9 @@ The quiescent copy reported 281,378,816 allocated bytes. These times
 measure the native local reader and coordinator. They exclude vendor
 network latency, hosted Queue delivery, snapshot preparation and the
 final audit. The [backfill lookup profile](evidence-inventory-comparison.md#backfill-payload-lookup)
-isolates the preparation fix discovered during the replay. The live
-LoFi account-only resume still requires a current bearer for the same
-client.
+isolates the preparation fix discovered during the replay. The
+[live LoFi continuation](#live-lofi-continuation-through-migration-0124)
+subsequently qualified the saved cursor against the real service.
 
 ### Rebuild from captures through migration 0123
 

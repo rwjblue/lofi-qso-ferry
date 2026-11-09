@@ -830,8 +830,10 @@ copy. It preserves passkeys, linked credential ciphertext and template
 bindings, starts with empty contact state, and durably locks vendor writes.
 The copy upgraded through migration 0123 completed four live destination
 polls with zero uploads and preserved its LoFi cursor at 1,949 active
-contacts. A current bearer for the same LoFi client is required to resume
-that saved run. [Account-only rehearsal](evidence-inventory-fresh-start.md#real-scheduled-polls)
+contacts. A later copy through migration 0124 verified a newer bearer
+for the same client and completed that saved run against live LoFi.
+It published ready source coverage for 4,341 active contacts.
+[Account-only rehearsal](evidence-inventory-fresh-start.md#real-scheduled-polls) · [Live continuation](evidence-inventory-fresh-start.md#live-lofi-continuation-through-migration-0124)
 
 A separate recovery rehearsal verified that a refused cursor can restart
 just the source scan. A complete offline replay rebuilt all 17 selections

@@ -11,10 +11,9 @@ interface MatchReceipt {
   row_count: number;
   state: string;
 }
-interface MatchVersion {
-  ordinal: number;
-  version: number;
-}
+type MatchPublicationBasis =
+  | (MatchReceipt & { kind: "receipt" })
+  | { kind: "version"; ordinal: number; version: number };
 export interface InventoryMatchResult {
   source_scope: string;
   record_key: string;
@@ -39,6 +38,20 @@ const refKey = (row: { scope: string; key: string; facet: string }) =>
 const scope = (destination: string) => `matching:${destination}`;
 const identifier = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 512;
+const MATCH_RESULT_LIMIT = 20;
+
+function recoveredMatch(receipt: MatchReceipt, id: string, digest: string) {
+  if (receipt.input_digest !== digest || receipt.state !== "committed")
+    throw new Error("inventory_match_receipt_conflict");
+  return {
+    setId: id,
+    recovered: true,
+    records: receipt.row_count,
+    statements: 0,
+    rowsRead: 0,
+    rowsWritten: 0,
+  };
+}
 
 /** Persists comparison observations only. No ownership, association, source
  * proof, delivery attempt or vendor write is created by matching publication. */
@@ -56,17 +69,7 @@ export class InventoryMatchingResults {
         id,
       )
       .first<MatchReceipt>();
-    if (!receipt) return null;
-    if (receipt.input_digest !== digest || receipt.state !== "committed")
-      throw new Error("inventory_match_receipt_conflict");
-    return {
-      setId: id,
-      recovered: true,
-      records: receipt.row_count,
-      statements: 0,
-      rowsRead: 0,
-      rowsWritten: 0,
-    };
+    return receipt ? recoveredMatch(receipt, id, digest) : null;
   }
   async publish(
     page: PreparedInventoryMatchingSnapshot,
@@ -118,12 +121,31 @@ export class InventoryMatchingResults {
     const inputDigest = work
       ? await sha256(canonical({ matchingDigest: page.digest, work }))
       : page.digest;
-    const receipt = await this.recover(page, id, inputDigest);
-    if (receipt) return receipt;
+    const basis = await this.store
+      .statement(
+        `WITH receipt AS MATERIALIZED (
+           SELECT input_digest,row_count,state FROM inventory_match_sets WHERE tenant=?2 AND set_id=?4
+         )
+         SELECT 'receipt' AS kind,NULL AS ordinal,NULL AS version,input_digest,row_count,state FROM receipt
+         UNION ALL
+         SELECT 'version',CAST(j.key AS INTEGER),coalesce(r.version,0),NULL,NULL,NULL
+         FROM json_each(CASE WHEN EXISTS(SELECT 1 FROM receipt) THEN '[]' ELSE ?1 END) j
+         LEFT JOIN match_results r ON r.tenant=?2 AND r.destination=?3 AND r.source_scope=json_extract(j.value,'$.scope') AND r.record_key=json_extract(j.value,'$.key')`,
+        page.selected.length <= MATCH_RESULT_LIMIT
+          ? canonical(page.selected)
+          : "[]",
+        page.tenant,
+        page.destination,
+        id,
+      )
+      .all<MatchPublicationBasis>();
+    const first = basis.results[0];
+    if (first?.kind === "receipt")
+      return recoveredMatch(first, id, inputDigest);
     if (
       page.formatVersion !== 1 ||
       page.results.length < 1 ||
-      page.results.length > 20 ||
+      page.results.length > MATCH_RESULT_LIMIT ||
       page.results.length !== page.selected.length ||
       page.records.length > 128 ||
       page.scopes.length > 21 ||
@@ -146,20 +168,10 @@ export class InventoryMatchingResults {
       )
     )
       throw new Error("invalid_inventory_matching_manifest");
-    const versions = await this.store
-      .statement(
-        `SELECT CAST(j.key AS INTEGER) AS ordinal,coalesce(r.version,0) AS version FROM json_each(?1) j LEFT JOIN match_results r ON r.tenant=?2 AND r.destination=?3 AND r.source_scope=json_extract(j.value,'$.scope') AND r.record_key=json_extract(j.value,'$.key')`,
-        canonical(page.selected),
-        page.tenant,
-        page.destination,
-      )
-      .all<MatchVersion>();
-    const versionByKey = new Map(
-      versions.results.map((row) => [
-        refKey(page.selected[row.ordinal]),
-        row.version,
-      ]),
-    );
+    const versionByKey = new Map<string, number>();
+    for (const row of basis.results)
+      if (row.kind === "version")
+        versionByKey.set(refKey(page.selected[row.ordinal]), row.version);
     const rows = page.results.map((row) => ({
       ...row,
       expectedVersion: versionByKey.get(refKey(row.source)),
@@ -368,7 +380,7 @@ export class InventoryMatchingResults {
       !identifier(tenant) ||
       !identifier(destination) ||
       selected.length < 1 ||
-      selected.length > 20 ||
+      selected.length > MATCH_RESULT_LIMIT ||
       selected.some((row) => !identifier(row.scope) || !identifier(row.key)) ||
       new Set(selected.map((row) => canonical([row.scope, row.key]))).size !==
         selected.length

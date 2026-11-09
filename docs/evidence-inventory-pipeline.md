@@ -376,6 +376,28 @@ Rows written stayed at 77,378. Across the full run the peak fell from
 also completed two incremental rounds including contact and operation
 edits, retirement and restoration.
 
+### Matching publication preflight
+
+A match publisher now reads the receipt and expected result versions
+in one statement. A committed receipt bypasses version lookup. For new
+work the guarded publication still checks the captured result and work
+versions. A lost acknowledgement can still recover the committed receipt.
+The native race test commits a new result after preflight and verifies
+that the stale publication rolls back.
+
+Two private copies of the captured log republished 20 cohorts across
+LoTW and QRZ. Both produced the same 400 classifications and selected
+remote records. New publications used 40 D1 calls in total, down from
+60, including their write batches. All 20 receipt replays took one read
+each. Write-batch statement and row counts were identical for both
+providers. The audit preserved credential envelopes, checkpoints,
+coverage and historical associations. The replay made zero external
+requests and created zero dispatches.
+
+The 1,000-contact synthetic fixture saved one D1 call for each of its
+50 new cohorts. The full classification stage used 3,270 calls, down
+from 3,320, and both runs produced all 1,000 results in 39 deliveries.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

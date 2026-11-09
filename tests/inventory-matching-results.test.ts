@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { measureD1 } from "../scripts/inventory-benchmark-metrics.ts";
 import { InventoryMatchingResults } from "../src/inventory-matching-results.ts";
 import {
   InventoryMatchingWorkspace,
@@ -80,8 +81,14 @@ test("native publication stores a twenty-pair comparison cohort and receipt repl
     assert.ok(f.page.results.every((row) => row.state === "matched_existing"));
     const before = await f.inventory.snapshot("a", "source", "sync");
     const credential = await f.store.private("a", "source", "v1", "credential");
-    const result = await f.matches.publish(f.page, f.lease, "twenty");
+    const meter = measureD1(f.db);
+    const measured = new InventoryMatchingResults(
+      new Store(meter.database, f.store.keys),
+    );
+    const result = await measured.publish(f.page, f.lease, "twenty");
     assert.equal(result.records, 20);
+    assert.equal(meter.totals.calls, 2);
+    assert.equal(meter.totals.statements, result.statements + 1);
     const current = await f.matches.current("a", "destination", f.selected);
     assert.equal(current.results.length, 20);
     assert.ok(
@@ -90,9 +97,11 @@ test("native publication stores a twenty-pair comparison cohort and receipt repl
       ),
     );
     assert.equal(
-      (await f.matches.publish(f.page, f.lease, "twenty")).recovered,
+      (await measured.publish(f.page, f.lease, "twenty")).recovered,
       true,
     );
+    assert.equal(meter.totals.calls, 3);
+    assert.equal(meter.totals.statements, result.statements + 2);
     assert.deepEqual(
       (await f.matches.current("a", "destination", f.selected)).results,
       current.results,
@@ -476,6 +485,39 @@ function alteredStore(
     f.store.keys,
   );
 }
+
+test("publication rejects result versions changed after the preflight read", async () => {
+  const f = await prepared();
+  try {
+    const store = alteredStore(f, async (plan) => {
+      await f.matches.publish(f.page, f.lease, "newer-result");
+      return f.db.batch(plan);
+    });
+    await assert.rejects(
+      new InventoryMatchingResults(store).publish(
+        f.page,
+        f.lease,
+        "stale-result",
+      ),
+      /inventory match result requirements incomplete/,
+    );
+    assert.deepEqual(
+      (await f.db.prepare("SELECT set_id,version FROM match_results").all())
+        .results,
+      [{ set_id: "newer-result", version: 1 }],
+    );
+    assert.deepEqual(
+      (
+        await f.db
+          .prepare("SELECT set_id,state FROM inventory_match_sets")
+          .all()
+      ).results,
+      [{ set_id: "newer-result", state: "committed" }],
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});
 
 test("late SQL and post-admission authority failures roll all publication state back", async (t) => {
   for (const failure of ["sql", "authority"] as const)

@@ -21,6 +21,7 @@ import {
   lotwInventorySelections,
   registerInventorySelection,
   registerKnownInventoryConnections,
+  registerSourceCalendarSelections,
   startInventorySelections,
 } from "../src/inventory-scheduler.ts";
 import { database, seed } from "./helpers.ts";
@@ -423,6 +424,107 @@ test("date selection partitioning is gap-free, bounded and retains station filte
       }),
     /date_range/,
   );
+});
+
+test("calendar enrollment resumes by month and binds current unfiltered LoTW selections", async (t) => {
+  const f = await fixture(t);
+  await f.store
+    .statement(
+      `INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at,config)
+       VALUES('a','lotw','lotw','fixture','LoTW','active','v1',1,'{"readAccess":true}'),
+             ('a','upload-only','lotw','upload','Upload','active','v1',1,'{"readAccess":false}')`,
+    )
+    .run();
+  await (
+    await f.store.putPrivate("a", "lotw", "v1", "credential", {
+      query: { username: "fixture", password: "fixture" },
+    })
+  ).run();
+  const first = await runHostedScheduled(f.env);
+  assert.ok(first.mode === "inventory_read_only");
+  assert.deepEqual(first.calendarRegistration, { registered: 0, failed: 0 });
+  const source = await f.db
+    .prepare("SELECT scope_id FROM inventory_scopes WHERE provider='lofi'")
+    .first<string>("scope_id");
+  const wakeup = f.sent.find(
+    (row) => (row.body as InventoryRunWakeup).scope === source,
+  );
+  assert.ok(wakeup);
+  const delivery = batch(wakeup.body);
+  await runHostedInventoryQueue(f.env, delivery.value, async () =>
+    Response.json({
+      account: { uuid: "source" },
+      operations: [],
+      qsos: [
+        {
+          uuid: "q1",
+          syncedAtMillis: 100,
+          startAtMillis: Date.parse("2024-03-01T00:10:00Z"),
+        },
+      ],
+      meta: { operations: { records_left: 0 }, qsos: { records_left: 0 } },
+    }),
+  );
+  assert.deepEqual(delivery.outcomes, ["ack"]);
+  const runtime = await inventoryRuntime(f.store);
+  const link = await f.store.connection("a", "lotw");
+  assert.ok(link);
+  await registerInventorySelection(f.store, runtime, link, {
+    provider: "lotw",
+    selection: {
+      startDate: "2024-02-01",
+      endDate: "2024-02-29",
+      stationCallsign: "N1RWJ",
+    },
+  });
+  for (let i = 0; i < 2; i++)
+    assert.deepEqual(
+      await registerSourceCalendarSelections(f.store, runtime, 1),
+      { registered: 1, failed: 0 },
+    );
+  assert.deepEqual(
+    await registerSourceCalendarSelections(f.store, runtime, 1),
+    { registered: 0, failed: 0 },
+  );
+  const plans = await f.db
+    .prepare(
+      `SELECT json_extract(p.plan,'$.selection.startDate') AS start,
+        json_extract(p.plan,'$.selection.endDate') AS end
+       FROM inventory_scheduled_selections p
+       JOIN inventory_scopes s ON s.tenant=p.tenant AND s.scope_id=p.scope_id
+       WHERE s.provider='lotw' AND json_type(p.plan,'$.selection.stationCallsign') IS NULL
+       ORDER BY start`,
+    )
+    .all();
+  assert.deepEqual(plans.results, [
+    { start: "2024-02-01", end: "2024-02-29" },
+    { start: "2024-03-01", end: "2024-03-31" },
+  ]);
+  assert.equal(
+    await f.db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_coverage c JOIN inventory_scopes s ON s.tenant=c.tenant AND s.scope_id=c.scope_id WHERE s.provider='lotw'",
+      )
+      .first("n"),
+    0,
+    "scheduling a month provides no coverage",
+  );
+  await f.db
+    .prepare("UPDATE connections SET config=? WHERE id='lotw'")
+    .bind('{"readAccess":false}')
+    .run();
+  assert.deepEqual(await registerSourceCalendarSelections(f.store, runtime), {
+    registered: 0,
+    failed: 0,
+  });
+  await f.db
+    .prepare("UPDATE connections SET config=? WHERE id='lotw'")
+    .bind('{"readAccess":true}')
+    .run();
+  assert.deepEqual(await registerSourceCalendarSelections(f.store, runtime), {
+    registered: 2,
+    failed: 0,
+  });
 });
 
 test("scheduled recurrence respects poll policy and switches to full verification when due", async (t) => {

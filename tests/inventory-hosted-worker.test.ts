@@ -23,6 +23,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   let reads = 0;
   let qrzReads = 0;
   let qrzStatuses = 0;
+  let lotwReads = 0;
   const readTimes: number[] = [];
   const runtime = new Miniflare(
     convertV4MiniflareOptions({
@@ -53,7 +54,20 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       },
       serviceBindings: { ASSETS: async () => new Response("fixture") },
       outboundService: async (request) => {
-        if (new URL(request.url).hostname === "logbook.qrz.com") {
+        const url = new URL(request.url);
+        if (url.hostname === "lotw.arrl.org") {
+          lotwReads++;
+          assert.equal(request.method, "GET");
+          assert.equal(url.searchParams.get("qso_startdate"), "2026-11-01");
+          assert.equal(url.searchParams.get("qso_enddate"), "2026-11-30");
+          assert.equal(url.searchParams.get("qso_qsorxsince"), "1900-01-01");
+          assert.equal(url.searchParams.get("qso_owncall"), null);
+          assert.equal(url.searchParams.get("qso_callsign"), null);
+          return new Response(
+            "<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>0<EOH><APP_LOTW_EOF>",
+          );
+        }
+        if (url.hostname === "logbook.qrz.com") {
           assert.equal(request.method, "POST");
           const form = new URLSearchParams(await request.text());
           if (form.get("ACTION") === "STATUS") {
@@ -370,4 +384,29 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     ).results,
     credentials,
   );
+
+  await store
+    .statement(
+      `INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at,config)
+       VALUES('a','lotw','lotw','fixture','LoTW','active','v1',1,'{"readAccess":true}')`,
+    )
+    .run();
+  await (
+    await store.putPrivate("a", "lotw", "v1", "credential", {
+      query: { username: "fixture", password: "fixture" },
+    })
+  ).run();
+  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  let lotwPhase: string | null = null;
+  for (let i = 0; i < 100; i++) {
+    lotwPhase = await db
+      .prepare(
+        "SELECT r.phase FROM inventory_runs r JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.scope_id WHERE s.provider='lotw'",
+      )
+      .first<string>("phase");
+    if (lotwPhase === "complete") break;
+    await delay(50);
+  }
+  assert.equal(lotwPhase, "complete");
+  assert.equal(lotwReads, 1);
 });

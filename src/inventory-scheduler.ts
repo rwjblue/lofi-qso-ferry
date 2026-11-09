@@ -228,6 +228,89 @@ export async function registerKnownInventoryConnections(
   return report;
 }
 
+/** Enroll bounded unfiltered LoTW months discovered by managed source scans. */
+export async function registerSourceCalendarSelections(
+  store: Store,
+  runtime: InventoryRuntime,
+  limit = 16,
+) {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 32)
+    throw new Error("invalid_inventory_schedule_limit");
+  const progress = await store
+    .statement(
+      "SELECT last_tenant,last_connection,last_month FROM inventory_calendar_registration_progress WHERE id=1",
+    )
+    .first<{
+      last_tenant: string;
+      last_connection: string;
+      last_month: string;
+    }>();
+  if (!progress) throw new Error("inventory_calendar_registration_unavailable");
+  // The exact canonical plan is the durable acknowledgement. A filtered or
+  // partial read of the same month does not satisfy this unfiltered selection.
+  const candidates = (
+    await store
+      .statement(
+        `WITH months AS (
+          SELECT c.*,m.month_start,coalesce(date(m.month_start,'+1 month','-1 day'),'9999-12-31') AS month_end
+          FROM connections c JOIN accounts a ON a.id=c.tenant
+          JOIN private_data credential ON credential.tenant=c.tenant AND credential.connection=c.id AND credential.id=c.credential_version AND credential.kind='credential'
+          JOIN inventory_source_calendar_months m ON m.tenant=c.tenant
+          JOIN inventory_scopes source ON source.tenant=m.tenant AND source.scope_id=m.scope_id
+          JOIN connections lofi ON lofi.tenant=source.tenant AND lofi.id=source.connection_id
+          WHERE (c.tenant,c.id,m.month_start)>(?,?,?) AND a.status='active'
+            AND c.kind='lotw' AND c.status='active'
+            AND credential.revoked_at IS NULL AND (credential.expires_at IS NULL OR credential.expires_at>unixepoch('subsec')*1000)
+            AND json_extract(c.config,'$.readAccess')=1
+            AND source.provider='lofi' AND source.state='observing' AND source.runtime_version=?
+            AND lofi.kind='lofi' AND lofi.status='active' AND lofi.remote_identity=source.logical_identity
+        )
+        SELECT months.* FROM months WHERE NOT EXISTS(
+          SELECT 1 FROM inventory_scopes target
+          JOIN inventory_scheduled_selections p ON p.tenant=target.tenant AND p.scope_id=target.scope_id
+          WHERE target.tenant=months.tenant AND target.provider='lotw' AND target.logical_identity=months.remote_identity
+            AND target.connection_id=months.id AND target.state='observing'
+            AND target.runtime_version=? AND p.runtime_version=target.runtime_version AND p.config_version=target.config_version
+            AND json_extract(p.plan,'$.provider')='lotw'
+            AND p.plan=json_object('provider','lotw','selection',json_object('endDate',months.month_end,'startDate',months.month_start))
+        )
+        GROUP BY tenant,id,month_start ORDER BY tenant,id,month_start LIMIT ?`,
+        progress.last_tenant,
+        progress.last_connection,
+        progress.last_month,
+        runtime.version,
+        runtime.version,
+        limit,
+      )
+      .all<Connection & { month_start: string; month_end: string }>()
+  ).results;
+  const report = { registered: 0, failed: 0 };
+  for (const { month_start, month_end, ...connection } of candidates) {
+    try {
+      await registerInventorySelection(store, runtime, connection, {
+        provider: "lotw",
+        selection: { startDate: month_start, endDate: month_end },
+      });
+      report.registered++;
+    } catch {
+      report.failed++;
+    }
+  }
+  const last = candidates.length === limit ? candidates.at(-1) : undefined;
+  await store
+    .statement(
+      "UPDATE inventory_calendar_registration_progress SET last_tenant=?,last_connection=?,last_month=? WHERE id=1 AND (last_tenant,last_connection,last_month)=(?,?,?)",
+      last?.tenant ?? "",
+      last?.id ?? "",
+      last?.month_start ?? "",
+      progress.last_tenant,
+      progress.last_connection,
+      progress.last_month,
+    )
+    .run();
+  return report;
+}
+
 /** Start initial/reconfigured full runs; normal recurrence belongs to the runner. */
 export async function startInventorySelections(store: Store, limit = 16) {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 32)

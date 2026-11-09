@@ -17,6 +17,7 @@ import {
 } from "./inventory-runtime.ts";
 import {
   registerKnownInventoryConnections,
+  registerSourceCalendarSelections,
   startInventorySelections,
 } from "./inventory-scheduler.ts";
 import { runScheduledTick } from "./scheduler-history.ts";
@@ -48,6 +49,10 @@ export async function runHostedScheduled(
   if (mode === "off") return { mode: "inventory_paused" as const, queued: 0 };
   const runtime = await activateInventoryRuntime(store);
   const registration = await registerKnownInventoryConnections(store, runtime);
+  const calendarRegistration = await registerSourceCalendarSelections(
+    store,
+    runtime,
+  );
   const starts = await startInventorySelections(store);
   const runs = new InventoryRuns(
     new InventoryIngestion(store, new InventoryComparisonPages(store)),
@@ -63,6 +68,7 @@ export async function runHostedScheduled(
   return {
     mode: "inventory_read_only" as const,
     registration,
+    calendarRegistration,
     starts,
     queued: inventoryQueued + comparisonQueued,
     inventoryQueued,

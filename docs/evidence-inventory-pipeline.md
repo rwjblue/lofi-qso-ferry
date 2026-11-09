@@ -268,6 +268,33 @@ Both runs used synthetic normalized pages and an empty destination.
 These are historical local measurements from before automatic source
 deferral and multi-step comparison delivery.
 
+#### Deferred comparison through migration 0123
+
+The normalized 200,000-contact run used 1,000-record source pages,
+an empty destination, and up to four comparison steps per Queue
+delivery. Source coverage was ready after 203.5 seconds of local
+backfill and verification. Classification then ran 30,003 comparison
+steps across 7,501 deliveries, with at most 74 D1 calls in a delivery.
+
+| Local stage | D1 calls | SQL statements | Rows read | Rows written | Elapsed |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Source backfill | 1,615 | 9,675 | 43,284,543 | 9,066,675 | 198.6 s |
+| Source verification | 25 | 75 | 1,212,459 | 82 | 5.0 s |
+| Classification | 452,531 | 840,036 | 124,384,630 | 15,423,363 | 4,339.6 s |
+
+The paged native D1 audit verified all 200,000 current absences in
+157 pages and 48.8 seconds. The final database allocated 3.21 GB.
+Serialized encrypted inventory and projection bodies occupied 247.9
+MB and 168.2 MB respectively, before their SQLite row and index
+overhead. The run made zero provider requests and uploads.
+
+After source collection, verification and classification used
+452,556 D1 calls across both stages. The corresponding migration 0115
+deferred stage used 1,058,170 calls. These runs used normalized local
+inputs and shared the machine with other work. Their elapsed times
+measure the local pipeline. Live provider pacing at this scale still
+needs qualification.
+
 #### Verification when every member is current
 
 [Migration 0116](../migrations/0116_inventory_current_source_quarantine.sql)

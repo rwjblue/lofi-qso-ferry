@@ -785,11 +785,13 @@ an audit that repeated shared-proof validation per row. Those local
 issues are fixed and qualified. The trial retains 275.3 MB before
 collection and before historical association publication; this makes
 retention and relational/index growth explicit work before cutover.
-A 200,000-contact synthetic pipeline run published source coverage and
-verified every classification against an empty destination. Live
-200,000-contact LoFi timing and all-history LoTW account coverage remain
+A 200,000-contact synthetic run through migration 0123 published
+source coverage after 203.5 seconds of local backfill and verification,
+then classified the full log against an empty destination in 72.3
+minutes. The paged D1 audit verified all 200,000 current results. Live
+LoFi timing at that scale and all-history LoTW account coverage remain
 open. The managed QRZ trial retained partial SQL measurements after its
-original final audit failed. [Synthetic pipeline evidence](evidence-inventory-pipeline.md#200000-contact-source-coverage)
+original final audit failed. [Synthetic pipeline evidence](evidence-inventory-pipeline.md#deferred-comparison-through-migration-0123)
 
 The [automatic adoption and calendar follow-up](evidence-inventory-adoption-scheduling.md)
 replayed every verified QRZ match and completed fourteen real LoTW

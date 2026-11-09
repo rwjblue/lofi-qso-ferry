@@ -29,6 +29,8 @@ interface Control {
   match_activity?: 0 | 1;
   review_activity?: 0 | 1 | 2;
 }
+type ControlSnapshot = Control &
+  Pick<InventoryComparisonDomain, "active_generation" | "pending_generation">;
 const phases = [
   "build",
   "operation",
@@ -338,47 +340,51 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
   async step(tenant: string) {
     if (!identifier(tenant))
       throw new Error("invalid_comparison_coordinator_tenant");
-    const eligible = await this.store
-      .statement(
-        "SELECT 1 FROM accounts a WHERE a.id=? AND a.status='active' AND EXISTS(SELECT 1 FROM inventory_scopes s WHERE s.tenant=a.id)",
+    const eligible =
+      "a.id=? AND a.status='active' AND EXISTS(SELECT 1 FROM inventory_scopes s WHERE s.tenant=a.id)";
+    const readControl = () =>
+      this.store.statement(
+        `SELECT c.*,d.active_generation,d.pending_generation
+         FROM accounts a LEFT JOIN inventory_comparison_coordinators c ON c.tenant=a.id
+         LEFT JOIN comparison_domains d ON d.tenant=a.id
+         WHERE ${eligible}`,
         tenant,
-      )
-      .first();
-    if (!eligible) return { kind: "idle" as const, more: false };
-    const lease = await this.store.claim(
-      tenant,
-      "inventory-comparison",
-      Date.now(),
-      60000,
-    );
-    if (!lease) return { kind: "deferred" as const, more: true };
+      );
+    const [claimed, loaded] = await this.store.db.batch([
+      this.store.claimStatement(
+        tenant,
+        "inventory-comparison",
+        Date.now(),
+        60000,
+        {
+          sql: `EXISTS(SELECT 1 FROM accounts a WHERE ${eligible})`,
+          params: [tenant],
+        },
+      ),
+      readControl(),
+    ]);
+    const lease = claimed.results[0] as Lease | undefined;
+    let current = loaded.results[0] as
+      | ControlSnapshot
+      | { version: null }
+      | undefined;
+    if (!lease)
+      return current
+        ? { kind: "deferred" as const, more: true }
+        : { kind: "idle" as const, more: false };
     try {
-      const readControl = () =>
-        this.store
-          .statement(
-            `SELECT c.*,d.active_generation,d.pending_generation
-             FROM inventory_comparison_coordinators c LEFT JOIN comparison_domains d USING(tenant)
-             WHERE c.tenant=?`,
+      if (!current?.version) {
+        const [, initialized] = await this.store.db.batch<ControlSnapshot>([
+          this.store.statement(
+            `INSERT INTO inventory_comparison_coordinators(tenant)
+             SELECT a.id FROM accounts a WHERE ${eligible} ON CONFLICT DO NOTHING`,
             tenant,
-          )
-          .first<
-            Control &
-              Pick<
-                InventoryComparisonDomain,
-                "active_generation" | "pending_generation"
-              >
-          >();
-      let current = await readControl();
-      if (!current) {
-        await this.store
-          .statement(
-            "INSERT INTO inventory_comparison_coordinators(tenant) VALUES(?) ON CONFLICT DO NOTHING",
-            tenant,
-          )
-          .run();
-        current = await readControl();
+          ),
+          readControl(),
+        ]);
+        current = initialized.results[0];
       }
-      if (!current || current.phase_count !== phases.length)
+      if (!current?.version || current.phase_count !== phases.length)
         throw new Error("comparison_coordinator_unavailable");
       let control: Control = current;
       if (

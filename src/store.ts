@@ -302,20 +302,33 @@ export class Store {
       ),
     ];
   }
+  claimStatement(
+    tenant: string,
+    scope: string,
+    now = Date.now(),
+    ttl = 60_000,
+    guard?: SqlGuard,
+  ) {
+    const input = guard
+      ? `SELECT ?,?,?,1,? WHERE ${guard.sql}`
+      : "VALUES(?,?,?,1,?)";
+    return this.statement(
+      `INSERT INTO leases ${input} ON CONFLICT(tenant,scope) DO UPDATE SET token=excluded.token,fence=leases.fence+1,expires_at=excluded.expires_at WHERE leases.expires_at<=? RETURNING *`,
+      tenant,
+      scope,
+      randomToken(),
+      now + ttl,
+      ...(guard?.params ?? []),
+      now,
+    );
+  }
   async claim(
     tenant: string,
     scope: string,
     now = Date.now(),
     ttl = 60_000,
   ): Promise<Lease | null> {
-    return this.statement(
-      `INSERT INTO leases VALUES(?,?,?,1,?) ON CONFLICT(tenant,scope) DO UPDATE SET token=excluded.token,fence=leases.fence+1,expires_at=excluded.expires_at WHERE leases.expires_at<=? RETURNING *`,
-      tenant,
-      scope,
-      randomToken(),
-      now + ttl,
-      now,
-    ).first<Lease>();
+    return this.claimStatement(tenant, scope, now, ttl).first<Lease>();
   }
   async release(lease: Lease) {
     await this.statement(

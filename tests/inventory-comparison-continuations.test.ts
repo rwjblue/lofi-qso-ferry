@@ -313,7 +313,8 @@ test("batched maintenance preserves selected work signaled after the snapshot", 
         if (property === "batch")
           return async (plan: D1PreparedStatement[]) => {
             const heads = await target.batch(plan);
-            assert.equal(heads.length, 5);
+            if (heads.length !== 5) return heads;
+            assert.equal(signaled, false);
             assert.ok(heads.every((head) => !head.results.length));
             const queued = await target.batch([
               target.prepare(

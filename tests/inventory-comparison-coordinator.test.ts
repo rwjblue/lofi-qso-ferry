@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { measureD1 } from "../scripts/inventory-benchmark-metrics.ts";
 import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
 import { Store } from "../src/store.ts";
 import { seed } from "./helpers.ts";
+import { observation } from "./inventory-context-fixtures.ts";
 import {
   activationFixture,
   coordinatorFixture,
 } from "./inventory-coordinator-fixtures.ts";
-import { observation } from "./inventory-context-fixtures.ts";
 import { sourceContact } from "./inventory-matching-fixtures.ts";
 
 test("durable turns rotate builds and drain projections before managed activation", async () => {
@@ -154,6 +155,47 @@ test("a tenant without a comparison domain gets one first generation automatical
       f.generation,
     );
     assert.equal((await f.coordinator.step("missing")).more, false);
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("comparison admission reads scope and contention in one guarded batch", async () => {
+  const f = await coordinatorFixture(1);
+  try {
+    await seed(f.store, "no-scope");
+    const meter = measureD1(f.db);
+    const coordinator = new InventoryComparisonCoordinator(
+      new Store(meter.database, f.store.keys),
+    );
+    assert.deepEqual(await coordinator.step("no-scope"), {
+      kind: "idle",
+      more: false,
+    });
+    assert.equal(meter.totals.calls, 1);
+    const leader = await f.store.claim("a", "inventory-comparison");
+    assert.ok(leader);
+    try {
+      assert.deepEqual(await coordinator.step("a"), {
+        kind: "deferred",
+        more: true,
+      });
+      assert.equal(meter.totals.calls, 2);
+      await f.db
+        .prepare("UPDATE accounts SET status='locked' WHERE id='a'")
+        .run();
+      assert.deepEqual(await coordinator.step("a"), {
+        kind: "idle",
+        more: false,
+      });
+      assert.equal(meter.totals.calls, 3);
+      const leases = await f.db
+        .prepare("SELECT * FROM leases WHERE scope='inventory-comparison'")
+        .all();
+      assert.deepEqual(leases.results, [leader]);
+    } finally {
+      await f.store.release(leader);
+    }
   } finally {
     await f.mf.dispose();
   }

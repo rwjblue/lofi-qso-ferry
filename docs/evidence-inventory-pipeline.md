@@ -421,6 +421,34 @@ The 1,000-contact synthetic fixture saved one D1 call for each of its
 50 new cohorts. The full classification stage used 3,270 calls, down
 from 3,320, and both runs produced all 1,000 results in 39 deliveries.
 
+### Comparison coordinator admission
+
+The coordinator now acquires its lease and reads the control and
+generation pointers in one D1 batch. The lease statement checks the
+active account and inventory scope. A busy lease still defers the turn.
+The fixture checks that ineligible and contended turns leave lease
+state intact. [D1 batch semantics](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch)
+
+Both 1,000-contact synthetic profiles used one durable step per Queue
+delivery. The tables measure classification after source coverage.
+
+| Destination | Turns | D1 calls before → after | SQL statements before → after |
+| --- | ---: | ---: | ---: |
+| Empty | 153 | 3,498 → 3,192 | 5,252 → 5,099 |
+| Matched | 152 | 4,184 → 3,880 | 6,338 → 6,186 |
+
+With the hosted four-step budget, the empty profile classified all
+1,000 contacts in 39 deliveries and used 2,964 D1 calls. Its largest
+delivery used 93 calls.
+
+Two private copies of the captured log also republished the same 160
+classifications in 17 coordinator turns. Each of QRZ and LoTW supplied
+40 matches and 40 absences. Both copies retained the same state, reason
+and selected remote record for every contact. D1 calls fell from 403
+to 369 and statements from 577 to 560. The audit verified credential
+envelopes, checkpoints, coverage and historical associations. The replay
+made zero external requests and uploads.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

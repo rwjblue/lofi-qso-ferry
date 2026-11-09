@@ -132,7 +132,7 @@ async function initialize(
         "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,config,created_at) VALUES('trial',?,?,?,?,'active','managed-v1',?,?)",
         entry.provider,
         entry.provider,
-        entry.original.remote_identity,
+        entry.provider === "qrz" ? book.bookId : entry.original.remote_identity,
         `Managed read-only ${entry.provider} trial`,
         JSON.stringify(entry.config),
         Date.now(),

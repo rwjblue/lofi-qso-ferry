@@ -152,6 +152,15 @@ test("managed trial completes real native selections and reopens without additio
   assert.ok(reopened.sampleDecrypted && reopened.credentialEnvelopesUnchanged);
   assert.deepEqual(reopened.runs, report.runs);
   assert.equal(reopened.requests, 0);
+  const local = await openInventoryTrial(report.directory);
+  try {
+    assert.equal(
+      (await local.store.connection("trial", "qrz"))?.remote_identity,
+      book.bookId,
+    );
+  } finally {
+    await local.mf.dispose();
+  }
   for (const name of [
     "keys.json",
     "manifest.json",

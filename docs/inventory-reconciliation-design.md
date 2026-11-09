@@ -773,7 +773,7 @@ Exercise insert, update, unchanged replay, tombstone and event-heavy pages at 20
 
 Success means a measured bulk writer with safe 500–1,000-record pages, understandable size/time limits, a substantial reduction from the old per-record recipe, and an end-to-end native ingestion cost model. Synthetic timing does not establish actual LoFi cooldowns or the hours target; a later bounded live-read validation supplies that evidence. No uploads, database resets or credentialed service requests are needed for this first milestone.
 
-This first milestone is implemented and measured locally. The inventory runtime, comparison-key/index foundations, native encrypted projections, guarded comparison results/work completion and historical adoption have also advanced; see the evidence links at the top. Selected-input cohort invalidation and automatic edit/retirement/restoration recovery are implemented. Hosted comparison wakeups and bounded Queue/cron recovery are implemented. Initial [complete-pipeline measurements](evidence-inventory-pipeline.md) and [incremental qualification](evidence-inventory-incremental.md) found and removed empty selected-input and bucket Queue amplification; larger and complete real-source qualification remains open. Retention and remaining empty-poll overhead require qualification alongside ownership-aware planning, followed by new delivery ownership, source-proof and member-aware delivery integration. Adapter edge cases and batch submission remain focused work rather than reasons to extend broad planning indefinitely.
+The bulk writer is implemented and measured locally. The Worker now runs inventory, encrypted projection, guarded comparison and historical adoption, with incremental recovery on edits, retirement and restoration. Local tests exercise ownership review, fresh source proofs, QRZ dispatch and member-aware LoTW batch submission and receipt recovery with simulated sends. [Pipeline measurements](evidence-inventory-pipeline.md) · [Incremental qualification](evidence-inventory-incremental.md) · [Delivery integration](evidence-inventory-source-proof.md)
 
 The [managed real-service trial](evidence-inventory-managed-trial.md) now
 completes LoFi's 4,251 active contacts and the configured QRZ book range
@@ -785,10 +785,11 @@ an audit that repeated shared-proof validation per row. Those local
 issues are fixed and qualified. The trial retains 275.3 MB before
 collection and before historical association publication; this makes
 retention and relational/index growth explicit work before cutover.
-The 200,000-contact target and complete LoTW account inventory remain
-unqualified. Complete SQL cost for the QRZ continuation was lost when its
-original final audit failed, so this is coverage/classification evidence
-with partial cost measurements rather than a whole-run cost forecast.
+A 200,000-contact synthetic pipeline run published source coverage and
+verified every classification against an empty destination. Live
+200,000-contact LoFi timing and all-history LoTW account coverage remain
+open. The managed QRZ trial retained partial SQL measurements after its
+original final audit failed. [Synthetic pipeline evidence](evidence-inventory-pipeline.md#200000-contact-source-coverage)
 
 The [automatic adoption and calendar follow-up](evidence-inventory-adoption-scheduling.md)
 replayed every verified QRZ match and completed fourteen real LoTW
@@ -824,17 +825,18 @@ Use `off`, `shadow` and `active` planner modes independently of export gates and
 
 Preserve existing account, authentication and connection records, encrypted credentials, configuration and their required references. Validate that preserved credentials still decrypt under their original identities. Contact/mapping/attempt data import is not required. Existing remote history is observed and conservatively adopted, including remote narrative preservation. An absent new local mapping does not mean a contact is absent at a vendor.
 
-The [account-only rehearsal](evidence-inventory-fresh-start.md) now
-creates this boundary on a private local copy. It preserves passkeys,
-linked credential ciphertext and template bindings, starts with empty
-contact state, and durably blocks writes before the previous sender
-has been audited. Real QRZ and LoTW selections completed on the copy.
-The LoFi continuation retained its cursor after a rejected bearer. The
-[cursor recovery rehearsal](evidence-inventory-fresh-start.md#restart-a-refused-lofi-cursor)
-also verified that a refused cursor can restart just the source scan. A
-[complete offline replay](evidence-inventory-fresh-start.md#complete-account-only-offline-replay)
-rebuilt all 17 selections from the captured bodies and recovered the
-same per-contact classifications and historical associations.
+The account-only rehearsal creates this boundary on a private local
+copy. It preserves passkeys, linked credential ciphertext and template
+bindings, starts with empty contact state, and durably locks vendor writes.
+The copy upgraded through migration 0123 completed four live destination
+polls with zero uploads and preserved its LoFi cursor at 1,949 active
+contacts. A current bearer for the same LoFi client is required to resume
+that saved run. [Account-only rehearsal](evidence-inventory-fresh-start.md#real-scheduled-polls)
+
+A separate recovery rehearsal verified that a refused cursor can restart
+just the source scan. A complete offline replay rebuilt all 17 selections
+from the captured bodies and recovered the same per-contact
+classifications and historical associations. [Cursor recovery](evidence-inventory-fresh-start.md#restart-a-refused-lofi-cursor) · [Offline replay](evidence-inventory-fresh-start.md#complete-account-only-offline-replay)
 
 At deployment cutover, pause the previous sender before allowing the replacement to write. Resolve or quarantine any outstanding submitted/dispatching/uncertain vendor work before treating a fresh negative read as permission to insert; a reset must not turn a possibly queued old upload into a new contact. This can be evaluated before the old database is retired without copying its complete history into the replacement. The local implementation and trial authorization does not include a production reset or cutover.
 

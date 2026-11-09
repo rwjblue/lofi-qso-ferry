@@ -259,6 +259,25 @@ One QRZ and four LoTW selections had ready coverage at the end, with
 bindings matched the starting copy. The source remained paused for
 authentication. The trial made zero LoFi requests and zero uploads.
 
+A later copy through migration 0123 completed one live QRZ delta and
+three live LoTW polls, including two deltas and one full verification.
+The runner made three requests to each destination and transferred
+91,653 response bytes. All four due jobs advanced their checkpoints and
+scheduled their next poll. One QRZ and four LoTW selections retained
+ready coverage, with 73 and 706 active receipts respectively. The
+invocation took 6.1 seconds with 13 reader turns, three comparison
+turns, 223 D1 calls and 495 SQL statements.
+
+Reopening the copy verified the write lock, original account bindings,
+credential ciphertext, passkeys and template selections. All four
+linked credentials decrypted. Only successful-poll timestamps changed
+on the two destination links. The LoFi run, cursor, checkpoints and
+encrypted records matched the starting copy, including its 1,949 active
+contacts. The source-only preflight returned
+`source_authentication_required` without making a request. The
+destination poll made zero LoFi requests and zero uploads. The
+write-locked copy is ready for a current same-client bearer.
+
 ### QRZ delta recovery
 
 The initial recovery handled the exact ambiguous empty first `MODSINCE`

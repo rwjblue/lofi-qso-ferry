@@ -194,6 +194,32 @@ found zero candidates. Its observation was current while the lease
 was held and became unavailable when the lease was released. The
 trial made zero uploads. Native Workerd tests also cover a positive
 candidate, replacement of a prior observation, and a template change
-during the read. The next stage needs a fenced dispatch claim, mutation
-authorization and recovery of a lost response. Automatic enrollment,
-LoTW signing and expired-proof collection remain open.
+during the read.
+
+## QRZ dispatch and readback
+
+[Migration 0095](../migrations/0095_inventory_qrz_dispatch.sql) commits
+a single may-send claim with the vendor request reservation. It checks
+the current empty observation, request digest and book lease in the
+same transaction. A denied budget leaves no claim. The transport also
+checks rollout authorization and the exact saved INSERT fields before
+sending. A confirmed response publishes the canonical QRZ LOGID as
+delivery ownership.
+
+A lost response leaves the claim and its identity reservation in
+place. Recovery needs a newer lease and current credentials for the
+same logical book. It verifies that book and reads for a unique exact
+copy of the archived ADIF. An empty or ambiguous read leaves the claim
+unsettled. While an outcome is unknown, this first version pauses QRZ
+delivery review and historical adoption for the tenant. A settled
+delivery retains its source and remote ownership without a historical
+association.
+
+The native Workerd fixture verified a normal receipt and an interrupted
+send with one simulated INSERT, a stranded lease, an empty readback
+and then an exact observation after the source proof became stale.
+It also verified that closed exports, a candidate, a denied budget and
+a template rebind block dispatch. The upgrade on an isolated copy of
+the live trial preserved its artifact and credential envelopes with
+zero network requests. Hosted dispatch and recovery scheduling, restore
+quarantine, LoTW signing and expired-proof collection remain open.

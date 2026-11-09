@@ -617,8 +617,10 @@ closure. Local QRZ preparation now reserves exact outbound identities
 and saves immutable INSERT artifacts with a native commit receipt.
 The final QRZ neighborhood check now publishes a short-lived observation
 under the book lease. A successful canonical personal-log trial reached
-that boundary with zero uploads. Hosted enrollment, dispatch admission
-and recovery are separate work.
+that boundary with zero uploads. Native QRZ dispatch now reserves one
+INSERT with an immutable may-send claim. Its read-only resolver can
+settle an exact receipt after the original source proof expires.
+Hosted enrollment, scheduling and restore quarantine remain separate.
 
 Load source data, routing, credentials, templates, ownership and match results for a bounded cohort. Reuse the source-proof coordinator's shared collection and final canonical drain while retaining each member's original generation, proof identity and expiry. Stage immutable per-QSO attempts with the existing individually guarded cohort transaction.
 

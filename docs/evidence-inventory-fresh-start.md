@@ -155,3 +155,22 @@ local work. Reopening verified the original copy, LoFi cursor and job,
 and all credential envelopes. A plain resume made zero provider requests
 and zero reader or comparison turns. Both the poll and the diagnostic
 used the write-locked copy and made zero uploads.
+
+### QRZ delta recovery
+
+The runner now permits one covering read when the first `MODSINCE` page
+returns the exact ambiguous empty response. It keeps the verified book
+and date bounds and removes only the modification filter. The covering
+read must return positive, in-scope records, with the entire count in a
+single terminal page. An empty, partial or contradictory read leaves
+the delta held. Recovery uses the ordinary delta publication, which
+retains the full coverage epoch and does not quarantine older receipts.
+
+A fresh clone of the same pre-poll database completed the real QRZ delta
+with three requests. The covering read re-observed 73 unchanged receipts.
+After reopening, the QRZ checkpoint version had advanced by three and
+the original full selection and its coverage were ready. The modification
+date stayed at the same overlapping calendar lower bound. The other due
+polls completed in three LoTW requests. The combined invocation took 7.2
+seconds, with the LoFi cursor, original database and credential envelopes
+preserved. It made zero uploads.

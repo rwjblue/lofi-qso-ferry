@@ -162,6 +162,8 @@ export interface QrzInventoryRequest {
   selection: QrzInventorySelection;
   resume?: QrzInventoryResume;
   pageSize?: number;
+  /** Allow one complete date read to verify an ambiguous modified selection. */
+  verifyAmbiguousDelta?: true;
 }
 export interface LotwInventoryRequest {
   binding: InventoryQueryBinding;
@@ -876,37 +878,55 @@ export function createQrzInventoryAdapter(
         // supplying the run's original configured page size.
         let limit = input.resume?.pageSize ?? requestedLimit;
         let afterLogId = input.resume?.afterLogId ?? 0;
+        let observedSelection = input.selection;
         const client = new QrzClient(apiKey, { fetch: budget.fetch });
         await client.verifyBook(book);
         const fetchPage = () =>
           client.fetchPage({
             afterLogId,
             max: limit,
-            between: input.selection.between,
-            modifiedSince: input.selection.modifiedSince,
+            between: observedSelection.between,
+            modifiedSince: observedSelection.modifiedSince,
           });
         let page: QrzPage;
         try {
           page = await fetchPage();
         } catch (error) {
-          const previous = input.resume?.previousFullPage;
           if (
             !(error instanceof QrzError) ||
-            error.detail !== "ambiguous_empty_selection" ||
-            input.resume?.version !== 1 ||
-            !previous ||
-            previous.pageSize <= 1
+            error.detail !== "ambiguous_empty_selection"
           )
             throw error;
-          // FAIL supplies no records or completion. Re-query a previously
-          // successful full-page boundary with smaller MAX so a terminal tail
-          // can be established by subsequent explicit successful records.
-          afterLogId = previous.afterLogId;
-          limit = previous.pageSize - 1;
-          page = await fetchPage();
-          // Even an explicitly empty replay is not a positive boundary witness.
-          // Leave it for core verification rather than complete from this FAIL.
-          if (page.records.length === 0) throw error;
+          if (
+            input.verifyAmbiguousDelta &&
+            input.selection.modifiedSince &&
+            !input.resume
+          ) {
+            // One complete positive date read covers every record the modified
+            // selection could return. Never continue a partial broader read.
+            observedSelection = { between: input.selection.between };
+            page = await fetchPage();
+            if (
+              page.nextAfterLogId !== null ||
+              !page.records.length ||
+              page.count !== page.records.length
+            )
+              throw error;
+          } else {
+            const previous = input.resume?.previousFullPage;
+            if (
+              input.resume?.version !== 1 ||
+              !previous ||
+              previous.pageSize <= 1
+            )
+              throw error;
+            // Re-query a proven full-page boundary with smaller MAX. An
+            // explicitly empty replay cannot establish a positive witness.
+            afterLogId = previous.afterLogId;
+            limit = previous.pageSize - 1;
+            page = await fetchPage();
+            if (!page.records.length) throw error;
+          }
         }
         budget.records(page.records.length);
         if (
@@ -965,7 +985,7 @@ export function createQrzInventoryAdapter(
                   coverage: coverage(
                     "qrz",
                     input.binding,
-                    input.selection.modifiedSince
+                    observedSelection.modifiedSince
                       ? "book_modified_selection"
                       : "book_date_selection",
                   ),

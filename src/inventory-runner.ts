@@ -533,6 +533,9 @@ export class InventoryRunner {
             ? { resume: context.stream.resume as QrzInventoryResume }
             : {}),
           pageSize: query.pageSize,
+          ...(context.run.mode === "delta"
+            ? { verifyAmbiguousDelta: true }
+            : {}),
         },
       );
     }

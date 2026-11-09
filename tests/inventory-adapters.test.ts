@@ -508,6 +508,62 @@ test("QRZ ambiguous empty remains verification work and STATUS consumes request/
   assert.equal(byteBudget.usage.requests, 2);
 });
 
+test("QRZ delta fallback requires one complete positive date selection", async () => {
+  for (const [fallback, outcome] of [
+    [fetchBody([adif]), "complete"],
+    [fetchBody([]), "ambiguous_empty"],
+    [fetchBody([adif], 2), "ambiguous_empty"],
+    [fetchBody([adif, { ...adif, APP_QRZLOG_LOGID: "2" }]), "ambiguous_empty"],
+    [fetchBody([{ ...adif, STATION_CALLSIGN: "W2AW" }]), "scope_mismatch"],
+  ] as const) {
+    const options: string[] = [];
+    const request = qrzRequest({
+      verifyAmbiguousDelta: true,
+      pageSize: 2,
+      selection: {
+        between: ["2026-11-01", "2026-11-14"],
+        modifiedSince: "2026-11-07",
+      },
+    });
+    const result = await createQrzInventoryAdapter("key", book).readStep(
+      context(async (input, init) => {
+        const form = new URLSearchParams(await new Request(input, init).text());
+        if (form.get("ACTION") === "STATUS") return new Response(statusBody());
+        assert.equal(form.get("ACTION"), "FETCH");
+        const option = form.get("OPTION") ?? "";
+        options.push(option);
+        return new Response(
+          option.includes("MODSINCE:") ? "RESULT=FAIL&COUNT=0" : fallback,
+        );
+      }),
+      request,
+    );
+    assert.equal(result.usage.requests, 3);
+    assert.equal(options.length, 2);
+    assert.equal(options[0], `${options[1]},MODSINCE:2026-11-07`);
+    assert.match(
+      options[1],
+      /MAX:2,AFTERLOGID:0,BETWEEN:2026-11-01\+2026-11-14/,
+    );
+    assert.deepEqual(result.binding, request.binding);
+    if (outcome === "complete") {
+      assert.ok(
+        result.kind === "page" && result.progress.kind === "observed_complete",
+      );
+      assert.deepEqual(
+        result.observations.map((row) => row.body),
+        [adif],
+      );
+      assert.equal(result.progress.coverage.selection, "book_date_selection");
+      assert.equal(result.progress.coverage.absenceAuthority, false);
+    } else {
+      assert.equal(result.kind, "blocked");
+      assert.equal(result.code, outcome);
+      assert.equal("observations" in result, false);
+    }
+  }
+});
+
 test("LoTW receipt checkpoints remain restricted to their original static query scope", async () => {
   const adapter = createLotwInventoryAdapter({
     username: "synthetic-user",

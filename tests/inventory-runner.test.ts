@@ -373,6 +373,64 @@ test("ambiguous QRZ absence holds the run without publishing coverage", async (t
   assert.equal(coverage?.epoch, 0);
 });
 
+test("a positive QRZ delta fallback publishes receipts without replacing full coverage", async (t) => {
+  const f = await fixture(t, "qrz");
+  assert.ok(f.plan.provider === "qrz");
+  f.plan.pageSize = 3;
+  const baseline = await f.begin();
+  const other = { ...contact, APP_QRZLOG_LOGID: "2", CALL: "W2AW" };
+  const added = { ...contact, APP_QRZLOG_LOGID: "3", CALL: "W3AW" };
+  let isDelta = false;
+  const runner = new InventoryRunner(f.runs, async (input, init) => {
+    const form = new URLSearchParams(await new Request(input, init).text());
+    if (form.get("ACTION") === "STATUS") return status();
+    assert.equal(form.get("ACTION"), "FETCH");
+    if (form.get("OPTION")?.includes("MODSINCE:"))
+      return isDelta ? new Response("RESULT=FAIL&COUNT=0") : qrz([]);
+    return qrz(isDelta ? [contact, added] : [contact, other]);
+  });
+  await f.finish(runner, baseline.id);
+  isDelta = true;
+  const delta = await f.begin("delta");
+  const checkpoint = (await f.inventory.snapshot("a", f.scope, "scan"))
+    ?.checkpoint;
+  const recovered = await runner.step(await f.wakeup(delta.id));
+  assert.equal(recovered.kind, "advanced");
+  assert.equal(recovered.usage?.requests, 3);
+  assert.equal((await f.runs.load("a", delta.id))?.phase, "publishing");
+  assert.deepEqual(
+    (await f.inventory.snapshot("a", f.scope, "scan"))?.checkpoint,
+    checkpoint,
+  );
+  await f.finish(runner, delta.id);
+  const coverage = await f.runs.coverage(
+    "a",
+    f.scope,
+    "scan",
+    "receipt",
+    delta.partition,
+  );
+  assert.equal(coverage?.state, "ready");
+  assert.equal(coverage?.published_run_id, baseline.id);
+  assert.equal(coverage?.epoch, 1);
+  assert.equal(
+    await f.db
+      .prepare("SELECT delta_run_id FROM inventory_coverage")
+      .first("delta_run_id"),
+    delta.id,
+  );
+  assert.deepEqual(
+    (
+      await f.db
+        .prepare(
+          "SELECT state,count(*) AS records FROM inventory_partition_membership GROUP BY state",
+        )
+        .all()
+    ).results,
+    [{ state: "present", records: 3 }],
+  );
+});
+
 test("QRZ terminal-page recovery fits the runner request budget and persists the smaller page", async (t) => {
   const f = await fixture(t, "qrz");
   assert.ok(f.plan.provider === "qrz");

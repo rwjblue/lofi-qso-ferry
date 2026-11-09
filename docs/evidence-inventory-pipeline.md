@@ -355,6 +355,27 @@ counters apply to single-step deliveries. A repeat of the four-step
 run measured a peak of 120 D1 calls in one comparison delivery. The
 profile uses the [Workers Paid D1 invocation budget](https://developers.cloudflare.com/d1/platform/limits/).
 
+### Batched matching maintenance lookups
+
+The comparison coordinator now reads the heads of five maintenance
+queues in one D1 batch. Pair enrollment, bucket invalidation, coverage
+readiness, coverage expansion and selected-input invalidation each keep
+their existing selector. A positive hint still runs the current selector
+and uses the child publisher's existing lease and guards. A work signal
+after the snapshot resets the coordinator's idle sweep. The native
+race fixture queued selected-input work at that boundary and processed
+it on the next turn.
+
+In the same 1,000-contact fixture with four steps per delivery, both
+runs produced 1,000 final absence classifications in 153 steps and
+39 deliveries after source coverage. Classification calls fell from
+3,674 to 3,320. Earlier probing and reselecting positive work increased
+SQL statements from 4,824 to 5,074 and rows read from 646,296 to 651,225.
+Rows written stayed at 77,378. Across the full run the peak fell from
+120 to 104 D1 calls in a single delivery. A 200-contact matched fixture
+also completed two incremental rounds including contact and operation
+edits, retirement and restoration.
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

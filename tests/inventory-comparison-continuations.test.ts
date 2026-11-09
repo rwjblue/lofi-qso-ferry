@@ -285,7 +285,7 @@ test("checkpoint-only deltas stay parked and coverage restoration wakes held pro
   }
 });
 
-test("an idle phase sweep preserves a work signal that arrives after it checked a phase", async () => {
+test("batched maintenance preserves selected work signaled after the snapshot", async () => {
   const f = await fixture();
   try {
     const coordinator = new InventoryComparisonCoordinator(f.store);
@@ -307,35 +307,33 @@ test("an idle phase sweep preserves a work signal that arrives after it checked 
       .run();
     await f.store.release(lease);
 
-    const store = new Store(f.db, f.store.keys);
-    const statement = store.statement.bind(store);
     let signaled = false;
-    store.statement = (sql, ...params) => {
-      const bound = statement(sql, ...params);
-      if (
-        !sql.startsWith(
-          "SELECT b.generation_id,b.scope_id FROM comparison_domains",
-        )
-      )
-        return bound;
-      return new Proxy(bound, {
-        get(target, property) {
-          if (property === "first")
-            return async () => {
-              const row = await target.first();
-              await f.db
-                .prepare(
-                  "UPDATE inventory_comparison_coordinators SET work_version=work_version+1 WHERE tenant='a'",
-                )
-                .run();
-              signaled = true;
-              return row;
-            };
-          const value = Reflect.get(target, property, target);
-          return typeof value === "function" ? value.bind(target) : value;
-        },
-      });
-    };
+    const db = new Proxy(f.db, {
+      get(target, property) {
+        if (property === "batch")
+          return async (plan: D1PreparedStatement[]) => {
+            const heads = await target.batch(plan);
+            assert.equal(heads.length, 5);
+            assert.ok(heads.every((head) => !head.results.length));
+            const queued = await target.batch([
+              target.prepare(
+                `INSERT INTO inventory_matching_selected_jobs(tenant,generation_id,scope_id,facet,record_key,config_version)
+                 SELECT tenant,generation_id,scope_id,facet,record_key,config_version
+                 FROM inventory_matching_selected_signals WHERE tenant='a'`,
+              ),
+              target.prepare(
+                "UPDATE inventory_comparison_coordinators SET work_version=work_version+1 WHERE tenant='a'",
+              ),
+            ]);
+            assert.equal(queued[0].meta.changes, 1);
+            signaled = true;
+            return heads;
+          };
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const store = new Store(db, f.store.keys);
     const swept = await new InventoryComparisonCoordinator(store).step("a");
     assert.equal(signaled, true);
     assert.equal(swept.more, true);
@@ -348,7 +346,13 @@ test("an idle phase sweep preserves a work signal that arrives after it checked 
         .first(),
       { phase: 10, idle_turns: 1, caught_up: 1, scheduled: 1 },
     );
-    assert.equal((await coordinator.step("a")).more, false);
+    const resumed = await coordinator.step("a");
+    assert.equal(resumed.kind, "advanced");
+    assert.equal("phase" in resumed && resumed.phase, "selected");
+    for (let i = 0; ; i++) {
+      assert.ok(i < 30);
+      if (!(await coordinator.step("a")).more) break;
+    }
     assert.deepEqual(
       await f.db
         .prepare(

@@ -215,15 +215,17 @@ SELECT c.tenant,c.page_id,c.destination,c.source_scope,c.record_key,c.source_con
       rowsWritten: results.reduce((n, r) => n + r.meta.rows_written, 0),
     };
   }
-  async step(tenant: string) {
+  headStatement(tenant: string) {
     if (!identifier(tenant))
       throw new Error("invalid_inventory_matching_coverage_tenant");
-    const key = await this.store
-      .statement(
-        `WITH live AS MATERIALIZED(SELECT s.* FROM comparison_domains d CROSS JOIN inventory_comparison_ready_builds s WHERE d.tenant=?1 AND s.tenant=d.tenant AND s.generation_id=d.active_generation),heads AS MATERIALIZED(SELECT s.*,(SELECT j.rowid FROM inventory_matching_coverage_jobs j INDEXED BY inventory_matching_coverage_job_fair WHERE j.tenant=s.tenant AND j.generation_id=s.generation_id AND j.scope_id=s.scope_id AND j.config_version=s.config_version AND j.completed_version<j.work_version ORDER BY j.last_turn,j.facet,j.node_hash LIMIT 1) AS head FROM live s) SELECT j.generation_id AS generation,j.scope_id AS scope,j.facet,j.node_hash AS hash FROM heads h CROSS JOIN inventory_matching_coverage_jobs j WHERE j.rowid=h.head ORDER BY j.last_turn,j.scope_id,j.facet,j.node_hash LIMIT 1`,
-        tenant,
-      )
-      .first<MatchingCoverageKey>();
+    return this.store.statement(
+      `WITH live AS MATERIALIZED(SELECT s.* FROM comparison_domains d CROSS JOIN inventory_comparison_ready_builds s WHERE d.tenant=?1 AND s.tenant=d.tenant AND s.generation_id=d.active_generation),heads AS MATERIALIZED(SELECT s.*,(SELECT j.rowid FROM inventory_matching_coverage_jobs j INDEXED BY inventory_matching_coverage_job_fair WHERE j.tenant=s.tenant AND j.generation_id=s.generation_id AND j.scope_id=s.scope_id AND j.config_version=s.config_version AND j.completed_version<j.work_version ORDER BY j.last_turn,j.facet,j.node_hash LIMIT 1) AS head FROM live s) SELECT j.generation_id AS generation,j.scope_id AS scope,j.facet,j.node_hash AS hash FROM heads h CROSS JOIN inventory_matching_coverage_jobs j WHERE j.rowid=h.head ORDER BY j.last_turn,j.scope_id,j.facet,j.node_hash LIMIT 1`,
+      tenant,
+    );
+  }
+
+  async step(tenant: string) {
+    const key = await this.headStatement(tenant).first<MatchingCoverageKey>();
     if (!key) return { kind: "idle" as const };
     const lease = await this.store.claim(
       tenant,

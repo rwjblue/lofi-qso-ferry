@@ -213,17 +213,20 @@ SELECT ?1,?17,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,
       rowsWritten: results.reduce((n, r) => n + r.meta.rows_written, 0),
     };
   }
-  async step(tenant: string) {
+  headStatement(tenant: string) {
     if (!identifier(tenant))
       throw new Error("invalid_inventory_matching_coverage_event_tenant");
-    const key = await this.store
-      .statement(
-        `WITH live AS MATERIALIZED(SELECT s.* FROM comparison_domains d CROSS JOIN inventory_comparison_ready_builds s WHERE d.tenant=?1 AND s.tenant=d.tenant AND s.generation_id=d.active_generation),heads AS MATERIALIZED(
+    return this.store.statement(
+      `WITH live AS MATERIALIZED(SELECT s.* FROM comparison_domains d CROSS JOIN inventory_comparison_ready_builds s WHERE d.tenant=?1 AND s.tenant=d.tenant AND s.generation_id=d.active_generation),heads AS MATERIALIZED(
 SELECT s.*,(SELECT e.rowid FROM inventory_matching_coverage_events e INDEXED BY inventory_matching_coverage_event_pending JOIN inventory_matching_recoverable_coverage cv ON cv.tenant=e.tenant AND cv.scope_id=e.scope_id AND cv.stream_id=e.stream_id AND cv.facet=e.facet AND cv.partition_id=e.partition_id AND cv.version=e.coverage_version AND cv.published_run_id=e.published_run_id AND cv.published_config_version=e.config_version WHERE e.tenant=s.tenant AND e.scope_id=s.scope_id AND e.config_version=s.config_version AND e.completed_version<e.work_version ORDER BY e.stream_id,e.facet,e.partition_id LIMIT 1) AS head FROM live s)
 SELECT e.scope_id AS scope,e.stream_id AS stream,e.facet,e.partition_id AS partition FROM heads h CROSS JOIN inventory_matching_coverage_events e WHERE e.rowid=h.head ORDER BY e.scope_id,e.stream_id,e.facet,e.partition_id LIMIT 1`,
-        tenant,
-      )
-      .first<MatchingCoverageEventKey>();
+      tenant,
+    );
+  }
+
+  async step(tenant: string) {
+    const key =
+      await this.headStatement(tenant).first<MatchingCoverageEventKey>();
     if (!key) return { kind: "idle" as const };
     const lease = await this.store.claim(
       tenant,

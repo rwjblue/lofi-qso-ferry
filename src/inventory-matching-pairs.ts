@@ -190,16 +190,18 @@ INSERT INTO inventory_matching_pair_rows(tenant,page_id,record_key,expected_work
       rowsWritten: results.reduce((n, row) => n + row.meta.rows_written, 0),
     };
   }
-  async step(tenant: string) {
+  headStatement(tenant: string) {
     if (!identifier(tenant))
       throw new Error("invalid_inventory_matching_pair_tenant");
-    const key = await this.store
-      .statement(
-        `WITH live AS MATERIALIZED(SELECT * FROM inventory_matching_ready_pairs WHERE tenant=?1)
+    return this.store.statement(
+      `WITH live AS MATERIALIZED(SELECT * FROM inventory_matching_ready_pairs WHERE tenant=?1)
 SELECT j.generation_id AS generation,j.destination,j.source_scope AS source FROM live r CROSS JOIN inventory_matching_pair_jobs j JOIN comparison_domains d ON d.tenant=j.tenant AND d.source_set_version=j.source_set_version WHERE j.tenant=r.tenant AND j.generation_id=r.generation_id AND j.destination=r.destination AND j.source_scope=r.source_scope AND j.source_config_version=r.source_config_version AND j.destination_config_version=r.destination_config_version AND j.completed_version<j.work_version ORDER BY j.last_turn,j.destination,j.source_scope LIMIT 1`,
-        tenant,
-      )
-      .first<MatchingPairKey>();
+      tenant,
+    );
+  }
+
+  async step(tenant: string) {
+    const key = await this.headStatement(tenant).first<MatchingPairKey>();
     if (!key) return { kind: "idle" as const };
     const lease = await this.store.claim(
       tenant,

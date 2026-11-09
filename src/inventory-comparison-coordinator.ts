@@ -47,6 +47,19 @@ const matchPhase = phases.indexOf("match");
 const identifier = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 512;
 
+function matchingMaintenance(store: Store) {
+  return {
+    jobs: {
+      pair: new InventoryMatchingPairs(store),
+      bucket: new InventoryMatchingInvalidations(store),
+      "coverage-events": new InventoryMatchingCoverageEvents(store),
+      "coverage-match": new InventoryMatchingCoverage(store),
+      selected: new InventoryMatchingSelected(store),
+    },
+    ready: undefined as ReadonlySet<string> | undefined,
+  };
+}
+
 /** Durable fair turns over derived comparison work. Child publishers retain
  * native input/lease guards. This coordinator never reads or writes a vendor. */
 export class InventoryComparisonCoordinator {
@@ -187,6 +200,7 @@ WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a O
     lease: Lease,
     phase: (typeof phases)[number],
     pendingGeneration: string | null,
+    maintenance: ReturnType<typeof matchingMaintenance>,
   ) {
     let progress = false;
     let deferred = false;
@@ -289,27 +303,31 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
       phase === "coverage-match" ||
       phase === "selected"
     ) {
-      const result =
-        phase === "pair"
-          ? await new InventoryMatchingPairs(this.store).step(tenant)
-          : phase === "bucket"
-            ? await new InventoryMatchingInvalidations(this.store).step(tenant)
-            : phase === "coverage-events"
-              ? await new InventoryMatchingCoverageEvents(this.store).step(
-                  tenant,
-                )
-              : phase === "coverage-match"
-                ? await new InventoryMatchingCoverage(this.store).step(tenant)
-                : await new InventoryMatchingSelected(this.store).step(tenant);
-      progress = result.kind !== "idle" && result.kind !== "deferred";
-      deferred = result.kind === "deferred";
-      records = "records" in result ? (result.records ?? 0) : 0;
-      pageId =
-        "pageId" in result
-          ? result.pageId
-          : "dispatchId" in result
-            ? result.dispatchId
-            : undefined;
+      if (!maintenance.ready) {
+        const jobs = Object.entries(maintenance.jobs);
+        const heads = await this.store.db.batch(
+          jobs.map(([, job]) => job.headStatement(tenant)),
+        );
+        maintenance.ready = new Set(
+          jobs.flatMap(([name], index) =>
+            heads[index].results.length ? [name] : [],
+          ),
+        );
+      }
+      // Positive hints still use the current selector and native lease.
+      // Signals after this snapshot reset the idle sweep at finish.
+      if (maintenance.ready.has(phase)) {
+        const result = await maintenance.jobs[phase].step(tenant);
+        progress = result.kind !== "idle" && result.kind !== "deferred";
+        deferred = result.kind === "deferred";
+        records = "records" in result ? (result.records ?? 0) : 0;
+        pageId =
+          "pageId" in result
+            ? result.pageId
+            : "dispatchId" in result
+              ? result.dispatchId
+              : undefined;
+      }
     } else if (pendingGeneration) {
       const result = await this.activate(tenant, pendingGeneration, lease);
       progress = result.kind === "activated";
@@ -399,6 +417,7 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
           generation: domain.pending_generation,
         };
       }
+      const maintenance = matchingMaintenance(this.store);
       for (;;) {
         let cursor = control.phase;
         let checked = 0;
@@ -414,6 +433,7 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
             lease,
             phase,
             pendingGeneration,
+            maintenance,
           );
           checked++;
           cursor = (cursor + 1) % phases.length;

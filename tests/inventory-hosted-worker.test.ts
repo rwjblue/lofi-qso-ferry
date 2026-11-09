@@ -7,6 +7,10 @@ import { build } from "esbuild";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import forge from "node-forge";
 import { serializeAdifRecord } from "../src/adif.ts";
+import {
+  consumeInventoryRecoveryWakeups,
+  publishInventoryRecoveryWakeups,
+} from "../src/inventory-delivery-recovery.ts";
 import { InventoryDeliveryWorkspace } from "../src/inventory-delivery-workspace.ts";
 import {
   runHostedInventoryQueue,
@@ -23,10 +27,6 @@ import {
   InventoryQrzNeighborhood,
 } from "../src/inventory-qrz-neighborhood.ts";
 import { InventoryQrzPreparation } from "../src/inventory-qrz-preparation.ts";
-import {
-  consumeQrzRecoveryWakeups,
-  publishQrzRecoveryWakeups,
-} from "../src/inventory-qrz-recovery.ts";
 import { isQrzSendWakeup } from "../src/inventory-qrz-send.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
@@ -90,6 +90,9 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   let qrzReads = 0;
   let qrzStatuses = 0;
   let recoveryFixture: { adif: string | null; actions: string[] } | null = null;
+  let lotwRecoveryReport:
+    | ((request: { url: string; method: string; body: unknown }) => Response)
+    | undefined;
   const lotwReads: [string | null, string | null][] = [];
   const readTimes: number[] = [];
   const shadowSelection = {
@@ -134,6 +137,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       outboundService: async (request) => {
         const url = new URL(request.url);
         if (url.hostname === "lotw.arrl.org") {
+          if (lotwRecoveryReport) return lotwRecoveryReport(request);
           assert.equal(request.method, "GET");
           const start = url.searchParams.get("qso_startdate");
           const end = url.searchParams.get("qso_enddate");
@@ -333,6 +337,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   // Miniflare exposes experimental extra handlers at runtime; narrow the
   // generated proxy structurally rather than casting its experimental types.
   assert.ok("scheduled" in worker && typeof worker.scheduled === "function");
+  const scheduleTick = worker.scheduled.bind(worker);
   await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
   let state: {
     phase: string;
@@ -1196,7 +1201,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   assert.equal((await recoveryJob())?.published_version, 0);
   await store.release(strandedLease);
   await assert.rejects(
-    publishQrzRecoveryWakeups(store, {
+    publishInventoryRecoveryWakeups(store, "qrz", {
       async sendBatch() {
         throw new Error("fixture recovery Queue unavailable");
       },
@@ -1224,12 +1229,13 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     await delay(50);
   }
   let acknowledged = false;
-  await consumeQrzRecoveryWakeups(
+  await consumeInventoryRecoveryWakeups(
     new InventoryQrzDispatch(store, async () =>
       assert.fail(
         "a superseded QRZ recovery message must not read the provider",
       ),
     ),
+    "qrz",
     [
       {
         id: "stale-recovery",
@@ -1781,6 +1787,15 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       1,
       "the claim must be durable before HTTP",
     );
+    assert.equal(
+      await db
+        .prepare(
+          "SELECT count(*) AS n FROM inventory_lotw_recovery_jobs WHERE batch_id=?",
+        )
+        .bind(replacement.batchId)
+        .first("n"),
+      1,
+    );
     lotwSendActions.push("upload");
     throw new Error("fixture lost the LoTW response");
   };
@@ -1866,66 +1881,145 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   };
   let readbackPhase: "partial" | "old" | "complete" = "partial";
   let readbackRequests = 0;
-  const readback = new InventoryLotwReadback(
-    new Store(db, keys),
-    async (input, init) => {
-      const url = new URL(String(input));
-      assert.equal(
-        url.origin + url.pathname,
-        "https://lotw.arrl.org/lotwuser/lotwreport.adi",
-      );
-      assert.equal(init?.method ?? "GET", "GET");
-      assert.equal(init?.body, undefined);
-      assert.equal(url.searchParams.get("qso_qsorxsince"), stamp);
-      assert.equal(
-        url.searchParams.get("qso_owncall"),
-        archivedLotw.station.callsign,
-      );
-      assert.equal(url.searchParams.get("qso_callsign"), null);
-      readbackRequests++;
-      const rows = [
-        readbackRecord(first, { confirmed: true }),
-        readbackRecord(second, {
-          minute: readbackPhase === "partial",
-          prior: readbackPhase === "old",
-        }),
-      ];
-      return new Response(
-        `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>2<EOH>${rows.join("")}<APP_LOTW_EOF>`,
-      );
-    },
-  );
-  const reconcileLotw = () =>
-    readback.reconcile("a", replacement.batchId, "live");
+  const readback = new InventoryLotwReadback(new Store(db, keys));
+  lotwRecoveryReport = (request) => {
+    const url = new URL(request.url);
+    assert.equal(
+      url.origin + url.pathname,
+      "https://lotw.arrl.org/lotwuser/lotwreport.adi",
+    );
+    assert.equal(request.method, "GET");
+    assert.equal(request.body, null);
+    assert.equal(url.searchParams.get("qso_qsorxsince"), stamp);
+    assert.equal(
+      url.searchParams.get("qso_owncall"),
+      archivedLotw.station.callsign,
+    );
+    assert.equal(url.searchParams.get("qso_callsign"), null);
+    readbackRequests++;
+    const rows = [
+      readbackRecord(first, { confirmed: true }),
+      readbackRecord(second, {
+        minute: readbackPhase === "partial",
+        prior: readbackPhase === "old",
+      }),
+    ];
+    return new Response(
+      `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>2<EOH>${rows.join("")}<APP_LOTW_EOF>`,
+    );
+  };
+  const readbackOutcome = () => readback.outcome("a", replacement.batchId);
+  const readbackJob = () =>
+    store
+      .statement(
+        "SELECT version,turns,published_version,due_at FROM inventory_lotw_recovery_jobs WHERE tenant='a' AND batch_id=?",
+        replacement.batchId,
+      )
+      .first<{
+        version: number;
+        turns: number;
+        published_version: number;
+        due_at: number;
+      }>();
+  const dueLotwReadback = () =>
+    store
+      .statement(
+        "UPDATE inventory_lotw_recovery_jobs SET due_at=? WHERE tenant='a' AND batch_id=?",
+        Date.now() - 1,
+        replacement.batchId,
+      )
+      .run();
+  const runLotwReadback = async (turn: number) => {
+    await dueLotwReadback();
+    await scheduleTick({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+    for (let i = 0; i < 120; i++) {
+      const busy = await db
+        .prepare(
+          "SELECT 1 FROM leases WHERE tenant='a' AND scope='inventory:lotw-delivery' AND expires_at>unixepoch('subsec')*1000",
+        )
+        .first();
+      if (readbackRequests === turn && !busy) return;
+      await delay(50);
+    }
+    assert.fail("expected hosted LoTW readback turn");
+  };
   await db.prepare("UPDATE accounts SET quiet_minutes=31 WHERE id='a'").run();
   assert.equal(await jobs.current("a", lotwProof.id), null);
-  assert.deepEqual(await reconcileLotw(), {
+  const initialReadback = await readbackJob();
+  assert.ok(initialReadback && initialReadback.due_at > Date.now());
+  assert.deepEqual(
+    [
+      initialReadback.version,
+      initialReadback.turns,
+      initialReadback.published_version,
+    ],
+    [1, 0, 0],
+  );
+  await dueLotwReadback();
+  await assert.rejects(
+    publishInventoryRecoveryWakeups(store, "lotw", {
+      async sendBatch() {
+        throw new Error("fixture LoTW recovery queue unavailable");
+      },
+    }),
+    /fixture LoTW recovery queue unavailable/,
+  );
+  assert.equal((await readbackJob())?.published_version, 0);
+  // Give the recovery phase a fresh vendor window after the preparation and
+  // dispatch checks in this fixture. Production uses the normal admission.
+  await db.prepare("DELETE FROM vendor_requests WHERE vendor='lotw'").run();
+  await runLotwReadback(1);
+  assert.deepEqual(await readbackOutcome(), {
     kind: "partial",
     observed: 1,
     members: 2,
   });
   assert.equal(await lotwClaims(), 1);
   assert.equal(await reopenedLotw.cancelStale("a", replacement.batchId), false);
+  assert.deepEqual(
+    [(await readbackJob())?.version, (await readbackJob())?.turns],
+    [2, 1],
+  );
+  const staleReadback = singleDelivery({
+    kind: "inventory-lotw-recovery",
+    version: 1,
+    tenant: "a",
+    batch: replacement.batchId,
+    workVersion: 1,
+  });
+  const staleReadbackResult = await runHostedInventoryQueue(
+    lotwEnv,
+    staleReadback.batch,
+    async () => assert.fail("a stale readback must not contact LoTW"),
+  );
+  staleReadback.assertAcknowledged();
+  assert.equal(staleReadbackResult.mode, "inventory_read_only");
+  assert.equal((await readbackJob())?.turns, 1);
   readbackPhase = "old";
-  assert.deepEqual(await reconcileLotw(), {
+  await runLotwReadback(2);
+  assert.deepEqual(await readbackOutcome(), {
     kind: "partial",
     observed: 1,
     members: 2,
   });
   readbackPhase = "complete";
-  assert.deepEqual(await reconcileLotw(), {
+  await runLotwReadback(3);
+  assert.deepEqual(await readbackOutcome(), {
     kind: "observed",
     observed: 2,
     members: 2,
   });
   assert.equal(await lotwClaims(), 0);
-  assert.deepEqual(await reconcileLotw(), {
+  assert.equal(await readbackJob(), null);
+  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  assert.deepEqual(await readbackOutcome(), {
     kind: "observed",
     observed: 2,
     members: 2,
   });
   assert.deepEqual(await sendLotw(), { kind: "observed" });
   assert.equal(readbackRequests, 3);
+  lotwRecoveryReport = undefined;
   assert.deepEqual(lotwSendActions, []);
   assert.deepEqual(
     (

@@ -5,21 +5,22 @@ import {
   publishComparisonWakeups,
 } from "./inventory-comparison-continuations.ts";
 import {
+  consumeInventoryRecoveryWakeups,
+  isInventoryRecoveryWakeup,
+  publishInventoryRecoveryWakeups,
+} from "./inventory-delivery-recovery.ts";
+import {
   consumeInventoryWakeups,
   publishInventoryWakeups,
 } from "./inventory-continuations.ts";
 import { InventoryIngestion } from "./inventory-ingestion.ts";
+import { InventoryLotwReadback } from "./inventory-lotw-readback.ts";
 import {
   configuredInventoryShadow,
   InventoryPreparationShadow,
   inventoryShadowProviders,
 } from "./inventory-preparation-shadow.ts";
 import { InventoryQrzDispatch } from "./inventory-qrz-dispatch.ts";
-import {
-  consumeQrzRecoveryWakeups,
-  isQrzRecoveryWakeup,
-  publishQrzRecoveryWakeups,
-} from "./inventory-qrz-recovery.ts";
 import {
   type InventoryDeliveryEnvironment,
   InventoryQrzSendQueue,
@@ -112,8 +113,14 @@ export async function runHostedScheduled(
     proofJobs,
     env.INVENTORY_QUEUE,
   );
-  const qrzRecoveryQueued = await publishQrzRecoveryWakeups(
+  const qrzRecoveryQueued = await publishInventoryRecoveryWakeups(
     store,
+    "qrz",
+    env.INVENTORY_QUEUE,
+  );
+  const lotwRecoveryQueued = await publishInventoryRecoveryWakeups(
+    store,
+    "lotw",
     env.INVENTORY_QUEUE,
   );
   let qrzSendQueued = 0;
@@ -140,11 +147,13 @@ export async function runHostedScheduled(
       comparisonQueued +
       sourceProofQueued +
       qrzRecoveryQueued +
+      lotwRecoveryQueued +
       qrzSendQueued,
     inventoryQueued,
     comparisonQueued,
     sourceProofQueued,
     qrzRecoveryQueued,
+    lotwRecoveryQueued,
     qrzSendQueued,
     qrzSendFailed,
     qrzShadow: shadows.qrz,
@@ -179,14 +188,18 @@ export async function runHostedInventoryQueue(
     (message) =>
       !isComparisonMessage(message.body) &&
       !isSourceProofWakeup(message.body) &&
-      !isQrzRecoveryWakeup(message.body) &&
+      !isInventoryRecoveryWakeup("qrz", message.body) &&
+      !isInventoryRecoveryWakeup("lotw", message.body) &&
       !isQrzSendWakeup(message.body),
   );
   const proofMessages = batch.messages.filter((message) =>
     isSourceProofWakeup(message.body),
   );
-  const recoveryMessages = batch.messages.filter((message) =>
-    isQrzRecoveryWakeup(message.body),
+  const qrzRecoveryMessages = batch.messages.filter((message) =>
+    isInventoryRecoveryWakeup("qrz", message.body),
+  );
+  const lotwRecoveryMessages = batch.messages.filter((message) =>
+    isInventoryRecoveryWakeup("lotw", message.body),
   );
   const sendMessages = batch.messages.filter((message) =>
     isQrzSendWakeup(message.body),
@@ -271,8 +284,27 @@ export async function runHostedInventoryQueue(
       return retryAt;
     },
   );
-  const recovery = await consumeQrzRecoveryWakeups(dispatch, recoveryMessages);
+  const qrzRecovery = await consumeInventoryRecoveryWakeups(
+    dispatch,
+    "qrz",
+    qrzRecoveryMessages,
+  );
+  const lotwRecovery = await consumeInventoryRecoveryWakeups(
+    new InventoryLotwReadback(store, fetcher),
+    "lotw",
+    lotwRecoveryMessages,
+  );
   const send = await sender.consume(sendMessages);
+  const reports = [
+    inventory,
+    comparison,
+    proof,
+    qrzRecovery,
+    lotwRecovery,
+    send,
+  ];
+  const total = (field: keyof typeof proof) =>
+    reports.reduce((sum, report) => sum + report[field], 0);
   const qrzSendQueued = qrzSendAfterProof + send.queued;
   const inventoryQueued =
     inventory.queued + inventoryAfterComparison + inventoryAfterProof;
@@ -282,44 +314,20 @@ export async function runHostedInventoryQueue(
       mode === "selected_qrz"
         ? ("inventory_selected_qrz" as const)
         : ("inventory_read_only" as const),
-    processed:
-      inventory.processed +
-      comparison.processed +
-      proof.processed +
-      recovery.processed +
-      send.processed,
+    processed: total("processed"),
     inventoryProcessed: inventory.processed,
     comparisonProcessed: comparison.processed,
     sourceProofProcessed: proof.processed,
-    qrzRecoveryProcessed: recovery.processed,
+    qrzRecoveryProcessed: qrzRecovery.processed,
+    lotwRecoveryProcessed: lotwRecovery.processed,
     qrzSendProcessed: send.processed,
     qrzSendOutcome: send.outcome,
     qrzShadow: shadows.qrz,
     lotwShadow: shadows.lotw,
-    acknowledged:
-      inventory.acknowledged +
-      comparison.acknowledged +
-      proof.acknowledged +
-      recovery.acknowledged +
-      send.acknowledged,
-    retried:
-      inventory.retried +
-      comparison.retried +
-      proof.retried +
-      recovery.retried +
-      send.retried,
-    invalid:
-      inventory.invalid +
-      comparison.invalid +
-      proof.invalid +
-      recovery.invalid +
-      send.invalid,
-    failed:
-      inventory.failed +
-      comparison.failed +
-      proof.failed +
-      recovery.failed +
-      send.failed,
+    acknowledged: total("acknowledged"),
+    retried: total("retried"),
+    invalid: total("invalid"),
+    failed: total("failed"),
     queued:
       inventoryQueued + comparisonQueued + sourceProofQueued + qrzSendQueued,
     inventoryQueued,

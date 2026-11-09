@@ -351,7 +351,7 @@ supported projection fields plus a LoTW receive timestamp at or after
 the claim's second. Partial results retain the batch hold. The last
 receipt settles it in the same transaction. The ownership index can
 reject conflicts across aliases, and a delivery receipt cannot become
-a historical adoption. Hosted send and readback wakeups remain open.
+a historical adoption.
 
 The native fixture resolved one of two contacts after the source proof
 became stale. A minute-only match and an exact record received before
@@ -361,3 +361,18 @@ uploads. A fresh account copy records the old unresolved batch count
 while leaving the contact state behind. The real account-only replay
 on the new schema retained four credential envelopes, recorded zero
 prior LoTW batches, and made zero requests.
+
+## Hosted LoTW recovery
+
+[Migration 0103](../migrations/0103_inventory_lotw_recovery_jobs.sql)
+creates a readback job when the upload claim commits and backfills
+existing unresolved claims. Cron and Queue share the QRZ scheduling
+rules. Each leased turn advances its durable version before reading.
+Six turns bound automatic work. A parked batch keeps its ownership
+and restore quarantine fences its queued versions.
+
+The Worker fixture verified a failed publication, an obsolete queue
+message and three readback turns with exports disabled. An exact
+receipt for one member survived through the second turn. Settlement
+of the remaining member retired the recovery job atomically. Hosted
+send scheduling remains open.

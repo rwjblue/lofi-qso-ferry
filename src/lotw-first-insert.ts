@@ -23,6 +23,32 @@ export type LotwFirstInsertHistory = {
   | { state: "held"; reason: "existing_history"; recordCount: number }
 );
 
+export function lotwFirstInsertSelection(
+  station: LotwFirstInsertHistoryInput["station"],
+  contact: LotwFirstInsertHistoryInput["contact"],
+): Required<
+  Pick<
+    LotwQuery,
+    "startDate" | "endDate" | "stationCallsign" | "workedCallsign"
+  >
+> {
+  const stationCallsign = callsign(station.callsign);
+  const workedCallsign = callsign(contact.call);
+  const date = utcDate(contact.date);
+  const time = contact.time;
+  if (
+    typeof time !== "string" ||
+    time.length !== 9 ||
+    !/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\dZ$/.test(time)
+  )
+    throw new Error("LoTW first-insert contact requires whole-second UTC time");
+  const startDate = new Date(date - 86_400_000).toISOString().slice(0, 10);
+  const endDate = new Date(date + 86_400_000).toISOString().slice(0, 10);
+  utcDate(startDate);
+  utcDate(endDate);
+  return { startDate, endDate, stationCallsign, workedCallsign };
+}
+
 function utcDate(value: string): number {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value))
     throw new Error("Invalid LoTW first-insert contact date");
@@ -62,21 +88,10 @@ export async function checkLotwFirstInsertHistory(
   input: LotwFirstInsertHistoryInput,
   options: { fetcher?: typeof fetch } = {},
 ): Promise<LotwFirstInsertHistory> {
-  const stationCallsign = callsign(input.station.callsign);
-  const workedCallsign = callsign(input.contact.call);
-  const date = utcDate(input.contact.date);
-  const time = input.contact.time;
-  if (
-    typeof time !== "string" ||
-    time.length !== 9 ||
-    !/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\dZ$/.test(time)
-  )
-    throw new Error("LoTW first-insert contact requires whole-second UTC time");
-  const startDate = new Date(date - 86_400_000).toISOString().slice(0, 10);
-  const endDate = new Date(date + 86_400_000).toISOString().slice(0, 10);
-  // Reject unsupported calendar edges rather than silently clipping coverage.
-  utcDate(startDate);
-  utcDate(endDate);
+  const query: Readonly<LotwQuery> = Object.freeze(
+    lotwFirstInsertSelection(input.station, input.contact),
+  );
+  const { startDate, endDate } = query;
   const credentials = Object.freeze({
     username: input.credentials?.username,
     password: input.credentials?.password,
@@ -89,12 +104,6 @@ export async function checkLotwFirstInsertHistory(
   )
     throw new Error("LoTW first-insert query credentials are required");
   // Capture the entire scope and transport before any asynchronous work.
-  const query: Readonly<LotwQuery> = Object.freeze({
-    startDate,
-    endDate,
-    stationCallsign,
-    workedCallsign,
-  });
   const client = new LotwClient(credentials, { fetcher: options.fetcher });
   const report = await client.query(query);
   if (report.records.length !== 0)

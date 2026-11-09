@@ -413,6 +413,7 @@ export class InventoryLotwPreparation {
           `UPDATE inventory_lotw_batches SET cancelled_at=CAST(unixepoch('subsec')*1000 AS INTEGER)
        WHERE tenant=?1 AND batch_id=?2 AND committed_at IS NOT NULL AND cancelled_at IS NULL
        AND NOT EXISTS(SELECT 1 FROM inventory_restore_locks WHERE tenant=?1)
+       AND NOT EXISTS(SELECT 1 FROM inventory_lotw_dispatches WHERE tenant=?1 AND batch_id=?2)
        AND NOT EXISTS(SELECT 1 FROM inventory_lotw_batch_current WHERE tenant=?1 AND batch_id=?2) RETURNING batch_id`,
           tenant,
           batch,

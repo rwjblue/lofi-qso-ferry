@@ -13,6 +13,7 @@ import {
   runHostedScheduled,
 } from "../src/inventory-hosted.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
+import { InventoryLotwDispatch } from "../src/inventory-lotw-dispatch.ts";
 import { InventoryLotwPreparation } from "../src/inventory-lotw-preparation.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
 import { InventoryQrzDispatch } from "../src/inventory-qrz-dispatch.ts";
@@ -1715,6 +1716,118 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   const archivedLotw = await reopenedLotw.artifact("a", replacement.batchId);
   assert.ok(archivedLotw);
 
+  const lotwGates = () => ({
+    ...writeGates(),
+    qrzFreshInsertsEnabled: false,
+    lotwFreshInsertsEnabled: true,
+    allowedQsoIds: lotwKeys,
+    allowedDestinationIds: ["lotw"],
+  });
+  let lotwSendMode: "candidate" | "budget" | "lost" = "candidate";
+  const lotwSendActions: string[] = [];
+  const lotwClaims = () =>
+    db
+      .prepare("SELECT count(*) AS n FROM inventory_lotw_dispatch_pending")
+      .first<number>("n");
+  const lotwTransport: typeof fetch = async (input, init) => {
+    const url = new URL(String(input));
+    assert.equal(url.origin, "https://lotw.arrl.org");
+    assert.equal(init?.redirect, "manual");
+    if (url.pathname === "/lotw/crl") {
+      lotwSendActions.push("certificate");
+      return certificateFetch(input, init);
+    }
+    if (url.pathname === "/lotwuser/lotwreport.adi") {
+      lotwSendActions.push("history");
+      assert.equal(init?.method ?? "GET", "GET");
+      assert.equal(url.searchParams.get("qso_owncall"), "N1RWJ");
+      assert.equal(url.searchParams.get("qso_callsign"), null);
+      assert.equal(url.searchParams.get("qso_startdate"), "2026-11-07");
+      assert.equal(url.searchParams.get("qso_enddate"), "2026-11-09");
+      assert.equal(url.searchParams.get("qso_qsorxsince"), "1900-01-01");
+      if (lotwSendMode === "budget")
+        await store
+          .statement(
+            "UPDATE vendor_requests SET cooldown_until=? WHERE vendor='lotw'",
+            Date.now() + 60_000,
+          )
+          .run();
+      const prior = serializeAdifRecord({
+        STATION_CALLSIGN: "N1RWJ",
+        CALL: lotwSendMode === "candidate" ? "W3AW" : "W4AW",
+        BAND: "40m",
+        MODE: "SSB",
+        QSO_DATE: "20261107",
+        TIME_ON: "151500",
+        QSL_RCVD: "N",
+      });
+      return new Response(
+        `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:1>1<EOH>${prior}<APP_LOTW_EOF>`,
+      );
+    }
+    assert.equal(url.href, "https://lotw.arrl.org/lotw/upload");
+    assert.equal(init?.method, "POST");
+    assert.ok(init?.body instanceof FormData);
+    assert.deepEqual([...init.body.keys()], ["upfile"]);
+    const file = init.body.get("upfile");
+    assert.ok(file instanceof File);
+    assert.deepEqual(
+      new Uint8Array(await file.arrayBuffer()),
+      archivedLotw.bytes,
+    );
+    assert.equal(
+      await lotwClaims(),
+      1,
+      "the claim must be durable before HTTP",
+    );
+    lotwSendActions.push("upload");
+    throw new Error("fixture lost the LoTW response");
+  };
+  const lotwSender = new InventoryLotwDispatch(store, lotwTransport);
+  const sendLotw = (gates = lotwGates) =>
+    lotwSender.send("a", replacement.batchId, gates, "live");
+  assert.deepEqual(
+    await sendLotw(() => ({ ...lotwGates(), allowedQsoIds: ["q2"] })),
+    { kind: "held", reason: "lotw_exports_disabled" },
+  );
+  assert.deepEqual(lotwSendActions, []);
+  assert.deepEqual(await sendLotw(), {
+    kind: "held",
+    reason: "lotw_batch_existing_history",
+  });
+  assert.deepEqual(lotwSendActions.splice(0), ["certificate", "history"]);
+  assert.equal(await lotwClaims(), 0);
+  lotwSendMode = "budget";
+  assert.equal((await sendLotw()).kind, "deferred");
+  assert.deepEqual(lotwSendActions.splice(0), ["certificate", "history"]);
+  assert.equal(await lotwClaims(), 0);
+  await db
+    .prepare("UPDATE vendor_requests SET cooldown_until=0 WHERE vendor='lotw'")
+    .run();
+  lotwSendMode = "lost";
+  await db
+    .prepare(`CREATE TRIGGER fixture_lotw_dispatch_rebind BEFORE UPDATE OF requests ON vendor_requests
+    WHEN NEW.vendor='lotw' AND EXISTS(SELECT 1 FROM inventory_lotw_dispatch_guards)
+    BEGIN UPDATE connections SET config=json_set(config,'$.station.dxcc',1) WHERE tenant='a' AND id='lotw'; END;`)
+    .run();
+  assert.deepEqual(await sendLotw(), {
+    kind: "held",
+    reason: "lotw_send_authority_changed",
+  });
+  assert.deepEqual(lotwSendActions.splice(0), ["certificate", "history"]);
+  assert.equal(await lotwClaims(), 0);
+  await db.prepare("DROP TRIGGER fixture_lotw_dispatch_rebind").run();
+  assert.deepEqual(await sendLotw(), { kind: "uncertain" });
+  assert.deepEqual(lotwSendActions.splice(0), [
+    "certificate",
+    "history",
+    "upload",
+  ]);
+  assert.deepEqual(await sendLotw(), { kind: "uncertain" });
+  assert.deepEqual(lotwSendActions, []);
+  assert.equal(await lotwClaims(), 1);
+  assert.equal(await reopenedLotw.cancelStale("a", replacement.batchId), false);
+
   const scopeVersions = async () =>
     (
       await store
@@ -1734,6 +1847,15 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     ).results;
   const originalCiphertext = await ciphertext();
   assert.equal((await lockRestoredDatabase(db)).lockedAccounts, 1);
+  assert.equal(
+    await db
+      .prepare(
+        "SELECT prior_state FROM inventory_lotw_restore_pending WHERE batch_id=?",
+      )
+      .bind(replacement.batchId)
+      .first("prior_state"),
+    "possibly_sent",
+  );
   assert.equal(await reopenedLotw.current("a", replacement.batchId), false);
   assert.equal(await reopenedLotw.cancelStale("a", replacement.batchId), false);
   assert.deepEqual(

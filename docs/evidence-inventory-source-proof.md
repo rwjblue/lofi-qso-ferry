@@ -316,5 +316,28 @@ batches and made no requests.
 
 The hosted fixture also enrolled the LoTW proof from an explicit
 shadow selection and staged the replacement batch through the proof
-queue with exports disabled. Batch submission and member-level
-readback remain to be implemented.
+queue with exports disabled.
+
+## LoTW guarded batch dispatch
+
+[Migration 0101](../migrations/0101_inventory_lotw_dispatch.sql) binds
+the complete final read, ordered members, wire hash and tenant delivery
+lease to one may-send claim. The claim commits with the vendor request
+slot. A file response can record acceptance for processing or rejection.
+It leaves each member's outcome unresolved.
+
+The Workerd fixture held a two-contact batch when the report included
+prior history for one member, even on another band. It also verified
+that a denied vendor slot and a station rebind during admission create
+no claim. The simulated vendor received the exact TQ8 once. A lost
+response left the claim and file intact. Replaying made no requests,
+and restore quarantine retained the batch as possibly sent. Hosted send
+scheduling and member-level readback remain open.
+
+A separate real read-only trial compared a shared station report with
+two worked-call reports. The shared report contained 244 records. Its
+local filters returned exactly the same single record for each call as
+the corresponding direct report. The three validation requests took
+10.5 seconds and transferred 148,488 response bytes. This establishes
+predicate equivalence for the sampled contacts. The trial made zero
+upload requests. [ARRL query contract](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)

@@ -68,6 +68,12 @@ interface UpdateEvidence {
 const uploadUrl = "https://lotw.arrl.org/lotw/upload";
 const minute = 60_000;
 const proofPurpose = "lotw_grid_correction";
+const eligibleCandidate = `(?1 IS NULL OR c.record_key IN(SELECT value FROM json_each(?1)))
+ AND (?2 IS NULL OR c.destination_connection IN(SELECT value FROM json_each(?2)))
+ AND NOT EXISTS(SELECT 1 FROM inventory_lotw_grid_updates u
+  WHERE (u.tenant,u.association_id)=(c.tenant,c.association_id)
+  AND (u.state IN('uncertain','submitted','attention')
+    OR (u.source_payload=c.projection_payload AND (u.state='observed' OR u.due_at>?3))))`;
 const evidenceIdentity = (row: {
   tenant: string;
   association_id: string;
@@ -107,12 +113,7 @@ export class InventoryLotwGridUpdates {
     const row = await this.store
       .statement(
         `SELECT c.* FROM inventory_lotw_grid_correction_candidates c
-         WHERE (?1 IS NULL OR c.record_key IN(SELECT value FROM json_each(?1)))
-         AND (?2 IS NULL OR c.destination_connection IN(SELECT value FROM json_each(?2)))
-         AND NOT EXISTS(SELECT 1 FROM inventory_lotw_grid_updates u
-          WHERE (u.tenant,u.association_id)=(c.tenant,c.association_id)
-          AND (u.state IN('uncertain','submitted','attention')
-            OR (u.source_payload=c.projection_payload AND (u.state='observed' OR u.due_at>?3))))
+         WHERE ${eligibleCandidate}
          ORDER BY c.derived_at,c.tenant,c.destination,c.source_scope,c.record_key LIMIT 1`,
         auth.keys === null ? null : canonical(auth.keys),
         auth.destinations === null ? null : canonical(auth.destinations),
@@ -135,29 +136,79 @@ export class InventoryLotwGridUpdates {
         );
       return { attempted: false, observed };
     }
-    const lease = await this.store.claim(
+    const { attempted } = await this.resume(
+      env,
       row.tenant,
+      row.source_scope,
+      proof.id,
+    );
+    return { attempted, observed };
+  }
+
+  /** A Queue delivery resumes the exact proof and may retry a busy lease. */
+  async resume(
+    env: LotwGridUpdateEnvironment,
+    tenant: string,
+    scope: string,
+    proofId: string,
+  ): Promise<{ attempted: boolean; retryAt?: number }> {
+    const lease = await this.store.claim(
+      tenant,
       INVENTORY_LOTW_DELIVERY_LEASE,
       Date.now(),
       90_000,
     );
-    if (!lease) return { attempted: false, observed };
+    if (!lease) return { attempted: false, retryAt: Date.now() + 5_000 };
     try {
-      return {
-        attempted: await this.update(
-          row,
-          proof.id,
-          proof.expiresAt,
-          lease,
-          env,
-        ),
-        observed,
-      };
-    } catch (error) {
-      if (error instanceof VendorDeferredError)
-        await this.defer(row, "lotw_request_deferred", error.retryAt);
-      else await this.defer(row, "lotw_grid_update_unavailable");
-      return { attempted: false, observed };
+      const auth = this.authorization(env);
+      const row = auth
+        ? await this.store
+            .statement(
+              `SELECT c.*,p.expires_at FROM inventory_source_proof_jobs j
+               CROSS JOIN inventory_source_proof_current p ON (p.tenant,p.proof_id)=(j.tenant,j.job_id)
+               CROSS JOIN inventory_lotw_grid_correction_candidates c
+               WHERE (j.tenant,j.scope_id,j.job_id)=(?4,?5,?6) AND j.phase='complete' AND j.grid_pending=1
+               AND (c.tenant,c.source_scope,c.record_key,c.projection_version,c.projection_payload,c.destination)
+                 =(j.tenant,j.scope_id,json_extract(j.snapshot,'$.contacts[0].key'),
+                   json_extract(j.snapshot,'$.contacts[0].projectionVersion'),
+                   json_extract(j.snapshot,'$.contacts[0].projectionPayload'),
+                   json_extract(j.snapshot,'$.contacts[0].routes[0].destination'))
+               AND ${eligibleCandidate}`,
+              auth.keys === null ? null : canonical(auth.keys),
+              auth.destinations === null ? null : canonical(auth.destinations),
+              Date.now(),
+              tenant,
+              scope,
+              proofId,
+            )
+            .first<Candidate & { expires_at: number }>()
+        : null;
+      let attempted = false;
+      if (row) {
+        try {
+          attempted = await this.update(
+            row,
+            proofId,
+            row.expires_at,
+            lease,
+            env,
+          );
+        } catch (error) {
+          if (error instanceof VendorDeferredError)
+            await this.defer(row, "lotw_request_deferred", error.retryAt);
+          else await this.defer(row, "lotw_grid_update_unavailable");
+        }
+      }
+      await this.store
+        .statement(
+          `UPDATE inventory_source_proof_jobs SET grid_pending=0
+           WHERE (tenant,scope_id,job_id)=(?1,?5,?6) AND phase='complete' AND grid_pending=1 AND ${leaseCurrent}`,
+          ...leaseArgs(lease),
+          scope,
+          proofId,
+        )
+        .run();
+      return { attempted };
     } finally {
       await this.store.release(lease);
     }
@@ -392,6 +443,8 @@ export class InventoryLotwGridUpdates {
        SELECT c.tenant,c.association_id,c.source_scope,c.projection_payload,c.destination,c.remote_key,'uncertain','lotw_grid_dispatch_uncertain',?15,?16,?17
        FROM inventory_lotw_grid_correction_candidates c
        JOIN inventory_source_proof_current p ON (p.tenant,p.scope_id,p.proof_id)=(c.tenant,c.source_scope,?14)
+       JOIN inventory_source_proof_jobs j ON (j.tenant,j.scope_id,j.job_id)=(p.tenant,p.scope_id,p.proof_id)
+         AND j.phase='complete' AND j.grid_pending=1
        WHERE c.tenant=?1 AND ${leaseCurrent}
        AND (c.association_id,c.destination,c.source_scope,c.result_set,c.result_version,c.projection_payload,c.destination_connection,c.destination_credential,c.destination_config)
           =(?5,?6,?7,?8,?9,?10,?11,?12,?13)

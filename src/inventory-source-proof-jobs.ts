@@ -39,6 +39,7 @@ interface Job {
   expires_at: number | null;
   drain_run: string | null;
   reason: string | null;
+  grid_pending: number;
 }
 const PROOF_ATTEMPTS = 4;
 const leaseSql = `EXISTS(SELECT 1 FROM leases l WHERE l.tenant=? AND l.scope=? AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000)`;
@@ -140,18 +141,22 @@ export class InventorySourceProofJobs {
       const old = await this.load(tenant, scope);
       if (old?.phase === "collecting" || old?.phase === "draining")
         return { kind: "existing" as const, id: old.job_id };
-      if (old?.phase === "complete" && selected.length) {
+      if (old?.phase === "complete") {
         const snapshot = JSON.parse(
           old.snapshot,
         ) as InventorySourceProofSnapshot;
-        if (covers(snapshot)) {
+        const requestedGrid = route?.purpose === "lotw_grid_correction";
+        const covered = selected.length > 0 && covers(snapshot);
+        if (old.grid_pending || (covered && !requestedGrid)) {
           const proof = await this.current(tenant, old.job_id);
           if (proof)
-            return {
-              kind: "complete" as const,
-              id: old.job_id,
-              expiresAt: proof.expires_at,
-            };
+            return covered
+              ? {
+                  kind: "complete" as const,
+                  id: old.job_id,
+                  expiresAt: proof.expires_at,
+                }
+              : { kind: "existing" as const, id: old.job_id };
         }
       }
       const result = await new InventorySourceProofWorkspace(
@@ -172,11 +177,12 @@ export class InventorySourceProofJobs {
       const id = crypto.randomUUID();
       const saved = await this.store
         .statement(
-          `INSERT INTO inventory_source_proof_jobs(tenant,scope_id,job_id,snapshot,witnesses,started_at,collection_deadline,due_at)
-           SELECT ?,?,?,?,?,?,?,? WHERE ${leaseSql}
+          `INSERT INTO inventory_source_proof_jobs(tenant,scope_id,job_id,snapshot,witnesses,started_at,collection_deadline,due_at,grid_pending)
+           SELECT ?,?,?,?,?,?,?,?,? WHERE ${leaseSql}
            ON CONFLICT(tenant,scope_id) DO UPDATE SET job_id=excluded.job_id,version=inventory_source_proof_jobs.version+1,phase='collecting',
              snapshot=excluded.snapshot,witnesses=excluded.witnesses,continuation=NULL,started_at=excluded.started_at,
-             collection_deadline=excluded.collection_deadline,due_at=excluded.due_at,attempts=0,collection_finished_at=NULL,expires_at=NULL,drain_run=NULL,reason=NULL
+             collection_deadline=excluded.collection_deadline,due_at=excluded.due_at,attempts=0,collection_finished_at=NULL,expires_at=NULL,drain_run=NULL,reason=NULL,
+             grid_pending=excluded.grid_pending
            WHERE inventory_source_proof_jobs.phase IN('held','complete')`,
           tenant,
           scope,
@@ -186,6 +192,7 @@ export class InventorySourceProofJobs {
           now,
           now + SOURCE_PRESENCE_COLLECTION_MS,
           now,
+          Number(route?.purpose === "lotw_grid_correction"),
           ...leaseArgs(lease),
         )
         .run();
@@ -212,6 +219,13 @@ export class InventorySourceProofJobs {
     if (!lease) return { kind: "busy" as const };
     try {
       const job = await this.load(tenant, scope);
+      if (
+        job?.job_id === id &&
+        job.phase === "complete" &&
+        job.grid_pending &&
+        (job.expires_at ?? 0) > Date.now()
+      )
+        return { kind: "complete" as const, gridPending: true };
       if (
         !job ||
         job.job_id !== id ||
@@ -448,11 +462,19 @@ export class InventorySourceProofJobs {
         )
         .run();
       if (saved.meta.changes)
-        return { kind: "complete" as const, expiresAt: expiry };
+        return {
+          kind: "complete" as const,
+          gridPending: Boolean(job.grid_pending),
+          expiresAt: expiry,
+        };
       return { kind: "stale" as const };
     } catch (error) {
       if (await this.current(job.tenant, job.job_id))
-        return { kind: "complete" as const, expiresAt: expiry };
+        return {
+          kind: "complete" as const,
+          gridPending: Boolean(job.grid_pending),
+          expiresAt: expiry,
+        };
       if (
         error instanceof Error &&
         /inventory source proof (inputs|witnesses)/.test(error.message)

@@ -47,7 +47,11 @@ export async function publishSourceProofWakeups(
       .statement(
         `SELECT tenant,scope_id,job_id,version,due_at FROM inventory_source_proof_jobs
          WHERE phase IN('collecting','draining')
-           AND (published_version<version OR (published_at<=? AND due_at<=?))
+           AND (published_version<version OR (published_at<=?1 AND due_at<=?2))
+         UNION ALL
+         SELECT tenant,scope_id,job_id,version,due_at FROM inventory_source_proof_jobs
+         WHERE phase='complete' AND grid_pending=1 AND expires_at>?2
+           AND (published_version<version OR (published_at<=?1 AND due_at<=?2))
          ORDER BY due_at,tenant,scope_id LIMIT 16`,
         now - 60_000,
         now,
@@ -80,7 +84,7 @@ export async function publishSourceProofWakeups(
       `UPDATE inventory_source_proof_jobs AS j SET published_version=version,published_at=max(published_at,?2)
        WHERE j.rowid IN(SELECT w.rowid FROM json_each(?1) x CROSS JOIN inventory_source_proof_jobs w
         WHERE (w.tenant,w.scope_id,w.job_id,w.version)=(json_extract(x.value,'$.tenant'),json_extract(x.value,'$.scope_id'),json_extract(x.value,'$.job_id'),json_extract(x.value,'$.version'))
-        AND w.phase IN('collecting','draining'))`,
+         AND (w.phase IN('collecting','draining') OR (w.phase='complete' AND w.grid_pending=1)))`,
       canonical(rows),
       now,
     )

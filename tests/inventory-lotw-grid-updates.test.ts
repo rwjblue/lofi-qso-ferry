@@ -5,7 +5,9 @@ import { gunzipSync } from "node:zlib";
 import { serializeAdifRecord } from "../src/adif.ts";
 import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
 import { InventoryComparisonPages } from "../src/inventory-comparison-pages.ts";
+import { runHostedInventoryQueue } from "../src/inventory-hosted.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
+import { INVENTORY_LOTW_DELIVERY_LEASE } from "../src/inventory-lotw-dispatch.ts";
 import { InventoryLotwGridUpdates } from "../src/inventory-lotw-grid-updates.ts";
 import { InventoryRunner } from "../src/inventory-runner.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
@@ -16,9 +18,13 @@ import {
 } from "../src/inventory-scheduler.ts";
 import { InventorySourceProofDrain } from "../src/inventory-source-proof-drain.ts";
 import { InventorySourceProofJobs } from "../src/inventory-source-proof-jobs.ts";
+import {
+  isSourceProofWakeup,
+  publishSourceProofWakeups,
+} from "../src/inventory-source-proof-wakeups.ts";
 import type { InventorySourceProofScope } from "../src/inventory-source-proof-workspace.ts";
 import { importPkcs12 } from "../src/signing.ts";
-import { database } from "./helpers.ts";
+import { database, unusedInventoryQueue } from "./helpers.ts";
 import {
   applyAdditionalMigrations,
   fixtureEnvironment,
@@ -156,8 +162,18 @@ test("LoTW grid correction uses a fresh source proof and recovers an uncertain u
   const runner = new InventoryRunner(runs, fetcher, { scheduled: true });
   const proofJobs = new InventorySourceProofJobs(runs, fetcher);
   const updates = new InventoryLotwGridUpdates(store, proofJobs, fetcher);
+  const sent: MessageSendRequest<unknown>[] = [];
   const env = {
     ...fixtureEnvironment(db),
+    INVENTORY_QUEUE: {
+      ...unusedInventoryQueue,
+      async sendBatch(messages) {
+        sent.push(...messages);
+        return {
+          metadata: { metrics: { backlogCount: sent.length, backlogBytes: 0 } },
+        };
+      },
+    } satisfies Queue,
     INVENTORY_RUNTIME_MODE: "managed",
     EXPORTS_ENABLED: "true",
     ROLLOUT_CHECKS_PASSED: "true",
@@ -313,13 +329,60 @@ test("LoTW grid correction uses a fresh source proof and recovers an uncertain u
     .statement("UPDATE inventory_source_proof_jobs SET due_at=?", Date.now())
     .run();
   assert.equal(
-    (await proofJobs.step("a", sourceScope, job.job_id)).kind,
-    "complete",
+    await publishSourceProofWakeups(proofJobs, env.INVENTORY_QUEUE),
+    1,
   );
-  assert.deepEqual(await updates.step(env), {
-    attempted: true,
-    observed: false,
-  });
+  const wakeup = sent.find(({ body }) => isSourceProofWakeup(body));
+  assert.ok(wakeup);
+  async function deliverProof(body: unknown) {
+    const outcomes: (number | string)[] = [];
+    await runHostedInventoryQueue(
+      env,
+      {
+        queue: "fixture",
+        metadata: { metrics: { backlogCount: 1, backlogBytes: 0 } },
+        messages: [
+          {
+            id: "proof",
+            body,
+            timestamp: new Date(),
+            attempts: 1,
+            ack: () => outcomes.push("ack"),
+            retry: (options) => outcomes.push(options?.delaySeconds ?? 0),
+          },
+        ],
+        ackAll: () => assert.fail("unexpected batch acknowledgement"),
+        retryAll: () => assert.fail("unexpected batch retry"),
+      },
+      fetcher,
+    );
+    return outcomes;
+  }
+  const deliveryLease = await store.claim(
+    "a",
+    INVENTORY_LOTW_DELIVERY_LEASE,
+    Date.now(),
+    30_000,
+  );
+  assert.ok(deliveryLease);
+  const retry = await deliverProof(wakeup.body);
+  assert.ok(typeof retry[0] === "number" && retry[0] > 0);
+  assert.equal(uploads, 0);
+  assert.equal((await proofJobs.load("a", sourceScope))?.phase, "complete");
+  assert.equal(
+    (await proofJobs.enqueue("a", sourceScope, ["contact"])).kind,
+    "existing",
+  );
+  await store.release(deliveryLease);
+  sent.length = 0;
+  assert.equal(
+    await publishSourceProofWakeups(proofJobs, env.INVENTORY_QUEUE),
+    1,
+  );
+  assert.ok(sent.some(({ body }) => isSourceProofWakeup(body)));
+  assert.deepEqual(await deliverProof(wakeup.body), ["ack"]);
+  assert.deepEqual(await deliverProof(wakeup.body), ["ack"]);
+  assert.equal((await proofJobs.load("a", sourceScope))?.grid_pending, 0);
   assert.equal(uploads, 1);
   assert.equal(stateAtUpload, "uncertain");
   assert.match(signed, /<GRIDSQUARE:4>FN32/);

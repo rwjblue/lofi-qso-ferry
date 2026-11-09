@@ -300,17 +300,15 @@ test("an idle phase sweep preserves a work signal that arrives after it checked 
     const swept = await new InventoryComparisonCoordinator(store).step("a");
     assert.equal(signaled, true);
     assert.equal(swept.more, true);
+    assert.equal("phase" in swept && swept.phase, "match");
     assert.deepEqual(
       await f.db
         .prepare(
           "SELECT c.phase,c.idle_turns,c.observed_version=c.work_version AS caught_up,w.not_before IS NOT NULL AS scheduled FROM inventory_comparison_coordinators c JOIN inventory_comparison_wakeups w USING(tenant)",
         )
         .first(),
-      { phase: 9, idle_turns: 0, caught_up: 1, scheduled: 1 },
+      { phase: 10, idle_turns: 1, caught_up: 1, scheduled: 1 },
     );
-    const match = await coordinator.step("a");
-    assert.equal(match.more, true);
-    assert.equal("phase" in match && match.phase, "match");
     assert.equal((await coordinator.step("a")).more, false);
     assert.deepEqual(
       await f.db

@@ -156,7 +156,7 @@ export class InventoryComparisonCoordinator {
     return this.store
       .statement(
         `UPDATE inventory_comparison_coordinators SET ${activity === undefined ? "" : "match_activity=?,"}${review === undefined ? "" : "review_activity=?,"}version=version+1,observed_version=work_version,phase=?,idle_turns=CASE WHEN ?=1 OR observed_version!=work_version THEN 0 ELSE min(phase_count,idle_turns+?) END,next_due_at=coalesce(?,next_due_at),build_generation=?,build_scope=?,updated_at=?
-WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a ON a.id=l.tenant AND a.status='active' WHERE l.tenant=? AND l.scope='inventory-comparison' AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000) RETURNING idle_turns,work_version,observed_version,next_due_at`,
+WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a ON a.id=l.tenant AND a.status='active' WHERE l.tenant=? AND l.scope='inventory-comparison' AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000) RETURNING *`,
         ...(activity === undefined
           ? []
           : [advanceActivity ? 1 - activity : activity]),
@@ -176,12 +176,7 @@ WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a O
         lease.token,
         lease.fence,
       )
-      .first<{
-        idle_turns: number;
-        next_due_at: number;
-        work_version: number;
-        observed_version: number;
-      }>();
+      .first<Control>();
   }
   private async checkPhase(
     tenant: string,
@@ -385,62 +380,75 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
           generation: domain.pending_generation,
         };
       }
-      let cursor = control.phase;
-      let checked = 0;
-      let phase: (typeof phases)[number];
-      let result: Awaited<
-        ReturnType<InventoryComparisonCoordinator["checkPhase"]>
-      >;
-      do {
-        phase = phases[cursor];
-        result = await this.checkPhase(
-          tenant,
-          control,
-          lease,
-          phase,
-          domain.pending_generation,
+      for (;;) {
+        let cursor = control.phase;
+        let checked = 0;
+        let phase: (typeof phases)[number];
+        let result: Awaited<
+          ReturnType<InventoryComparisonCoordinator["checkPhase"]>
+        >;
+        do {
+          phase = phases[cursor];
+          result = await this.checkPhase(
+            tenant,
+            control,
+            lease,
+            phase,
+            domain.pending_generation,
+          );
+          checked++;
+          cursor = (cursor + 1) % phases.length;
+        } while (
+          !result.progress &&
+          !result.deferred &&
+          phase !== "match" &&
+          cursor !== matchPhase
         );
-        checked++;
-        cursor = (cursor + 1) % phases.length;
-        // Matching keeps its own durable turn for adoption and review rotation.
-      } while (
-        !result.progress &&
-        !result.deferred &&
-        phase !== "match" &&
-        cursor !== matchPhase
-      );
-      const {
-        progress,
-        deferred,
-        build,
-        records,
-        pageId,
-        nextDueAt,
-        activity,
-      } = result;
-      const saved = await this.finish(tenant, control, lease, {
-        progress: progress || deferred,
-        nextPhase: cursor,
-        checked,
-        build,
-        nextDueAt,
-      });
-      return {
-        kind:
-          !saved || deferred
-            ? ("deferred" as const)
-            : progress
-              ? ("advanced" as const)
-              : domain.pending_generation
-                ? ("waiting" as const)
-                : ("idle" as const),
-        phase,
-        ...(activity ? { activity } : {}),
-        records,
-        pageId,
-        more: !saved || deferred || saved.idle_turns < phases.length,
-        nextDueAt: saved?.next_due_at ?? 0,
-      };
+        const {
+          progress,
+          deferred,
+          build,
+          records,
+          pageId,
+          nextDueAt,
+          activity,
+        } = result;
+        const saved = await this.finish(tenant, control, lease, {
+          progress: progress || deferred,
+          nextPhase: cursor,
+          checked,
+          build,
+          nextDueAt,
+        });
+        // Keep the durable match boundary and use the same lease for the
+        // following match turn when the preceding sweep found no work.
+        if (
+          saved &&
+          cursor === matchPhase &&
+          !progress &&
+          !deferred &&
+          saved.idle_turns < phases.length
+        ) {
+          control = saved;
+          continue;
+        }
+        return {
+          kind:
+            !saved || deferred
+              ? ("deferred" as const)
+              : progress
+                ? ("advanced" as const)
+                : domain.pending_generation
+                  ? ("waiting" as const)
+                  : ("idle" as const),
+          phase,
+          ...(activity ? { activity } : {}),
+          records,
+          pageId,
+          more: !saved || deferred || saved.idle_turns < phases.length,
+          nextDueAt: saved?.next_due_at ?? 0,
+        };
+      }
     } finally {
       await this.store.release(lease);
     }

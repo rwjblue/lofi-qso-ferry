@@ -1,6 +1,5 @@
 import {
   contactIsTest as testContact,
-  countyAdif,
   structuredContactAdif,
 } from "./contact-adif.ts";
 export { contactAdif, contactReconciliationAdif } from "./contact-adif.ts";
@@ -25,6 +24,15 @@ import {
 } from "./identity-claims.ts";
 import { type IntakeContact, pendingContacts } from "./intake.ts";
 import { LotwClient, observeLotwContact } from "./lotw.ts";
+import {
+  certificateCurrentlyValid,
+  lotwAttemptIdentity,
+  type LotwConfig,
+  type LotwCredential,
+  lotwDeliveryInput,
+  lotwProjectionHash,
+  lotwSigningCertificate,
+} from "./lotw-delivery-input.ts";
 import { checkLotwFirstInsertHistory } from "./lotw-first-insert.ts";
 import {
   attemptLotwOwnershipCurrent,
@@ -42,12 +50,7 @@ import {
   sameQrzIdentity,
 } from "./qrz.ts";
 import { type QrzPlanningAllowance, qrzPlanningFetch } from "./qrz-planning.ts";
-import {
-  canonicalLotwIdentity,
-  comparableRemote,
-  lotwRemoteIdentity,
-  reconcileQrzAttempt,
-} from "./reconcile.ts";
+import { comparableRemote, reconcileQrzAttempt } from "./reconcile.ts";
 import {
   b64,
   canonical,
@@ -63,7 +66,6 @@ import {
   type LotwContact,
   type LotwStation,
   SIGNING_CONFIGURATION,
-  type SigningCredential,
 } from "./signing.ts";
 import {
   attemptSourceExportProofCurrent,
@@ -140,20 +142,6 @@ class UnsentAuthorizationError extends Error {
     super("Authorization changed before mutation transport");
   }
 }
-function certificateCurrentlyValid(
-  credential: SigningCredential,
-  now: number,
-): boolean {
-  const validFrom = Date.parse(credential.validFrom);
-  const validTo = Date.parse(credential.validTo);
-  return (
-    Number.isFinite(now) &&
-    Number.isFinite(validFrom) &&
-    Number.isFinite(validTo) &&
-    validFrom <= now &&
-    now <= validTo
-  );
-}
 interface QrzCredential {
   apiKey: string;
 }
@@ -165,21 +153,12 @@ interface QrzCredentialSnapshot {
   destination_created_at: number;
   destination_expires_at: number | null;
 }
-interface LotwCredential {
-  signing?: SigningCredential;
-  signingCredentials?: SigningCredential[];
-  query?: { username: string; password: string };
-}
 export interface QrzConfig {
   bookId?: string;
   stationCallsign: string;
   startDate: string;
   endDate: string;
   replacementContractVerified?: boolean;
-}
-interface LotwConfig {
-  station?: LotwStation;
-  stations?: LotwStation[];
 }
 interface Member {
   id: string;
@@ -292,26 +271,6 @@ function freshInsertUnavailable(mode: SourceExportAuthorizationMode): string {
   return mode === "lotw_fresh_insert"
     ? "lotw_fresh_insert_unavailable"
     : "qrz_fresh_insert_unavailable";
-}
-async function lotwAttemptIdentity(
-  station: LotwStation,
-  contact: LotwContact,
-): Promise<LotwIdentityEvidence> {
-  const identity = canonicalLotwIdentity({
-    STATION_CALLSIGN: station.callsign,
-    CALL: contact.call,
-    QSO_DATE: contact.date.replaceAll("-", ""),
-    TIME_ON: contact.time.replaceAll(":", "").replace(/Z$/, ""),
-    BAND: contact.band,
-    MODE: contact.mode,
-    ...(contact.submode ? { SUBMODE: contact.submode } : {}),
-    PROP_MODE: contact.propagation ?? "",
-    SAT_NAME: contact.satellite ?? "",
-  });
-  return { remoteId: await lotwRemoteIdentity(identity), identity };
-}
-function countyLotw(county: string, state: string | undefined): string {
-  return countyAdif(county, state).split(",").slice(1).join(",");
 }
 /** Recheck retained source even for an upload prepared by an older version. */
 async function sourceExportContext(
@@ -1457,20 +1416,13 @@ async function prepareDueWork(
       return { state: "blocked", reason: "exports_disabled_before_signing" };
     if (await store.historicalAssociationOnly(key))
       return { state: "blocked", reason: "historical_association_read_only" };
-    const config = JSON.parse(connection.config) as LotwConfig;
-    const routes = (
-      config.stations ?? (config.station ? [config.station] : [])
-    ).filter(
-      (station) =>
-        station.callsign === contact.stationCall &&
-        (contact.dxcc === undefined || station.dxcc === contact.dxcc),
+    const input = lotwDeliveryInput(
+      JSON.parse(connection.config) as LotwConfig,
+      contact,
     );
-    if (
-      routes.length !== 1 ||
-      !Number.isInteger(contact.dxcc ?? routes[0]?.dxcc)
-    )
+    if (!input)
       return { state: "blocked", reason: "lotw_station_route_mismatch" };
-    const route = routes[0];
+    const { station, qso: lotwContact } = input;
     const credential = await store.private<LotwCredential>(
       key.tenant,
       key.destination,
@@ -1479,36 +1431,6 @@ async function prepareDueWork(
     );
     if (!credential)
       return { state: "blocked", reason: "credential_unavailable" };
-    const station: LotwStation = {
-      callsign: contact.stationCall,
-      dxcc: contact.dxcc ?? route.dxcc,
-      ...(contact.grid ? { grid: contact.grid } : {}),
-      ...(contact.state ? { state: contact.state } : {}),
-      ...(contact.county
-        ? { county: countyLotw(contact.county, contact.state) }
-        : {}),
-      ...((contact.cqZone ?? route.cqZone)
-        ? { cqZone: contact.cqZone ?? route.cqZone }
-        : {}),
-      ...((contact.ituZone ?? route.ituZone)
-        ? { ituZone: contact.ituZone ?? route.ituZone }
-        : {}),
-      ...(route.iota ? { iota: route.iota } : {}),
-    };
-    const iso = new Date(contact.startAtMillis).toISOString();
-    const lotwContact: LotwContact = {
-      id: contact.id,
-      generation: contact.generation,
-      call: contact.call,
-      band: contact.band,
-      mode: contact.mode,
-      ...(contact.submode ? { submode: contact.submode } : {}),
-      date: iso.slice(0, 10),
-      time: `${iso.slice(11, 19)}Z`,
-      ...(contact.frequencyMHz
-        ? { frequencyMHz: String(contact.frequencyMHz) }
-        : {}),
-    };
     try {
       canonicalSigningData(station, lotwContact);
     } catch {
@@ -1518,10 +1440,7 @@ async function prepareDueWork(
     lotwIdentityId = exactLotwIdentity.remoteId;
     if (!(await lotwOwnershipAvailable(store, key, exactLotwIdentity)))
       return { state: "blocked", reason: "lotw_ownership_unavailable" };
-    const { id: _id, generation: _generation, ...transmitted } = lotwContact;
-    const projectionHash = await sha256(
-      canonical({ station, contact: transmitted }),
-    );
+    const projectionHash = await lotwProjectionHash(station, lotwContact);
     if (
       await unchangedProjection(
         store,
@@ -1608,22 +1527,12 @@ async function prepareDueWork(
       ))
     )
       return { state: "blocked", reason: "credential_revoked_before_signing" };
-    const eligibleCertificates = (
-      credential.signingCredentials ??
-      (credential.signing ? [credential.signing] : [])
-    ).filter(
-      (cert) =>
-        cert.callsign === station.callsign &&
-        cert.dxcc === station.dxcc &&
-        cert.qsoFrom <= lotwContact.date &&
-        (!cert.qsoTo || cert.qsoTo >= lotwContact.date),
-    );
-    if (eligibleCertificates.length !== 1)
+    const selected = lotwSigningCertificate(credential, station, lotwContact);
+    if (!selected)
       return {
         state: "blocked",
         reason: "lotw_certificate_selection_ambiguous_or_missing",
       };
-    const selected = eligibleCertificates[0];
     if (!certificateCurrentlyValid(selected, currentTime()))
       return {
         state: "blocked",

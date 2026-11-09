@@ -13,6 +13,7 @@ const WINDOW_MS = 300_000;
 const GLOBAL_TOTAL = 24;
 const NONFOREGROUND_TOTAL = 20;
 const ORDINARY_BACKGROUND_TOTAL = 4;
+const BOOTSTRAP_RESERVE_ERROR = "inventory bootstrap reserved background";
 
 export class InventoryVendorAdmissionError extends Error {
   constructor(readonly code: string) {
@@ -118,6 +119,7 @@ async function deferredUntil(
   stream: InventoryStream,
   priority: InventoryReadPriority,
   now: number,
+  backgroundReserved: boolean,
 ) {
   const result = await store
     .statement(
@@ -150,6 +152,7 @@ async function deferredUntil(
   const bootstrap =
     bootstrapWindow >= window ? (result?.bootstrap_requests ?? 0) : 0;
   const quota =
+    backgroundReserved ||
     globalWindow > window ||
     bootstrapWindow > window ||
     requests >= GLOBAL_TOTAL ||
@@ -297,12 +300,22 @@ export function inventoryVendorFetch(
             cooldown_until: number;
           };
         } catch (error) {
-          if (
+          const backgroundReserved =
             error instanceof Error &&
-            error.message.includes("inventory request deferred")
+            error.message.includes(BOOTSTRAP_RESERVE_ERROR);
+          if (
+            backgroundReserved ||
+            (error instanceof Error &&
+              error.message.includes("inventory request deferred"))
           )
             throw new VendorDeferredError(
-              await deferredUntil(store, stream, priority, now),
+              await deferredUntil(
+                store,
+                stream,
+                priority,
+                now,
+                backgroundReserved,
+              ),
             );
           if (
             error instanceof Error &&

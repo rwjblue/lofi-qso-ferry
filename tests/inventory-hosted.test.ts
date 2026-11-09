@@ -37,6 +37,8 @@ import {
   startInventorySelections,
 } from "../src/inventory-scheduler.ts";
 import { isSourceProofWakeup } from "../src/inventory-source-proof-wakeups.ts";
+import { inventoryVendorFetch } from "../src/inventory-vendor-admission.ts";
+import { VendorDeferredError } from "../src/vendor-requests.ts";
 import { database, seed } from "./helpers.ts";
 import {
   applyAdditionalMigrations,
@@ -590,6 +592,141 @@ test("LoFi recurrence slots only established links and respects server check per
     await lofiRecurringDueAt(f.store, sources[0], earliest),
     earliest,
   );
+});
+
+test("LoFi bootstrap leaves four slots for established links in the same window", async (t) => {
+  const f = await fixture(t);
+  const initial = await runHostedScheduled(f.env);
+  assert.ok(initial.mode === "inventory_read_only");
+  const runs = new InventoryRuns(new InventoryIngestion(f.store));
+  const source = await f.db
+    .prepare(
+      `SELECT j.active_run_id FROM inventory_stream_jobs j
+       JOIN inventory_scopes s USING(tenant,scope_id) WHERE s.provider='lofi'`,
+    )
+    .first<string>("active_run_id");
+  assert.ok(source);
+  const runner = new InventoryRunner(runs, async () => lofi(), {
+    scheduled: true,
+  });
+  for (let turn = 0; turn < 6; turn++) {
+    const run = await runs.load("a", source);
+    assert.ok(run);
+    if (run.phase === "complete") break;
+    // The remaining part of this fixture advances a synthetic quota clock.
+    await f.db.prepare("DELETE FROM inventory_read_pacing").run();
+    const result = await runner.step(await f.due(source));
+    assert.ok(result.kind === "advanced" || result.kind === "complete");
+  }
+  const established = await runs.load("a", source);
+  assert.ok(established?.phase === "complete");
+
+  await f.db.batch([
+    f.db.prepare(
+      `INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at,config)
+       VALUES('a','new-source','lofi','new-source','Fixture','active','v1',1,'{"accountId":"new-source"}')`,
+    ),
+    await f.store.putPrivate("a", "new-source", "v1", "credential", {
+      key: "browser:new-source",
+      secret: "fixture-secret",
+      token: "fixture-token",
+    }),
+  ]);
+  const link = await f.store.connection("a", "new-source");
+  assert.ok(link);
+  const runtime = await inventoryRuntime(f.store);
+  const fresh = await registerInventorySelection(f.store, runtime, link, {
+    provider: "lofi",
+    pageSize: 1000,
+  });
+  assert.equal((await startInventorySelections(f.store)).started, 1);
+  const oldStream = await runs.inventory.snapshot(
+    "a",
+    established.scope,
+    established.streamId,
+  );
+  const freshStream = await runs.inventory.snapshot(
+    "a",
+    fresh.scope,
+    fresh.stream,
+  );
+  const oldLease = await f.store.claim(
+    "a",
+    `inventory:${established.scope}`,
+    Date.now(),
+    3_600_000,
+  );
+  const freshLease = await f.store.claim(
+    "a",
+    `inventory:${fresh.scope}`,
+    Date.now(),
+    3_600_000,
+  );
+  assert.ok(oldStream && freshStream && oldLease && freshLease);
+  const window = (Math.floor(Date.now() / 300_000) + 1) * 300_000;
+  let now = window + 1000;
+  let transportCalls = 0;
+  const fetcher = async () => {
+    transportCalls++;
+    return new Response("fixture");
+  };
+  const bootstrap = inventoryVendorFetch(
+    f.store,
+    freshStream,
+    freshLease,
+    fetcher,
+    {
+      priority: "bootstrap",
+      now: () => now,
+      sourceDelayMs: 5000,
+    },
+  );
+  const ordinary = inventoryVendorFetch(f.store, oldStream, oldLease, fetcher, {
+    priority: "background",
+    now: () => now,
+    sourceDelayMs: 5000,
+  });
+  const live = inventoryVendorFetch(f.store, oldStream, oldLease, fetcher, {
+    priority: "live",
+    now: () => now,
+    sourceDelayMs: 5000,
+  });
+  const endpoint = "https://lofi.ham2k.net/v1/sync";
+  const read = async (fetcher: typeof fetch, count: number) => {
+    for (let i = 0; i < count; i++) {
+      await fetcher(endpoint);
+      now += 5000;
+    }
+  };
+  await read(bootstrap, 16);
+  await assert.rejects(
+    bootstrap(endpoint),
+    (error) =>
+      error instanceof VendorDeferredError &&
+      !error.requestSent &&
+      error.retryAt === window + 300_000,
+  );
+  assert.equal(transportCalls, 16);
+  await read(ordinary, 4);
+  await read(live, 4);
+  assert.equal(transportCalls, 24);
+  const budget = () =>
+    f.db
+      .prepare(
+        "SELECT requests,background_requests FROM vendor_requests WHERE vendor='lofi'",
+      )
+      .first();
+  assert.deepEqual(await budget(), { requests: 24, background_requests: 4 });
+
+  await f.db
+    .prepare(
+      "UPDATE connections SET status='disabled' WHERE tenant='a' AND id='source'",
+    )
+    .run();
+  now = window + 301_000;
+  await read(bootstrap, 20);
+  assert.equal(transportCalls, 44);
+  assert.deepEqual(await budget(), { requests: 20, background_requests: 0 });
 });
 
 test("date selection partitioning is gap-free, bounded and retains station filters", () => {

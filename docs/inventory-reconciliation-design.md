@@ -463,8 +463,8 @@ The proposed bootstrap policy is:
 | Control                                           | Planning choice                                                                                                                            |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | Vendor-wide total                                 | Retain the existing 24 requests/five minutes initially; measure before considering a higher total                                          |
-| Combined nonforeground allowance during bootstrap | Up to 20 requests/five minutes across bootstrap and other background source work, leaving four slots reserved for foreground demand        |
-| Ordinary background sublimit                      | Keep its four-request allowance inside the combined nonforeground ceiling; do not add it on top of 20                                      |
+| Combined nonforeground allowance during bootstrap | Up to 20 requests/five minutes across bootstrap and ordinary background work, leaving four slots available to foreground demand          |
+| Ordinary background sublimit                      | Reserve its four slots when a current scheduled LoFi link has published full coverage, limiting bootstrap to 16 in that window             |
 | Foreground priority                               | Due established-source/proof/authentication work runs first and may consume more than its reserve, reducing bootstrap capacity             |
 | Source concurrency                                | One fenced request chain per LoFi client/source across operation and QSO streams                                                           |
 | Page size                                         | Validate 200 as an intermediate step; target adaptive 500–1,000-record QSO pulls with separately budgeted operation records                |
@@ -472,6 +472,13 @@ The proposed bootstrap policy is:
 | Idle pacing                                       | Return to normal product polling once caught up, respecting a longer server check period; do not reuse the backlog rate indefinitely       |
 
 This is a source-inventory allocation, not relabeling every historical delivery as foreground traffic. All requests, including renewal and retries, still use persistent vendor admission. A future multi-account bootstrap shares the same global allowance; it is not 20 requests per account. Add a persisted global pacing/burst bound alongside per-source timing so multiple sources and fixed-window rollover cannot generate a synchronized request burst.
+
+The native bootstrap reservation uses the same eligible roster as
+recurring polling. It leaves ordinary capacity available throughout the
+window, including when the scheduled polls arrive after the bootstrap
+burst. If ordinary work is idle, those slots may go unused. A fresh
+rebuild with no established link can still use up to 20 bootstrap
+slots. See the [mixed workload check](evidence-inventory-fresh-start.md#mixed-lofi-bootstrap-and-recurring-work).
 
 Read and persist the server tuning values from top-level camelCase, top-level snake_case or nested `meta.flags` snake_case, matching the [current HaLo parser](https://github.com/ham2k/halo/blob/507c7741cd9b8882a64591b04edf0fdd4aa8c574/packages/halo_core/lib/src/sync/sync_engine.dart#L1133-L1185). The relevant knobs are `suggested_sync_loop_delay` and `suggested_sync_check_period`, in milliseconds. Loop delay zero is valid guidance, with local pacing/admission still preventing a hot loop; idle check period must be positive. Server-suggested sync batch size is not automatically an inbound-read cap, because upstream now distinguishes pull size from push batch size.
 

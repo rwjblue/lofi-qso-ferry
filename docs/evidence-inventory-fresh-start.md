@@ -77,6 +77,16 @@ same client, 89 held the rejected bearer and three had no bearer.
 The real rehearsal still needs a current same-client bearer before
 its next LoFi read.
 
+A private copy of the later QRZ recovery rehearsal was upgraded
+through migration 0114. It retained the exact LoFi run and cursor,
+1,949 active LoFi contacts, 706 LoTW receipts across four ready
+selections, and 73 QRZ receipts in one ready selection. Reopening
+verified the linked credential envelopes, passkeys, template bindings
+and write lock. The current resume command stopped at
+`source_authentication_required` with zero reader or comparison turns
+and zero provider requests. The original rehearsal retained the same
+saved state.
+
 ## Run or continue a locked rebuild
 
 ```sh
@@ -616,3 +626,37 @@ The native D1 fixture completed all 100 baselines, then published one
 durable next wakeups across the 34 five-minute windows in the cycle.
 Three sampled roster lookups each read 801 D1 rows. This fixture used
 simulated quota windows and pacing and made zero external requests.
+
+### Mixed LoFi bootstrap and recurring work
+
+[Migration 0114](../migrations/0114_inventory_lofi_bootstrap_reserve.sql)
+caps bootstrap at 16 requests per five-minute window when a current
+scheduled LoFi link has published full source coverage. The native guard
+checks the recurring roster after validating request authority and
+pacing. A denied reservation leaves the existing counters and
+transport untouched and returns the next window as its earliest retry.
+
+The native D1 fixture completed one full source run, then admitted 16
+bootstrap reads for a new source, four ordinary reads and four
+foreground reads in one simulated window. The 17th bootstrap attempt
+deferred before transport. After disabling the only established
+link, the next window admitted 20 bootstrap reads. All responses were
+local fixtures.
+
+A separate 68-window model covered two nominal cycles for 100
+established links. Each window offered 20 bootstrap reads and one
+ordinary proof request alongside scheduled polls. Both arms used the
+native quota and pacing SQL, with bootstrap first when deadlines tied.
+
+| Completed work in two cycles | Prior admission | Ordinary capacity reserved |
+| --- | ---: | ---: |
+| Established links reached | 34 | 100 |
+| Scheduled polls | 67 | 200 |
+| Modeled proof requests | 0 | 68 |
+| Bootstrap reads | 1,293 | 1,088 |
+| Deferrals before transport | 76,977 | 748 |
+
+Both arms reached the same 20-request nonforeground ceiling. This
+model measured scheduling and admission with synthetic responses.
+Hosted Queue timing, pagination and actual proof collection were
+outside the model.

@@ -4,9 +4,12 @@ import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { serializeAdifRecord } from "../src/adif.ts";
+import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
+import { InventoryRuns } from "../src/inventory-runs.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
 import { registerInventorySelection } from "../src/inventory-scheduler.ts";
+import { InventorySourceProofDrain } from "../src/inventory-source-proof-drain.ts";
 import { InventorySourceProofWorkspace } from "../src/inventory-source-proof-workspace.ts";
 import { Store } from "../src/store.ts";
 import { keys, seed } from "./helpers.ts";
@@ -521,4 +524,33 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   }
   assert.equal(decision, "ownership_incomplete");
   assert.deepEqual([reads, qrzReads, lotwReads.length], [2, 2, 3]);
+
+  const drain = new InventorySourceProofDrain(
+    new InventoryRuns(new InventoryIngestion(store)),
+  );
+  const collectedAt = Date.now();
+  assert.equal(
+    await drain.observed(captured.snapshot.source, collectedAt),
+    null,
+  );
+  const started = await drain.start(captured.snapshot.source, collectedAt);
+  assert.equal(started.kind, "started");
+  if (started.kind !== "started") assert.fail(JSON.stringify(started));
+  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  let receipt: Awaited<ReturnType<typeof drain.observed>> = null;
+  for (let i = 0; i < 500; i++) {
+    receipt = await drain.observed(captured.snapshot.source, collectedAt);
+    if (receipt) break;
+    await delay(100);
+  }
+  assert.equal(receipt?.run_id, started.run);
+  assert.ok(receipt && receipt.request_started_at >= collectedAt);
+  assert.equal(
+    await drain.observed(
+      captured.snapshot.source,
+      receipt.request_started_at + 1,
+    ),
+    null,
+  );
+  assert.deepEqual([reads, qrzReads, lotwReads.length], [3, 2, 3]);
 });

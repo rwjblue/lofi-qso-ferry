@@ -21,6 +21,12 @@ import {
   registerSourceCalendarSelections,
   startInventorySelections,
 } from "./inventory-scheduler.ts";
+import { InventorySourceProofJobs } from "./inventory-source-proof-jobs.ts";
+import {
+  consumeSourceProofWakeups,
+  isSourceProofWakeup,
+  publishSourceProofWakeups,
+} from "./inventory-source-proof-wakeups.ts";
 import { runScheduledTick } from "./scheduler-history.ts";
 import { keyring } from "./security.ts";
 import { Store } from "./store.ts";
@@ -67,19 +73,24 @@ export async function runHostedScheduled(
     store,
     env.INVENTORY_QUEUE,
   );
+  const sourceProofQueued = await publishSourceProofWakeups(
+    new InventorySourceProofJobs(runs),
+    env.INVENTORY_QUEUE,
+  );
   return {
     mode: "inventory_read_only" as const,
     registration,
     calendarRegistration,
     overflowRegistration,
     starts,
-    queued: inventoryQueued + comparisonQueued,
+    queued: inventoryQueued + comparisonQueued + sourceProofQueued,
     inventoryQueued,
     comparisonQueued,
+    sourceProofQueued,
   };
 }
 
-/** Queue handlers never invoke legacy intake, proofs or delivery preparation. */
+/** Queue handlers run managed reads and evidence work under read-only mode. */
 export async function runHostedInventoryQueue(
   env: Env,
   batch: MessageBatch<unknown>,
@@ -103,10 +114,16 @@ export async function runHostedInventoryQueue(
     isComparisonMessage(message.body),
   );
   const inventoryMessages = batch.messages.filter(
-    (message) => !isComparisonMessage(message.body),
+    (message) =>
+      !isComparisonMessage(message.body) && !isSourceProofWakeup(message.body),
+  );
+  const proofMessages = batch.messages.filter((message) =>
+    isSourceProofWakeup(message.body),
   );
   let comparisonAfterInventory = 0,
-    inventoryAfterComparison = 0;
+    inventoryAfterComparison = 0,
+    inventoryAfterProof = 0,
+    sourceProofQueued = 0;
   const inventory = await consumeInventoryWakeups(
     runner,
     { messages: inventoryMessages },
@@ -135,19 +152,38 @@ export async function runHostedInventoryQueue(
       },
     },
   );
-  const inventoryQueued = inventory.queued + inventoryAfterComparison;
+  const proofJobs = new InventorySourceProofJobs(runner.runs, fetcher);
+  const proof = await consumeSourceProofWakeups(
+    proofJobs,
+    proofMessages,
+    async () => {
+      inventoryAfterProof += await publishInventoryWakeups(
+        runner.runs,
+        env.INVENTORY_QUEUE,
+      );
+      sourceProofQueued += await publishSourceProofWakeups(
+        proofJobs,
+        env.INVENTORY_QUEUE,
+      );
+    },
+  );
+  const inventoryQueued =
+    inventory.queued + inventoryAfterComparison + inventoryAfterProof;
   const comparisonQueued = comparison.queued + comparisonAfterInventory;
   return {
     mode: "inventory_read_only" as const,
-    processed: inventory.processed + comparison.processed,
+    processed: inventory.processed + comparison.processed + proof.processed,
     inventoryProcessed: inventory.processed,
     comparisonProcessed: comparison.processed,
-    acknowledged: inventory.acknowledged + comparison.acknowledged,
-    retried: inventory.retried + comparison.retried,
-    invalid: inventory.invalid + comparison.invalid,
-    failed: inventory.failed + comparison.failed,
-    queued: inventoryQueued + comparisonQueued,
+    sourceProofProcessed: proof.processed,
+    acknowledged:
+      inventory.acknowledged + comparison.acknowledged + proof.acknowledged,
+    retried: inventory.retried + comparison.retried + proof.retried,
+    invalid: inventory.invalid + comparison.invalid + proof.invalid,
+    failed: inventory.failed + comparison.failed + proof.failed,
+    queued: inventoryQueued + comparisonQueued + sourceProofQueued,
     inventoryQueued,
     comparisonQueued,
+    sourceProofQueued,
   };
 }

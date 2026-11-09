@@ -117,6 +117,24 @@ export class InventorySourceProofJobs {
       const old = await this.load(tenant, scope);
       if (old?.phase === "collecting" || old?.phase === "draining")
         return { kind: "existing" as const, id: old.job_id };
+      if (old?.phase === "complete" && selected.length) {
+        const snapshot = JSON.parse(
+          old.snapshot,
+        ) as InventorySourceProofSnapshot;
+        if (
+          selected.every((key) =>
+            snapshot.contacts.some((contact) => contact.key === key),
+          )
+        ) {
+          const proof = await this.current(tenant, old.job_id);
+          if (proof)
+            return {
+              kind: "complete" as const,
+              id: old.job_id,
+              expiresAt: proof.expires_at,
+            };
+        }
+      }
       const result = await new InventorySourceProofWorkspace(
         this.store,
       ).capture(tenant, scope, selected);
@@ -158,7 +176,12 @@ export class InventorySourceProofJobs {
     }
   }
 
-  async step(tenant: string, scope: string, id: string) {
+  async step(
+    tenant: string,
+    scope: string,
+    id: string,
+    expectedVersion?: number,
+  ) {
     const lease = await this.store.claim(
       tenant,
       `inventory:${scope}`,
@@ -168,12 +191,17 @@ export class InventorySourceProofJobs {
     if (!lease) return { kind: "busy" as const };
     try {
       const job = await this.load(tenant, scope);
-      if (!job || job.job_id !== id) return { kind: "stale" as const };
+      if (
+        !job ||
+        job.job_id !== id ||
+        (expectedVersion !== undefined && job.version !== expectedVersion)
+      )
+        return { kind: "stale" as const };
       if (job.phase === "held" || job.phase === "complete")
         return { kind: job.phase, reason: job.reason };
       const now = Date.now();
       if (job.due_at > now)
-        return { kind: "deferred" as const, retryAt: job.due_at };
+        return { kind: "not_due" as const, retryAt: job.due_at };
       const snapshot = JSON.parse(job.snapshot) as InventorySourceProofSnapshot;
       if (job.phase === "draining")
         return await this.drain(job, snapshot, lease, now);

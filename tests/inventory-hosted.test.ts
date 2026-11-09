@@ -24,6 +24,7 @@ import {
   registerSourceCalendarSelections,
   startInventorySelections,
 } from "../src/inventory-scheduler.ts";
+import { isSourceProofWakeup } from "../src/inventory-source-proof-wakeups.ts";
 import { database, seed } from "./helpers.ts";
 import {
   applyAdditionalMigrations,
@@ -230,6 +231,68 @@ test("cron registers source/book selections and publishes initial jobs without v
         .all()
     ).results,
     credentials,
+  );
+});
+
+test("proof wakeup publication recovers a failed queue send and ignores an old work version", async (t) => {
+  const f = await fixture(t);
+  await runHostedScheduled(f.env);
+  const scope = await f.db
+    .prepare("SELECT scope_id FROM inventory_scopes WHERE provider='lofi'")
+    .first<string>("scope_id");
+  assert.ok(scope);
+  const now = Date.now();
+  // Only wakeup behavior is exercised. The stale message must never load a snapshot.
+  await f.db
+    .prepare(
+      "INSERT INTO inventory_source_proof_jobs(tenant,scope_id,job_id,snapshot,witnesses,started_at,collection_deadline,due_at) VALUES('a',?,'fixture-proof','{}','[]',?,?,?)",
+    )
+    .bind(scope, now, now + 120000, now)
+    .run();
+  await assert.rejects(
+    runHostedScheduled({
+      ...f.env,
+      INVENTORY_QUEUE: {
+        ...f.env.INVENTORY_QUEUE,
+        async sendBatch() {
+          throw new Error("fixture_queue_unavailable");
+        },
+      },
+    }),
+    /fixture_queue_unavailable/,
+  );
+  assert.equal(
+    await f.db
+      .prepare("SELECT published_version FROM inventory_source_proof_jobs")
+      .first("published_version"),
+    0,
+  );
+  const recovered = await runHostedScheduled(f.env);
+  assert.equal(
+    "sourceProofQueued" in recovered && recovered.sourceProofQueued,
+    1,
+  );
+  const message = f.sent.find((row) => isSourceProofWakeup(row.body));
+  assert.ok(message);
+  const repeated = await runHostedScheduled(f.env);
+  assert.equal(
+    "sourceProofQueued" in repeated && repeated.sourceProofQueued,
+    0,
+  );
+  await f.db
+    .prepare("UPDATE inventory_source_proof_jobs SET version=version+1")
+    .run();
+  const replay = batch(message.body);
+  const report = await runHostedInventoryQueue(f.env, replay.value, async () =>
+    assert.fail("stale proof wakeup must not read the provider"),
+  );
+  assert.deepEqual(replay.outcomes, ["ack"]);
+  assert.equal("sourceProofQueued" in report && report.sourceProofQueued, 1);
+  assert.equal(
+    await f.db
+      .prepare("SELECT published_version FROM inventory_source_proof_jobs")
+      .first("published_version"),
+    2,
   );
 });
 

@@ -445,7 +445,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     await db.batch([
       ...triggers.map((trigger) => db.prepare(`DROP TRIGGER ${trigger}`)),
       db.prepare(update).bind(Date.now() - 3_600_000),
-      ...ddl.map((sql) => {
+      ...ddl.map((sql: string | null) => {
         assert.ok(sql);
         return db.prepare(sql);
       }),
@@ -458,15 +458,72 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     kind: "existing",
     id: queuedProof.id,
   });
-  const resumedJobs = new InventorySourceProofJobs(jobs.runs, jobs.fetcher);
+  const drain = new InventorySourceProofDrain(jobs.runs);
   assert.equal(
-    (await resumedJobs.step("a", sourceScope, queuedProof.id)).kind,
-    "draining",
+    await drain.observed(captured.snapshot.source, Date.now()),
+    null,
   );
-  const collected = await resumedJobs.load("a", sourceScope);
-  assert.ok(collected && collected.phase === "draining");
-  assert.equal(collected.attempts, 0);
-  assert.equal(collected.expires_at, observedAt + 300_000);
+  assert.equal((await jobs.load("a", sourceScope))?.phase, "collecting");
+  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  const reloaded = new InventorySourceProofJobs(jobs.runs, jobs.fetcher);
+  let collected: Awaited<ReturnType<typeof reloaded.load>> = null;
+  for (let i = 0; i < 500; i++) {
+    collected = await reloaded.load("a", sourceScope);
+    if (collected?.phase === "complete" || collected?.phase === "held") break;
+    await delay(100);
+  }
+  assert.equal(
+    collected?.phase,
+    "complete",
+    JSON.stringify({
+      phase: collected?.phase,
+      reason: collected?.reason,
+      reads,
+    }),
+  );
+  assert.ok(collected?.collection_finished_at);
+  const collectedAt = collected.collection_finished_at;
+  const receipt = await drain.observed(captured.snapshot.source, collectedAt);
+  assert.equal(receipt?.run_id, collected.drain_run);
+  assert.ok(receipt && receipt.request_started_at >= collectedAt);
+  assert.deepEqual(
+    await db
+      .prepare(
+        "SELECT json_type(committed_checkpoint,'$.operations.cursor') AS operation_cursor,json_type(committed_checkpoint,'$.qsos.cursor') AS qso_cursor FROM inventory_streams WHERE scope_id=?",
+      )
+      .bind(sourceScope)
+      .first(),
+    { operation_cursor: null, qso_cursor: null },
+  );
+  assert.equal(
+    await drain.observed(
+      captured.snapshot.source,
+      receipt.request_started_at + 1,
+    ),
+    null,
+  );
+
+  assert.deepEqual([reads, qrzReads], [3, 2]);
+  assert.equal(
+    (await reloaded.current("a", queuedProof.id))?.expires_at,
+    observedAt + 300_000,
+  );
+  assert.equal(collected.attempts, 1);
+  assert.deepEqual(await reloaded.enqueue("a", sourceScope, ["q2"]), {
+    kind: "complete",
+    id: queuedProof.id,
+    expiresAt: observedAt + 300_000,
+  });
+  assert.equal(
+    (await reloaded.step("a", sourceScope, queuedProof.id)).kind,
+    "complete",
+  );
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM inventory_source_proofs")
+      .first("n"),
+    1,
+  );
   assert.deepEqual(
     await db.prepare("SELECT count(*) AS n FROM attempts").first(),
     { n: 0 },
@@ -566,64 +623,6 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     3,
   );
   assert.equal(lotwReads.length, 3);
-
-  const drain = new InventorySourceProofDrain(
-    new InventoryRuns(new InventoryIngestion(store)),
-  );
-  const collectedAt = collected.collection_finished_at;
-  assert.ok(collectedAt);
-  assert.equal(
-    await drain.observed(captured.snapshot.source, collectedAt),
-    null,
-  );
-  const started = await resumedJobs.step("a", sourceScope, queuedProof.id);
-  assert.equal(started.kind, "deferred", JSON.stringify(started));
-  assert.equal(await resumedJobs.current("a", queuedProof.id), null);
-  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
-  let receipt: Awaited<ReturnType<typeof drain.observed>> = null;
-  for (let i = 0; i < 500; i++) {
-    receipt = await drain.observed(captured.snapshot.source, collectedAt);
-    if (receipt) break;
-    await delay(100);
-  }
-  assert.equal(receipt?.run_id, collected.drain_run);
-  assert.ok(receipt && receipt.request_started_at >= collectedAt);
-  assert.deepEqual(
-    await db
-      .prepare(
-        "SELECT json_type(committed_checkpoint,'$.operations.cursor') AS operation_cursor,json_type(committed_checkpoint,'$.qsos.cursor') AS qso_cursor FROM inventory_streams WHERE scope_id=?",
-      )
-      .bind(sourceScope)
-      .first(),
-    { operation_cursor: null, qso_cursor: null },
-  );
-  assert.equal(
-    await drain.observed(
-      captured.snapshot.source,
-      receipt.request_started_at + 1,
-    ),
-    null,
-  );
-  assert.deepEqual([reads, qrzReads, lotwReads.length], [3, 2, 3]);
-
-  const reloaded = new InventorySourceProofJobs(jobs.runs, jobs.fetcher);
-  const proof = await reloaded.step("a", sourceScope, queuedProof.id);
-  assert.equal(proof.kind, "complete", JSON.stringify(proof));
-  assert.equal(
-    (await reloaded.current("a", queuedProof.id))?.expires_at,
-    collected.expires_at,
-  );
-  assert.equal((await reloaded.load("a", sourceScope))?.attempts, 1);
-  assert.equal(
-    (await reloaded.step("a", sourceScope, queuedProof.id)).kind,
-    "complete",
-  );
-  assert.equal(
-    await db
-      .prepare("SELECT count(*) AS n FROM inventory_source_proofs")
-      .first("n"),
-    1,
-  );
 
   await new InventoryOwnership(store).hold(
     "a",

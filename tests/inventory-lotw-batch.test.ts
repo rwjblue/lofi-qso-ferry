@@ -30,7 +30,7 @@ import { inventorySyncScopeRoute } from "../src/inventory-sync-scope.ts";
 import { InventoryUploadPlanner } from "../src/inventory-upload-planner.ts";
 import { importPkcs12 } from "../src/signing.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
-import { database } from "./helpers.ts";
+import { applyMigration, database } from "./helpers.ts";
 import {
   applyAdditionalMigrations,
   fixtureEnvironment,
@@ -449,8 +449,15 @@ test("managed delivery sends 100 LoTW members, recovers partial receipts, and ad
       .match(/<REC_TYPE:8>tCONTACT/g)?.length,
     100,
   );
+  const retirementCandidates = (provider: "qrz" | "lotw") =>
+    store
+      .statement(
+        `SELECT count(*) AS n FROM inventory_${provider}_retirement_candidates WHERE tenant='a'`,
+      )
+      .first<number>("n");
   const dispatch = new InventoryLotwDispatch(store, fetcher);
   const sender = new InventorySendQueue(env, "lotw", dispatch);
+  assert.equal(await retirementCandidates("lotw"), 1);
   assert.equal(await sender.retireExpired(), 0);
   assert.equal(await sender.schedule(), 0);
   const wakeup = messages.find((body) => isInventorySendWakeup("lotw", body));
@@ -465,6 +472,7 @@ test("managed delivery sends 100 LoTW members, recovers partial receipts, and ad
   const sent = await runHostedInventoryQueue(env, delivery(wakeup), fetcher);
   assert.equal(sent.mode, "inventory_managed");
   assert.equal(sent.lotwSendOutcome, "submitted");
+  assert.equal(await retirementCandidates("lotw"), 0);
   assert.equal(sent.qrzSendQueued, 1);
   assert.equal(sent.failed, 0);
   assert.equal((await sender.consume([message(wakeup)])).outcome, "stale");
@@ -532,6 +540,7 @@ test("managed delivery sends 100 LoTW members, recovers partial receipts, and ad
     "qrz",
     new InventoryQrzDispatch(store, fetcher),
   );
+  assert.equal(await retirementCandidates("qrz"), 20);
   assert.equal(await qrzSender.retireExpired(), 0);
   const qrzWakeup = messages.find((body) => isInventorySendWakeup("qrz", body));
   assert.ok(qrzWakeup);
@@ -544,10 +553,11 @@ test("managed delivery sends 100 LoTW members, recovers partial receipts, and ad
     "stale",
   );
   assert.equal(qrzInserts, 1);
+  assert.equal(await retirementCandidates("qrz"), 19);
 
   const pending = await store
     .statement(
-      "SELECT attempt_id FROM inventory_qrz_attempt_current WHERE tenant='a' LIMIT 1",
+      "SELECT attempt_id FROM inventory_qrz_attempt_current WHERE tenant='a' ORDER BY attempt_id LIMIT 1",
     )
     .first<string>("attempt_id");
   assert.ok(pending);
@@ -602,8 +612,26 @@ test("managed delivery sends 100 LoTW members, recovers partial receipts, and ad
     ),
     db.prepare(immutableProof),
   ]);
+  await store
+    .statement(
+      `INSERT INTO inventory_qrz_send_jobs(tenant,attempt_id,hold_reason)
+       VALUES('a',?,'qrz_neighborhood_has_candidate')
+       ON CONFLICT(tenant,attempt_id) DO UPDATE SET due_at=NULL,hold_reason=excluded.hold_reason`,
+      pending,
+    )
+    .run();
   assert.equal(await qrzSender.retireExpired(), 16);
-  assert.equal(await qrzSender.retireExpired(), 3);
+  assert.equal(await qrzSender.retireExpired(), 2);
+  assert.equal(await qrzSender.retireExpired(), 0);
+  assert.equal(await retirementCandidates("qrz"), 1);
+  await store
+    .statement(
+      "DELETE FROM inventory_qrz_send_jobs WHERE tenant='a' AND attempt_id=?",
+      pending,
+    )
+    .run();
+  assert.equal(await qrzSender.retireExpired(), 1);
+  assert.equal(await retirementCandidates("qrz"), 0);
   assert.equal(await sender.retireExpired(), 0);
   assert.equal(
     await store
@@ -614,4 +642,41 @@ test("managed delivery sends 100 LoTW members, recovers partial receipts, and ad
     1,
   );
   assert.equal(qrzInserts, 1);
+});
+
+test("retirement migration backfills only existing committed and unclaimed artifacts", async (t) => {
+  const { db, mf } = await database();
+  t.after(() => mf.dispose());
+  await db.batch(
+    [
+      "CREATE TABLE inventory_qrz_preparations(tenant TEXT, stage_id TEXT, committed_at INTEGER, PRIMARY KEY(tenant,stage_id))",
+      "CREATE TABLE inventory_qrz_attempts(tenant TEXT, attempt_id TEXT, stage_id TEXT, cancelled_at INTEGER, PRIMARY KEY(tenant,attempt_id))",
+      "CREATE TABLE inventory_qrz_dispatches(tenant TEXT, attempt_id TEXT, PRIMARY KEY(tenant,attempt_id))",
+      "CREATE TABLE inventory_lotw_batches(tenant TEXT, batch_id TEXT, committed_at INTEGER, cancelled_at INTEGER, PRIMARY KEY(tenant,batch_id))",
+      "CREATE TABLE inventory_lotw_dispatches(tenant TEXT, batch_id TEXT, PRIMARY KEY(tenant,batch_id))",
+      "INSERT INTO inventory_qrz_preparations VALUES('a','committed',1),('a','open',NULL)",
+      "INSERT INTO inventory_qrz_attempts VALUES('a','ready','committed',NULL),('a','claimed','committed',NULL),('a','cancelled','committed',2),('a','uncommitted','open',NULL)",
+      "INSERT INTO inventory_qrz_dispatches VALUES('a','claimed')",
+      "INSERT INTO inventory_lotw_batches VALUES('a','ready',1,NULL),('a','claimed',1,NULL),('a','cancelled',1,2),('a','uncommitted',NULL,NULL)",
+      "INSERT INTO inventory_lotw_dispatches VALUES('a','claimed')",
+    ].map((sql) => db.prepare(sql)),
+  );
+
+  await applyMigration(db, "0145_inventory_live_retirement_candidates.sql");
+  assert.deepEqual(
+    (
+      await db
+        .prepare("SELECT * FROM inventory_qrz_retirement_candidates")
+        .all()
+    ).results,
+    [{ tenant: "a", attempt_id: "ready" }],
+  );
+  assert.deepEqual(
+    (
+      await db
+        .prepare("SELECT * FROM inventory_lotw_retirement_candidates")
+        .all()
+    ).results,
+    [{ tenant: "a", batch_id: "ready" }],
+  );
 });

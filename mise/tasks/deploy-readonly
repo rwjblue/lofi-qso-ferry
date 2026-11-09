@@ -25,5 +25,5 @@ if (production.workers_dev !== false || production.preview_urls !== false) throw
 if (!production.d1_databases?.some(binding => binding.binding === 'DB' && !binding.database_id.startsWith('00000000-'))) throw new Error('Production D1 is not configured');
 console.log('Read-only production gates verified');
 JS
-npx wrangler d1 migrations apply ferry-production --env production --remote
+npx wrangler d1 migrations apply DB --env production --remote
 npx wrangler deploy --env production

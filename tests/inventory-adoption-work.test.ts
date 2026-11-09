@@ -14,6 +14,7 @@ async function fixture(
   provider: "qrz" | "lotw" = "qrz",
   count = 3,
   empty = false,
+  remoteGrid?: string,
 ) {
   const f = await matchingWorkFixture({
     provider,
@@ -22,9 +23,15 @@ async function fixture(
     ),
     receipts: empty
       ? []
-      : Array.from({ length: count }, (_, i) =>
-          receipt(String(i), "130000", `W${i}AW`),
-        ),
+      : Array.from({ length: count }, (_, i) => {
+          const existing = receipt(String(i), "130000", `W${i}AW`);
+          if (remoteGrid)
+            existing.body = {
+              ...(existing.body as object),
+              MY_GRIDSQUARE: remoteGrid,
+            };
+          return existing;
+        }),
   });
   try {
     await installMatchingCoordinator(f.db, 72);
@@ -129,6 +136,75 @@ for (const [provider, size] of [
       await f.mf.dispose();
     }
   });
+
+test("an exact historical grid mismatch is adopted without entering delivery", async (t) => {
+  for (const provider of ["qrz", "lotw"] as const)
+    await t.test(provider, async () => {
+      const f = await fixture(provider, 1, false, "EM00");
+      try {
+        await applyMigration(f.db, "0083_inventory_delivery_review.sql");
+        const pairJob = () =>
+          f.db
+            .prepare(
+              "SELECT work_version,completed_version,cursor_key FROM inventory_matching_pair_jobs WHERE tenant='a' AND destination='destination' AND source_scope='source'",
+            )
+            .first<{
+              work_version: number;
+              completed_version: number;
+              cursor_key: string;
+            }>();
+        const before = await pairJob();
+        assert.ok(before);
+        await applyMigration(
+          f.db,
+          "0138_inventory_historical_grid_recheck.sql",
+        );
+        assert.deepEqual(await pairJob(), {
+          work_version: before.work_version + 1,
+          completed_version: before.completed_version,
+          cursor_key: "",
+        });
+
+        await f.match();
+        assert.equal(
+          (await f.matches.current("a", "destination", f.selected)).results[0]
+            ?.state,
+          "matched_existing",
+        );
+        assert.deepEqual(await f.adoption.step("a"), {
+          kind: "processed",
+          records: 1,
+          completed: 1,
+          held: 0,
+        });
+        assert.deepEqual(await counts(f), {
+          jobs: 0,
+          associations: 1,
+          evidence: 1,
+          attempts: 0,
+        });
+        assert.deepEqual(
+          await f.db
+            .prepare("SELECT * FROM inventory_historical_write_blocks")
+            .first(),
+          {
+            tenant: "a",
+            source: "source",
+            qso: "q0",
+            destination: "destination",
+          },
+        );
+        assert.equal(
+          await f.db
+            .prepare("SELECT record_key FROM inventory_delivery_review")
+            .first(),
+          null,
+        );
+      } finally {
+        await f.mf.dispose();
+      }
+    });
+});
 
 test("absence does not enqueue adoption; an omitted matched job rolls back its entire result", async () => {
   const absent = await fixture("qrz", 1, true);

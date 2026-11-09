@@ -1,3 +1,4 @@
+import { historicalGridRelation } from "./historical-location.ts";
 import {
   HISTORICAL_TIME_WINDOW_MS,
   historicalCandidateKeys,
@@ -117,9 +118,105 @@ interface SelectedRow {
   encryptedBytes: number;
   envelope: string | null;
 }
+interface HistoricalGridReviewCandidate {
+  source: InventoryMatchingReference;
+  sourceIdentity: string;
+  sourcePayload: string;
+  remoteKey: string;
+  grid: string;
+}
 const referenceKey = (row: InventoryMatchingReference) =>
   canonical([row.scope, row.key, row.facet]);
 const MAX_BYTES = 4 * 1024 * 1024;
+const byteBound = "inventory_projection_read_byte_bound";
+
+async function changedHistoricalGrids(
+  store: Store,
+  tenant: string,
+  target: InventoryMatchingScope,
+  candidates: readonly HistoricalGridReviewCandidate[],
+  stats: {
+    bodyQueries: number;
+    rowsRead: number;
+    decryptedBodies: number;
+    encryptedInputBytes: number;
+    plaintextBytes: number;
+  },
+) {
+  const changed = new Set<string>();
+  if (!candidates.length) return changed;
+  const remaining =
+    MAX_BYTES - Math.max(stats.encryptedInputBytes, stats.plaintextBytes);
+  const baselines = await store
+    .statement(
+      `WITH requested AS MATERIALIZED (
+         SELECT CAST(j.key AS INTEGER) AS ordinal,p.scope_id,p.payload_id,p.connection_id,p.encrypted_bytes
+         FROM json_each(?1) j CROSS JOIN inventory_historical_associations a
+         CROSS JOIN comparison_projection_payloads p
+         WHERE (a.tenant,a.provider,a.book_identity,a.source_identity,a.record_key)=
+           (?2,?3,?4,json_extract(j.value,'$[0]'),json_extract(j.value,'$[1]'))
+           AND a.source_payload!=json_extract(j.value,'$[2]')
+           AND a.remote_record_key=json_extract(j.value,'$[3]')
+           AND (p.tenant,p.scope_id,p.payload_id)=(a.tenant,a.source_scope,a.source_payload)
+       ), budget AS MATERIALIZED (SELECT sum(encrypted_bytes) AS bytes FROM requested)
+       SELECT r.ordinal,r.payload_id,r.connection_id,r.encrypted_bytes,p.envelope
+       FROM budget b CROSS JOIN requested r
+       LEFT JOIN comparison_projection_payloads p ON b.bytes<=?5
+         AND (p.tenant,p.scope_id,p.payload_id)=(?2,r.scope_id,r.payload_id)`,
+      canonical(
+        candidates.map((row) => [
+          row.sourceIdentity,
+          row.source.key,
+          row.sourcePayload,
+          row.remoteKey,
+        ]),
+      ),
+      tenant,
+      target.provider,
+      target.logicalIdentity,
+      remaining,
+    )
+    .all<{
+      ordinal: number;
+      payload_id: string;
+      connection_id: string;
+      encrypted_bytes: number;
+      envelope: string | null;
+    }>();
+  stats.bodyQueries++;
+  stats.rowsRead += baselines.meta.rows_read;
+  const encryptedBytes = baselines.results.reduce(
+    (total, row) => total + row.encrypted_bytes,
+    0,
+  );
+  if (encryptedBytes > remaining) throw new Error(byteBound);
+  stats.encryptedInputBytes += encryptedBytes;
+  for (const { envelope, ordinal, ...row } of baselines.results) {
+    if (envelope === null) continue;
+    const opened = await openInventoryProjectionBody(
+      tenant,
+      row.payload_id,
+      { ...row, envelope, state: "ready" },
+      store.keys,
+      MAX_BYTES - stats.plaintextBytes,
+    ).catch((error: unknown) => {
+      if (error instanceof Error && error.message === byteBound) throw error;
+      // Unavailable baseline data cannot authorize a repair or unset ownership.
+      return null;
+    });
+    if (!opened) continue;
+    stats.plaintextBytes += opened.plaintextBytes;
+    stats.decryptedBodies++;
+    const candidate = candidates[ordinal];
+    if (
+      opened.body.record.MY_GRIDSQUARE?.toUpperCase() !==
+      candidate.grid.toUpperCase()
+    )
+      changed.add(referenceKey(candidate.source));
+  }
+  return changed;
+}
+
 function identifier(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 512;
 }
@@ -369,8 +466,7 @@ export class InventoryMatchingWorkspace {
     if (selectedRows.length !== selected.length)
       throw new Error("inventory_matching_snapshot_changed");
     stats.encryptedInputBytes = selectedRows[0].encryptedBytes;
-    if (stats.encryptedInputBytes > MAX_BYTES)
-      throw new Error("inventory_projection_read_byte_bound");
+    if (stats.encryptedInputBytes > MAX_BYTES) throw new Error(byteBound);
     const records = new Map<string, InventoryMatchingRecordSnapshot>();
     const add = (
       reference: InventoryMatchingReference,
@@ -697,6 +793,7 @@ export class InventoryMatchingWorkspace {
       forward,
       reverse,
     });
+    const gridReviews: HistoricalGridReviewCandidate[] = [];
     const classified = graph.results.map(
       (row): Omit<InventoryMatchingDecision, "coverage"> => {
         const eligibility = inScope(row.source);
@@ -735,10 +832,12 @@ export class InventoryMatchingWorkspace {
             remote: null,
           };
         if (row.state !== "unique") return { ...row, state: row.state };
-        const source = bodies.get(referenceKey(row.source));
+        const sourceKey = referenceKey(row.source);
+        const source = bodies.get(sourceKey);
         const remote = row.remote && bodies.get(referenceKey(row.remote));
         if (
           !source ||
+          !row.remote ||
           !remote ||
           (target.provider === "qrz" &&
             !/^[0-9]{1,64}$/.test(row.remote?.key ?? ""))
@@ -753,6 +852,24 @@ export class InventoryMatchingWorkspace {
           source.record,
           remote.record,
         );
+        const grid = source.record.MY_GRIDSQUARE;
+        const sourceIdentity = byScope.get(row.source.scope)?.logicalIdentity;
+        const sourcePayload = records.get(sourceKey)?.candidate?.payload;
+        if (
+          details.state === "adopted_existing" &&
+          grid &&
+          sourceIdentity &&
+          sourcePayload &&
+          historicalGridRelation(grid, remote.record.MY_GRIDSQUARE) ===
+            "different"
+        )
+          gridReviews.push({
+            source: row.source,
+            sourceIdentity,
+            sourcePayload,
+            remoteKey: row.remote.key,
+            grid,
+          });
         return {
           ...row,
           state:
@@ -770,10 +887,23 @@ export class InventoryMatchingWorkspace {
         };
       },
     );
+    const gridChanges = await changedHistoricalGrids(
+      this.store,
+      tenant,
+      target,
+      gridReviews,
+      stats,
+    );
     const results = classified.map((row) => {
       const body = bodies.get(referenceKey(row.source));
       return {
         ...row,
+        ...(gridChanges.has(referenceKey(row.source))
+          ? {
+              state: "projection_mismatch" as const,
+              reason: "historical_grid_changed",
+            }
+          : {}),
         coverage:
           !forwardOnly && inScope(row.source) === "eligible" && body
             ? (coveringCoverage(body, target, coverageRows.results) ?? [])

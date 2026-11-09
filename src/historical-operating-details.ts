@@ -1,6 +1,9 @@
 import type { AdifRecord } from "./adif.ts";
-import { historicalGridsCompatible } from "./historical-location.ts";
-import type { HistoricalVendor } from "./historical-matching.ts";
+import { historicalGridRelation } from "./historical-location.ts";
+import {
+  type HistoricalVendor,
+  historicalCandidates,
+} from "./historical-matching.ts";
 import { matchQrzHistory, type QrzMatch } from "./qrz.ts";
 
 // LoTW query reports do not establish transmitted latitude/longitude or
@@ -39,6 +42,23 @@ function withinHistoricalFrequency(
   return delta > -100n && delta < 100n;
 }
 
+function exactGridMismatchIdentity(
+  vendor: HistoricalVendor,
+  source: AdifRecord,
+  remote: AdifRecord,
+): boolean {
+  const candidate = historicalCandidates(vendor, source, [remote])
+    .candidates[0];
+  return (
+    candidate?.modeBasis === "exact" &&
+    candidate.time.maximumSeparationMs === 0 &&
+    (source.BAND_RX || source.BAND).toUpperCase() ===
+      (remote.BAND_RX || remote.BAND).toUpperCase() &&
+    (source.PROP_MODE ?? "").toUpperCase() ===
+      (remote.PROP_MODE ?? "").toUpperCase()
+  );
+}
+
 /** Run only after precise identity candidacy has been established. Temporary
  * identity alignment permits operating-detail comparison without changing the
  * original records, receipt identity or source projection. No adoption proof. */
@@ -64,7 +84,16 @@ export function historicalOperatingDetails(
     delete operating[field];
     if (remote[field] !== undefined) operating[field] = remote[field];
   }
-  if (historicalGridsCompatible(source.MY_GRIDSQUARE, remote.MY_GRIDSQUARE))
+  const grid = historicalGridRelation(
+    source.MY_GRIDSQUARE,
+    remote.MY_GRIDSQUARE,
+  );
+  // A conflicting grid is tolerated only with exact contact identity. Other
+  // operating details still have to agree under the ordinary historical policy.
+  if (
+    grid === "compatible" ||
+    (grid === "different" && exactGridMismatchIdentity(vendor, source, remote))
+  )
     operating.MY_GRIDSQUARE = remote.MY_GRIDSQUARE;
   for (const field of ["FREQ", "FREQ_RX"])
     if (withinHistoricalFrequency(source[field], remote[field]))

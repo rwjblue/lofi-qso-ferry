@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { measureD1 } from "../scripts/inventory-benchmark-metrics.ts";
+import { InventoryAssociations } from "../src/inventory-associations.ts";
+import { InventoryMatchingResults } from "../src/inventory-matching-results.ts";
 import { InventoryMatchingWorkspace } from "../src/inventory-matching-workspace.ts";
 import {
   type InventoryProjectionBody,
@@ -224,6 +226,59 @@ test("an operation change keeps the selected source pending until its new contex
     assert.equal(page.records[0].candidate?.state, "pending");
     assert.equal(page.stats.decryptedBodies, 0);
     assert.equal(page.stats.lookupQueries, 0);
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("only a real post-adoption grid change becomes a comparison review", async () => {
+  const remote = receipt();
+  remote.body = { ...(remote.body as object), MY_GRIDSQUARE: "EM00" };
+  const f = await matchingFixture({ receipts: [remote] });
+  try {
+    const selected = [{ scope: "source", key: "q0" }];
+    const matches = new InventoryMatchingResults(f.store);
+    const associations = new InventoryAssociations(f.store);
+    const compare = async (state: string, reason: string | null) => {
+      await matches.match("a", "destination", selected);
+      const { results } = await matches.current("a", "destination", selected);
+      assert.equal(results[0]?.state, state);
+      assert.equal(results[0]?.reason, reason);
+    };
+    const edit = async (order: number, grid: string, fromOperation = false) => {
+      const operation = observation("op", "operation", order);
+      if (fromOperation)
+        operation.body = { ...(operation.body as object), grid };
+      const source = sourceContact("q0");
+      source.order = order;
+      source.revision = String(order);
+      source.body = {
+        ...(source.body as object),
+        our: fromOperation ? {} : { grid },
+      };
+      await f.full([operation, source]);
+      await f.project("source");
+    };
+
+    await compare("matched_existing", null);
+    assert.equal(
+      (await associations.adopt("a", "destination", selected)).records,
+      1,
+    );
+    await edit(2, "fn31");
+    await compare("matched_existing", null);
+    await edit(3, "FN32", true);
+    await compare("projection_mismatch", "historical_grid_changed");
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT (SELECT count(*) FROM inventory_historical_write_blocks) AS owners,(SELECT count(*) FROM attempts) AS attempts",
+        )
+        .first(),
+      { owners: 1, attempts: 0 },
+    );
+    await edit(4, "EM00");
+    await compare("matched_existing", null);
   } finally {
     await f.mf.dispose();
   }

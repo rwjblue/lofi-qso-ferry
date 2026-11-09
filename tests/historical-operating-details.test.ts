@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { AdifRecord } from "../src/adif.ts";
 import { historicalOperatingDetails } from "../src/historical-operating-details.ts";
 import { matchQrzHistory } from "../src/qrz.ts";
 
@@ -42,7 +43,7 @@ test("historical frequency differences up to 100 Hz preserve the original remote
       }
 });
 
-test("a frequency tolerance cannot clear missing frequency or conflicting grids", () => {
+test("historical tolerances keep missing frequencies and other operating differences held", () => {
   for (const vendor of ["qrz", "lotw"] as const) {
     const source = { ...identity, FREQ: "14.074" };
     for (const frequency of ["", "0", "14.074e0", "NaN"])
@@ -57,9 +58,54 @@ test("a frequency tolerance cannot clear missing frequency or conflicting grids"
       historicalOperatingDetails(vendor, source, {
         ...identity,
         MY_GRIDSQUARE: "FN31BB",
-        FREQ: "14.0741",
+        FREQ: "14.0742",
       }).state,
       "history_mismatch",
     );
   }
+});
+
+test("a conflicting historical grid requires an exact contact identity and valid grids", () => {
+  const source = { ...identity, FREQ: "14.074" };
+  const remote = Object.freeze({
+    ...identity,
+    MY_GRIDSQUARE: "EM00",
+    FREQ: "14.0741",
+  });
+  const differences: AdifRecord[] = [
+    { TIME_ON: "1200" },
+    { TIME_ON: "120001" },
+    { BAND_RX: "40M" },
+    { PROP_MODE: "TR" },
+    { MY_GRIDSQUARE: "INVALID" },
+  ];
+  for (const vendor of ["qrz", "lotw"] as const) {
+    const result = historicalOperatingDetails(vendor, source, remote);
+    assert.equal(result.state, "adopted_existing");
+    assert.equal(result.record, remote);
+    for (const change of differences)
+      assert.equal(
+        historicalOperatingDetails(vendor, source, { ...remote, ...change })
+          .state,
+        "history_mismatch",
+      );
+    assert.equal(
+      historicalOperatingDetails(vendor, source, {
+        ...remote,
+        MY_GRIDSQUARE: "",
+      }).state,
+      "history_ambiguous",
+    );
+  }
+  assert.equal(
+    historicalOperatingDetails(
+      "lotw",
+      { ...source, MODE: "SSB" },
+      {
+        ...remote,
+        MODE: "PHONE",
+      },
+    ).state,
+    "history_mismatch",
+  );
 });

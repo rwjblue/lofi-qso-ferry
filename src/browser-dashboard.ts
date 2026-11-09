@@ -38,6 +38,7 @@ const inventoryLabels: Record<string, string> = {
   forward_check: "New contact · final destination check required",
   forward_destination_candidate: "Possible existing destination contact",
   held: "On hold",
+  historical_grid_changed: "LoFi grid changed after this contact was matched",
   incomplete: "Waiting for comparison evidence",
   matched_existing: "Matched existing",
   observed: "Receipt verified",

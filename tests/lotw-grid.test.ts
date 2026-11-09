@@ -78,8 +78,8 @@ test("eight-character LoTW readback requires all eight characters even after con
   assert.equal(station.grid, "fn31pr12");
 });
 
-test("historical nested grids associate while eight-character upload verification stays exact", () => {
-  for (const grid of ["FN31", "FN31PR"]) {
+test("historical grid discrepancies associate while eight-character upload verification stays exact", () => {
+  for (const grid of ["FN31", "FN31PR", "FN31PR13"]) {
     const remote = Object.freeze({ ...source, MY_GRIDSQUARE: grid });
     const result = historicalOperatingDetails("lotw", source, remote);
     assert.equal(result.state, "adopted_existing");
@@ -100,13 +100,6 @@ test("historical nested grids associate while eight-character upload verificatio
       MY_GRIDSQUARE: "FN31PR12",
     }).state,
     "adopted_existing",
-  );
-  assert.equal(
-    historicalOperatingDetails("lotw", source, {
-      ...source,
-      MY_GRIDSQUARE: "FN31PR13",
-    }).state,
-    "history_mismatch",
   );
   assert.equal(source.MY_GRIDSQUARE, "fn31pr12");
 });

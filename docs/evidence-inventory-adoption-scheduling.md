@@ -361,12 +361,23 @@ had coordinate conflicts. The replay kept the existing destination
 identities, credential envelopes, checkpoints and coverage and made
 zero vendor requests.
 
-Grid precision prefixes remain compatible. Conflicting grid values
-still need review. ARRL documents corrected Station Location resubmission
+Grid precision prefixes remained compatible in that replay. The matcher
+at the time held conflicting grids. ARRL documents corrected Station Location resubmission
 and award-credit constraints. QRZ documents replacing a record with a
 single-record INSERT and warns about the effect on confirmation status.
 [ARRL grid corrections](https://lotw.arrl.org/lotw-help/updatingconfirmations/)
 · [QRZ replacement](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html)
+
+## Historical grid discrepancies
+
+A valid but conflicting own-station grid can now be adopted when the
+contact is unique in both directions, has an exact timestamp and mode,
+and agrees on receive band and propagation. Other operating details
+still follow the historical comparison rules, including QRZ coordinate
+checks. The association preserves the original source and remote
+projections. Adoption never creates a provider write, and upload and
+receipt checks still use the exact grid. Migration 0138 revisits existing
+historical matches through the bounded pair census.
 
 ## Superseded comparison proof retention
 

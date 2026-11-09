@@ -380,8 +380,10 @@ test("legacy read-only snapshots cannot bypass coverage-set publication fences",
 
 test("operating-detail differences and missing location remain distinct from a historical match", async () => {
   const remote = receipt();
-  remote.body = { ...(remote.body as object), MY_GRIDSQUARE: "EM00" };
-  const f = await prepared({ receipts: [remote] });
+  remote.body = { ...(remote.body as object), FREQ: "14.0742" };
+  const withFrequency = sourceContact("q0");
+  withFrequency.body = { ...(withFrequency.body as object), freq: 14_074 };
+  const f = await prepared({ sources: [withFrequency], receipts: [remote] });
   try {
     assert.equal(f.page.graph.results[0].state, "unique");
     assert.equal(f.page.results[0].state, "projection_mismatch");

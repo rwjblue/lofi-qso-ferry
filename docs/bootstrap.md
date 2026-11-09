@@ -17,8 +17,22 @@ observed birth of each source UUID. Edits of existing contacts retain
 their original birth.
 
 Historical matching distinguishes verified existing records, operating
-detail conflicts, incomplete coverage and inventory absence. An absence
-must still pass fresh source and destination checks before first delivery.
+detail conflicts, incomplete coverage and inventory absence. A grid-only
+conflict can still be adopted as existing history when the same contact
+is unique in both directions and its exact identity agrees. Adoption
+records the association without uploading or changing the destination.
+An absence must still pass fresh source and destination checks before
+first delivery.
+
+When an adopted contact's effective LoFi grid changes and still differs
+from the same destination record, the comparison flags it for correction
+review. The adopted mapping continues to prevent a duplicate upload.
+For LoTW, a correction must preserve the remote record's exact identity,
+including its receive band, and use the corrected signed Station Location.
+QRZ corrections require manual review because replacement can insert a
+record or reset its confirmation. See [LoTW confirmation updates](https://lotw.arrl.org/lotw-help/updatingconfirmations/)
+and the [QRZ API guide](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html).
+
 A scope change fences obsolete work. Preserve settled mappings and any
 attempt that might already have reached a provider.
 

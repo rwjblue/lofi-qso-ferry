@@ -1,6 +1,10 @@
 import { type AdifRecord, adifStationCallsign } from "./adif.ts";
 import { contactReconciliationAdif } from "./contact-adif.ts";
 import { historicalCandidates } from "./historical-matching.ts";
+import {
+  INVENTORY_BODY_CIPHER_BYTES,
+  openInventoryBody,
+} from "./inventory-body-archive.ts";
 import { InventoryComparisonGenerations } from "./inventory-comparison-generations.ts";
 import { inventoryComparisonToken } from "./inventory-comparison-keys.ts";
 import { inventoryComparisonHint } from "./inventory-comparison-pages.ts";
@@ -11,14 +15,7 @@ import {
   projectContact,
   sourceFingerprint,
 } from "./projection.ts";
-import {
-  canonical,
-  type Envelope,
-  open,
-  randomToken,
-  seal,
-  sha256,
-} from "./security.ts";
+import { canonical, randomToken, seal, sha256 } from "./security.ts";
 import type { Store } from "./store.ts";
 
 export const INVENTORY_COMPARISON_PROJECTION_VERSION = 1;
@@ -76,6 +73,7 @@ export interface InventoryProjectionReference {
   connection_id: string | null;
   kind: string | null;
   payload_bytes: number | null;
+  cipher_bytes: number | null;
   membership_version: number;
   member_state: string | null;
 }
@@ -134,7 +132,7 @@ interface ProjectionSnapshotRow {
 }
 const referenceFields = `'family',r.family,'key',r.key,'subtype',r.subtype,'parent_key',r.parent_key,
  'status',r.status,'facet',r.facet,'semantic_version',r.semantic_version,'payload_id',r.payload_id,
- 'connection_id',r.connection_id,'kind',r.kind,'payload_bytes',r.payload_bytes,
+ 'connection_id',r.connection_id,'kind',r.kind,'payload_bytes',r.payload_bytes,'cipher_bytes',r.cipher_bytes,
  'membership_version',r.membership_version,'member_state',r.member_state`;
 
 // Keep the scope, membership and bodies in one read snapshot. Return each
@@ -162,7 +160,7 @@ const projectionSnapshot = `WITH scoped AS MATERIALIZED (
 ), inputs AS MATERIALIZED (
  SELECT CAST(j.key AS INTEGER) AS ordinal,e.entity_family AS family,e.record_key AS key,e.subtype,e.parent_key,e.status,
         f.facet,f.semantic_version,f.payload_id,p.connection_id,p.kind,length(p.envelope) AS payload_bytes,
-        length(CAST(p.envelope AS BLOB)) AS cipher_bytes,
+        ${INVENTORY_BODY_CIPHER_BYTES} AS cipher_bytes,
         coalesce(mv.version,0) AS membership_version,m.state AS member_state,i.key_class,i.bucket_hash,i.projection_version,
         coalesce(pd.topology_version,0) AS topology_version,w.work_version,w.completed_version
  FROM scoped s CROSS JOIN json_each(?5) j CROSS JOIN inventory_records e
@@ -193,7 +191,7 @@ const projectionSnapshot = `WITH scoped AS MATERIALIZED (
  LIMIT ${MAX_DEPENDENCIES + 1}
 ), context_rows AS MATERIALIZED (
  SELECT r.family,r.key,e.subtype,e.parent_key,e.status,'source' AS facet,f.semantic_version,f.payload_id,
-        p.connection_id,p.kind,length(p.envelope) AS payload_bytes,length(CAST(p.envelope AS BLOB)) AS cipher_bytes,
+        p.connection_id,p.kind,length(p.envelope) AS payload_bytes,${INVENTORY_BODY_CIPHER_BYTES} AS cipher_bytes,
         coalesce(mv.version,0) AS membership_version,m.state AS member_state
  FROM coverage cv CROSS JOIN refs r
  LEFT JOIN inventory_records e ON (e.tenant,e.scope_id,e.entity_family,e.record_key)=(?1,?2,r.family,r.key)
@@ -333,13 +331,15 @@ export class InventoryProjectionWorkspace {
               ? "inventory_source"
               : "inventory_receipt") ||
           !Number.isSafeInteger(row.payload_bytes) ||
-          Number(row.payload_bytes) <= 0
+          Number(row.payload_bytes) <= 0 ||
+          !Number.isSafeInteger(row.cipher_bytes) ||
+          Number(row.cipher_bytes) <= 0
         )
           throw new Error("inventory_projection_payload_binding_changed");
         payloadRefs.set(row.payload_id, row);
       }
     const encryptedInputBytes = [...payloadRefs.values()].reduce(
-      (sum, row) => sum + Number(row.payload_bytes),
+      (sum, row) => sum + Number(row.cipher_bytes),
       0,
     );
     if (cipherBytes !== encryptedInputBytes)
@@ -359,16 +359,17 @@ export class InventoryProjectionWorkspace {
           encoder.encode(envelope).byteLength !== ref.payload_bytes
         )
           throw new Error("inventory_projection_payload_size_changed");
-        const body = await open<unknown>(
-          JSON.parse(envelope) as Envelope,
+        const body = await openInventoryBody<unknown>(
+          this.store,
           {
             tenant,
+            scope,
             connection: current.connection_id,
             id,
             kind: ref.kind ?? "",
-            purpose: "storage",
           },
-          this.store.keys,
+          envelope,
+          Number(ref.cipher_bytes),
         );
         decryptedBodies++;
         plaintextBytes += encoder.encode(canonical(body)).byteLength;

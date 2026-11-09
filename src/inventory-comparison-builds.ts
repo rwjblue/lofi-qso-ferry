@@ -1,3 +1,7 @@
+import {
+  INVENTORY_BODY_CIPHER_BYTES,
+  openInventoryBody,
+} from "./inventory-body-archive.ts";
 import { InventoryComparisonGenerations } from "./inventory-comparison-generations.ts";
 import {
   type InventoryComparisonToken,
@@ -5,7 +9,7 @@ import {
 } from "./inventory-comparison-keys.ts";
 import { inventoryComparisonHint } from "./inventory-comparison-pages.ts";
 import { inventoryJsonChunks } from "./inventory-ingestion.ts";
-import { canonical, type Envelope, open, sha256 } from "./security.ts";
+import { canonical, sha256 } from "./security.ts";
 import type { Lease, Store } from "./store.ts";
 
 interface BuildSnapshot {
@@ -106,7 +110,7 @@ export class InventoryComparisonBuilds {
     if (snapshot.complete) return null;
     const selected = await this.store
       .statement(
-        `SELECT e.record_key,e.subtype,e.status,e.parent_key,f.facet,f.semantic_version,f.payload_id,p.connection_id,p.kind,length(p.envelope) AS payload_bytes,
+        `SELECT e.record_key,e.subtype,e.status,e.parent_key,f.facet,f.semantic_version,f.payload_id,p.connection_id,p.kind,${INVENTORY_BODY_CIPHER_BYTES} AS payload_bytes,
        i.key_class,i.bucket_hash,CASE WHEN i.semantic_version=f.semantic_version AND i.config_version=? AND i.state!='retired' THEN 1 ELSE 0 END AS reusable
        FROM inventory_records e JOIN inventory_record_facets f ON f.tenant=e.tenant AND f.scope_id=e.scope_id AND f.entity_family=e.entity_family AND f.record_key=e.record_key AND f.facet=?
        JOIN inventory_payloads p ON p.tenant=f.tenant AND p.scope_id=f.scope_id AND p.payload_id=f.payload_id
@@ -163,16 +167,17 @@ export class InventoryComparisonBuilds {
           const envelope = payloads.get(row.payload_id);
           if (!envelope)
             throw new Error("inventory_comparison_build_payload_missing");
-          const body = await open<unknown>(
-            JSON.parse(envelope) as Envelope,
+          const body = await openInventoryBody<unknown>(
+            this.store,
             {
               tenant,
+              scope,
               connection: row.connection_id,
               id: row.payload_id,
               kind: row.kind,
-              purpose: "storage",
             },
-            this.store.keys,
+            envelope,
+            row.payload_bytes,
           );
           token = await inventoryComparisonToken(
             context,

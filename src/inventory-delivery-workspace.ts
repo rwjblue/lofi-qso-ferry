@@ -1,5 +1,9 @@
 import { contactReconciliationAdif } from "./contact-adif.ts";
 import {
+  INVENTORY_BODY_CIPHER_BYTES,
+  openInventoryBody,
+} from "./inventory-body-archive.ts";
+import {
   INVENTORY_LOTW_BATCH_LIMIT,
   INVENTORY_SOURCE_PROOF_DEPENDENCY_LIMIT,
 } from "./inventory-delivery-limits.ts";
@@ -10,7 +14,7 @@ import type {
 } from "./inventory-source-proof-workspace.ts";
 import type { SourceRecord } from "./lofi.ts";
 import { projectContact, sourceFingerprint } from "./projection.ts";
-import { canonical, type Envelope, open } from "./security.ts";
+import { canonical } from "./security.ts";
 import type { Store } from "./store.ts";
 
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -223,7 +227,7 @@ export class InventoryDeliveryWorkspace {
     const result = await this.store
       .statement(
         `WITH refs AS MATERIALIZED(
-           SELECT CAST(j.key AS INTEGER) AS ordinal,p.payload_id,length(CAST(p.envelope AS BLOB)) AS bytes
+           SELECT CAST(j.key AS INTEGER) AS ordinal,p.payload_id,${INVENTORY_BODY_CIPHER_BYTES} AS bytes
            FROM json_each(?1) j CROSS JOIN inventory_payloads p
            WHERE p.tenant=?2 AND p.scope_id=?3 AND p.payload_id=j.value AND p.connection_id=?4 AND p.kind='inventory_source'
          ), admitted AS MATERIALIZED(
@@ -244,18 +248,18 @@ export class InventoryDeliveryWorkspace {
     const bodies = [];
     for (const { ordinal, bytes, envelope } of result.results) {
       const dependency = dependencies[ordinal];
-      if (!dependency || encoder.encode(envelope).byteLength !== bytes)
-        return null;
-      const body = await open<SourceRecord>(
-        JSON.parse(envelope) as Envelope,
+      if (!dependency) return null;
+      const body = await openInventoryBody<SourceRecord>(
+        this.store,
         {
           tenant,
+          scope,
           connection,
           id: dependency.payload,
           kind: "inventory_source",
-          purpose: "storage",
         },
-        this.store.keys,
+        envelope,
+        bytes,
       );
       plaintextBytes += encoder.encode(canonical(body)).byteLength;
       if (plaintextBytes > MAX_BYTES || body.uuid !== dependency.target.id)

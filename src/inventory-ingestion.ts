@@ -1,3 +1,4 @@
+import { openInventoryBody } from "./inventory-body-archive.ts";
 import type {
   InventoryComparisonPages,
   PreparedComparisonPage,
@@ -9,14 +10,7 @@ import {
   inventoryRunPrelude,
 } from "./inventory-run-publication.ts";
 import { inventorySourceMonths } from "./inventory-source-calendar.ts";
-import {
-  canonical,
-  type Envelope,
-  open,
-  randomToken,
-  seal,
-  sha256,
-} from "./security.ts";
+import { canonical, randomToken, seal, sha256 } from "./security.ts";
 import type { Lease, Store } from "./store.ts";
 
 /** This foundation publishes observations only, never coverage or write proofs. */
@@ -800,16 +794,16 @@ export class InventoryIngestion {
         kind: string;
       }>();
     return row
-      ? open<T>(
-          JSON.parse(row.envelope) as Envelope,
+      ? openInventoryBody<T>(
+          this.store,
           {
             tenant,
+            scope,
             connection: row.connection_id,
             id: row.payload_id,
             kind: row.kind,
-            purpose: "storage",
           },
-          this.store.keys,
+          row.envelope,
         )
       : null;
   }

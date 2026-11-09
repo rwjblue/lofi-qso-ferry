@@ -1,4 +1,5 @@
 import type { DestinationIdentityClaim } from "./identity-claims.ts";
+import type { InventoryBodyArchive } from "./inventory-body-archive.ts";
 import {
   attemptLotwOwnershipWrite,
   type LotwOwnershipWrite,
@@ -80,6 +81,7 @@ export class Store {
   constructor(
     readonly db: D1Database,
     readonly keys: Keyring,
+    readonly inventoryBodyArchive?: InventoryBodyArchive,
   ) {}
   statement(sql: string, ...params: (string | number | null)[]) {
     return this.db.prepare(sql).bind(...params);

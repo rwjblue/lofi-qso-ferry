@@ -10,6 +10,7 @@ import { InventoryRuns } from "../src/inventory-runs.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
 import { registerInventorySelection } from "../src/inventory-scheduler.ts";
 import { InventorySourceProofDrain } from "../src/inventory-source-proof-drain.ts";
+import { InventorySourceProofJobs } from "../src/inventory-source-proof-jobs.ts";
 import { InventorySourceProofWorkspace } from "../src/inventory-source-proof-workspace.ts";
 import { Store } from "../src/store.ts";
 import { keys, seed } from "./helpers.ts";
@@ -411,6 +412,61 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     [observedAt, observedAt],
   );
   assert.ok(captured.snapshot.contacts[0].eligibleAfter > Date.now());
+  const jobs = new InventorySourceProofJobs(
+    new InventoryRuns(new InventoryIngestion(store)),
+    async () =>
+      assert.fail("fresh committed witnesses should avoid collection HTTP"),
+  );
+  assert.equal((await jobs.enqueue("a", sourceScope, ["q2"])).kind, "quiet");
+  // Move the fixture's due clocks back while preserving its published inputs.
+  for (const [triggers, update] of [
+    [
+      ["comparison_projection_version"],
+      "UPDATE comparison_projections SET derived_at=? WHERE facet='source'",
+    ],
+    [
+      [
+        "inventory_match_result_update",
+        "inventory_delivery_review_result_update",
+      ],
+      "UPDATE match_results SET next_eligible_at=? WHERE record_key='q2'",
+    ],
+  ] as const) {
+    const ddl = await Promise.all(
+      triggers.map((trigger) =>
+        db
+          .prepare(
+            "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+          )
+          .bind(trigger)
+          .first<string>("sql"),
+      ),
+    );
+    await db.batch([
+      ...triggers.map((trigger) => db.prepare(`DROP TRIGGER ${trigger}`)),
+      db.prepare(update).bind(Date.now() - 3_600_000),
+      ...ddl.map((sql) => {
+        assert.ok(sql);
+        return db.prepare(sql);
+      }),
+    ]);
+  }
+  const queuedProof = await jobs.enqueue("a", sourceScope, ["q2"]);
+  assert.equal(queuedProof.kind, "queued", JSON.stringify(queuedProof));
+  if (queuedProof.kind !== "queued") assert.fail();
+  assert.deepEqual(await jobs.enqueue("a", sourceScope, ["q2"]), {
+    kind: "existing",
+    id: queuedProof.id,
+  });
+  const resumedJobs = new InventorySourceProofJobs(jobs.runs, jobs.fetcher);
+  assert.equal(
+    (await resumedJobs.step("a", sourceScope, queuedProof.id)).kind,
+    "draining",
+  );
+  const collected = await resumedJobs.load("a", sourceScope);
+  assert.ok(collected && collected.phase === "draining");
+  assert.equal(collected.attempts, 0);
+  assert.equal(collected.expires_at, observedAt + 300_000);
   assert.deepEqual(
     await db.prepare("SELECT count(*) AS n FROM attempts").first(),
     { n: 0 },

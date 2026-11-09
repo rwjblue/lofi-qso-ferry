@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { gunzipSync } from "node:zlib";
 import { serializeAdifRecord } from "../src/adif.ts";
+import { deliveryGates } from "../src/delivery-gates.ts";
 import { InventoryComparisonCoordinator } from "../src/inventory-comparison-coordinator.ts";
 import { InventoryComparisonPages } from "../src/inventory-comparison-pages.ts";
+import { inventoryDashboardSummary } from "../src/inventory-dashboard.ts";
 import {
   InventorySendQueue,
   isInventorySendWakeup,
@@ -24,6 +26,7 @@ import {
   startInventorySelections,
 } from "../src/inventory-scheduler.ts";
 import { InventorySourceProofJobs } from "../src/inventory-source-proof-jobs.ts";
+import { inventorySyncScopeRoute } from "../src/inventory-sync-scope.ts";
 import { InventoryUploadPlanner } from "../src/inventory-upload-planner.ts";
 import { importPkcs12 } from "../src/signing.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
@@ -532,6 +535,48 @@ test("managed delivery sends 100 LoTW members, recovers partial receipts, and ad
     "stale",
   );
   assert.equal(qrzInserts, 1);
+
+  const pending = await store
+    .statement(
+      "SELECT attempt_id FROM inventory_qrz_attempt_current WHERE tenant='a' LIMIT 1",
+    )
+    .first<string>("attempt_id");
+  assert.ok(pending);
+  const scopeChange = await inventorySyncScopeRoute(
+    new Request("https://test.invalid/api/sync-scope", {
+      method: "POST",
+      body: JSON.stringify({
+        destination: "qrz",
+        mode: "since",
+        since: "2026-11-09",
+      }),
+    }),
+    db,
+    "a",
+  );
+  assert.equal(scopeChange?.status, 200);
+  let narrowedRequests = 0;
+  const narrowed = await new InventoryQrzDispatch(store, async () => {
+    narrowedRequests++;
+    throw new Error("Out-of-scope upload reached vendor transport");
+  }).send("a", pending, () => deliveryGates(env));
+  assert.equal(narrowed.kind, "held");
+  assert.equal(narrowedRequests, 0);
+  assert.equal(
+    (await inventoryDashboardSummary(db, "a"))
+      .find(({ provider }) => provider === "qrz")
+      ?.deliveries.find(({ reason }) => reason === "sync_scope_changed")?.count,
+    19,
+  );
+  assert.equal(
+    await store
+      .statement(
+        "SELECT count(*) AS n FROM inventory_qrz_dispatches WHERE tenant='a' AND attempt_id=?",
+        pending,
+      )
+      .first("n"),
+    0,
+  );
 
   // Advance the fixture's proof expiry without waiting five minutes. The
   // archived proof trigger is restored before the managed retirement turn.

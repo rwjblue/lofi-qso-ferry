@@ -72,10 +72,14 @@ function time(value: number) {
 export class InventoryRuns {
   constructor(readonly inventory: InventoryIngestion) {}
 
-  async load(tenant: string, runId: string): Promise<InventoryRun | null> {
+  async load(
+    tenant: string,
+    runId: string,
+    scopePolicies = false,
+  ): Promise<InventoryRun | null> {
     const row = await this.inventory.store
       .statement(
-        `SELECT r.*,j.work_version AS job_version,j.active_run_id,j.state AS job_state,j.next_due_at FROM inventory_runs r JOIN inventory_stream_jobs j ON j.tenant=r.tenant AND j.scope_id=r.scope_id AND j.stream_id=r.stream_id WHERE r.tenant=? AND r.run_id=?`,
+        `SELECT r.*,j.work_version AS job_version,j.active_run_id,j.state AS job_state,j.next_due_at FROM inventory_runs r JOIN inventory_stream_jobs j ON j.tenant=r.tenant AND j.scope_id=r.scope_id AND j.stream_id=r.stream_id WHERE r.tenant=? AND r.run_id=? ${scopePolicies ? "AND EXISTS(SELECT 1 FROM inventory_scoped_schedule p WHERE (p.tenant,p.scope_id,p.stream_id)=(r.tenant,r.scope_id,r.stream_id))" : ""}`,
         tenant,
         runId,
       )
@@ -525,6 +529,7 @@ export class InventoryRuns {
     before = Date.now() + 43_200_000,
     limit = 100,
     recoverBefore?: number,
+    scopePolicies = false,
   ) {
     requireValue(
       time(before) &&
@@ -537,7 +542,7 @@ export class InventoryRuns {
     return (
       await this.inventory.store
         .statement(
-          `SELECT w.* FROM inventory_stream_jobs j CROSS JOIN inventory_wakeups w WHERE j.state IN ('idle','ready') AND j.next_due_at<=? AND w.tenant=j.tenant AND w.scope_id=j.scope_id AND w.stream_id=j.stream_id AND w.work_version=j.work_version AND (w.published_at IS NULL OR (w.published_at<=? AND j.next_due_at<=?)) ORDER BY j.next_due_at,j.tenant,j.scope_id,j.stream_id LIMIT ?`,
+          `SELECT w.* FROM inventory_stream_jobs j CROSS JOIN inventory_wakeups w WHERE j.state IN ('idle','ready') AND j.next_due_at<=? AND w.tenant=j.tenant AND w.scope_id=j.scope_id AND w.stream_id=j.stream_id AND w.work_version=j.work_version AND (w.published_at IS NULL OR (w.published_at<=? AND j.next_due_at<=?)) ${scopePolicies ? "AND EXISTS(SELECT 1 FROM inventory_scoped_schedule p WHERE (p.tenant,p.scope_id,p.stream_id)=(j.tenant,j.scope_id,j.stream_id))" : ""} ORDER BY j.next_due_at,j.tenant,j.scope_id,j.stream_id LIMIT ?`,
           before,
           recoverBefore ?? -1,
           Date.now(),

@@ -174,6 +174,8 @@ export class InventoryMatchingResults {
       page.coverage.length > 256 ||
       page.lookups.length > 148 ||
       page.graph.policyVersion !== 2 ||
+      !Number.isSafeInteger(page.syncScopeVersion ?? 0) ||
+      (page.syncScopeVersion ?? 0) < 0 ||
       (page.coverageRecovery === 1 &&
         (!page.recovery || page.recovery.length > 40)) ||
       new Set(page.results.map((row) => refKey(row.source))).size !==
@@ -214,7 +216,7 @@ export class InventoryMatchingResults {
     const recovery = page.recovery ?? [];
     const plan = [
       this.store.statement(
-        `INSERT INTO inventory_match_sets(tenant,set_id,destination,generation_id,domain_version,source_set_version,policy_version,result_version,input_digest,lease_token,lease_fence,prepared_at,scope_count,coverage_count,record_count,probe_count,token_count,candidate_count,row_count${page.coverageRecovery === 1 ? ",recovery_count" : ""}) VALUES(?,?,?,?,?,?,2,1,?,?,?,?,?,?,?,?,?,?,?${page.coverageRecovery === 1 ? ",?" : ""})`,
+        `INSERT INTO inventory_match_sets(tenant,set_id,destination,generation_id,domain_version,source_set_version,policy_version,result_version,input_digest,lease_token,lease_fence,prepared_at,scope_count,coverage_count,record_count,probe_count,token_count,candidate_count,row_count,sync_scope_version${page.coverageRecovery === 1 ? ",recovery_count" : ""}) VALUES(?,?,?,?,?,?,2,1,?,?,?,?,?,?,?,?,?,?,?,?${page.coverageRecovery === 1 ? ",?" : ""})`,
         page.tenant,
         id,
         page.destination,
@@ -232,6 +234,7 @@ export class InventoryMatchingResults {
         tokens.length,
         candidates.length,
         rows.length,
+        page.syncScopeVersion ?? 0,
         ...(page.coverageRecovery === 1 ? [recovery.length] : []),
       ),
     ];
@@ -293,8 +296,8 @@ export class InventoryMatchingResults {
     );
     stage(
       "inventory_match_rows",
-      "source_scope,record_key,expected_version,state,reason,remote_key,required_coverage",
-      `json_extract(value,'$.source.scope'),json_extract(value,'$.source.key'),json_extract(value,'$.expectedVersion'),json_extract(value,'$.state'),json_extract(value,'$.reason'),json_extract(value,'$.remote.key'),json_extract(value,'$.coverage')`,
+      "source_scope,record_key,expected_version,state,reason,remote_key,required_coverage,scope_excluded",
+      `json_extract(value,'$.source.scope'),json_extract(value,'$.source.key'),json_extract(value,'$.expectedVersion'),json_extract(value,'$.state'),json_extract(value,'$.reason'),json_extract(value,'$.remote.key'),json_extract(value,'$.coverage'),coalesce(json_extract(value,'$.scopeExcluded'),0)`,
       rows,
     );
     if (page.coverageRecovery === 1)

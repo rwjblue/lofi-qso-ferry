@@ -44,6 +44,10 @@ interface ScopeRow
   extends Omit<InventoryMatchingScope, "configHash" | "coverageClock"> {
   config: string;
   coverageClock: number | null;
+  syncScopeVersion: number;
+  syncScopeMode: "all" | "since" | "forward";
+  syncSince: string | null;
+  syncChangedAt: number | null;
 }
 export interface InventoryMatchingCoverage {
   scope: string;
@@ -88,6 +92,7 @@ export interface InventoryMatchingDecision {
   reason: string | null;
   remote: InventoryMatchingReference | null;
   coverage: string[];
+  scopeExcluded?: true;
 }
 export interface InventoryMatchingRecovery {
   scope: string;
@@ -118,7 +123,10 @@ const MAX_BYTES = 4 * 1024 * 1024;
 function identifier(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 512;
 }
-function ready(scope: InventoryMatchingScope | undefined): boolean {
+function ready(
+  scope: InventoryMatchingScope | undefined,
+  allowUnresolved = false,
+): boolean {
   return (
     !!scope?.scope &&
     scope.state === "observing" &&
@@ -127,7 +135,7 @@ function ready(scope: InventoryMatchingScope | undefined): boolean {
     scope.scopeIdentity === scope.logicalIdentity &&
     scope.buildComplete === 1 &&
     scope.configVersion === scope.buildConfigVersion &&
-    scope.unresolved === 0
+    (allowUnresolved || scope.unresolved === 0)
   );
 }
 function fullSource(row: CoverageRow, scope: InventoryMatchingScope): boolean {
@@ -283,10 +291,12 @@ export class InventoryMatchingWorkspace {
       `SELECT c.id AS connection,c.kind,c.status AS connectionState,c.remote_identity AS logicalIdentity,c.config,
        s.scope_id AS scope,s.provider,s.logical_identity AS scopeIdentity,s.config_version AS configVersion,s.state,
        b.config_version AS buildConfigVersion,b.complete AS buildComplete,(c.kind='lofi' OR s.provider='lofi') AS source,
+       coalesce(p.version,0) AS syncScopeVersion,coalesce(p.mode,'all') AS syncScopeMode,p.since AS syncSince,p.changed_at AS syncChangedAt,
        ${this.trackCoverageClocks ? "CASE WHEN s.scope_id IS NULL THEN NULL ELSE coalesce(cv.version,0) END" : "NULL"} AS coverageClock,
        EXISTS(SELECT 1 FROM inventory_partition_membership m INDEXED BY inventory_unresolved_members WHERE m.tenant=d.tenant AND m.scope_id=s.scope_id AND m.facet=CASE s.provider WHEN 'lofi' THEN 'source' ELSE 'receipt' END AND m.state='unresolved') AS unresolved
        FROM comparison_domains d JOIN accounts a ON a.id=d.tenant AND a.status='active' JOIN connections c ON c.tenant=d.tenant
        LEFT JOIN inventory_scopes s ON s.tenant=c.tenant AND s.connection_id=c.id
+       LEFT JOIN inventory_sync_scopes p ON p.tenant=c.tenant AND p.destination=c.id AND s.scope_id=?2
        LEFT JOIN comparison_builds b ON b.tenant=s.tenant AND b.scope_id=s.scope_id AND b.generation_id=d.active_generation
        ${this.trackCoverageClocks ? "LEFT JOIN inventory_matching_coverage_clocks cv ON cv.tenant=s.tenant AND cv.scope_id=s.scope_id AND cv.facet=CASE s.provider WHEN 'lofi' THEN 'source' ELSE 'receipt' END" : ""}
        WHERE d.tenant=?1 AND d.active_generation IS NOT NULL AND (c.kind='lofi' OR s.provider='lofi' OR s.scope_id=?2) ORDER BY c.id,s.scope_id LIMIT 22`,
@@ -328,12 +338,25 @@ export class InventoryMatchingWorkspace {
     const scopeRows = header.results as ScopeRow[];
     if (scopeRows.length > 21)
       throw new Error("inventory_matching_scope_split_required");
+    const policy = scopeRows.find((row) => row.scope === destination);
+    const forwardOnly = policy?.syncScopeMode === "forward";
+    const dateFloor = policy?.syncSince?.replaceAll("-", "") ?? null;
     const scopes = await Promise.all(
-      scopeRows.map(async ({ config, coverageClock, ...row }) => ({
-        ...row,
-        configHash: await sha256(config),
-        ...(coverageClock !== null ? { coverageClock } : {}),
-      })),
+      scopeRows.map(
+        async ({
+          config,
+          coverageClock,
+          syncScopeVersion: _version,
+          syncScopeMode: _mode,
+          syncSince: _since,
+          syncChangedAt: _changedAt,
+          ...row
+        }) => ({
+          ...row,
+          configHash: await sha256(config),
+          ...(coverageClock !== null ? { coverageClock } : {}),
+        }),
+      ),
     );
     const target = scopes.find((row) => row.scope === destination);
     if (!target || !["qrz", "lotw"].includes(target.provider ?? ""))
@@ -421,6 +444,36 @@ export class InventoryMatchingWorkspace {
       }
       bodies.set(referenceKey(reference), body);
     }
+    const forwardBirths = new Map<string, string>();
+    if (forwardOnly) {
+      const births = await this.store
+        .statement(
+          `SELECT b.scope_id AS scope,b.record_key AS key,b.phase
+         FROM json_each(?1) r CROSS JOIN inventory_forward_births b
+         WHERE b.tenant=?2 AND b.scope_id=json_extract(r.value,'$.scope')
+           AND b.record_key=json_extract(r.value,'$.key') AND b.started_at>=?3`,
+          canonical(selected),
+          tenant,
+          policy.syncChangedAt,
+        )
+        .all<{ scope: string; key: string; phase: string }>();
+      stats.metadataQueries++;
+      stats.rowsRead += births.meta.rows_read;
+      for (const { scope, key, phase } of births.results)
+        forwardBirths.set(referenceKey({ scope, key, facet: "source" }), phase);
+    }
+    function inScope(reference: InventoryMatchingReference) {
+      const key = referenceKey(reference);
+      const record = bodies.get(key)?.record;
+      if (forwardOnly) {
+        const phase = forwardBirths.get(key);
+        if (phase === "complete") return "eligible";
+        return phase && phase !== "held" ? "pending" : "outside";
+      }
+      return dateFloor && record?.QSO_DATE && record.QSO_DATE < dateFloor
+        ? "outside"
+        : "eligible";
+    }
     const load = async () => {
       const references = [...records.values()].filter(
         (row) => !bodies.has(referenceKey(row.reference)),
@@ -456,7 +509,8 @@ export class InventoryMatchingWorkspace {
     };
     const windows = selectedReferences.flatMap((row) => {
       const body = bodies.get(referenceKey(row));
-      const range = body && interval(body);
+      const range =
+        !forwardOnly && inScope(row) === "eligible" && body && interval(body);
       return range ? [range] : [];
     });
     const coverageStatement = this.store.statement(
@@ -474,7 +528,10 @@ export class InventoryMatchingWorkspace {
     const forwardRequests = selectedReferences.flatMap((reference, i) => {
       const body = bodies.get(referenceKey(reference));
       const keys = body && historicalCandidateKeys(body.record);
-      return body?.state === "ready" && keys?.workedCall && keys.time
+      return inScope(reference) === "eligible" &&
+        body?.state === "ready" &&
+        keys?.workedCall &&
+        keys.time
         ? [
             {
               subject: reference,
@@ -602,8 +659,9 @@ export class InventoryMatchingWorkspace {
           complete:
             !!body &&
             sourceReady(byScope.get(subject.scope)) &&
-            ready(target) &&
-            !!coveringCoverage(body, target, coverageRows.results) &&
+            ready(target, forwardOnly) &&
+            (forwardOnly ||
+              !!coveringCoverage(body, target, coverageRows.results)) &&
             !!lookup?.probe.indexReady,
         };
       },
@@ -641,8 +699,41 @@ export class InventoryMatchingWorkspace {
     });
     const classified = graph.results.map(
       (row): Omit<InventoryMatchingDecision, "coverage"> => {
+        const eligibility = inScope(row.source);
+        if (eligibility === "pending")
+          return {
+            ...row,
+            state: "incomplete",
+            reason: "forward_birth_pending",
+            remote: null,
+          };
+        if (eligibility === "outside" && row.state !== "excluded")
+          return {
+            ...row,
+            state: "excluded",
+            reason: null,
+            remote: null,
+            scopeExcluded: true,
+          };
         if (row.state === "none")
           return { ...row, state: "absent_at_inventory" };
+        if (
+          forwardOnly &&
+          (row.state === "unique" || row.state === "ambiguous")
+        )
+          return {
+            ...row,
+            state: "incomplete",
+            reason: "forward_destination_candidate",
+            remote: null,
+          };
+        if (forwardOnly && row.reason === "forward_incomplete")
+          return {
+            ...row,
+            state: "incomplete",
+            reason: "forward_baseline_pending",
+            remote: null,
+          };
         if (row.state !== "unique") return { ...row, state: row.state };
         const source = bodies.get(referenceKey(row.source));
         const remote = row.remote && bodies.get(referenceKey(row.remote));
@@ -683,9 +774,10 @@ export class InventoryMatchingWorkspace {
       const body = bodies.get(referenceKey(row.source));
       return {
         ...row,
-        coverage: body
-          ? (coveringCoverage(body, target, coverageRows.results) ?? [])
-          : [],
+        coverage:
+          !forwardOnly && inScope(row.source) === "eligible" && body
+            ? (coveringCoverage(body, target, coverageRows.results) ?? [])
+            : [],
       };
     });
     const recovery: InventoryMatchingRecovery[] = [];
@@ -730,7 +822,7 @@ export class InventoryMatchingWorkspace {
           });
         const days: { date: string; subject: InventoryMatchingReference }[] =
           [];
-        for (const row of results) {
+        for (const row of forwardOnly ? [] : results) {
           const body = bodies.get(referenceKey(row.source));
           const window = body && interval(body);
           if (
@@ -789,6 +881,7 @@ export class InventoryMatchingWorkspace {
       generation: session.generation,
       domainVersion: session.domainVersion,
       sourceSetVersion: session.sourceSetVersion,
+      syncScopeVersion: policy?.syncScopeVersion ?? 0,
       selected: selectedReferences,
       scopes,
       coverage,

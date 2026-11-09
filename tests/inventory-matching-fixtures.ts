@@ -62,6 +62,8 @@ export async function matchingFixture(
     for (const name of [
       "0049_inventory_matching_read_indexes.sql",
       "0050_inventory_match_results.sql",
+      "0127_inventory_sync_scopes.sql",
+      "0132_inventory_match_scope_binding.sql",
       "0064_inventory_matching_result_update.sql",
       "0061_inventory_matching_coverage_clocks.sql",
       "0065_inventory_matching_coverage_recovery.sql",

@@ -22,6 +22,9 @@ must still pass fresh source and destination checks before first delivery.
 A scope change fences obsolete work. Preserve settled mappings and any
 attempt that might already have reached a provider.
 
-The dashboard and settings API are implemented. Release checks cover
-native scope enforcement and forward eligibility. [Release checks](../ROADMAP.md)
+The Worker binds matching and delivery authority to the current scope
+version. Changing that version invalidates stale prepared evidence.
+Forward eligibility uses the first immutable birth after a completed
+all-client baseline and a committed delta. This is local evidence from
+observed replay. [Scope and dispatch tests](../tests/inventory-sync-scope.test.ts)
 · [Personal-log evidence](evidence-inventory-fresh-start.md)

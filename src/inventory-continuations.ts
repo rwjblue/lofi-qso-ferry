@@ -19,7 +19,12 @@ function delay(until: number, now: number) {
 export async function publishInventoryWakeups(
   runs: InventoryRuns,
   queue: InventoryQueue,
-  options: { limit?: number; now?: number; recoverAfterMs?: number } = {},
+  options: {
+    limit?: number;
+    now?: number;
+    recoverAfterMs?: number;
+    scopePolicies?: boolean;
+  } = {},
 ) {
   const now = options.now ?? Date.now();
   const recoverAfterMs = options.recoverAfterMs ?? 300_000;
@@ -29,6 +34,7 @@ export async function publishInventoryWakeups(
     now + MAX_DELAY_SECONDS * 1000,
     options.limit ?? 100,
     Math.max(1, now - recoverAfterMs),
+    options.scopePolicies ?? false,
   );
   if (!rows.length) return 0;
   await queue.sendBatch(
@@ -101,7 +107,9 @@ export async function consumeInventoryWakeups(
   }
   if (completed.length) {
     try {
-      report.queued = await publishInventoryWakeups(runner.runs, queue);
+      report.queued = await publishInventoryWakeups(runner.runs, queue, {
+        scopePolicies: runner.options.scheduled,
+      });
       await options.afterPublish?.();
       for (const message of completed) {
         message.ack();

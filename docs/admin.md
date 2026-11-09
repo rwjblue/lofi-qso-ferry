@@ -29,6 +29,23 @@ signed-in account, with recent scan windows and delivery activity.
   Coverage, a pending candidate, or a prepared artifact provides no authority
   to send by itself.
 
+## Sync scope
+
+Each connected destination has its own sync scope. All LoFi history schedules
+the observed source months. Since a date applies the inclusive UTC QSO date
+before comparison. The planner clips the date windows and includes one day
+of padding for matches across midnight. Widening schedules gaps left by
+the earlier plan. A scope change immediately fences older prepared work and
+requeues comparisons through bounded source and destination pairs.
+
+From now on skips destination history scans. It uses the complete all-client
+LoFi baseline and contacts first seen in a completed managed delta started
+after the setting changed. A later edit keeps the original birth record.
+A newly seen backdated contact can qualify. This evidence comes from the
+verified source replay and does not establish an upstream creation timestamp.
+The current source proof, final destination collision check, and write gates
+still apply. Existing possibly-sent work keeps its receipt recovery path.
+
 Refresh to get a new read-only snapshot. Account and connection lists have
 explicit limits. Global metrics contain controlled states and counts. The
 connection list omits private contact bodies, keys, and raw provider errors.

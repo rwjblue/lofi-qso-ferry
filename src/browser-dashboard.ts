@@ -33,6 +33,10 @@ const inventoryLabels: Record<string, string> = {
   collecting: "Reading contacts",
   delivered: "Accepted by QRZ",
   excluded: "Excluded",
+  forward_baseline_pending: "Waiting for a verified LoFi baseline",
+  forward_birth_pending: "Waiting for the LoFi read to finish",
+  forward_check: "New contact · final destination check required",
+  forward_destination_candidate: "Possible existing destination contact",
   held: "On hold",
   incomplete: "Waiting for comparison evidence",
   matched_existing: "Matched existing",
@@ -51,6 +55,7 @@ const inventoryLabels: Record<string, string> = {
   source_proof_required: "Waiting for fresh source verification",
   stale: "Coverage needs refresh",
   submitted: "Submitted to LoTW",
+  sync_scope_changed: "Sync scope changed",
   waiting: "Waiting",
 };
 

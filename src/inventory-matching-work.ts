@@ -114,6 +114,44 @@ SELECT w.generation_id,w.destination,w.source_scope,w.source_config_version,w.de
           );
           if (page.generation !== head.generation_id)
             throw new Error("inventory_matching_work_generation_changed");
+          const pendingBirths = new Set(
+            page.results.flatMap((row) =>
+              row.reason === "forward_birth_pending" ? [row.source.key] : [],
+            ),
+          );
+          if (pendingBirths.size) {
+            const pending = work.filter((row) => pendingBirths.has(row.key));
+            const result = await this.store
+              .statement(
+                `UPDATE matching_work AS w SET due_at=?1
+               WHERE (tenant,generation_id,destination,source_scope)=(?2,?3,?4,?5)
+               AND EXISTS(SELECT 1 FROM json_each(?6) j WHERE
+                 (w.record_key,w.work_version,w.completed_version,w.due_at)=
+                 (json_extract(j.value,'$.key'),json_extract(j.value,'$.workVersion'),
+                   json_extract(j.value,'$.completedVersion'),json_extract(j.value,'$.dueAt')))
+               AND EXISTS(SELECT 1 FROM leases l WHERE (l.tenant,l.scope,l.token,l.fence)=(?2,?7,?8,?9)
+                 AND l.expires_at>unixepoch('subsec')*1000)`,
+                Date.now() + 30_000,
+                tenant,
+                head.generation_id,
+                head.destination,
+                head.source_scope,
+                canonical(pending),
+                lease.scope,
+                lease.token,
+                lease.fence,
+              )
+              .run();
+            if (result.meta.changes !== pending.length)
+              return { kind: "deferred" as const };
+            work = work.filter((row) => !pendingBirths.has(row.key));
+            if (work.length) continue;
+            return {
+              kind: "held" as const,
+              records: pending.length,
+              reason: "forward_birth_pending" as const,
+            };
+          }
           const result = await new InventoryMatchingResults(this.store).publish(
             page,
             lease,

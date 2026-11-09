@@ -277,6 +277,8 @@ export async function inventoryComparisonTrial(captureDirectory: string) {
       "0048_inventory_projection_publication.sql",
       "0049_inventory_matching_read_indexes.sql",
       "0050_inventory_match_results.sql",
+      "0127_inventory_sync_scopes.sql",
+      "0132_inventory_match_scope_binding.sql",
       "0051_inventory_historical_ownership.sql",
       "0052_inventory_projection_jobs.sql",
       "0053_inventory_projection_coverage_jobs.sql",

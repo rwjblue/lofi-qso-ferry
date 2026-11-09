@@ -119,6 +119,7 @@ export async function runHostedScheduled(
   const inventoryQueued = await publishInventoryWakeups(
     runs,
     env.INVENTORY_QUEUE,
+    { scopePolicies: true },
   );
   const comparisonQueued = await publishComparisonWakeups(
     store,
@@ -351,6 +352,7 @@ export async function runHostedInventoryQueue(
         inventoryAfterComparison += await publishInventoryWakeups(
           runner.runs,
           env.INVENTORY_QUEUE,
+          { scopePolicies: true },
         );
       },
     },
@@ -378,6 +380,7 @@ export async function runHostedInventoryQueue(
       inventoryAfterProof += await publishInventoryWakeups(
         runner.runs,
         env.INVENTORY_QUEUE,
+        { scopePolicies: true },
       );
       sourceProofQueued += await publishSourceProofWakeups(
         proofJobs,

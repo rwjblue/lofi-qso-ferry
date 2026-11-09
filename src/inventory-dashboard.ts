@@ -36,16 +36,21 @@ function deliveries(tenant: string | undefined) {
            WHEN a.cancelled_at IS NOT NULL THEN 'cancelled'
            WHEN d.attempt_id IS NOT NULL THEN
              CASE WHEN back.turns=6 THEN 'readback_held' ELSE 'awaiting_readback' END
+           WHEN ms.sync_scope_version IS NOT coalesce(policy.version,0) THEN 'send_held'
            WHEN j.hold_reason IS NOT NULL THEN 'send_held'
            WHEN j.due_at IS NOT NULL THEN 'queued'
            ELSE 'prepared' END AS state,
-      j.hold_reason AS reason,coalesce(r.received_at,a.cancelled_at,d.claimed_at,h.committed_at) AS updated_at,
+      CASE WHEN d.attempt_id IS NULL AND a.cancelled_at IS NULL AND ms.sync_scope_version IS NOT coalesce(policy.version,0)
+        THEN 'sync_scope_changed' ELSE j.hold_reason END AS reason,
+      coalesce(r.received_at,a.cancelled_at,d.claimed_at,h.committed_at) AS updated_at,
       coalesce(back.due_at,j.due_at) AS dueAt,0 AS confirmed
     FROM inventory_qrz_attempts a JOIN inventory_qrz_preparations h USING(tenant,stage_id)
     LEFT JOIN inventory_qrz_dispatches d USING(tenant,attempt_id)
     LEFT JOIN inventory_qrz_dispatch_receipts r USING(tenant,attempt_id)
     LEFT JOIN inventory_qrz_send_jobs j USING(tenant,attempt_id)
     LEFT JOIN inventory_qrz_recovery_jobs back USING(tenant,attempt_id)
+    LEFT JOIN inventory_match_sets ms ON (ms.tenant,ms.set_id)=(a.tenant,a.result_set)
+    LEFT JOIN inventory_sync_scopes policy ON (policy.tenant,policy.destination)=(h.tenant,h.destination_connection)
     WHERE h.committed_at IS NOT NULL ${filter}
     UNION ALL
     SELECT 'lotw',m.tenant,m.record_key,h.destination_connection,
@@ -56,10 +61,13 @@ function deliveries(tenant: string | undefined) {
              CASE WHEN back.turns=6 THEN 'readback_held'
                   WHEN u.state='submitted' THEN 'submitted'
                   ELSE 'awaiting_readback' END
+           WHEN ms.sync_scope_version IS NOT coalesce(policy.version,0) THEN 'send_held'
            WHEN j.hold_reason IS NOT NULL THEN 'send_held'
            WHEN j.due_at IS NOT NULL THEN 'queued'
            ELSE 'prepared' END,
-      j.hold_reason,coalesce(r.received_at,m.cancelled_at,u.received_at,d.claimed_at,h.committed_at),
+      CASE WHEN d.batch_id IS NULL AND m.cancelled_at IS NULL AND ms.sync_scope_version IS NOT coalesce(policy.version,0)
+        THEN 'sync_scope_changed' ELSE j.hold_reason END,
+      coalesce(r.received_at,m.cancelled_at,u.received_at,d.claimed_at,h.committed_at),
       coalesce(back.due_at,j.due_at),coalesce(r.confirmed,0)
     FROM inventory_lotw_batch_members m JOIN inventory_lotw_batches h USING(tenant,batch_id)
     LEFT JOIN inventory_lotw_member_receipts r ON r.tenant=m.tenant AND r.attempt_id=m.attempt_id
@@ -67,6 +75,8 @@ function deliveries(tenant: string | undefined) {
     LEFT JOIN inventory_lotw_upload_receipts u ON u.tenant=h.tenant AND u.batch_id=h.batch_id
     LEFT JOIN inventory_lotw_send_jobs j ON j.tenant=h.tenant AND j.batch_id=h.batch_id
     LEFT JOIN inventory_lotw_recovery_jobs back ON back.tenant=h.tenant AND back.batch_id=h.batch_id
+    LEFT JOIN inventory_match_sets ms ON (ms.tenant,ms.set_id)=(m.tenant,m.result_set)
+    LEFT JOIN inventory_sync_scopes policy ON (policy.tenant,policy.destination)=(h.tenant,h.destination_connection)
     WHERE h.committed_at IS NOT NULL ${lotwFilter}`;
 }
 
@@ -96,9 +106,16 @@ export async function inventoryDashboardSummary(
          WHERE h.state='committed' ${filter("h")}
            AND NOT EXISTS (SELECT 1 FROM inventory_match_stale_sets x WHERE x.tenant=h.tenant AND x.set_id=h.set_id)
        ), compared AS MATERIALIZED (
-         SELECT s.provider,r.tenant,r.destination,r.source_scope,r.record_key,r.version,r.set_id,r.state,r.reason,r.derived_at,r.next_eligible_at
+         SELECT s.provider,r.tenant,r.destination,r.source_scope,r.record_key,r.version,r.set_id,
+           CASE WHEN r.state='excluded' AND EXISTS(
+             SELECT 1 FROM inventory_match_rows q WHERE (q.tenant,q.set_id,q.source_scope,q.record_key)=
+               (r.tenant,r.set_id,r.source_scope,r.record_key) AND q.scope_excluded=1
+           ) THEN 'out_of_scope'
+           WHEN r.state='absent_at_inventory' AND p.mode='forward' THEN 'forward_check'
+           ELSE r.state END AS state,r.reason,r.derived_at,r.next_eligible_at
          FROM valid v CROSS JOIN match_results r INDEXED BY match_result_set
          JOIN inventory_scopes s ON s.tenant=r.tenant AND s.scope_id=r.destination
+         LEFT JOIN inventory_sync_scopes p ON (p.tenant,p.destination)=(s.tenant,s.connection_id)
          WHERE (r.tenant,r.set_id)=(v.tenant,v.set_id)
        ), review AS (
          SELECT c.provider,CASE
@@ -113,7 +130,7 @@ export async function inventoryDashboardSummary(
          LEFT JOIN inventory_delivery_review_basis b ON
            (b.tenant,b.destination,b.source_scope,b.record_key,b.result_set,b.result_version)=
            (c.tenant,c.destination,c.source_scope,c.record_key,c.set_id,c.version)
-         WHERE c.state='absent_at_inventory'
+         WHERE c.state IN('absent_at_inventory','forward_check')
        )
        SELECT provider,'matches' AS section,state,reason,count(*) AS count,max(derived_at) AS since,NULL AS dueAt
          FROM compared GROUP BY provider,state,reason
@@ -130,12 +147,16 @@ export async function inventoryDashboardSummary(
            THEN 'stale' ELSE c.state END AS state,c.completed_at
          FROM inventory_coverage c JOIN inventory_scopes s USING(tenant,scope_id)
          WHERE s.state='observing' ${filter("s")}
+         AND (NOT EXISTS(SELECT 1 FROM inventory_sync_scopes p WHERE (p.tenant,p.destination)=(s.tenant,s.connection_id) AND p.mode!='all')
+           OR EXISTS(SELECT 1 FROM inventory_scoped_schedule p WHERE (p.tenant,p.scope_id,p.stream_id)=(c.tenant,c.scope_id,c.stream_id)))
        ), scans AS (
          SELECT s.provider,coalesce(r.phase,'waiting') AS state,j.reason,
            r.phase_started_at AS since,nullif(j.next_due_at,0) AS dueAt
          FROM inventory_stream_jobs j JOIN inventory_scopes s USING(tenant,scope_id)
          LEFT JOIN inventory_runs r ON r.tenant=j.tenant AND r.run_id=j.active_run_id
          WHERE j.state!='idle' AND s.state='observing' ${filter("s")}
+         AND (NOT EXISTS(SELECT 1 FROM inventory_sync_scopes p WHERE (p.tenant,p.destination)=(s.tenant,s.connection_id) AND p.mode!='all')
+           OR EXISTS(SELECT 1 FROM inventory_scoped_schedule p WHERE (p.tenant,p.scope_id,p.stream_id)=(j.tenant,j.scope_id,j.stream_id)))
        ), delivery AS (${deliveries(tenant)})
        SELECT provider,'coverage' AS section,state,NULL AS reason,count(*) AS count,max(completed_at) AS since,NULL AS dueAt
          FROM coverage GROUP BY provider,state
@@ -220,7 +241,9 @@ export async function inventoryDashboardWindows(
      LEFT JOIN inventory_runs running ON running.tenant=j.tenant AND running.run_id=j.active_run_id
      LEFT JOIN inventory_coverage c ON (c.tenant,c.scope_id,c.stream_id)=(t.tenant,t.scope_id,t.stream_id)
      LEFT JOIN inventory_runs r ON r.tenant=c.tenant AND r.run_id=coalesce(c.building_run_id,c.published_run_id)
-     WHERE t.tenant=?1 AND s.state='observing'
+     WHERE t.tenant=?1 AND s.state='observing' AND (p.stream_id IS NOT NULL OR j.stream_id IS NOT NULL OR c.stream_id IS NOT NULL)
+       AND (NOT EXISTS(SELECT 1 FROM inventory_sync_scopes policy WHERE (policy.tenant,policy.destination)=(s.tenant,s.connection_id) AND policy.mode!='all')
+         OR EXISTS(SELECT 1 FROM inventory_scoped_schedule allowed WHERE (allowed.tenant,allowed.scope_id,allowed.stream_id)=(t.tenant,t.scope_id,t.stream_id)))
      ORDER BY case WHEN running.run_id IS NULL THEN 1 ELSE 0 END,
        coalesce(running.phase_started_at,c.completed_at,p.created_at,0) DESC,s.provider,t.stream_id,c.partition_id LIMIT 48`,
     )

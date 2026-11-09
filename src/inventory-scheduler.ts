@@ -20,6 +20,53 @@ export interface InventorySchedulePolicy {
   verificationPeriodMs?: number;
 }
 
+function managedScopeId(connection: Connection) {
+  return sha256(
+    canonical([
+      "inventory-scope-v1",
+      connection.tenant,
+      connection.kind,
+      connection.remote_identity,
+    ]),
+  );
+}
+
+async function openManagedInventoryScope(
+  store: Store,
+  runtime: InventoryRuntime,
+  connection: Connection,
+  scope: string,
+  stream: string,
+  binding: string,
+) {
+  const inventory = new InventoryIngestion(store);
+  await inventory.initialize(
+    {
+      tenant: connection.tenant,
+      scope,
+      connection: connection.id,
+      provider: connection.kind,
+      logicalIdentity: connection.remote_identity,
+      adapterBinding: "inventory-adapters-v1",
+      ordering: connection.kind === "lofi" ? "numeric" : "serialized",
+    },
+    stream,
+    binding,
+  );
+  await bindInventoryScopeRuntime(
+    store,
+    connection.tenant,
+    scope,
+    runtime.version,
+  );
+  await new InventoryRuns(inventory).resumeHeldScope(
+    connection.tenant,
+    scope,
+    connection.remote_identity,
+  );
+  return inventory;
+}
+
 /** Register a static selection; a different selection always gets a new stream. */
 export async function registerInventorySelection(
   store: Store,
@@ -36,14 +83,7 @@ export async function registerInventorySelection(
     connection.status !== "active"
   )
     throw new Error("inventory_schedule_unavailable");
-  const scope = await sha256(
-    canonical([
-      "inventory-scope-v1",
-      connection.tenant,
-      connection.kind,
-      connection.remote_identity,
-    ]),
-  );
+  const scope = await managedScopeId(connection);
   const selection =
     plan.provider === "lofi"
       ? { provider: plan.provider }
@@ -66,32 +106,14 @@ export async function registerInventorySelection(
     canonical(["inventory-selection-v1", selection]),
   );
   const streamId = queryBinding;
-  const inventory = new InventoryIngestion(store);
-  await inventory.initialize(
-    {
-      tenant: connection.tenant,
-      scope,
-      connection: connection.id,
-      provider: connection.kind,
-      logicalIdentity: connection.remote_identity,
-      adapterBinding: "inventory-adapters-v1",
-      ordering: connection.kind === "lofi" ? "numeric" : "serialized",
-    },
+  // Query/client changes retain the logical account but require a new full run.
+  const inventory = await openManagedInventoryScope(
+    store,
+    runtime,
+    connection,
+    scope,
     streamId,
     queryBinding,
-  );
-  await bindInventoryScopeRuntime(
-    store,
-    connection.tenant,
-    scope,
-    runtime.version,
-  );
-  const runs = new InventoryRuns(inventory);
-  // Query/client changes retain the logical account but require a new full run.
-  await runs.resumeHeldScope(
-    connection.tenant,
-    scope,
-    connection.remote_identity,
   );
   const stream = await inventory.snapshot(connection.tenant, scope, streamId);
   if (!stream) throw new Error("inventory_stream_unavailable");
@@ -147,6 +169,66 @@ export async function registerInventorySelection(
   )
     throw new Error("inventory_schedule_binding_changed");
   return { tenant: connection.tenant, scope, stream: streamId };
+}
+
+/** Forward destinations need an index scope, but get no history scan stream. */
+async function registerForwardInventoryDestinations(
+  store: Store,
+  runtime: InventoryRuntime,
+  limit: number,
+) {
+  const cursor = await store
+    .statement(
+      "SELECT last_tenant,last_connection FROM inventory_forward_registration_progress WHERE id=1",
+    )
+    .first<{ last_tenant: string; last_connection: string }>();
+  if (!cursor) throw new Error("inventory_forward_registration_unavailable");
+  const { results } = await store
+    .statement(
+      `SELECT c.* FROM inventory_sync_scopes p
+     JOIN connections c ON (c.tenant,c.id)=(p.tenant,p.destination)
+     JOIN accounts a ON a.id=c.tenant AND a.status='active'
+     JOIN private_data k ON (k.tenant,k.connection,k.id,k.kind)=(c.tenant,c.id,c.credential_version,'credential')
+     WHERE (c.tenant,c.id)>(?,?) AND c.kind IN('qrz','lotw') AND c.status='active'
+       AND p.mode='forward' AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>unixepoch('subsec')*1000)
+       AND (c.kind='qrz' OR json_extract(c.config,'$.readAccess')=1)
+       AND NOT EXISTS(SELECT 1 FROM inventory_scopes s WHERE
+         (s.tenant,s.connection_id,s.provider,s.logical_identity)=(c.tenant,c.id,c.kind,c.remote_identity)
+         AND s.runtime_version=? AND s.state='observing')
+     ORDER BY c.tenant,c.id LIMIT ?`,
+      cursor.last_tenant,
+      cursor.last_connection,
+      runtime.version,
+      limit,
+    )
+    .all<Connection>();
+  const report = { registered: 0, failed: 0 };
+  for (const connection of results) {
+    try {
+      await openManagedInventoryScope(
+        store,
+        runtime,
+        connection,
+        await managedScopeId(connection),
+        "forward-target",
+        "forward-target-v1",
+      );
+      report.registered++;
+    } catch {
+      report.failed++;
+    }
+  }
+  const last = results.length === limit ? results.at(-1) : undefined;
+  await store
+    .statement(
+      "UPDATE inventory_forward_registration_progress SET last_tenant=?,last_connection=? WHERE id=1 AND (last_tenant,last_connection)=(?,?)",
+      last?.tenant ?? "",
+      last?.id ?? "",
+      cursor.last_tenant,
+      cursor.last_connection,
+    )
+    .run();
+  return report;
 }
 
 /** Produce disjoint inclusive date selections without reading any service. */
@@ -238,6 +320,13 @@ export async function registerSourceCalendarSelections(
 ) {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 32)
     throw new Error("invalid_inventory_schedule_limit");
+  const report = await registerForwardInventoryDestinations(
+    store,
+    runtime,
+    Math.ceil(limit / 2),
+  );
+  const remaining = limit - report.registered - report.failed;
+  if (!remaining) return report;
   const progress = await store
     .statement(
       "SELECT last_tenant,last_connection,last_month FROM inventory_calendar_registration_progress WHERE id=1",
@@ -253,39 +342,57 @@ export async function registerSourceCalendarSelections(
       .statement(
         `WITH months AS (
           SELECT c.*,m.month_start,coalesce(date(m.month_start,'+1 month','-1 day'),'9999-12-31') AS month_end,
-            json_extract(c.config,'$.startDate') AS book_start,json_extract(c.config,'$.endDate') AS book_end
+            json_extract(c.config,'$.startDate') AS book_start,json_extract(c.config,'$.endDate') AS book_end,
+            coalesce(date(policy.since,'-1 day'),m.month_start) AS scope_floor
           FROM connections c JOIN accounts a ON a.id=c.tenant
           JOIN private_data credential ON credential.tenant=c.tenant AND credential.connection=c.id AND credential.id=c.credential_version AND credential.kind='credential'
+          LEFT JOIN inventory_sync_scopes policy ON (policy.tenant,policy.destination)=(c.tenant,c.id)
           JOIN inventory_source_calendar_months m ON m.tenant=c.tenant
           JOIN inventory_scopes source ON source.tenant=m.tenant AND source.scope_id=m.scope_id
           JOIN connections lofi ON lofi.tenant=source.tenant AND lofi.id=source.connection_id
           WHERE (c.tenant,c.id,m.month_start)>(?,?,?) AND a.status='active'
             AND c.kind IN('qrz','lotw') AND c.status='active' AND json_valid(c.config)
+            AND coalesce(policy.mode,'all')!='forward'
             AND credential.revoked_at IS NULL AND (credential.expires_at IS NULL OR credential.expires_at>unixepoch('subsec')*1000)
             AND (c.kind='qrz' OR json_extract(c.config,'$.readAccess')=1)
             AND source.provider='lofi' AND source.state='observing' AND source.runtime_version=?
             AND lofi.kind='lofi' AND lofi.status='active' AND lofi.remote_identity=source.logical_identity
+          GROUP BY c.tenant,c.id,m.month_start
         ), windows AS (
-          SELECT months.*,CASE kind WHEN 'qrz' THEN max(month_start,book_start) ELSE month_start END AS period_start,
-            CASE kind WHEN 'qrz' THEN min(month_end,book_end) ELSE month_end END AS period_end
+          SELECT months.*,CASE kind WHEN 'qrz' THEN max(month_start,book_start,scope_floor)
+            ELSE max(month_start,scope_floor) END AS first_date,
+            CASE kind WHEN 'qrz' THEN min(month_end,book_end) ELSE month_end END AS last_date
           FROM months WHERE kind='lotw' OR (book_start=date(book_start) AND book_end=date(book_end) AND book_start<=month_end AND book_end>=month_start)
+        ), scheduled AS MATERIALIZED (
+          SELECT p.tenant,target.connection_id AS id,p.from_date,p.through_date
+          FROM inventory_scoped_schedule p JOIN inventory_scopes target USING(tenant,scope_id)
+          WHERE target.state='observing' AND target.runtime_version=?
+            AND p.from_date IS NOT NULL AND p.through_date IS NOT NULL
+            AND (target.provider='qrz' OR (target.provider='lotw'
+              AND json_type(p.plan,'$.selection.stationCallsign') IS NULL
+              AND json_type(p.plan,'$.selection.workedCallsign') IS NULL))
+        ), gaps AS MATERIALIZED (
+          SELECT w.*,(SELECT min(day) FROM (
+            SELECT w.first_date AS day
+            UNION ALL
+            SELECT date(p.through_date,'+1 day') FROM scheduled p
+            WHERE (p.tenant,p.id)=(w.tenant,w.id) AND p.through_date>=w.first_date AND p.from_date<=w.last_date
+          ) possible
+          WHERE day BETWEEN w.first_date AND w.last_date AND NOT EXISTS(
+            SELECT 1 FROM scheduled p WHERE (p.tenant,p.id)=(w.tenant,w.id) AND day BETWEEN p.from_date AND p.through_date
+          )) AS period_start
+          FROM windows w WHERE w.first_date<=w.last_date
         )
-        SELECT windows.* FROM windows WHERE period_start<=period_end AND NOT EXISTS(
-          SELECT 1 FROM inventory_scopes target
-          JOIN inventory_scheduled_selections p ON p.tenant=target.tenant AND p.scope_id=target.scope_id
-          WHERE target.tenant=windows.tenant AND target.provider=windows.kind AND target.logical_identity=windows.remote_identity
-            AND target.connection_id=windows.id AND target.state='observing'
-            AND target.runtime_version=? AND p.runtime_version=target.runtime_version AND p.config_version=target.config_version
-            AND (p.plan=json_object('provider','lotw','selection',json_object('endDate',windows.period_end,'startDate',windows.period_start))
-                 OR (windows.kind='qrz' AND json_extract(p.plan,'$.provider')='qrz' AND json_extract(p.plan,'$.between')=json_array(windows.period_start,windows.period_end)))
-        )
-        GROUP BY tenant,id,month_start ORDER BY tenant,id,month_start LIMIT ?`,
+        SELECT g.*,coalesce((SELECT min(date(p.from_date,'-1 day')) FROM scheduled p
+          WHERE (p.tenant,p.id)=(g.tenant,g.id) AND p.from_date>g.period_start AND p.from_date<=g.last_date),g.last_date) AS period_end
+        FROM gaps g WHERE g.period_start IS NOT NULL
+        ORDER BY tenant,id,month_start LIMIT ?`,
         progress.last_tenant,
         progress.last_connection,
         progress.last_month,
         runtime.version,
         runtime.version,
-        limit,
+        remaining,
       )
       .all<
         Connection & {
@@ -295,7 +402,6 @@ export async function registerSourceCalendarSelections(
         }
       >()
   ).results;
-  const report = { registered: 0, failed: 0 };
   for (const { period_start, period_end, ...connection } of candidates) {
     try {
       const book = JSON.parse(connection.config);
@@ -322,7 +428,7 @@ export async function registerSourceCalendarSelections(
       report.failed++;
     }
   }
-  const last = candidates.length === limit ? candidates.at(-1) : undefined;
+  const last = candidates.length === remaining ? candidates.at(-1) : undefined;
   await store
     .statement(
       "UPDATE inventory_calendar_registration_progress SET last_tenant=?,last_connection=?,last_month=? WHERE id=1 AND (last_tenant,last_connection,last_month)=(?,?,?)",
@@ -367,6 +473,7 @@ export async function registerLotwAccountFeeds(
           AND json_extract(f.plan,'$.provider')='lotw' AND json_extract(f.plan,'$.selection.kind')='account_received'
          WHERE (c.tenant,c.id)>(?1,?2) AND c.kind='lotw' AND c.status='active'
           AND json_extract(c.config,'$.readAccess')=1 AND k.revoked_at IS NULL
+          AND NOT EXISTS(SELECT 1 FROM inventory_sync_scopes policy WHERE (policy.tenant,policy.destination)=(c.tenant,c.id) AND policy.mode!='all')
           AND (k.expires_at IS NULL OR k.expires_at>unixepoch('subsec')*1000)
           AND s.state='observing' AND s.runtime_version=?3
           AND json_extract(p.plan,'$.provider')='lotw' AND json_type(p.plan,'$.selection.startDate')='text'
@@ -454,7 +561,7 @@ export async function registerOverflowSelections(
          FROM inventory_stream_jobs j
          JOIN inventory_scopes s ON s.tenant=j.tenant AND s.scope_id=j.scope_id
          JOIN inventory_runs r ON r.tenant=j.tenant AND r.run_id=j.active_run_id
-         JOIN inventory_scheduled_selections p ON p.tenant=j.tenant AND p.scope_id=j.scope_id AND p.stream_id=j.stream_id
+         JOIN inventory_scoped_schedule p ON p.tenant=j.tenant AND p.scope_id=j.scope_id AND p.stream_id=j.stream_id
          JOIN connections c ON c.tenant=s.tenant AND c.id=s.connection_id
          JOIN accounts a ON a.id=c.tenant
          JOIN private_data credential ON credential.tenant=c.tenant AND credential.connection=c.id AND credential.id=c.credential_version AND credential.kind='credential'
@@ -548,6 +655,7 @@ export async function restoreLotwDatedPolls(store: Store, tenant?: string) {
       `WITH due AS MATERIALIZED (
         SELECT * FROM inventory_lotw_dated_fallback_due
         WHERE (?1 IS NULL OR tenant=?1)
+          AND EXISTS(SELECT 1 FROM inventory_scoped_schedule p WHERE (p.tenant,p.scope_id,p.stream_id)=(inventory_lotw_dated_fallback_due.tenant,inventory_lotw_dated_fallback_due.scope_id,inventory_lotw_dated_fallback_due.stream_id))
         ORDER BY due_at,tenant,scope_id,stream_id LIMIT 16
        )
        INSERT INTO inventory_wakeups(tenant,wakeup_id,scope_id,stream_id,run_id,work_version,not_before)
@@ -566,7 +674,7 @@ export async function startInventorySelections(store: Store, limit = 16) {
   const rows = (
     await store
       .statement(
-        `SELECT p.*,j.work_version,j.state AS job_state FROM inventory_scheduled_selections p JOIN inventory_scopes s ON s.tenant=p.tenant AND s.scope_id=p.scope_id JOIN inventory_runtime runtime ON runtime.mode='inventory_read_only' AND runtime.version=p.runtime_version LEFT JOIN inventory_stream_jobs j ON j.tenant=p.tenant AND j.scope_id=p.scope_id AND j.stream_id=p.stream_id WHERE s.state='observing' AND s.config_version=p.config_version AND (j.tenant IS NULL OR j.state='held' AND j.reason='scope_changed') ORDER BY p.created_at,p.tenant,p.scope_id,p.stream_id LIMIT ?`,
+        `SELECT p.*,j.work_version,j.state AS job_state FROM inventory_scoped_schedule p JOIN inventory_scopes s ON s.tenant=p.tenant AND s.scope_id=p.scope_id JOIN inventory_runtime runtime ON runtime.mode='inventory_read_only' AND runtime.version=p.runtime_version LEFT JOIN inventory_stream_jobs j ON j.tenant=p.tenant AND j.scope_id=p.scope_id AND j.stream_id=p.stream_id WHERE s.state='observing' AND s.config_version=p.config_version AND (j.tenant IS NULL OR j.state='held' AND j.reason='scope_changed') ORDER BY p.created_at,p.tenant,p.scope_id,p.stream_id LIMIT ?`,
         limit,
       )
       .all<{

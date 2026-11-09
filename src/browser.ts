@@ -558,6 +558,14 @@ function renderSync(data: Dashboard, scopes: SyncScope[]) {
     if (!links.length) {
       card.append(node("p", "Not connected", "small"));
     } else {
+      const active = links.filter((row) => row.status === "active");
+      const forwardOnly =
+        active.length > 0 &&
+        active.every((row) =>
+          scopes.some(
+            (scope) => scope.destination === row.id && scope.mode === "forward",
+          ),
+        );
       card.append(
         node(
           "p",
@@ -566,9 +574,11 @@ function renderSync(data: Dashboard, scopes: SyncScope[]) {
         ),
         node(
           "p",
-          provider.lastProgressAt
-            ? `Last observed ${new Date(provider.lastProgressAt).toLocaleString()}`
-            : "Waiting for the first inventory scan",
+          forwardOnly
+            ? "Historical scans are disabled for this scope."
+            : provider.lastProgressAt
+              ? `Last observed ${new Date(provider.lastProgressAt).toLocaleString()}`
+              : "Waiting for the first inventory scan",
           "small",
         ),
         statusList("Coverage windows", provider.coverage),
@@ -589,7 +599,7 @@ function renderSync(data: Dashboard, scopes: SyncScope[]) {
           ),
           statusList("Upload and receipt status", provider.deliveries),
         );
-        for (const link of links.filter((row) => row.status === "active"))
+        for (const link of active)
           card.append(
             syncScopeForm(
               link,

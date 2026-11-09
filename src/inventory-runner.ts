@@ -157,7 +157,11 @@ export class InventoryRunner {
   ): Promise<InventoryTurnResult> {
     wakeup = inventoryRunWakeup(wakeup);
     const store = this.runs.inventory.store;
-    const first = await this.runs.load(wakeup.tenant, wakeup.run);
+    const first = await this.runs.load(
+      wakeup.tenant,
+      wakeup.run,
+      this.options.scheduled,
+    );
     if (!matches(first, wakeup)) return { kind: "skipped", reason: "stale" };
     if (first.nextDueAt > Date.now())
       return { kind: "skipped", reason: "not_due", retryAt: first.nextDueAt };
@@ -171,7 +175,11 @@ export class InventoryRunner {
       return { kind: "skipped", reason: "busy", retryAt: Date.now() + 5000 };
     try {
       // The lease and message may both have become stale while being acquired.
-      const current = await this.runs.load(wakeup.tenant, wakeup.run);
+      const current = await this.runs.load(
+        wakeup.tenant,
+        wakeup.run,
+        this.options.scheduled,
+      );
       if (!matches(current, wakeup))
         return { kind: "skipped", reason: "stale" };
       if (current.nextDueAt > Date.now())
@@ -360,6 +368,22 @@ export class InventoryRunner {
           : 0;
       let receipt: InventoryReceipt;
       try {
+        const forwardBirth =
+          this.options.scheduled &&
+          query.provider === "lofi" &&
+          context.run.mode === "delta" &&
+          (await store
+            .statement(
+              `SELECT 1 FROM inventory_forward_source_baselines WHERE
+             (tenant,scope_id,stream_id,config_version,checkpoint_version,building_run_id)=(?,?,?,?,?,?) LIMIT 1`,
+              context.run.tenant,
+              context.run.scope,
+              context.run.streamId,
+              context.stream.configVersion,
+              context.stream.version,
+              context.run.id,
+            )
+            .first()) !== null;
         const prepared = await this.runs.preparePage(context, lease, {
           observations: result.observations,
           requestStartedAt: result.requestStartedAt,
@@ -372,8 +396,7 @@ export class InventoryRunner {
             result.completedAt + loopDelayMs,
             retained?.nextAllowedAt ?? 0,
           ),
-          // Discovery remains historical until the explicit cutover policy exists.
-          origin: "historical",
+          origin: forwardBirth ? "forward" : "historical",
           ...(query.provider === "lofi"
             ? {
                 pacingDelayMs: loopDelayMs,

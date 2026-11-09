@@ -141,20 +141,26 @@ export async function inventoryOwnershipTokens(
 
 export class InventoryOwnership {
   constructor(readonly store: Store) {}
-  private async ensure(tenant: string, provider: HistoricalVendor) {
+  private scopeKey(tenant: string, provider: HistoricalVendor) {
     if (!identifier(tenant) || !["qrz", "lotw"].includes(provider))
       throw new Error("invalid_inventory_ownership_scope");
-    const key = await new InventoryComparisonGenerations(this.store).key(
+    return new InventoryComparisonGenerations(this.store).key(tenant);
+  }
+  private domainStatement(
+    tenant: string,
+    provider: HistoricalVendor,
+    keyId: string,
+  ) {
+    return this.store.statement(
+      "INSERT INTO inventory_ownership_domains(tenant,provider,key_id) VALUES(?,?,?) ON CONFLICT DO NOTHING",
       tenant,
+      provider,
+      keyId,
     );
-    await this.store
-      .statement(
-        "INSERT INTO inventory_ownership_domains(tenant,provider,key_id) VALUES(?,?,?) ON CONFLICT DO NOTHING",
-        tenant,
-        provider,
-        key.keyId,
-      )
-      .run();
+  }
+  private async ensure(tenant: string, provider: HistoricalVendor) {
+    const key = await this.scopeKey(tenant, provider);
+    await this.domainStatement(tenant, provider, key.keyId).run();
     return key;
   }
   async initialize(tenant: string, provider: HistoricalVendor) {
@@ -217,7 +223,7 @@ export class InventoryOwnership {
       maxRecords > 128
     )
       throw new Error("invalid_inventory_ownership_queries");
-    const key = await this.ensure(tenant, provider);
+    const key = await this.scopeKey(tenant, provider);
     const tokens = await Promise.all(
       queries.map((query) =>
         inventoryOwnershipTokens(
@@ -230,7 +236,7 @@ export class InventoryOwnership {
       ),
     );
     const hashes = [...new Set(tokens.flatMap((token) => token.probes))];
-    const [header, found] = await this.store.db.batch([
+    const lookup = [
       this.store.statement(
         `SELECT d.*,EXISTS(SELECT 1 FROM inventory_ownership_holds h WHERE h.tenant=d.tenant AND h.provider=d.provider) AS held,
        (SELECT json_group_array(json_object('hash',j.value,'version',coalesce(b.version,0))) FROM json_each(?3) j LEFT JOIN inventory_ownership_buckets b ON b.tenant=d.tenant AND b.provider=d.provider AND b.bucket_hash=j.value) AS buckets
@@ -249,7 +255,16 @@ export class InventoryOwnership {
         maxRecords + 1,
         maxBytes,
       ),
-    ]);
+    ];
+    let [header, found] = await this.store.db.batch(lookup);
+    let rowsRead = header.meta.rows_read + found.meta.rows_read;
+    if (!header.results.length) {
+      [, header, found] = await this.store.db.batch([
+        this.domainStatement(tenant, provider, key.keyId),
+        ...lookup,
+      ]);
+      rowsRead += header.meta.rows_read + found.meta.rows_read;
+    }
     const state = header.results[0] as unknown as
       | (InventoryOwnershipDomain & { held: number; buckets: string })
       | undefined;
@@ -261,7 +276,7 @@ export class InventoryOwnership {
       buckets: JSON.parse(state.buckets) as { hash: string; version: number }[],
       tokens,
       stats: {
-        rowsRead: header.meta.rows_read + found.meta.rows_read,
+        rowsRead,
         decryptedBodies: 0,
         encryptedInputBytes: 0,
         plaintextBytes: 0,

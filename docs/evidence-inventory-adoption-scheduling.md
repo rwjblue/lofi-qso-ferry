@@ -146,6 +146,24 @@ The 1,000-contact matched pipeline verified all current results in 152
 deliveries. Classification and adoption used 3,128 calls, down from
 3,178, with 5,684 statements in both runs.
 
+### Ownership lookup after initialization
+
+An ownership lookup reads the domain, hold state and bounded evidence
+before deciding whether it needs initialization. A missing domain is
+created with the same guarded insert and read again in that batch. An
+initialized lookup uses two D1 calls and three read statements.
+
+The captured QRZ replay again completed all 2,917 pending adoptions
+in 211 turns and preserved the same 2,957 historical mappings. Calls
+fell from 2,744 to 2,533 and SQL statements from 4,643 to 4,432.
+Both runs wrote 65,651 rows and read about 1.07 million. The replay
+preserved credentials, checkpoints and current classifications and
+made zero provider requests.
+
+The 1,000-contact matched profile, including one domain initialization,
+used 3,079 D1 calls and 5,637 statements during classification and
+adoption, down from 3,128 and 5,684. All 1,000 matches were verified.
+
 ### Coalesced idle coordinator phases
 
 The coordinator now checks consecutive idle phases under one lease and

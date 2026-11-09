@@ -383,6 +383,45 @@ test("individually unique LoTW matches cannot claim competing historical tuples 
   }
 });
 
+test("ownership lookup initializes a missing domain and leaves later reads read-only", async () => {
+  const f = await ready();
+  try {
+    assert.equal(
+      await f.db
+        .prepare("SELECT count(*) AS n FROM inventory_ownership_domains")
+        .first("n"),
+      0,
+    );
+    const query = {
+      id: "query",
+      sourceIdentity: "source",
+      key: "q0",
+      book: "destination",
+      remoteKey: "1",
+      record: receipt().body as AdifRecord,
+    };
+    const cold = measureD1(f.db);
+    const first = await new InventoryOwnership(
+      new Store(cold.database, f.store.keys),
+    ).lookup("a", "qrz", [query]);
+    assert.equal(first.observations[0].state, "clear");
+    assert.equal(cold.totals.calls, 3);
+    assert.ok(cold.totals.rowsWritten > 0);
+    const warm = measureD1(f.db);
+    const next = await new InventoryOwnership(
+      new Store(warm.database, f.store.keys),
+    ).lookup("a", "qrz", [query]);
+    assert.deepEqual(next.observations, first.observations);
+    assert.equal(next.keyId, first.keyId);
+    assert.equal(next.version, first.version);
+    assert.equal(warm.totals.calls, 2);
+    assert.equal(warm.totals.statements, 3);
+    assert.equal(warm.totals.rowsWritten, 0);
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
 test("ownership candidate and byte bounds hold without decrypting a truncated registry", async () => {
   const f = await prepared();
   try {

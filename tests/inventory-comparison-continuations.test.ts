@@ -323,6 +323,66 @@ test("an idle phase sweep preserves a work signal that arrives after it checked 
   }
 });
 
+test("a work signal racing an overdue coordinator wake stays pending", async () => {
+  const f = await fixture();
+  try {
+    const coordinator = new InventoryComparisonCoordinator(f.store);
+    for (let i = 0; ; i++) {
+      assert.ok(i < 30);
+      if (!(await coordinator.step("a")).more) break;
+    }
+    const lease = await f.store.claim("a", "inventory-comparison");
+    assert.ok(lease);
+    const due = Date.now() - 1000;
+    await f.db
+      .prepare(
+        "UPDATE inventory_comparison_coordinators SET version=version+1,next_due_at=? WHERE tenant='a'",
+      )
+      .bind(due)
+      .run();
+    await f.store.release(lease);
+
+    const store = new Store(f.db, f.store.keys);
+    const statement = store.statement.bind(store);
+    store.statement = (sql, ...params) => {
+      const bound = statement(sql, ...params);
+      if (!sql.includes("idle_turns=0,next_due_at=0,updated_at")) return bound;
+      return new Proxy(bound, {
+        get(target, property) {
+          if (property === "first")
+            return async () => {
+              await f.db
+                .prepare(
+                  "UPDATE inventory_comparison_coordinators SET work_version=work_version+1 WHERE tenant='a'",
+                )
+                .run();
+              return target.first();
+            };
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
+    };
+    assert.deepEqual(
+      await new InventoryComparisonCoordinator(store).step("a"),
+      {
+        kind: "deferred",
+        more: true,
+      },
+    );
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT observed_version<work_version AS pending,next_due_at FROM inventory_comparison_coordinators WHERE tenant='a'",
+        )
+        .first(),
+      { pending: 1, next_due_at: due },
+    );
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
 test("Queue publication failure retries the old message and leaves the advanced frame recoverable", async () => {
   const f = await fixture();
   try {

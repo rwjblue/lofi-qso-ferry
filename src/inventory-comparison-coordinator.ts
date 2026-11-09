@@ -1,6 +1,9 @@
 import { InventoryAdoptionWork } from "./inventory-adoption-work.ts";
 import { InventoryComparisonBuilds } from "./inventory-comparison-builds.ts";
-import { InventoryComparisonGenerations } from "./inventory-comparison-generations.ts";
+import {
+  type InventoryComparisonDomain,
+  InventoryComparisonGenerations,
+} from "./inventory-comparison-generations.ts";
 import { InventoryDeliveryReview } from "./inventory-delivery-review.ts";
 import { InventoryMatchingCoverage } from "./inventory-matching-coverage.ts";
 import { InventoryMatchingCoverageEvents } from "./inventory-matching-coverage-events.ts";
@@ -332,20 +335,34 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
     );
     if (!lease) return { kind: "deferred" as const, more: true };
     try {
-      await this.store
-        .statement(
-          "INSERT INTO inventory_comparison_coordinators(tenant) VALUES(?) ON CONFLICT DO NOTHING",
-          tenant,
-        )
-        .run();
-      let control = await this.store
-        .statement(
-          "SELECT * FROM inventory_comparison_coordinators WHERE tenant=?",
-          tenant,
-        )
-        .first<Control>();
-      if (!control || control.phase_count !== phases.length)
+      const readControl = () =>
+        this.store
+          .statement(
+            `SELECT c.*,d.active_generation,d.pending_generation
+             FROM inventory_comparison_coordinators c LEFT JOIN comparison_domains d USING(tenant)
+             WHERE c.tenant=?`,
+            tenant,
+          )
+          .first<
+            Control &
+              Pick<
+                InventoryComparisonDomain,
+                "active_generation" | "pending_generation"
+              >
+          >();
+      let current = await readControl();
+      if (!current) {
+        await this.store
+          .statement(
+            "INSERT INTO inventory_comparison_coordinators(tenant) VALUES(?) ON CONFLICT DO NOTHING",
+            tenant,
+          )
+          .run();
+        current = await readControl();
+      }
+      if (!current || current.phase_count !== phases.length)
         throw new Error("comparison_coordinator_unavailable");
+      let control: Control = current;
       if (
         control.next_due_at > 0 &&
         control.next_due_at <= Date.now() &&
@@ -354,10 +371,11 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
       ) {
         const resumed = await this.store
           .statement(
-            `UPDATE inventory_comparison_coordinators SET version=version+1,observed_version=work_version,idle_turns=0,next_due_at=0,updated_at=? WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l WHERE l.tenant=? AND l.scope='inventory-comparison' AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000) RETURNING *`,
+            `UPDATE inventory_comparison_coordinators SET version=version+1,observed_version=work_version,idle_turns=0,next_due_at=0,updated_at=? WHERE tenant=? AND version=? AND work_version=? AND EXISTS(SELECT 1 FROM leases l WHERE l.tenant=? AND l.scope='inventory-comparison' AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000) RETURNING *`,
             Date.now(),
             tenant,
             control.version,
+            control.work_version,
             tenant,
             lease.token,
             lease.fence,
@@ -366,10 +384,11 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
         if (!resumed) return { kind: "deferred" as const, more: true };
         control = resumed;
       }
-      const generations = new InventoryComparisonGenerations(this.store);
-      let domain = await generations.domain(tenant);
-      if (!domain?.active_generation && !domain?.pending_generation) {
-        domain = await generations.begin(tenant);
+      const pendingGeneration = current.pending_generation;
+      if (!current.active_generation && !pendingGeneration) {
+        const domain = await new InventoryComparisonGenerations(
+          this.store,
+        ).begin(tenant);
         const saved = await this.finish(tenant, control, lease, {
           progress: true,
           nextPhase: 0,
@@ -394,7 +413,7 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
             control,
             lease,
             phase,
-            domain.pending_generation,
+            pendingGeneration,
           );
           checked++;
           cursor = (cursor + 1) % phases.length;
@@ -438,7 +457,7 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
               ? ("deferred" as const)
               : progress
                 ? ("advanced" as const)
-                : domain.pending_generation
+                : pendingGeneration
                   ? ("waiting" as const)
                   : ("idle" as const),
           phase,

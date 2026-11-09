@@ -217,15 +217,21 @@ lease when that sweep found no work. SQLite still validates the
 matching, adoption and delivery review rotation. An intervening work
 signal resets the idle counter, so the new work gets another sweep.
 
+An established coordinator also reads its control row and generation
+pointer together under the lease. The insert is needed only during
+initialization. A wake from an overdue deadline checks the observed
+work version so a racing signal stays pending.
+
 On the same 1,000-contact normalized fixture through migration 0116,
-both schedules published 1,000 current absence classifications and
-retained 50 match sets. These counters cover classification after
-source coverage.
+all runs published 1,000 current absence classifications and retained
+50 match sets. These counters cover classification after source
+coverage.
 
 | Coordinator lease use            | Queue deliveries | D1 calls | SQL statements | Rows read | Rows written |
 | -------------------------------- | ---------------: | -------: | -------------: | --------: | -----------: |
 | Separate idle and matching turns |              254 |    5,317 |          6,467 |   664,022 |       78,010 |
 | Matching after an idle sweep     |              153 |    4,408 |          5,558 |   658,862 |       77,606 |
+| Shared lease and control read    |              153 |    4,102 |          5,252 |   659,578 |       77,606 |
 
 The runs had different concurrent local workloads. The measurements
 compare database and Queue work.

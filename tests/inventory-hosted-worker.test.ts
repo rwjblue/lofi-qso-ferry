@@ -151,8 +151,14 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
                 ]
               : [],
           meta: {
-            operations: { records_left: 0 },
-            qsos: { records_left: 0 },
+            operations: {
+              records_left: 0,
+              ...(reads === 3 ? { next_cursor: "terminal-operation" } : {}),
+            },
+            qsos: {
+              records_left: 0,
+              ...(reads === 3 ? { next_cursor: "terminal-qso" } : {}),
+            },
             suggestedSyncLoopDelay: 0,
           },
         });
@@ -545,6 +551,15 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   }
   assert.equal(receipt?.run_id, started.run);
   assert.ok(receipt && receipt.request_started_at >= collectedAt);
+  assert.deepEqual(
+    await db
+      .prepare(
+        "SELECT json_type(committed_checkpoint,'$.operations.cursor') AS operation_cursor,json_type(committed_checkpoint,'$.qsos.cursor') AS qso_cursor FROM inventory_streams WHERE scope_id=?",
+      )
+      .bind(sourceScope)
+      .first(),
+    { operation_cursor: null, qso_cursor: null },
+  );
   assert.equal(
     await drain.observed(
       captured.snapshot.source,

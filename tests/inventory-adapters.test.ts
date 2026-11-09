@@ -242,6 +242,39 @@ test("LoFi empty incomplete reads preserve continuation and honor server pacing"
   assert.equal("proposedCheckpoint" in result.progress, false);
 });
 
+test("LoFi complete forward checkpoints keep the vector when terminal metadata includes cursors", async () => {
+  const base = lofiRequest();
+  const result = await createLoFiInventoryAdapter(credentials).readStep(
+    context(async () =>
+      lofiResponse([source("q", 105)], [], {
+        operations: { records_left: 0, next_cursor: "terminal-operation" },
+        qsos: { records_left: 0, next_cursor: "terminal-qso" },
+      }),
+    ),
+    {
+      ...base,
+      resume: {
+        ...base.resume,
+        mode: "forward",
+        operations: { watermark: 80 },
+        qsos: { watermark: 100 },
+      },
+    },
+  );
+  assert.equal(result.kind, "page");
+  if (result.kind !== "page" || result.progress.kind !== "observed_complete")
+    assert.fail(JSON.stringify(result));
+  assert.deepEqual(result.progress.proposedCheckpoint, {
+    mode: "forward",
+    accountId: "account-1",
+    readerPolicy: "all-clients-v1",
+    policyEpoch: "epoch-1",
+    operations: { watermark: 80 },
+    qsos: { watermark: 105 },
+  });
+  assert.deepEqual(result.progress.resume, result.progress.proposedCheckpoint);
+});
+
 test("LoFi refuses cursor fallback and accidental large reads before granting coverage", async () => {
   let requests = 0;
   const transport: typeof fetch = async () => {

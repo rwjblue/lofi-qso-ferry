@@ -703,6 +703,15 @@ export function createLoFiInventoryAdapter(
             page.qsos,
           );
           const finished = page.complete;
+          // LoFi can return cursor strings even with zero records left. A
+          // completed inventory run resumes later from its server watermarks.
+          const resume = finished
+            ? {
+                ...page.next,
+                operations: { watermark: page.next.operations.watermark },
+                qsos: { watermark: page.next.qsos.watermark },
+              }
+            : page.next;
           const hint = finished
             ? page.pacing?.checkPeriodMs
             : page.pacing?.loopDelayMs;
@@ -716,15 +725,15 @@ export function createLoFiInventoryAdapter(
             progress: finished
               ? {
                   kind: "observed_complete",
-                  resume: page.next,
-                  proposedCheckpoint: page.next,
+                  resume,
+                  proposedCheckpoint: resume,
                   coverage: coverage(
                     "lofi",
                     input.binding,
                     "all_client_sync_window",
                   ),
                 }
-              : { kind: "continue", resume: page.next },
+              : { kind: "continue", resume },
             streamProgress: {
               operations:
                 finished || page.next.operations.complete

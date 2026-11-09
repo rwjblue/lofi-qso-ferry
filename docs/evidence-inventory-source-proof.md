@@ -285,3 +285,8 @@ INSERT with a committed claim before the simulated lost response.
 The send job was gone and the readback job was durable. An empty
 readback left the claim unsettled. A later exact readback resolved it
 even after the source proof became stale. Live vendor writes were zero.
+
+An offline migration of an isolated copy of the real fresh-start
+rehearsal preserved all four credential envelopes and the durable send
+lock. With the selected sender configured for one real contact, the
+copy created zero send jobs, dispatch claims or network requests.

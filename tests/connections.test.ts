@@ -275,6 +275,12 @@ test("verified connection renewals retain logical destination and ledger, creden
   assert.notEqual(renewed.version, first.version);
   assert.notEqual(secondTenant.id, first.id);
   assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM cursors WHERE stream LIKE 'rescan:%'")
+      .first("n"),
+    0,
+  );
+  assert.equal(
     (
       await store
         .statement(

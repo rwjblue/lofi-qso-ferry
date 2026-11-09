@@ -239,31 +239,6 @@ export async function saveVerifiedConnection(
       now,
     ),
     privateWrite,
-    // A saved unsent artifact cannot dispatch with a superseded credential.
-    // Retire only prepared work; dispatched outcomes still require readback.
-    store.statement(
-      "INSERT INTO attempt_events(tenant,attempt,state,at,reason) SELECT s.tenant,s.attempt,'cancelled',?,'credential changed before dispatch' FROM attempt_state s JOIN attempts a ON a.tenant=s.tenant AND a.id=s.attempt WHERE s.state='prepared' AND a.tenant=? AND a.destination=? AND a.credential_version!=?",
-      now,
-      tenant,
-      id,
-      version,
-    ),
-    store.statement(
-      "DELETE FROM private_data WHERE tenant=? AND connection=? AND kind='outbox' AND id IN(SELECT a.payload_id FROM attempts a JOIN attempt_state s ON s.tenant=a.tenant AND s.attempt=a.id WHERE a.tenant=? AND a.destination=? AND a.credential_version!=? AND s.state='prepared')",
-      tenant,
-      id,
-      tenant,
-      id,
-      version,
-    ),
-    store.statement(
-      "UPDATE attempt_state SET state='cancelled',reason='credential changed before dispatch',lease_token=NULL,fence=NULL,updated_at=? WHERE tenant=? AND state='prepared' AND attempt IN(SELECT id FROM attempts WHERE tenant=? AND destination=? AND credential_version!=?)",
-      now,
-      tenant,
-      tenant,
-      id,
-      version,
-    ),
     ...(slot?.replacing
       ? [
           store.statement(
@@ -279,16 +254,6 @@ export async function saveVerifiedConnection(
         ]
       : []),
     ...newQrzTemplate,
-    ...(input.kind !== "lofi" && !existing
-      ? [
-          store.statement(
-            "INSERT INTO cursors(tenant,connection,stream,cursor,generation,updated_at) SELECT tenant,id,?,json_object('mode','backfill','operations',json('{}'),'qsos',json('{}'),'accountId',json_extract(config,'$.accountId'),'requested',json('true')),0,? FROM connections WHERE tenant=? AND kind='lofi' AND status='active' ON CONFLICT(tenant,connection,stream) DO NOTHING",
-            `rescan:${id}`,
-            now,
-            tenant,
-          ),
-        ]
-      : []),
     store.statement(
       "UPDATE private_data SET expires_at=COALESCE(expires_at,?) WHERE tenant=? AND connection=? AND kind='credential' AND id!=?",
       now + 7 * 86_400_000,
@@ -804,14 +769,6 @@ export async function connectionRoute(
           revoked ? "revoked" : "disabled",
           revoked ? 1 : 0,
           identity.tenant,
-          id,
-        ),
-        store.statement(
-          "UPDATE attempt_state SET state='cancelled',reason='connection disabled',updated_at=? WHERE tenant=? AND state='prepared' AND attempt IN(SELECT id FROM attempts WHERE tenant=? AND (destination=? OR source=?))",
-          now,
-          identity.tenant,
-          identity.tenant,
-          id,
           id,
         ),
         ...(revoked

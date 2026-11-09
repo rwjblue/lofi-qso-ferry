@@ -151,6 +151,8 @@ export interface QrzInventoryResume {
   /** Legacy resumes have no version or recovery witness. */
   version?: 1;
   pageSize?: number;
+  /** An in-progress covering read retains the original modified query key. */
+  coveringDateSelection?: true;
   previousFullPage?: {
     afterLogId: number;
     pageSize: number;
@@ -162,7 +164,7 @@ export interface QrzInventoryRequest {
   selection: QrzInventorySelection;
   resume?: QrzInventoryResume;
   pageSize?: number;
-  /** Allow one complete date read to verify an ambiguous modified selection. */
+  /** Allow a covering date read to verify an ambiguous modified selection. */
   verifyAmbiguousDelta?: true;
 }
 export interface LotwInventoryRequest {
@@ -815,6 +817,7 @@ function withinQrzScope(
 function validateQrzResume(
   resume: QrzInventoryResume | undefined,
   queryKey: string,
+  canVerifyDelta: boolean,
 ) {
   if (!resume) return;
   requireValue(
@@ -824,7 +827,9 @@ function validateQrzResume(
   );
   if (resume.version === undefined) {
     requireValue(
-      resume.pageSize === undefined && resume.previousFullPage === undefined,
+      resume.pageSize === undefined &&
+        resume.previousFullPage === undefined &&
+        resume.coveringDateSelection === undefined,
     );
     return;
   }
@@ -836,6 +841,12 @@ function validateQrzResume(
       resume.pageSize <= 250,
   );
   const previous = resume.previousFullPage;
+  requireValue(
+    resume.coveringDateSelection === undefined ||
+      (canVerifyDelta &&
+        resume.coveringDateSelection === true &&
+        previous !== undefined),
+  );
   if (previous !== undefined)
     requireValue(
       previous !== null &&
@@ -873,20 +884,23 @@ export function createQrzInventoryAdapter(
             requestedLimit <= 250,
         );
         const queryKey = qrzSelectionKey(input.binding, book, input.selection);
-        validateQrzResume(input.resume, queryKey);
+        const canVerifyDelta =
+          input.verifyAmbiguousDelta === true &&
+          input.selection.modifiedSince !== undefined;
+        validateQrzResume(input.resume, queryKey, canVerifyDelta);
         // A recovery's smaller effective MAX persists even when core continues
         // supplying the run's original configured page size.
         let limit = input.resume?.pageSize ?? requestedLimit;
         let afterLogId = input.resume?.afterLogId ?? 0;
-        let observedSelection = input.selection;
+        let covering = input.resume?.coveringDateSelection === true;
         const client = new QrzClient(apiKey, { fetch: budget.fetch });
         await client.verifyBook(book);
         const fetchPage = () =>
           client.fetchPage({
             afterLogId,
             max: limit,
-            between: observedSelection.between,
-            modifiedSince: observedSelection.modifiedSince,
+            between: input.selection.between,
+            modifiedSince: covering ? undefined : input.selection.modifiedSince,
           });
         let page: QrzPage;
         try {
@@ -897,21 +911,12 @@ export function createQrzInventoryAdapter(
             error.detail !== "ambiguous_empty_selection"
           )
             throw error;
-          if (
-            input.verifyAmbiguousDelta &&
-            input.selection.modifiedSince &&
-            !input.resume
-          ) {
-            // One complete positive date read covers every record the modified
-            // selection could return. Never continue a partial broader read.
-            observedSelection = { between: input.selection.between };
+          if (canVerifyDelta && !input.resume) {
+            // A successful scan over the same dates covers the modified
+            // selection. Use a separate effective cursor from the first page.
+            covering = true;
             page = await fetchPage();
-            if (
-              page.nextAfterLogId !== null ||
-              !page.records.length ||
-              page.count !== page.records.length
-            )
-              throw error;
+            if (!page.records.length) throw error;
           } else {
             const previous = input.resume?.previousFullPage;
             if (
@@ -929,6 +934,16 @@ export function createQrzInventoryAdapter(
           }
         }
         budget.records(page.records.length);
+        if (
+          covering &&
+          page.nextAfterLogId === null &&
+          page.count !== page.records.length
+        )
+          return {
+            kind: "blocked",
+            code: "ambiguous_empty",
+            recovery: "verify",
+          };
         if (
           page.nextAfterLogId !== null &&
           (!Number.isSafeInteger(page.nextAfterLogId) ||
@@ -955,6 +970,9 @@ export function createQrzInventoryAdapter(
           afterLogId: page.nextAfterLogId ?? afterLogId,
           queryKey,
           pageSize: limit,
+          ...(covering && (input.resume || page.nextAfterLogId !== null)
+            ? { coveringDateSelection: true }
+            : {}),
           ...(page.nextAfterLogId === null
             ? {}
             : {
@@ -985,7 +1003,7 @@ export function createQrzInventoryAdapter(
                   coverage: coverage(
                     "qrz",
                     input.binding,
-                    observedSelection.modifiedSince
+                    !covering && input.selection.modifiedSince
                       ? "book_modified_selection"
                       : "book_date_selection",
                   ),

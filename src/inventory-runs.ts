@@ -24,6 +24,7 @@ export interface InventoryRun
   version: number;
   jobVersion: number;
   jobState: "idle" | "ready" | "held";
+  reason: InventoryRunReason | null;
   nextDueAt: number;
   activeRun: string | null;
   expectedStreamVersion: number;
@@ -95,6 +96,7 @@ export class InventoryRuns {
         version: number;
         job_version: number;
         job_state: "idle" | "ready" | "held";
+        reason: InventoryRunReason | null;
         next_due_at: number;
         active_run_id: string | null;
         expected_stream_version: number;
@@ -125,6 +127,7 @@ export class InventoryRuns {
       version: row.version,
       jobVersion: row.job_version,
       jobState: row.job_state,
+      reason: row.reason,
       nextDueAt: row.next_due_at,
       activeRun: row.active_run_id,
       expectedStreamVersion: row.expected_stream_version,

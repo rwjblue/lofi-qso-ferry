@@ -373,22 +373,46 @@ test("ambiguous QRZ absence holds the run without publishing coverage", async (t
   assert.equal(coverage?.epoch, 0);
 });
 
-test("a positive QRZ delta fallback publishes receipts without replacing full coverage", async (t) => {
+test("a multi-page QRZ delta fallback resumes and retains full coverage and older receipts", async (t) => {
   const f = await fixture(t, "qrz");
   assert.ok(f.plan.provider === "qrz");
   f.plan.pageSize = 3;
   const baseline = await f.begin();
   const other = { ...contact, APP_QRZLOG_LOGID: "2", CALL: "W2AW" };
   const added = { ...contact, APP_QRZLOG_LOGID: "3", CALL: "W3AW" };
+  const current = [
+    contact,
+    added,
+    { ...added, APP_QRZLOG_LOGID: "4" },
+    { ...added, APP_QRZLOG_LOGID: "5" },
+    { ...added, APP_QRZLOG_LOGID: "6" },
+    { ...added, APP_QRZLOG_LOGID: "7" },
+  ];
+  const options: string[] = [];
   let isDelta = false;
-  const runner = new InventoryRunner(f.runs, async (input, init) => {
+  let interrupted = false;
+  let persistFailure = false;
+  const fetcher: typeof fetch = async (input, init) => {
     const form = new URLSearchParams(await new Request(input, init).text());
     if (form.get("ACTION") === "STATUS") return status();
     assert.equal(form.get("ACTION"), "FETCH");
-    if (form.get("OPTION")?.includes("MODSINCE:"))
+    const option = form.get("OPTION") ?? "";
+    if (isDelta) options.push(option);
+    if (option.includes("MODSINCE:"))
       return isDelta ? new Response("RESULT=FAIL&COUNT=0") : qrz([]);
-    return qrz(isDelta ? [contact, added] : [contact, other]);
-  });
+    const after = Number(/AFTERLOGID:(\d+)/.exec(option)?.[1]);
+    const max = Number(/MAX:(\d+)/.exec(option)?.[1]);
+    if (!isDelta) return qrz([contact, other]);
+    if (after === 5 && max === 3 && (persistFailure || !interrupted)) {
+      interrupted = true;
+      return new Response("RESULT=FAIL&REASON=fixture_failure");
+    }
+    const page = current
+      .filter((row) => Number(row.APP_QRZLOG_LOGID) >= after)
+      .slice(0, max);
+    return page.length ? qrz(page) : new Response("RESULT=FAIL&COUNT=0");
+  };
+  const runner = new InventoryRunner(f.runs, fetcher);
   await f.finish(runner, baseline.id);
   isDelta = true;
   const delta = await f.begin("delta");
@@ -397,12 +421,58 @@ test("a positive QRZ delta fallback publishes receipts without replacing full co
   const recovered = await runner.step(await f.wakeup(delta.id));
   assert.equal(recovered.kind, "advanced");
   assert.equal(recovered.usage?.requests, 3);
-  assert.equal((await f.runs.load("a", delta.id))?.phase, "publishing");
+  assert.equal((await f.runs.load("a", delta.id))?.phase, "collecting");
   assert.deepEqual(
     (await f.inventory.snapshot("a", f.scope, "scan"))?.checkpoint,
     checkpoint,
   );
-  await f.finish(runner, delta.id);
+  const reopened = new InventoryRunner(new InventoryRuns(f.inventory), fetcher);
+  const beforeRetry = (await f.inventory.snapshot("a", f.scope, "scan"))
+    ?.resume;
+  const retry = await reopened.step(await f.wakeup(delta.id));
+  assert.equal(retry.kind, "deferred");
+  assert.equal((await f.runs.load("a", delta.id))?.reason, "qrz_cover_retry");
+  assert.deepEqual(
+    (await f.inventory.snapshot("a", f.scope, "scan"))?.resume,
+    beforeRetry,
+  );
+  await f.due(delta.id);
+  for (const [requests, phase] of [
+    [2, "collecting"],
+    [3, "collecting"],
+    [2, "publishing"],
+  ] as const) {
+    const result = await reopened.step(await f.wakeup(delta.id));
+    assert.equal(result.kind, "advanced");
+    assert.equal(result.usage?.requests, requests);
+    assert.equal(result.phase, phase);
+    assert.deepEqual(
+      (await f.inventory.snapshot("a", f.scope, "scan"))?.checkpoint,
+      checkpoint,
+    );
+  }
+  assert.equal(options.length, 7);
+  assert.match(options[0], /AFTERLOGID:0.*MODSINCE:/);
+  assert.deepEqual(
+    options
+      .slice(1)
+      .map((option) => /MAX:\d+,AFTERLOGID:\d+/.exec(option)?.[0]),
+    [
+      "MAX:3,AFTERLOGID:0",
+      "MAX:3,AFTERLOGID:5",
+      "MAX:3,AFTERLOGID:5",
+      "MAX:3,AFTERLOGID:8",
+      "MAX:2,AFTERLOGID:5",
+      "MAX:2,AFTERLOGID:7",
+    ],
+  );
+  assert.doesNotMatch(options.slice(1).join(" "), /MODSINCE:/);
+  const completedAfter = Date.now();
+  await f.finish(reopened, delta.id);
+  assert.ok(
+    ((await f.runs.load("a", delta.id))?.nextDueAt ?? 0) >=
+      completedAfter + 86_400_000,
+  );
   const coverage = await f.runs.coverage(
     "a",
     f.scope,
@@ -427,7 +497,25 @@ test("a positive QRZ delta fallback publishes receipts without replacing full co
         )
         .all()
     ).results,
-    [{ state: "present", records: 3 }],
+    [{ state: "present", records: 7 }],
+  );
+
+  persistFailure = true;
+  const failed = await f.begin("delta");
+  const beforeFailure = (await f.inventory.snapshot("a", f.scope, "scan"))
+    ?.checkpoint;
+  assert.equal(
+    (await reopened.step(await f.wakeup(failed.id))).kind,
+    "advanced",
+  );
+  assert.equal(
+    (await reopened.step(await f.wakeup(failed.id))).kind,
+    "deferred",
+  );
+  assert.equal((await reopened.step(await f.due(failed.id))).kind, "held");
+  assert.deepEqual(
+    (await f.inventory.snapshot("a", f.scope, "scan"))?.checkpoint,
+    beforeFailure,
   );
 });
 

@@ -158,13 +158,11 @@ used the write-locked copy and made zero uploads.
 
 ### QRZ delta recovery
 
-The runner now permits one covering read when the first `MODSINCE` page
-returns the exact ambiguous empty response. It keeps the verified book
-and date bounds and removes only the modification filter. The covering
-read must return positive, in-scope records, with the entire count in a
-single terminal page. An empty, partial or contradictory read leaves
-the delta held. Recovery uses the ordinary delta publication, which
-retains the full coverage epoch and does not quarantine older receipts.
+The initial recovery handled the exact ambiguous empty first `MODSINCE`
+page with one complete positive covering read. It kept the verified book
+and date bounds and removed only the modification filter. Recovery uses
+the ordinary delta publication, which retains the full coverage epoch
+and does not quarantine older receipts.
 
 A fresh clone of the same pre-poll database completed the real QRZ delta
 with three requests. The covering read re-observed 73 unchanged receipts.
@@ -174,3 +172,36 @@ date stayed at the same overlapping calendar lower bound. The other due
 polls completed in three LoTW requests. The combined invocation took 7.2
 seconds, with the LoFi cursor, original database and credential envelopes
 preserved. It made zero uploads.
+
+### Paged QRZ verification
+
+A covering read can now continue across pages. The saved cursor records
+that the modification filter was removed and stays bound to the original
+book, dates and run. Each page verifies book identity and uses the shared
+vendor admission. A live probe observed `COUNT=2` on each of two pages in
+a book with more than 4,000 receipts, so a full page is still followed
+by a terminal read. The existing smaller-page replay can recover an
+ambiguous tail without treating the failed response as completion.
+
+An ambiguous or invalid response during a covering read gets one delayed
+retry at the same cursor. A successful page clears the retry marker.
+Persistent ambiguity leaves the run held. Only terminal publication
+advances the committed checkpoint. After a multi-page recovery, the
+next scheduled poll is at least 24 hours later, so an idle selection
+that requires a covering scan uses at most one scheduled scan per day.
+
+A native replay of the full captured book accepted 4,252 unchanged
+receipts in 18 covering pages and restored ready coverage on the retained
+full selection. The runner consumed 38 local responses, including STATUS
+and the initial failed `MODSINCE` read. The replay simulated the admission
+window elapsing and made zero provider requests. It scheduled the next
+poll one day after completion.
+
+The live full-book trial first completed a normal modified poll with two
+changed receipts. A second poll entered covering verification and accepted
+six pages before repeated read failures left it held. Diagnostic reads at
+the held cursor produced both a LOGID validation failure and a valid page.
+Reopening confirmed the previous checkpoint and full selection were still
+retained, the source checkpoint and credential envelopes were unchanged,
+and no delivery attempts existed. Full-book live verification remains
+unqualified under these response failures.

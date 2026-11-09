@@ -63,6 +63,7 @@ export type InventoryRunPublication =
       reason:
         | "vendor_deferred"
         | "read_unavailable"
+        | "qrz_cover_retry"
         | "scope_changed"
         | "verification_required"
         | "unsupported"

@@ -508,12 +508,12 @@ test("QRZ ambiguous empty remains verification work and STATUS consumes request/
   assert.equal(byteBudget.usage.requests, 2);
 });
 
-test("QRZ delta fallback requires one complete positive date selection", async () => {
+test("QRZ delta fallback distinguishes positive, incomplete and contradictory date pages", async () => {
   for (const [fallback, outcome] of [
     [fetchBody([adif]), "complete"],
     [fetchBody([]), "ambiguous_empty"],
     [fetchBody([adif], 2), "ambiguous_empty"],
-    [fetchBody([adif, { ...adif, APP_QRZLOG_LOGID: "2" }]), "ambiguous_empty"],
+    [fetchBody([adif, { ...adif, APP_QRZLOG_LOGID: "2" }]), "continue"],
     [fetchBody([{ ...adif, STATION_CALLSIGN: "W2AW" }]), "scope_mismatch"],
   ] as const) {
     const options: string[] = [];
@@ -556,6 +556,25 @@ test("QRZ delta fallback requires one complete positive date selection", async (
       );
       assert.equal(result.progress.coverage.selection, "book_date_selection");
       assert.equal(result.progress.coverage.absenceAuthority, false);
+    } else if (outcome === "continue") {
+      assert.ok(result.kind === "page" && result.progress.kind === "continue");
+      assert.equal(
+        (result.progress.resume as QrzInventoryResume).coveringDateSelection,
+        true,
+      );
+      assert.deepEqual(result.completedStreams, []);
+      const refused = await createQrzInventoryAdapter("key", book).readStep(
+        context(async () =>
+          assert.fail("covering resume requires delta verification authority"),
+        ),
+        {
+          ...request,
+          verifyAmbiguousDelta: undefined,
+          resume: result.progress.resume as QrzInventoryResume,
+        },
+      );
+      assert.equal(refused.kind, "blocked");
+      assert.equal(refused.usage.requests, 0);
     } else {
       assert.equal(result.kind, "blocked");
       assert.equal(result.code, outcome);

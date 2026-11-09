@@ -37,6 +37,8 @@ import { openSourceCredentials } from "./source-credentials.ts";
 import type { Lease } from "./store.ts";
 import { vendorFetch } from "./vendor-requests.ts";
 
+const QRZ_COVERING_POLL_MS = 24 * 60 * 60_000;
+
 /** Queue payloads carry identity and a fence, never credentials or raw pages. */
 export interface InventoryRunWakeup {
   version: 1;
@@ -196,11 +198,17 @@ export class InventoryRunner {
             ? await inventorySourcePacing(store, context.stream)
             : undefined;
         const schedule = await this.schedulePolicy(context.run);
+        const qrzCoveredMultiplePages =
+          query.provider === "qrz" &&
+          context.run.mode === "delta" &&
+          (context.stream.resume as QrzInventoryResume | null)
+            ?.coveringDateSelection === true;
         const next =
           Date.now() +
           Math.max(
             schedule?.poll_period_ms ?? 300_000,
             pacing?.checkPeriodMs ?? 0,
+            qrzCoveredMultiplePages ? QRZ_COVERING_POLL_MS : 0,
           );
         return await this.published(
           context,
@@ -214,11 +222,17 @@ export class InventoryRunner {
         canonical(result.binding) === canonical(binding(context)),
         "inventory_read_binding_changed",
       );
+      const coverRetry = context.run.reason === "qrz_cover_retry";
       if (result.kind === "deferred")
         return await this.published(
           context,
           await this.runs.inventory.publish(
-            await this.runs.prepareDefer(context, lease, result.retryAt),
+            await this.runs.prepareDefer(
+              context,
+              lease,
+              result.retryAt,
+              coverRetry ? "qrz_cover_retry" : "vendor_deferred",
+            ),
           ),
           "deferred",
           result.usage,
@@ -231,7 +245,29 @@ export class InventoryRunner {
               context,
               lease,
               Date.now() + 60_000,
-              "read_unavailable",
+              coverRetry ? "qrz_cover_retry" : "read_unavailable",
+            ),
+          ),
+          "deferred",
+          result.usage,
+        );
+      if (
+        query.provider === "qrz" &&
+        (context.stream.resume as QrzInventoryResume | null)
+          ?.coveringDateSelection === true &&
+        !coverRetry &&
+        result.kind === "blocked" &&
+        (result.code === "invalid_response" ||
+          result.code === "ambiguous_empty")
+      )
+        return await this.published(
+          context,
+          await this.runs.inventory.publish(
+            await this.runs.prepareDefer(
+              context,
+              lease,
+              Date.now() + 60_000,
+              "qrz_cover_retry",
             ),
           ),
           "deferred",

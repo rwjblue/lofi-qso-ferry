@@ -164,6 +164,32 @@ bytes** before collection. The corresponding page census attributes
 to inventory/projection payload tables. This again favors proof retention
 and index density work before a payload backend change.
 
+## Superseded comparison proof retention
+
+[Migration 0105](../migrations/0105_inventory_match_proof_retirement.sql)
+enqueues a proof when its last current result is replaced, and backfills
+superseded proofs in an existing database. Historical associations and
+archived QRZ or LoTW preparations pin their proof details. After the
+existing seven-day receipt horizon, each managed cron tick can collect
+one eligible proof. D1 removes the dependency rows atomically and
+retains the match header and result rows for retries and durable work
+receipts. Currentness checks treat compacted proofs as stale.
+
+The full personal-log capture had 426 current proofs, 69 superseded
+proofs pinned by historical associations, and 797 unpinned superseded
+proofs still inside the seven-day window. To test collection, a private
+clone advanced only the 797 eligible proofs past that window by aging
+their preparation timestamps before applying the migration.
+
+The collector removed **163,531 dependency rows** and freed
+**45,207,552 bytes for SQLite to reuse**. The file's allocation remained
+394,432,512 bytes. It took 6.1 seconds in local D1 across 798 statements,
+including the final idle turn. D1 reported 662,211 rows read and
+164,328 rows written. The largest sampled turn read 2,483 rows and
+wrote 619. Current comparison results, ownership, credentials and stream
+checkpoints matched byte-for-byte. Reopening passed SQLite's foreign
+key check. The replay made zero provider requests.
+
 ## Durable source month hints
 
 [Migration 0080](../migrations/0080_inventory_source_calendar.sql)

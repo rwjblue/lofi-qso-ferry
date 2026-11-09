@@ -92,9 +92,9 @@ bounded report.
 
 ```json
 [
-  {"connection": "lofi-link"},
-  {"connection": "verified-qrz-link"},
-  {"connection": "lotw-link", "from": "2026-10-01", "through": "2026-10-31"}
+  { "connection": "lofi-link" },
+  { "connection": "verified-qrz-link" },
+  { "connection": "lotw-link", "from": "2026-10-01", "through": "2026-10-31" }
 ]
 ```
 

@@ -67,6 +67,8 @@ Store durable source bodies under a payload kind such as `inventory_source`, wit
 
 Superseded source bodies may be collected after no unresolved attempt, active matcher/shadow comparison or necessary dependency references them. Matching runs pin their captured immutable inputs until commit or abandonment. Immutable attempt artifacts remain independent of mutable current source data. Connection removal, account deletion, revocation and backup retention need explicit policies before this retention change activates.
 
+Managed cron collects up to one superseded comparison proof per tick after its seven-day receipt horizon. Current results, historical associations and archived QRZ and LoTW preparations pin the dependency rows. Compaction retains the match header and result rows, including the receipt used to recover a lost acknowledgement. The [personal-log replay](evidence-inventory-adoption-scheduling.md#superseded-comparison-proof-retention) measured reusable SQLite space separately from file allocation.
+
 Destination comparison projections persist for incremental matching. Full remote bodies can expire when they are no longer required for preservation or uncertain delivery. If a correction needs remote-owned content that is unavailable, fetch it through the adapter or hold the correction.
 
 ## Proposed schema

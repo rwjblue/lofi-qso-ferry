@@ -265,5 +265,23 @@ contacts, excluding a historical match. The running queue consumer
 used a narrower selection and staged exactly one encrypted artifact
 after the quiet clock advanced. The original artifact was recoverable
 by its stable stage ID. There were zero dispatch claims during shadow
-preparation. Hosted new-send scheduling, LoTW batches and expired-proof
-collection remain open.
+preparation.
+
+## Hosted QRZ send scheduling
+
+[Migration 0099](../migrations/0099_inventory_qrz_send_jobs.sql) keeps
+versioned pre-claim jobs for current prepared attempts. An explicit
+hosted mode and a live, finite rollout window are required. Cron can
+re-publish a durable job after a broker failure, and the proof queue
+can schedule a newly prepared artifact while its evidence is still
+current. Every job rechecks its selection, proof and rollout. The
+existing book lease and native dispatch claim still fence the wire.
+
+The local Workerd fixture used the hosted scheduler and queue handler
+with a simulated vendor transport. It checked closed gates, failed
+publication, a vendor-budget deferral, and replay of both an old work
+version and the possibly sent attempt. The transport saw one exact
+INSERT with a committed claim before the simulated lost response.
+The send job was gone and the readback job was durable. An empty
+readback left the claim unsettled. A later exact readback resolved it
+even after the source proof became stale. Live vendor writes were zero.

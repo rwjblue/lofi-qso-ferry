@@ -6,16 +6,23 @@ import { build } from "esbuild";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { serializeAdifRecord } from "../src/adif.ts";
 import { InventoryDeliveryWorkspace } from "../src/inventory-delivery-workspace.ts";
-import { runHostedScheduled } from "../src/inventory-hosted.ts";
+import {
+  runHostedInventoryQueue,
+  runHostedScheduled,
+} from "../src/inventory-hosted.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
 import { InventoryQrzDispatch } from "../src/inventory-qrz-dispatch.ts";
-import { InventoryQrzNeighborhood } from "../src/inventory-qrz-neighborhood.ts";
+import {
+  inventoryQrzBookLeaseScope,
+  InventoryQrzNeighborhood,
+} from "../src/inventory-qrz-neighborhood.ts";
 import { InventoryQrzPreparation } from "../src/inventory-qrz-preparation.ts";
 import {
   consumeQrzRecoveryWakeups,
   publishQrzRecoveryWakeups,
 } from "../src/inventory-qrz-recovery.ts";
+import { isQrzSendWakeup } from "../src/inventory-qrz-send.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
 import { registerInventorySelection } from "../src/inventory-scheduler.ts";
@@ -966,21 +973,6 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     kind: "held",
     reason: "qrz_neighborhood_has_candidate",
   });
-  sendMode = "budget";
-  assert.equal(
-    (await dispatch.send("a", sendAttempt, writeGates)).kind,
-    "deferred",
-  );
-  assert.equal(
-    await db
-      .prepare("SELECT count(*) AS n FROM inventory_qrz_dispatches")
-      .first("n"),
-    0,
-  );
-  assert.equal(inserts, 0);
-  await db
-    .prepare("UPDATE vendor_requests SET cooldown_until=0 WHERE vendor='qrz'")
-    .run();
   sendMode = "lost";
   await db
     .prepare(
@@ -994,23 +986,152 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   });
   assert.equal(inserts, 0);
   await db.prepare("DROP TRIGGER fixture_qrz_dispatch_race").run();
-  class StoppedWorker extends Store {
-    strandedLease?: Lease;
-    override async release(lease: Lease) {
-      this.strandedLease = lease;
-    }
-  }
-  const stopped = new StoppedWorker(db, keys);
-  assert.deepEqual(
-    await new InventoryQrzDispatch(stopped, vendor).send(
-      "a",
-      sendAttempt,
-      writeGates,
-    ),
-    {
-      kind: "uncertain",
+
+  let failPublication = true;
+  const deliveries: MessageSendRequest<unknown>[] = [];
+  const sendEnv = {
+    ...shadowEnv,
+    INVENTORY_RUNTIME_MODE: "selected_qrz",
+    INVENTORY_QRZ_SHADOW_JSON: JSON.stringify(shadowSelection),
+    INVENTORY_QUEUE: {
+      ...shadowEnv.INVENTORY_QUEUE,
+      async sendBatch(messages: Iterable<MessageSendRequest<unknown>>) {
+        const batch = Array.from(messages);
+        if (!batch.every(({ body }) => isQrzSendWakeup(body)))
+          return shadowEnv.INVENTORY_QUEUE.sendBatch(batch);
+        if (failPublication) throw new Error("fixture send queue unavailable");
+        deliveries.push(...batch);
+        return {
+          metadata: {
+            metrics: { backlogCount: deliveries.length, backlogBytes: 0 },
+          },
+        };
+      },
     },
+    EXPORTS_ENABLED: "true",
+    ROLLOUT_CHECKS_PASSED: "true",
+    LIVE_WRITE_AUTHORIZATION: "I_AUTHORIZE_LIVE_VENDOR_WRITES",
+    QRZ_FRESH_INSERTS_ENABLED: "true",
+    ROLLOUT_QSO_IDS_JSON: JSON.stringify(["q2"]),
+    ROLLOUT_DESTINATION_IDS_JSON: JSON.stringify(["destination"]),
+    QRZ_FRESH_INSERT_EXPIRES_AT: String(Date.now() + 300_000),
+  };
+  const sendJob = () =>
+    store
+      .statement(
+        "SELECT version,turns,published_version FROM inventory_qrz_send_jobs WHERE tenant='a' AND attempt_id=?",
+        sendAttempt,
+      )
+      .first();
+  const disabled = await runHostedScheduled({
+    ...sendEnv,
+    EXPORTS_ENABLED: "false",
+  });
+  assert.equal(disabled.mode, "inventory_selected_qrz");
+  if (disabled.mode !== "inventory_selected_qrz") assert.fail();
+  assert.equal(disabled.qrzSendQueued, 0);
+  assert.equal(await sendJob(), null);
+  const lostPublish = await runHostedScheduled(sendEnv);
+  assert.equal(lostPublish.mode, "inventory_selected_qrz");
+  if (lostPublish.mode !== "inventory_selected_qrz") assert.fail();
+  assert.equal(lostPublish.qrzSendFailed, 1);
+  assert.deepEqual(await sendJob(), {
+    version: 1,
+    turns: 0,
+    published_version: 0,
+  });
+  failPublication = false;
+  const published = await runHostedScheduled(sendEnv);
+  assert.equal(published.mode, "inventory_selected_qrz");
+  if (published.mode !== "inventory_selected_qrz") assert.fail();
+  assert.equal(published.qrzSendQueued, 1);
+  assert.equal(deliveries.length, 1);
+  const firstSend = deliveries[0].body;
+  const hostedSend = async (body: unknown, env = sendEnv) => {
+    let acknowledged = false;
+    const result = await runHostedInventoryQueue(
+      env,
+      {
+        queue: "inventory-fixture",
+        messages: [
+          {
+            id: "fixture-send",
+            timestamp: new Date(),
+            attempts: 1,
+            body,
+            ack() {
+              acknowledged = true;
+            },
+            retry() {
+              assert.fail("unexpected send message retry");
+            },
+          },
+        ],
+        metadata: { metrics: { backlogCount: 1, backlogBytes: 0 } },
+        ackAll() {
+          assert.fail("unexpected queue acknowledgement");
+        },
+        retryAll() {
+          assert.fail("unexpected queue retry");
+        },
+      },
+      vendor,
+    );
+    assert.ok(acknowledged);
+    assert.ok(
+      result.mode === "inventory_read_only" ||
+        result.mode === "inventory_selected_qrz",
+    );
+    return result.qrzSendOutcome;
+  };
+  const closedReads = dispatchReads;
+  assert.equal(
+    await hostedSend(firstSend, {
+      ...sendEnv,
+      INVENTORY_RUNTIME_MODE: "read_only",
+    }),
+    "stale",
   );
+  assert.equal(
+    await hostedSend(firstSend, {
+      ...sendEnv,
+      QRZ_FRESH_INSERT_EXPIRES_AT: "",
+    }),
+    "stale",
+  );
+  assert.equal(dispatchReads, closedReads);
+  assert.deepEqual(await sendJob(), {
+    version: 1,
+    turns: 0,
+    published_version: 1,
+  });
+
+  sendMode = "budget";
+  assert.equal(await hostedSend(firstSend), "deferred");
+  assert.equal(inserts, 0);
+  assert.deepEqual(await sendJob(), {
+    version: 3,
+    turns: 1,
+    published_version: 3,
+  });
+  assert.equal(deliveries.length, 2);
+  assert.ok((deliveries[1].delaySeconds ?? 0) > 0);
+  const beforeReplay = dispatchReads;
+  assert.equal(await hostedSend(firstSend), "stale");
+  assert.equal(dispatchReads, beforeReplay);
+  await db.batch([
+    db.prepare(
+      "UPDATE vendor_requests SET cooldown_until=0 WHERE vendor='qrz'",
+    ),
+    store.statement(
+      "UPDATE inventory_qrz_send_jobs SET due_at=? WHERE tenant='a' AND attempt_id=?",
+      Date.now() - 1,
+      sendAttempt,
+    ),
+  ]);
+  sendMode = "lost";
+  const secondSend = deliveries[1].body;
+  assert.equal(await hostedSend(secondSend), "uncertain");
   assert.equal(inserts, 1);
   assert.deepEqual(writes, [
     {
@@ -1019,18 +1140,23 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       unsettled: 1,
     },
   ]);
+  assert.equal(await sendJob(), null);
   assert.equal(await qrz.cancelStale("a", sendAttempt), false);
   const restarted = new InventoryQrzDispatch(new Store(db, keys), vendor);
   const beforeRecovery = dispatchReads;
-  assert.deepEqual(await restarted.send("a", sendAttempt, writeGates), {
-    kind: "uncertain",
-  });
+  assert.equal(await hostedSend(secondSend), "stale");
   assert.equal(dispatchReads, beforeRecovery);
+  const strandedLease = await store.claim(
+    "a",
+    inventoryQrzBookLeaseScope("7"),
+    Date.now(),
+    90_000,
+  );
+  assert.ok(strandedLease);
   assert.deepEqual(await restarted.reconcile("a", sendAttempt), {
     kind: "uncertain",
   });
   assert.equal(dispatchReads, beforeRecovery);
-  assert.ok(stopped.strandedLease);
   const dueRecovery = () =>
     store
       .statement(
@@ -1057,7 +1183,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   recoveryFixture = { adif: null, actions: [] };
   await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
   assert.equal((await recoveryJob())?.published_version, 0);
-  await store.release(stopped.strandedLease);
+  await store.release(strandedLease);
   await assert.rejects(
     publishQrzRecoveryWakeups(store, {
       async sendBatch() {
@@ -1080,7 +1206,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       .statement(
         "SELECT expires_at FROM leases WHERE tenant=? AND scope=?",
         "a",
-        stopped.strandedLease.scope,
+        strandedLease.scope,
       )
       .first<number>("expires_at");
     if (!leaseUntil) break;
@@ -1207,6 +1333,12 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     restoreStage.attempts.map((row) => qrz.artifact("a", row.attempt_id)),
   );
   assert.ok(restoreArtifacts.every(Boolean));
+  class StoppedWorker extends Store {
+    strandedLease?: Lease;
+    override async release(lease: Lease) {
+      this.strandedLease = lease;
+    }
+  }
   const restoreWorker = new StoppedWorker(db, keys);
   const restoreDispatch = new InventoryQrzDispatch(
     restoreWorker,

@@ -16,9 +16,13 @@ import {
   publishQrzRecoveryWakeups,
 } from "./inventory-qrz-recovery.ts";
 import {
+  type InventoryDeliveryEnvironment,
+  InventoryQrzSendQueue,
+  isQrzSendWakeup,
+} from "./inventory-qrz-send.ts";
+import {
   configuredQrzShadow,
   InventoryQrzShadow,
-  type InventoryShadowEnvironment,
 } from "./inventory-qrz-shadow.ts";
 import { InventoryRunner } from "./inventory-runner.ts";
 import { InventoryRuns } from "./inventory-runs.ts";
@@ -44,14 +48,14 @@ import { Store } from "./store.ts";
 
 function configuredMode(env: Env) {
   const value = env.INVENTORY_RUNTIME_MODE ?? "off";
-  if (value !== "off" && value !== "read_only")
+  if (value !== "off" && value !== "read_only" && value !== "selected_qrz")
     throw new Error("invalid_inventory_runtime_mode");
   return value;
 }
 
 /** Environment off pauses a handed-off database; it cannot restore its sender. */
 export async function runHostedScheduled(
-  env: InventoryShadowEnvironment,
+  env: InventoryDeliveryEnvironment,
   options: { scheduledTime?: number; legacy?: typeof runScheduledTick } = {},
 ) {
   const mode = configuredMode(env);
@@ -105,8 +109,21 @@ export async function runHostedScheduled(
     store,
     env.INVENTORY_QUEUE,
   );
+  let qrzSendQueued = 0;
+  let qrzSendFailed = 0;
+  try {
+    qrzSendQueued = await new InventoryQrzSendQueue(
+      env,
+      new InventoryQrzDispatch(store),
+    ).schedule();
+  } catch {
+    qrzSendFailed = 1;
+  }
   return {
-    mode: "inventory_read_only" as const,
+    mode:
+      mode === "selected_qrz"
+        ? ("inventory_selected_qrz" as const)
+        : ("inventory_read_only" as const),
     registration,
     calendarRegistration,
     overflowRegistration,
@@ -115,25 +132,28 @@ export async function runHostedScheduled(
       inventoryQueued +
       comparisonQueued +
       sourceProofQueued +
-      qrzRecoveryQueued,
+      qrzRecoveryQueued +
+      qrzSendQueued,
     inventoryQueued,
     comparisonQueued,
     sourceProofQueued,
     qrzRecoveryQueued,
+    qrzSendQueued,
+    qrzSendFailed,
     qrzShadow,
   };
 }
 
-/** Queue handlers run managed reads and evidence work under read-only mode. */
+/** Reads and recovery remain available independently of the selected sender. */
 export async function runHostedInventoryQueue(
-  env: InventoryShadowEnvironment,
+  env: InventoryDeliveryEnvironment,
   batch: MessageBatch<unknown>,
   fetcher: typeof fetch = fetch,
 ) {
   const mode = configuredMode(env);
   const store = new Store(env.DB, keyring(env));
   const runtime = await inventoryRuntime(store);
-  if (mode !== "read_only" || runtime.mode !== "inventory_read_only") {
+  if (mode === "off" || runtime.mode !== "inventory_read_only") {
     batch.retryAll({ delaySeconds: 300 });
     return { mode: "inventory_paused" as const, processed: 0 };
   }
@@ -151,7 +171,8 @@ export async function runHostedInventoryQueue(
     (message) =>
       !isComparisonMessage(message.body) &&
       !isSourceProofWakeup(message.body) &&
-      !isQrzRecoveryWakeup(message.body),
+      !isQrzRecoveryWakeup(message.body) &&
+      !isQrzSendWakeup(message.body),
   );
   const proofMessages = batch.messages.filter((message) =>
     isSourceProofWakeup(message.body),
@@ -159,6 +180,11 @@ export async function runHostedInventoryQueue(
   const recoveryMessages = batch.messages.filter((message) =>
     isQrzRecoveryWakeup(message.body),
   );
+  const sendMessages = batch.messages.filter((message) =>
+    isQrzSendWakeup(message.body),
+  );
+  const dispatch = new InventoryQrzDispatch(store, fetcher);
+  const sender = new InventoryQrzSendQueue(env, dispatch);
   let comparisonAfterInventory = 0,
     inventoryAfterComparison = 0,
     inventoryAfterProof = 0,
@@ -195,6 +221,7 @@ export async function runHostedInventoryQueue(
   const config = proofMessages.length ? configuredQrzShadow(env) : null;
   const selection = config?.selection;
   let qrzShadow: string | null = config?.kind === "invalid" ? "invalid" : null;
+  let qrzSendAfterProof = 0;
   const proof = await consumeSourceProofWakeups(
     proofJobs,
     proofMessages,
@@ -216,44 +243,65 @@ export async function runHostedInventoryQueue(
           wakeup.id,
         );
         qrzShadow = staged.kind;
+        qrzSendAfterProof += await sender.schedule();
         if (staged.kind === "quiet") return staged.retryAt;
       }
       return undefined;
     },
   );
-  const recovery = await consumeQrzRecoveryWakeups(
-    new InventoryQrzDispatch(store, fetcher),
-    recoveryMessages,
-  );
+  const recovery = await consumeQrzRecoveryWakeups(dispatch, recoveryMessages);
+  const send = await sender.consume(sendMessages);
+  const qrzSendQueued = qrzSendAfterProof + send.queued;
   const inventoryQueued =
     inventory.queued + inventoryAfterComparison + inventoryAfterProof;
   const comparisonQueued = comparison.queued + comparisonAfterInventory;
   return {
-    mode: "inventory_read_only" as const,
+    mode:
+      mode === "selected_qrz"
+        ? ("inventory_selected_qrz" as const)
+        : ("inventory_read_only" as const),
     processed:
       inventory.processed +
       comparison.processed +
       proof.processed +
-      recovery.processed,
+      recovery.processed +
+      send.processed,
     inventoryProcessed: inventory.processed,
     comparisonProcessed: comparison.processed,
     sourceProofProcessed: proof.processed,
     qrzRecoveryProcessed: recovery.processed,
+    qrzSendProcessed: send.processed,
+    qrzSendOutcome: send.outcome,
     qrzShadow,
     acknowledged:
       inventory.acknowledged +
       comparison.acknowledged +
       proof.acknowledged +
-      recovery.acknowledged,
+      recovery.acknowledged +
+      send.acknowledged,
     retried:
-      inventory.retried + comparison.retried + proof.retried + recovery.retried,
+      inventory.retried +
+      comparison.retried +
+      proof.retried +
+      recovery.retried +
+      send.retried,
     invalid:
-      inventory.invalid + comparison.invalid + proof.invalid + recovery.invalid,
+      inventory.invalid +
+      comparison.invalid +
+      proof.invalid +
+      recovery.invalid +
+      send.invalid,
     failed:
-      inventory.failed + comparison.failed + proof.failed + recovery.failed,
-    queued: inventoryQueued + comparisonQueued + sourceProofQueued,
+      inventory.failed +
+      comparison.failed +
+      proof.failed +
+      recovery.failed +
+      send.failed,
+    queued:
+      inventoryQueued + comparisonQueued + sourceProofQueued + qrzSendQueued,
     inventoryQueued,
     comparisonQueued,
     sourceProofQueued,
+    qrzSendQueued,
   };
 }

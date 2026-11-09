@@ -22,7 +22,7 @@ interface Target {
   provider: HistoricalVendor;
   logical_identity: string;
 }
-interface Existing extends Selection {
+interface Existing extends Selection, Target {
   source_identity: string | null;
   association: string | null;
 }
@@ -105,25 +105,22 @@ export class InventoryAssociations {
       new Set(selected.map(key)).size !== selected.length
     )
       throw new Error("invalid_inventory_adoption_selection");
-    const target = await this.store
+    const existing = await this.store
       .statement(
-        "SELECT provider,logical_identity FROM inventory_scopes WHERE tenant=? AND scope_id=? AND provider IN('qrz','lotw')",
+        `WITH target AS MATERIALIZED (
+   SELECT tenant,provider,logical_identity FROM inventory_scopes WHERE tenant=?2 AND scope_id=?3 AND provider IN('qrz','lotw')
+ ) SELECT t.provider,t.logical_identity,json_extract(j.value,'$.scope') AS scope,json_extract(j.value,'$.key') AS key,s.logical_identity AS source_identity,a.id AS association
+   FROM target t CROSS JOIN json_each(?1) j
+   LEFT JOIN inventory_scopes s ON s.tenant=t.tenant AND s.scope_id=json_extract(j.value,'$.scope') AND s.provider='lofi'
+   LEFT JOIN inventory_historical_associations a ON a.tenant=t.tenant AND a.provider=t.provider AND a.book_identity=t.logical_identity AND a.source_identity=s.logical_identity AND a.record_key=json_extract(j.value,'$.key')
+   ORDER BY CAST(j.key AS INTEGER)`,
+        canonical(selected),
         tenant,
         destination,
       )
-      .first<Target>();
-    if (!target) throw new Error("inventory_adoption_destination_unavailable");
-    const existing = await this.store
-      .statement(
-        `SELECT json_extract(j.value,'$.scope') AS scope,json_extract(j.value,'$.key') AS key,s.logical_identity AS source_identity,a.id AS association
-   FROM json_each(?1) j LEFT JOIN inventory_scopes s ON s.tenant=?2 AND s.scope_id=json_extract(j.value,'$.scope') AND s.provider='lofi'
-   LEFT JOIN inventory_historical_associations a ON a.tenant=s.tenant AND a.provider=?3 AND a.book_identity=?4 AND a.source_identity=s.logical_identity AND a.record_key=json_extract(j.value,'$.key')`,
-        canonical(selected),
-        tenant,
-        target.provider,
-        target.logical_identity,
-      )
       .all<Existing>();
+    const target = existing.results[0];
+    if (!target) throw new Error("inventory_adoption_destination_unavailable");
     const skipped: PreparedInventoryAdoption["skipped"] = [];
     const pending: Selection[] = [];
     for (const row of existing.results) {
@@ -186,14 +183,29 @@ export class InventoryAssociations {
         });
     }
     if (!matches.length) return finish();
-    const prior = await this.store
-      .statement(
+    const [prior, metadata] = await this.store.db.batch([
+      this.store.statement(
         "SELECT 1 FROM inventory_prior_delivery_evidence WHERE tenant=? AND provider=? LIMIT 1",
         tenant,
         target.provider,
-      )
-      .first();
-    if (prior) {
+      ),
+      this.store.statement(
+        `SELECT r.source_scope AS scope,r.record_key AS key,s.logical_identity AS source_identity,r.set_id AS match_set,r.version AS match_version,r.remote_key AS remote_record_key,h.generation_id,
+   src.current_projection_version AS source_projection_version,src.payload_id AS source_payload,remote.current_projection_version AS remote_projection_version,remote.payload_id AS remote_payload
+   FROM json_each(?1) j CROSS JOIN match_results r CROSS JOIN inventory_match_sets h CROSS JOIN inventory_scopes s
+   CROSS JOIN inventory_match_records src CROSS JOIN inventory_match_records remote
+   WHERE (r.tenant,r.destination,r.source_scope,r.record_key)=(?2,?3,json_extract(j.value,'$.source_scope'),json_extract(j.value,'$.record_key'))
+   AND (r.version,r.set_id,r.state)=(json_extract(j.value,'$.version'),json_extract(j.value,'$.set_id'),'matched_existing')
+   AND (h.tenant,h.set_id)=(r.tenant,r.set_id)
+   AND (s.tenant,s.scope_id,s.provider)=(r.tenant,r.source_scope,'lofi')
+   AND (src.tenant,src.set_id,src.scope_id,src.record_key,src.facet)=(r.tenant,r.set_id,r.source_scope,r.record_key,'source')
+   AND (remote.tenant,remote.set_id,remote.scope_id,remote.record_key,remote.facet)=(r.tenant,r.set_id,r.destination,r.remote_key,'receipt')`,
+        canonical(matches),
+        tenant,
+        destination,
+      ),
+    ]);
+    if (prior.results.length) {
       for (const row of matches)
         skipped.push({
           scope: row.source_scope,
@@ -202,39 +214,15 @@ export class InventoryAssociations {
         });
       return finish();
     }
-    const metadata = await this.store
-      .statement(
-        `SELECT r.source_scope AS scope,r.record_key AS key,s.logical_identity AS source_identity,r.set_id AS match_set,r.version AS match_version,r.remote_key AS remote_record_key,
-   src.current_projection_version AS source_projection_version,src.payload_id AS source_payload,remote.current_projection_version AS remote_projection_version,remote.payload_id AS remote_payload
-   FROM json_each(?1) j CROSS JOIN match_results r CROSS JOIN inventory_scopes s
-   CROSS JOIN inventory_match_records src CROSS JOIN inventory_match_records remote
-   WHERE (r.tenant,r.destination,r.source_scope,r.record_key)=(?2,?3,json_extract(j.value,'$.source_scope'),json_extract(j.value,'$.record_key'))
-   AND (r.version,r.set_id,r.state)=(json_extract(j.value,'$.version'),json_extract(j.value,'$.set_id'),'matched_existing')
-   AND (s.tenant,s.scope_id,s.provider)=(r.tenant,r.source_scope,'lofi')
-   AND (src.tenant,src.set_id,src.scope_id,src.record_key,src.facet)=(r.tenant,r.set_id,r.source_scope,r.record_key,'source')
-   AND (remote.tenant,remote.set_id,remote.scope_id,remote.record_key,remote.facet)=(r.tenant,r.set_id,r.destination,r.remote_key,'receipt')`,
-        canonical(matches),
-        tenant,
-        destination,
-      )
-      .all<Member>();
-    if (metadata.results.length !== matches.length)
+    const rows = metadata.results as (Member & { generation_id: string })[];
+    if (rows.length !== matches.length)
       throw new Error("inventory_adoption_match_changed");
-    const generations = new Set(matches.map((row) => row.set_id));
-    const genRows = await this.store
-      .statement(
-        "SELECT set_id,generation_id FROM inventory_match_sets WHERE tenant=? AND set_id IN(SELECT value FROM json_each(?))",
-        tenant,
-        canonical([...generations]),
-      )
-      .all<{ set_id: string; generation_id: string }>();
-    const generationIds = new Set(
-      genRows.results.map((row) => row.generation_id),
-    );
+    const generationIds = new Set(rows.map((row) => row.generation_id));
     if (generationIds.size !== 1)
       throw new Error("inventory_adoption_generation_changed");
     const generation = [...generationIds][0];
-    const refs = metadata.results.flatMap((row) => [
+    const members = rows.map(({ generation_id: _, ...row }) => row);
+    const refs = members.flatMap((row) => [
       {
         scope: row.scope,
         key: row.key,
@@ -260,7 +248,7 @@ export class InventoryAssociations {
     page.stats.decryptedBodies += bodies.stats.decryptedBodies;
     page.stats.encryptedInputBytes += bodies.stats.encryptedInputBytes;
     page.stats.plaintextBytes += bodies.stats.plaintextBytes;
-    const remote = metadata.results.map((row) => {
+    const remote = members.map((row) => {
       const body = bodies.items.find(
         (body) =>
           body.scope === destination &&
@@ -274,7 +262,7 @@ export class InventoryAssociations {
     const lookup = await new InventoryOwnership(this.store).lookup(
       tenant,
       target.provider,
-      metadata.results.map((row, i) => ({
+      members.map((row, i) => ({
         id: String(i),
         sourceIdentity: row.source_identity,
         key: row.key,
@@ -300,21 +288,15 @@ export class InventoryAssociations {
       for (let i = 0; i < remote.length; i++)
         for (let j = i + 1; j < remote.length; j++)
           if (
-            owner(
-              metadata.results[i].source_identity,
-              metadata.results[i].key,
-            ) !==
-              owner(
-                metadata.results[j].source_identity,
-                metadata.results[j].key,
-              ) &&
+            owner(members[i].source_identity, members[i].key) !==
+              owner(members[j].source_identity, members[j].key) &&
             historicalCandidates("lotw", remote[i], [remote[j]]).state !==
               "none"
           ) {
             conflicts.add(i);
             conflicts.add(j);
           }
-    for (const [i, row] of metadata.results.entries()) {
+    for (const [i, row] of members.entries()) {
       const observation = lookup.observations[i];
       if (
         lookup.state !== "observed" ||

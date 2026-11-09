@@ -104,6 +104,30 @@ Both timings exclude enrollment, the coordinator's idle phases,
 and final audit. The profile leaves shared proof validation as the
 largest remaining read cost within each adoption turn.
 
+### Adoption preparation reads
+
+The selection query now resolves the destination and existing mappings
+together. A second batch reads prior-delivery evidence and exact match
+metadata, including each selected proof's generation. The prepared page
+still binds the same inputs and ownership version, and native
+publication rechecks the same authority.
+
+Paired private copies through migration 0123 replayed the same 2,917
+pending QRZ adoptions in 211 productive turns. Both finished with
+2,957 identical historical mappings and zero pending adoptions, provider
+requests or upload attempts. Credential envelopes, checkpoints and
+current classifications passed the audit.
+
+| Native adoption worker | D1 calls | SQL statements | Rows read | Rows written |
+| --- | ---: | ---: | ---: | ---: |
+| Separate metadata reads | 3,588 | 5,065 | 1,067,086 | 65,651 |
+| Consolidated metadata | 2,955 | 4,643 | 1,072,507 | 65,651 |
+
+Reading the proof generation with each selected record raised row reads
+by about 0.5%. The full 1,000-contact matched pipeline saved 150 D1
+calls and 100 SQL statements during classification and adoption. It
+verified all 1,000 current matches in the same 152 Queue deliveries.
+
 ### Coalesced idle coordinator phases
 
 The coordinator now checks consecutive idle phases under one lease and

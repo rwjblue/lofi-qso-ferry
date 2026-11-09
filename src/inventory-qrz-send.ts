@@ -1,8 +1,8 @@
 import type { InventoryQrzDispatch } from "./inventory-qrz-dispatch.ts";
 import {
-  configuredQrzShadow,
+  configuredInventoryShadow,
   type InventoryShadowEnvironment,
-} from "./inventory-qrz-shadow.ts";
+} from "./inventory-preparation-shadow.ts";
 import { canonical } from "./security.ts";
 import { deliveryGates, routeDeliveryMode } from "./service.ts";
 
@@ -12,7 +12,7 @@ export type InventoryDeliveryEnvironment = InventoryShadowEnvironment & {
 
 function authorization(env: InventoryDeliveryEnvironment) {
   if (env.INVENTORY_RUNTIME_MODE !== "selected_qrz") return null;
-  const shadow = configuredQrzShadow(env);
+  const shadow = configuredInventoryShadow(env, "qrz");
   if (shadow.kind !== "configured") return null;
   let gates: ReturnType<typeof deliveryGates>;
   try {

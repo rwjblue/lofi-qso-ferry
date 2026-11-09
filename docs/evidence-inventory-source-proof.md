@@ -252,7 +252,7 @@ or uploads.
 
 ## Hosted QRZ shadow preparation
 
-The [shadow coordinator](../src/inventory-qrz-shadow.ts) starts from an
+The [shadow coordinator](../src/inventory-preparation-shadow.ts) starts from an
 explicit managed source, verified QRZ scope and at most twenty LoFi
 keys. It uses point lookups into current clear reviews and reuses the
 source proof and preparation receipts for durable progress. Cron can
@@ -312,5 +312,9 @@ kept its reservations and exact bytes under quarantine.
 An offline upgrade of the real fresh-start rehearsal preserved four
 credential envelopes and its send lock. Its active LoTW credential has
 query access and zero signing certificates. The upgrade created no
-batches and made no requests. Hosted LoTW enrollment, batch submission
-and member-level readback remain to be implemented.
+batches and made no requests.
+
+The hosted fixture also enrolled the LoTW proof from an explicit
+shadow selection and staged the replacement batch through the proof
+queue with exports disabled. Batch submission and member-level
+readback remain to be implemented.

@@ -645,6 +645,8 @@ Group members by tenant, logical destination, certificate version, full station 
 
 The inventory preparation path accepts an explicit compatible selection under one current source proof and destination. It checks the shared certificate once and signs one TQ8. One transaction saves the encrypted file, its wire hash, the ordered member manifest, and one attempt identity per contact. Publication rechecks every member and the shared station route and credential. A stale unsent batch can release all its reservations together while retaining its exact bytes. Restore quarantine holds those reservations for review.
 
+`INVENTORY_LOTW_SHADOW_JSON` accepts the same selection fields as the QRZ shadow. It runs with exports disabled and uses the existing proof queue. The initial selection must share one station configuration and one signing certificate. The shadow can retry a deferred certificate check while its source proof is current.
+
 Do not wait for a full batch. A sparse eligible cohort submits on its next fair scheduler turn. Share certificate checks only within their validated scope and lifetime.
 
 Twenty is an upper bound, not a requirement to combine every eligible contact. Members must fit the source-proof dependency/request/byte limits and have overlapping valid proof lifetimes at the shared dispatch boundary. Split or send smaller cohorts when those conditions cannot be met. The existing LoTW fresh-insert payload check explicitly permits one member, so multi-member authorization needs a distinct versioned contract and acceptance evidence; changing the signer call alone cannot enable it.

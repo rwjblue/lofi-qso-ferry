@@ -1,3 +1,4 @@
+import { InventoryLotwPreparation } from "./inventory-lotw-preparation.ts";
 import { InventoryQrzPreparation } from "./inventory-qrz-preparation.ts";
 import type { InventorySourceProofJobs } from "./inventory-source-proof-jobs.ts";
 import type { InventorySourceProofSnapshot } from "./inventory-source-proof-workspace.ts";
@@ -5,7 +6,10 @@ import { canonical, sha256 } from "./security.ts";
 
 export type InventoryShadowEnvironment = Env & {
   INVENTORY_QRZ_SHADOW_JSON?: string;
+  INVENTORY_LOTW_SHADOW_JSON?: string;
 };
+export const inventoryShadowProviders = ["qrz", "lotw"] as const;
+type Provider = (typeof inventoryShadowProviders)[number];
 
 interface Selection {
   tenant: string;
@@ -17,11 +21,18 @@ interface Selection {
 const identifier = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 256;
 
-export function configuredQrzShadow(env: InventoryShadowEnvironment) {
-  if (!env.INVENTORY_QRZ_SHADOW_JSON) return { kind: "off" as const };
+export function configuredInventoryShadow(
+  env: InventoryShadowEnvironment,
+  provider: Provider,
+) {
+  const raw =
+    provider === "qrz"
+      ? env.INVENTORY_QRZ_SHADOW_JSON
+      : env.INVENTORY_LOTW_SHADOW_JSON;
+  if (!raw) return { kind: "off" as const };
   let value: Partial<Selection> | null;
   try {
-    value = JSON.parse(env.INVENTORY_QRZ_SHADOW_JSON);
+    value = JSON.parse(raw);
   } catch {
     return { kind: "invalid" as const };
   }
@@ -40,12 +51,24 @@ export function configuredQrzShadow(env: InventoryShadowEnvironment) {
   return { kind: "configured" as const, selection: value as Selection };
 }
 
-/** The explicit selection limits the shadow to exact lookups. The existing
- * source proof outbox and QRZ preparation receipt carry durable state. */
-export class InventoryQrzShadow {
+const reviewGuard: Record<Provider, string> = {
+  qrz: `json_extract(b.destination_config,'$.bookId')=b.book_identity
+   AND EXISTS(SELECT 1 FROM active_templates t WHERE t.tenant=?2 AND t.destination=b.destination_connection)
+   AND NOT EXISTS(SELECT 1 FROM inventory_qrz_attempts a WHERE a.tenant=?2 AND a.book_identity=b.book_identity
+       AND a.source_identity=b.source_identity AND a.record_key=b.record_key AND a.cancelled_at IS NULL)`,
+  lotw: `json_extract(b.destination_config,'$.readAccess')=1
+   AND (json_type(b.destination_config,'$.station')='object' OR json_array_length(b.destination_config,'$.stations')>0)
+   AND NOT EXISTS(SELECT 1 FROM inventory_lotw_batch_members a WHERE a.tenant=?2
+       AND a.source_identity=b.source_identity AND a.record_key=b.record_key AND a.cancelled_at IS NULL)`,
+};
+
+/** The explicit selection limits the shadow to exact lookups. The source
+ * proof outbox and provider preparation receipts carry durable state. */
+export class InventoryPreparationShadow {
   constructor(
     readonly jobs: InventorySourceProofJobs,
     readonly selection: Selection,
+    readonly provider: Provider,
   ) {}
 
   private get store() {
@@ -61,10 +84,7 @@ export class InventoryQrzShadow {
              SELECT b.record_key,b.proof_not_before,b.result_set
              FROM json_each(?1) j CROSS JOIN inventory_delivery_preparation_review b
              WHERE (b.tenant,b.source_scope,b.destination,b.record_key)=(?2,?3,?4,j.value)
-               AND b.provider='qrz' AND json_extract(b.destination_config,'$.bookId')=b.book_identity
-               AND EXISTS(SELECT 1 FROM active_templates t WHERE t.tenant=?2 AND t.destination=b.destination_connection)
-               AND NOT EXISTS(SELECT 1 FROM inventory_qrz_attempts a WHERE a.tenant=?2 AND a.book_identity=b.book_identity
-                 AND a.source_identity=b.source_identity AND a.record_key=b.record_key AND a.cancelled_at IS NULL)
+               AND b.provider=?5 AND ${reviewGuard[this.provider]}
                AND NOT EXISTS(SELECT 1 FROM inventory_restore_locks l WHERE l.tenant=?2)
            ), fresh AS MATERIALIZED(
              SELECT result_set FROM (SELECT DISTINCT result_set FROM chosen) c
@@ -75,6 +95,7 @@ export class InventoryQrzShadow {
           tenant,
           sourceScope,
           destinationScope,
+          this.provider,
         )
         .all<{ record_key: string; proof_not_before: number }>()
     ).results;
@@ -103,7 +124,7 @@ export class InventoryQrzShadow {
       .map((row) => row.record_key);
     if (!keys.length) return { kind: "idle" as const };
     const result = await this.jobs.enqueue(tenant, sourceScope, keys, {
-      provider: "qrz",
+      provider: this.provider,
       destination: destinationScope,
     });
     return result.kind === "complete" ? this.stage(result.id) : result;
@@ -129,7 +150,7 @@ export class InventoryQrzShadow {
           recordKeys.includes(key) &&
           routes.some(
             (route) =>
-              route.provider === "qrz" &&
+              route.provider === this.provider &&
               route.destination === destinationScope,
           ),
       )
@@ -142,14 +163,25 @@ export class InventoryQrzShadow {
     if (retryAt > Date.now()) return { kind: "quiet" as const, retryAt };
     const keys = reviews.map((row) => row.record_key);
     const stageId = await sha256(
-      canonical(["inventory-qrz-shadow-v1", proofId, destinationScope, keys]),
+      canonical([
+        `inventory-${this.provider}-shadow-v1`,
+        proofId,
+        destinationScope,
+        keys,
+      ]),
     );
-    return new InventoryQrzPreparation(this.store).prepare(
-      tenant,
-      proofId,
-      destinationScope,
-      keys,
-      stageId,
-    );
+    const args = [tenant, proofId, destinationScope, keys, stageId] as const;
+    if (this.provider === "qrz")
+      return new InventoryQrzPreparation(this.store).prepare(...args);
+    const result = await new InventoryLotwPreparation(
+      this.store,
+      this.jobs.fetcher,
+    ).prepare(...args);
+    if (result.kind === "deferred" && result.retryAt >= proof.expires_at)
+      return {
+        kind: "held" as const,
+        reason: "lotw_certificate_budget_outside_proof",
+      };
+    return result;
   }
 }

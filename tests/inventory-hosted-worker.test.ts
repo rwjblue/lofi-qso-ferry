@@ -43,6 +43,35 @@ import {
   fixtureEnvironment,
 } from "./runtime-fixtures.ts";
 
+function singleDelivery(body: unknown) {
+  let acknowledged = false;
+  const batch: MessageBatch<unknown> = {
+    queue: "inventory-fixture",
+    messages: [
+      {
+        id: "fixture-message",
+        timestamp: new Date(),
+        attempts: 1,
+        body,
+        ack() {
+          acknowledged = true;
+        },
+        retry() {
+          assert.fail("unexpected message retry");
+        },
+      },
+    ],
+    metadata: { metrics: { backlogCount: 1, backlogBytes: 0 } },
+    ackAll() {
+      assert.fail("unexpected queue acknowledgement");
+    },
+    retryAll() {
+      assert.fail("unexpected queue retry");
+    },
+  };
+  return { batch, assertAcknowledged: () => assert.ok(acknowledged) };
+}
+
 test("actual Worker cron drives paced inventory, comparison and historical adoption", async (t) => {
   const bundle = await build({
     entryPoints: ["src/index.ts"],
@@ -1055,36 +1084,9 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   assert.equal(deliveries.length, 1);
   const firstSend = deliveries[0].body;
   const hostedSend = async (body: unknown, env = sendEnv) => {
-    let acknowledged = false;
-    const result = await runHostedInventoryQueue(
-      env,
-      {
-        queue: "inventory-fixture",
-        messages: [
-          {
-            id: "fixture-send",
-            timestamp: new Date(),
-            attempts: 1,
-            body,
-            ack() {
-              acknowledged = true;
-            },
-            retry() {
-              assert.fail("unexpected send message retry");
-            },
-          },
-        ],
-        metadata: { metrics: { backlogCount: 1, backlogBytes: 0 } },
-        ackAll() {
-          assert.fail("unexpected queue acknowledgement");
-        },
-        retryAll() {
-          assert.fail("unexpected queue retry");
-        },
-      },
-      vendor,
-    );
-    assert.ok(acknowledged);
+    const delivery = singleDelivery(body);
+    const result = await runHostedInventoryQueue(env, delivery.batch, vendor);
+    delivery.assertAcknowledged();
     assert.ok(
       result.mode === "inventory_read_only" ||
         result.mode === "inventory_selected_qrz",
@@ -1556,12 +1558,24 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     await delay(50);
   assert.equal(await lotwReviewCount(), 2);
   await ageQuietClocks();
-  const lotwProof = await jobs.enqueue("a", sourceScope, lotwKeys, {
-    provider: "lotw",
-    destination: lotwScope,
-  });
-  if (lotwProof.kind !== "queued") assert.fail(JSON.stringify(lotwProof));
-  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  const lotwEnv = {
+    ...shadowEnv,
+    INVENTORY_QRZ_SHADOW_JSON: undefined,
+    INVENTORY_LOTW_SHADOW_JSON: JSON.stringify({
+      tenant: "a",
+      sourceScope,
+      destinationScope: lotwScope,
+      recordKeys: lotwKeys,
+    }),
+  };
+  const lotwEnrollment = await runHostedScheduled(lotwEnv);
+  if (lotwEnrollment.mode !== "inventory_read_only")
+    assert.fail(lotwEnrollment.mode);
+  assert.equal(lotwEnrollment.lotwShadow, "queued");
+  assert.equal(lotwEnrollment.sourceProofQueued, 1);
+  const lotwJob = await jobs.load("a", sourceScope);
+  assert.ok(lotwJob);
+  const lotwProof = { id: lotwJob.job_id };
   for (let i = 0; i < 500; i++) {
     const job = await jobs.load("a", sourceScope);
     if (job?.phase === "complete" || job?.phase === "held") break;
@@ -1578,20 +1592,18 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   await ageQuietClocks();
   let certificateChecks = 0;
   let crlStatus = "Revoked";
-  const prepareLotw = new InventoryLotwPreparation(
-    store,
-    async (input, init) => {
-      assert.equal(
-        String(input),
-        `https://lotw.arrl.org/lotw/crl?serial=${signing.serial}`,
-      );
-      assert.equal(init?.method ?? "GET", "GET");
-      assert.equal(init?.redirect, "manual");
-      assert.equal(init?.body, undefined);
-      certificateChecks++;
-      return new Response(`<Status>${crlStatus}</Status>`);
-    },
-  );
+  const certificateFetch: typeof fetch = async (input, init) => {
+    assert.equal(
+      String(input),
+      `https://lotw.arrl.org/lotw/crl?serial=${signing.serial}`,
+    );
+    assert.equal(init?.method ?? "GET", "GET");
+    assert.equal(init?.redirect, "manual");
+    assert.equal(init?.body, undefined);
+    certificateChecks++;
+    return new Response(`<Status>${crlStatus}</Status>`);
+  };
+  const prepareLotw = new InventoryLotwPreparation(store, certificateFetch);
   const lotwBatchArgs = ["a", lotwProof.id, lotwScope, lotwKeys] as const;
   assert.deepEqual(await prepareLotw.prepare(...lotwBatchArgs, "revoked"), {
     kind: "held",
@@ -1675,9 +1687,29 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     lotwArtifact,
   );
   await db.prepare("UPDATE accounts SET quiet_minutes=30 WHERE id='a'").run();
-  const replacement = await prepareLotw.prepare(
+  const lotwDelivery = singleDelivery({
+    kind: "inventory-source-proof",
+    version: 1,
+    tenant: "a",
+    scope: sourceScope,
+    id: lotwProof.id,
+    workVersion: lotwJob.version,
+  });
+  const hostedBatch = await runHostedInventoryQueue(
+    lotwEnv,
+    lotwDelivery.batch,
+    certificateFetch,
+  );
+  if (hostedBatch.mode !== "inventory_read_only") assert.fail(hostedBatch.mode);
+  lotwDelivery.assertAcknowledged();
+  assert.equal(hostedBatch.lotwShadow, "prepared");
+  assert.equal(certificateChecks, 4);
+  const replacementId = await sha256(
+    canonical(["inventory-lotw-shadow-v1", lotwProof.id, lotwScope, lotwKeys]),
+  );
+  const replacement = await reopenedLotw.prepare(
     ...lotwBatchArgs,
-    "snapshot-batch",
+    replacementId,
   );
   if (replacement.kind !== "prepared") assert.fail(JSON.stringify(replacement));
   const archivedLotw = await reopenedLotw.artifact("a", replacement.batchId);

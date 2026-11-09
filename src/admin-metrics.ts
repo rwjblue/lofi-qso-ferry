@@ -1,10 +1,7 @@
 import type { AdminOverview } from "./admin-types.ts";
-import {
-  deliveryGates,
-  exportAuthorizationMode,
-  exportsEffective,
-} from "./delivery-gates.ts";
+import { deliveryGates } from "./delivery-gates.ts";
 import { inventoryDashboardSummary } from "./inventory-dashboard.ts";
+import { inventoryWriteStatus } from "./inventory-delivery-send.ts";
 import { readInventoryRetentionPolicy } from "./inventory-retention-policy.ts";
 import { lofiAccountLabel } from "./lofi-identity.ts";
 import { VENDOR_POLICIES } from "./vendor-requests.ts";
@@ -18,12 +15,12 @@ function gatesSummary(env: Env): AdminOverview["gates"] {
     rolloutChecksPassed: String(env.ROLLOUT_CHECKS_PASSED) === "true",
     liveWriteAuthorized:
       String(env.LIVE_WRITE_AUTHORIZATION) === "I_AUTHORIZE_LIVE_VENDOR_WRITES",
-    sourceBoundaryVerified: String(env.SOURCE_BOUNDARY_VERIFIED) === "true",
     qrzFreshInsertsEnabled: String(env.QRZ_FRESH_INSERTS_ENABLED) === "true",
     lotwFreshInsertsEnabled: String(env.LOTW_FRESH_INSERTS_ENABLED) === "true",
   };
   try {
     const gates = deliveryGates(env);
+    const writes = inventoryWriteStatus(env);
     const configured =
       gates.allowedQsoIds === null || (gates.allowedQsoIds?.length ?? 0) > 0;
     const destinationsConfigured =
@@ -41,8 +38,8 @@ function gatesSummary(env: Env): AdminOverview["gates"] {
           : destinationsConfigured
             ? "limited"
             : "none",
-      effective: exportsEffective(gates),
-      exportMode: exportAuthorizationMode(gates),
+      effective: writes.exportsEnabled,
+      exportMode: writes.exportMode,
       configurationValid: true,
     };
   } catch {

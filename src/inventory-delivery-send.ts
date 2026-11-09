@@ -59,6 +59,26 @@ function authorization(env: InventoryDeliveryEnvironment, provider: Provider) {
   return { ...shadow.selection, recordKeys, destination, expiresAt, gates };
 }
 
+export function inventoryWriteStatus(env: InventoryDeliveryEnvironment) {
+  const allowed = (provider: Provider) =>
+    Boolean(
+      managedInventoryAuthorization(env, provider) ??
+        authorization(env, provider),
+    );
+  const qrz = allowed("qrz");
+  const lotw = allowed("lotw");
+  return {
+    exportsEnabled: qrz || lotw,
+    exportMode: qrz
+      ? lotw
+        ? ("fresh_inserts" as const)
+        : ("qrz_fresh_insert" as const)
+      : lotw
+        ? ("lotw_fresh_insert" as const)
+        : null,
+  };
+}
+
 const itemKey = (provider: Provider) =>
   provider === "qrz" ? "attempt" : "batch";
 const identifier = (value: unknown): value is string =>

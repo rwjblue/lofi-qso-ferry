@@ -8,7 +8,6 @@ import {
 test("closed common gates override every vendor mode in both browser presentations", () => {
   const closed = exportPresentation(false, null);
   for (const mode of [
-    "source_boundary",
     "qrz_fresh_insert",
     "lotw_fresh_insert",
     "fresh_inserts",
@@ -20,19 +19,11 @@ test("closed common gates override every vendor mode in both browser presentatio
   }
 });
 
-test("independent fresh modes name only their permitted vendor and keep corrections and cutovers closed", () => {
+test("independent fresh modes name their permitted vendor", () => {
   const qrz = exportPresentation(true, "qrz_fresh_insert");
   const lotw = exportPresentation(true, "lotw_fresh_insert");
   assert.equal(qrz.label, "QRZ first inserts");
-  assert.match(
-    qrz.message,
-    /Corrections, LoTW exports and source-boundary cutovers remain disabled/,
-  );
   assert.equal(lotw.label, "LoTW first inserts");
-  assert.match(
-    lotw.message,
-    /Corrections, QRZ exports and source-boundary cutovers remain disabled/,
-  );
   for (const row of [qrz, lotw]) {
     assert.match(
       row.message,
@@ -45,24 +36,21 @@ test("independent fresh modes name only their permitted vendor and keep correcti
   }
 });
 
-test("both fresh capabilities never advertise source-boundary authority", () => {
+test("combined mode labels both first-insert capabilities", () => {
   const both = exportPresentation(true, "fresh_inserts");
   assert.equal(both.label, "QRZ and LoTW first inserts");
   assert.match(
     both.message,
-    /Corrections and source-boundary cutovers remain disabled/,
+    /authorized scope after current source verification/,
   );
-  assert.doesNotMatch(
-    both.message,
-    /Automatic delivery is enabled|boundary verified/,
-  );
-  const boundary = exportPresentation(true, "source_boundary");
-  assert.equal(boundary.label, "Enabled");
-  assert.match(boundary.message, /Automatic delivery is enabled/);
 });
 
 test("missing or unknown mode fails closed and never echoes server values", () => {
-  for (const mode of [null, "private-unrecognized-mode" as BrowserExportMode]) {
+  for (const mode of [
+    null,
+    "source_boundary" as BrowserExportMode,
+    "private-unrecognized-mode" as BrowserExportMode,
+  ]) {
     assert.deepEqual(
       exportPresentation(true, mode),
       exportPresentation(false, null),

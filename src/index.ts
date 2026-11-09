@@ -3,15 +3,11 @@ import { isAdmin } from "./admin-access.ts";
 import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
 import { connectionRoute } from "./connections.ts";
 import {
-  deliveryGates,
-  exportAuthorizationMode,
-  exportsEffective,
-} from "./delivery-gates.ts";
-import {
   inventoryDashboardActivity,
   inventoryDashboardSummary,
   inventoryDashboardWindows,
 } from "./inventory-dashboard.ts";
+import { inventoryWriteStatus } from "./inventory-delivery-send.ts";
 import {
   runHostedInventoryQueue,
   runHostedScheduled,
@@ -60,10 +56,7 @@ export default {
         return secured(
           Response.json({
             status: "ok",
-            exportsEnabled: exportsEffective(deliveryGates(env)),
-            exportMode: exportAuthorizationMode(deliveryGates(env)),
-            sourceBoundaryVerified:
-              String(env.SOURCE_BOUNDARY_VERIFIED) === "true",
+            ...inventoryWriteStatus(env),
           }),
         );
       if (request.method === "GET" && url.pathname === "/join") {
@@ -156,7 +149,6 @@ export default {
             )
             .all()
         ).results;
-        const gates = deliveryGates(env);
         return secured(
           Response.json({
             email: account?.email,
@@ -168,8 +160,7 @@ export default {
             connections,
             passkeys,
             sessions,
-            exportsEnabled: exportsEffective(gates),
-            exportMode: exportAuthorizationMode(gates),
+            ...inventoryWriteStatus(env),
             potaExample: POTA_TEMPLATE,
             defaultTemplate: await defaultTemplate(store, identity.tenant),
             destinationTemplates: await destinationTemplates(

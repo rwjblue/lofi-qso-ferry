@@ -19,7 +19,6 @@ export interface AdminOverview {
     exportsEnabled: boolean;
     rolloutChecksPassed: boolean;
     liveWriteAuthorized: boolean;
-    sourceBoundaryVerified: boolean;
     qrzFreshInsertsEnabled: boolean;
     lotwFreshInsertsEnabled: boolean;
     exportMode: BrowserExportMode;

@@ -6,6 +6,7 @@ import {
   exportsEffective,
   routeDeliveryMode,
 } from "../src/delivery-gates.ts";
+import { inventoryWriteStatus } from "../src/inventory-delivery-send.ts";
 
 function environment(overrides: Partial<Env> = {}): Env {
   return {
@@ -18,6 +19,31 @@ function environment(overrides: Partial<Env> = {}): Env {
     ...overrides,
   } as Env;
 }
+
+test("native export status agrees with the active sender and provider gates", () => {
+  const env = environment({
+    SOURCE_BOUNDARY_VERIFIED: "false",
+    QRZ_FRESH_INSERTS_ENABLED: "true",
+    LOTW_FRESH_INSERTS_ENABLED: "true",
+  });
+  for (const mode of ["off", "read_only", "selected_qrz"])
+    assert.deepEqual(
+      inventoryWriteStatus({ ...env, INVENTORY_RUNTIME_MODE: mode }),
+      { exportsEnabled: false, exportMode: null },
+    );
+  assert.deepEqual(
+    inventoryWriteStatus({ ...env, INVENTORY_RUNTIME_MODE: "managed" }),
+    { exportsEnabled: true, exportMode: "fresh_inserts" },
+  );
+  assert.deepEqual(
+    inventoryWriteStatus({
+      ...env,
+      INVENTORY_RUNTIME_MODE: "managed",
+      QRZ_FRESH_INSERTS_ENABLED: "false",
+    }),
+    { exportsEnabled: true, exportMode: "lotw_fresh_insert" },
+  );
+});
 
 test("production export scope requires explicit contacts and destinations", () => {
   const gates = deliveryGates(environment());

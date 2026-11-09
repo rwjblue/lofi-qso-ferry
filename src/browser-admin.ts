@@ -313,7 +313,6 @@ function renderOverview(data: AdminOverview) {
     ["Exports enabled", data.gates.exportsEnabled],
     ["Rollout checks passed", data.gates.rolloutChecksPassed],
     ["Live writes authorized", data.gates.liveWriteAuthorized],
-    ["Source boundary verified", data.gates.sourceBoundaryVerified],
     ["QRZ first inserts enabled", data.gates.qrzFreshInsertsEnabled],
     ["LoTW first inserts enabled", data.gates.lotwFreshInsertsEnabled],
     [

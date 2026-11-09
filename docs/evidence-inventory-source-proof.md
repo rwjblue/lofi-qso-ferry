@@ -80,7 +80,60 @@ and adapter tests cover resuming a paced collection, unchanged witness
 times and the completed watermark vector. The focused suites passed
 124 tests. TypeScript, lint, formatting and the Worker dry-run build passed.
 
-These receipts are inputs for the next native step. Persisting the
-collection, revalidating the full closure at mint, producing an expiring
-proof, and binding that proof to delivery preparation remain open.
-The trials created zero proof rows, delivery attempts or uploads.
+These first trials qualified read receipts before proof publication was
+implemented. They created zero proof rows, delivery attempts or uploads.
+
+## Durable proof publication
+
+[Migration 0089](../migrations/0089_inventory_source_proof_jobs.sql)
+keeps one active collection per managed source. It retains the exact
+scope, dependency snapshot, witnesses, validated side positions, due
+time and original deadline across restarts. A native debit runs in the
+same transaction as LoFi request admission. A denied request rolls back
+the debit. An admitted request consumes the slot even if the worker
+restarts before saving the result.
+
+[Migration 0090](../migrations/0090_inventory_source_proofs.sql)
+binds the collection to one deterministic forward run. Collection
+reserves a fourth attempt for the drain. The drain's admitted requests
+count against the same allowance. If the proof expires or exceeds that
+allowance, later requests proceed as ordinary inventory work.
+
+Publication checks the one-page receipt, original witness times, exact
+source versions, complete operation event set, and current lease. The
+immutable proof and completed job become visible in one transaction.
+The current-proof lookup checks expiry and the source closure again.
+A destination can refresh its review while the source remains
+identical. Delivery preparation will check the current destination
+review before it uses a source proof.
+
+[Migration 0091](../migrations/0091_inventory_source_proof_wakeups.sql)
+uses the job's work version to recover Queue publication and ignore
+older messages. The hosted read-only worker processes explicitly
+queued proof jobs. Repeating a selection already covered by a current
+proof reuses that proof and its original expiry.
+
+## Live proof trial and qualification
+
+The durable job processed one real LoFi contact needed by both QRZ
+and LoTW in 26.3 seconds. LoFi returned HTTP 200 for both requests,
+one targeted collection and one complete forward read. Native
+admission charged exactly two attempts. A new process recovered the
+collection before the drain and recovered the published proof after
+the drain. Another reopen after expiry found the retained proof row
+outside the current-proof lookup. All copies preserved the captured
+credential ciphertext and original access. The trial created one
+proof and zero delivery attempts or uploads.
+
+The actual Worker cron and Queue test used one canonical forward
+request after reusing committed operation and contact witnesses. It
+verified proof reuse, the original expiry, and invalidation when the
+source quiet period changed. The hosted tests also recovered a failed
+queue send and ignored an older work version. The focused suites
+passed 44 tests, and TypeScript, lint, formatting and the Worker
+dry-run build passed.
+
+The next stage binds this proof to destination preparation, exact
+routing and a current ownership review. Automatic cohort enrollment
+from delivery work, signed batches, upload recovery and expired proof
+collection remain open.

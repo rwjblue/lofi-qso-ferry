@@ -1,6 +1,7 @@
 import {
   consumeComparisonWakeups,
   isComparisonMessage,
+  MAX_COMPARISON_STEPS_PER_WAKEUP,
   publishComparisonWakeups,
 } from "./inventory-comparison-continuations.ts";
 import { InventoryComparisonPages } from "./inventory-comparison-pages.ts";
@@ -297,6 +298,7 @@ export async function runHostedInventoryQueue(
     env.INVENTORY_QUEUE,
     {
       maxTurns: 1,
+      maxStepsPerWakeup: MAX_COMPARISON_STEPS_PER_WAKEUP,
       async afterPublish() {
         inventoryAfterComparison += await publishInventoryWakeups(
           runner.runs,
@@ -392,6 +394,7 @@ export async function runHostedInventoryQueue(
     processed: total("processed"),
     inventoryProcessed: inventory.processed,
     comparisonProcessed: comparison.processed,
+    comparisonSteps: comparison.steps,
     sourceProofProcessed: proof.processed,
     qrzRecoveryProcessed: qrzRecovery.processed,
     lotwRecoveryProcessed: lotwRecovery.processed,

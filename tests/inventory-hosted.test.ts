@@ -367,7 +367,7 @@ test("the hosted queue executes an owned source page, and off pauses future deli
   );
 });
 
-test("a mixed hosted batch advances one read and one comparison turn", async (t) => {
+test("a mixed hosted batch advances one read and bounded comparison steps", async (t) => {
   const f = await fixture(t);
   await runHostedScheduled(f.env);
   const scope = await f.db
@@ -399,6 +399,7 @@ test("a mixed hosted batch advances one read and one comparison turn", async (t)
   assert.ok("inventoryProcessed" in report);
   assert.equal(report.inventoryProcessed, 1);
   assert.equal(report.comparisonProcessed, 1);
+  assert.ok(report.comparisonSteps > 1 && report.comparisonSteps <= 4);
   assert.equal(report.processed, 2);
   assert.equal(report.failed, 0);
   assert.equal(reads, 1);

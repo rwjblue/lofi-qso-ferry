@@ -4,6 +4,7 @@ import { parseArgs } from "node:util";
 import {
   type ComparisonQueueMessage,
   consumeComparisonWakeups,
+  MAX_COMPARISON_STEPS_PER_WAKEUP,
   publishComparisonWakeups,
 } from "../src/inventory-comparison-continuations.ts";
 import { InventoryComparisonPages } from "../src/inventory-comparison-pages.ts";
@@ -39,16 +40,23 @@ const { values } = parseArgs({
     "page-size": { type: "string", default: "1000" },
     schema: { type: "string", default: "current" },
     "source-comparison": { type: "string", default: "interleaved" },
+    "comparison-steps-per-wakeup": { type: "string", default: "1" },
     "incremental-rounds": { type: "string", default: "0" },
   },
 });
 const contacts = Number(values.contacts),
   pageSize = Number(values["page-size"]),
+  comparisonStepsPerWakeup = Number(values["comparison-steps-per-wakeup"]),
   incrementalRounds = Number(values["incremental-rounds"]);
 assert.ok(
   Number.isSafeInteger(contacts) && contacts >= 1 && contacts <= 200000,
 );
 assert.ok(Number.isSafeInteger(pageSize) && pageSize >= 1 && pageSize <= 1000);
+assert.ok(
+  Number.isSafeInteger(comparisonStepsPerWakeup) &&
+    comparisonStepsPerWakeup >= 1 &&
+    comparisonStepsPerWakeup <= MAX_COMPARISON_STEPS_PER_WAKEUP,
+);
 assert.ok(values.remote === "empty" || values.remote === "matched");
 const sourceComparison = values["source-comparison"];
 assert.ok(
@@ -141,6 +149,8 @@ try {
   let queueSends = 0,
     queueMessages = 0,
     turns = 0,
+    comparisonSteps = 0,
+    maxDeliveryD1Calls = 0,
     stage = "enrollment";
   const phaseTurns: Record<string, number> = {};
   const phaseDatabase: Record<string, Counters> = {};
@@ -167,6 +177,7 @@ try {
   let before = { ...meter.totals },
     stageStarted = performance.now(),
     previousTurns = 0,
+    previousSteps = 0,
     previousMessages = 0;
   const stages: unknown[] = [];
   const checkpoint = () => {
@@ -175,12 +186,14 @@ try {
       wallMs: performance.now() - stageStarted,
       database: difference(meter.totals, before),
       queueTurns: turns - previousTurns,
+      comparisonSteps: comparisonSteps - previousSteps,
       queueMessages: queueMessages - previousMessages,
     };
     stages.push(result);
     console.log(JSON.stringify({ event: "stage", ...result }));
     before = { ...meter.totals };
     previousTurns = turns;
+    previousSteps = comparisonSteps;
     previousMessages = queueMessages;
     stageStarted = performance.now();
   };
@@ -212,16 +225,21 @@ try {
         store,
         { messages: [message] },
         queue,
+        { maxStepsPerWakeup: comparisonStepsPerWakeup },
       );
       assert.equal(result.failed, 0);
       assert.ok(acknowledged);
-      const key = phase === undefined ? "stale" : String(phase);
-      phaseTurns[key] = (phaseTurns[key] ?? 0) + 1;
-      phaseDatabase[key] ??= counters();
-      const costs = phaseDatabase[key];
+      comparisonSteps += result.steps;
       const delta = difference(meter.totals, previous);
-      for (const name of Object.keys(costs) as (keyof Counters)[])
-        costs[name] += delta[name];
+      maxDeliveryD1Calls = Math.max(maxDeliveryD1Calls, delta.calls);
+      if (comparisonStepsPerWakeup === 1) {
+        const key = phase === undefined ? "stale" : String(phase);
+        phaseTurns[key] = (phaseTurns[key] ?? 0) + 1;
+        phaseDatabase[key] ??= counters();
+        const costs = phaseDatabase[key];
+        for (const name of Object.keys(costs) as (keyof Counters)[])
+          costs[name] += delta[name];
+      }
       if (turns % 250 === 0)
         console.log(
           JSON.stringify({
@@ -545,6 +563,9 @@ try {
       queueSends,
       queueMessages,
       queueTurns: turns,
+      comparisonSteps,
+      comparisonStepsPerWakeup,
+      maxDeliveryD1Calls,
       phaseTurns,
       phaseDatabase,
       storage: {
@@ -564,7 +585,8 @@ try {
   );
   if (incrementalRounds) {
     const baseline = { ...meter.totals },
-      baselineTurns = turns;
+      baselineTurns = turns,
+      baselineSteps = comparisonSteps;
     const incrementalStarted = performance.now();
     const firstStage = stages.length;
     async function results() {
@@ -773,6 +795,7 @@ try {
         outcomes,
         database: difference(meter.totals, baseline),
         queueTurns: turns - baselineTurns,
+        comparisonSteps: comparisonSteps - baselineSteps,
         storage: {
           sqliteBytesBefore: incrementalSizeBefore,
           sqliteBytesAfter: finalSize,

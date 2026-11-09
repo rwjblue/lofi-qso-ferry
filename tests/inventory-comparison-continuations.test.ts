@@ -34,12 +34,12 @@ async function fixture(activate = true) {
     throw error;
   }
 }
-function batch(bodies: unknown[], trace: string[] = []) {
+function batch(bodies: unknown[], trace: string[] = [], attempts = 1) {
   const outcomes: (string | number)[][] = bodies.map(() => []);
   const messages: Message<unknown>[] = bodies.map((body, index) => ({
     id: String(index),
     timestamp: new Date(),
-    attempts: 1,
+    attempts,
     body,
     ack() {
       outcomes[index].push("ack");
@@ -65,6 +65,7 @@ test("comparison turns publish their continuation before acknowledging Queue del
       f.queue,
     );
     assert.equal(report.processed, 1);
+    assert.equal(report.steps, 1);
     assert.equal(report.acknowledged, 1);
     assert.equal(report.queued, 1);
     assert.deepEqual(f.trace, ["send", "send", "ack"]);
@@ -79,6 +80,44 @@ test("comparison turns publish their continuation before acknowledging Queue del
       "wakeupVersion",
       "workVersion",
     ]);
+  } finally {
+    await f.mf.dispose();
+  }
+});
+
+test("one wakeup advances four durable comparison steps and publishes only the final frame", async () => {
+  const f = await fixture();
+  try {
+    await publishComparisonWakeups(f.store, f.queue);
+    const first = f.sent.shift()!;
+    const delivery = batch([first.body], f.trace);
+    const report = await consumeComparisonWakeups(
+      f.store,
+      delivery.value,
+      f.queue,
+      { maxStepsPerWakeup: 4 },
+    );
+    assert.equal(report.processed, 1);
+    assert.equal(report.steps, 4);
+    assert.equal(report.queued, 1);
+    assert.deepEqual(f.trace, ["send", "send", "ack"]);
+    assert.deepEqual(delivery.outcomes, [["ack"]]);
+    assert.equal(f.sent.length, 1);
+    const final = f.sent[0].body;
+    assert.ok(final.controlVersion >= first.body.controlVersion + 4);
+    assert.deepEqual(await f.wakeups.pending(), []);
+    assert.deepEqual(
+      await f.db
+        .prepare(
+          "SELECT version,control_version,work_version FROM inventory_comparison_wakeups WHERE tenant='a'",
+        )
+        .first(),
+      {
+        version: final.wakeupVersion,
+        control_version: final.controlVersion,
+        work_version: final.workVersion,
+      },
+    );
   } finally {
     await f.mf.dispose();
   }
@@ -388,18 +427,41 @@ test("Queue publication failure retries the old message and leaves the advanced 
   try {
     await publishComparisonWakeups(f.store, f.queue);
     const delivery = batch([f.sent.shift()!.body]);
-    const report = await consumeComparisonWakeups(f.store, delivery.value, {
-      async sendBatch() {
-        throw new Error("synthetic Queue outage");
+    const report = await consumeComparisonWakeups(
+      f.store,
+      delivery.value,
+      {
+        async sendBatch() {
+          throw new Error("synthetic Queue outage");
+        },
       },
-    });
+      { maxStepsPerWakeup: 4 },
+    );
     assert.deepEqual(delivery.outcomes, [[60]]);
+    assert.equal(report.steps, 4);
     assert.equal(report.failed, 1);
     assert.equal(report.acknowledged, 0);
     const pending = await f.wakeups.pending();
     assert.equal(pending.length, 1);
     assert.equal(pending[0].published_at, 0);
-    assert.equal(await publishComparisonWakeups(f.store, f.queue), 1);
+    const retry = batch([delivery.value.messages[0].body], [], 2);
+    const retried = await consumeComparisonWakeups(
+      f.store,
+      retry.value,
+      f.queue,
+      { maxStepsPerWakeup: 4 },
+    );
+    assert.equal(retried.steps, 1);
+    assert.equal(retried.queued, 0);
+    assert.deepEqual(retry.outcomes, [["ack"]]);
+    const final = await f.db
+      .prepare(
+        "SELECT version,not_before FROM inventory_comparison_wakeups WHERE tenant='a'",
+      )
+      .first<{ version: number; not_before: number | null }>();
+    assert.ok(final && final.version > pending[0].version);
+    assert.equal(final.not_before, null);
+    assert.deepEqual(await f.wakeups.pending(), []);
   } finally {
     await f.mf.dispose();
   }
@@ -459,7 +521,9 @@ test("early comparison messages retain the parked deadline instead of running wo
       f.store,
       delivery.value,
       f.queue,
+      { maxStepsPerWakeup: 4 },
     );
+    assert.equal(report.steps, 0);
     assert.equal(report.retried, 1);
     assert.equal(report.acknowledged, 0);
     assert.ok(Number(delivery.outcomes[0][0]) >= 599);
@@ -499,6 +563,13 @@ test("comparison message batches enforce a bounded turn count and reject malform
     await assert.rejects(
       consumeComparisonWakeups(f.store, batch([]).value, f.queue, {
         maxTurns: 0,
+      }),
+      /invalid_comparison_queue_turn_limit/,
+    );
+    await assert.rejects(
+      consumeComparisonWakeups(f.store, batch([]).value, f.queue, {
+        maxTurns: 2,
+        maxStepsPerWakeup: 4,
       }),
       /invalid_comparison_queue_turn_limit/,
     );

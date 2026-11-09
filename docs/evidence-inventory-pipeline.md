@@ -332,6 +332,29 @@ increased from 1,210,564 to 1,219,430. Both runs wrote 131,195 rows,
 took 152 Queue turns, and published all 1,000 matches. These are local
 counts for the classification stage after source coverage.
 
+### Comparison steps per Queue delivery
+
+The hosted consumer can run up to four durable comparison steps on a
+new delivery. It rechecks the wakeup before every step and sends the
+final continuation before acknowledging the incoming message. A
+redelivery runs at most one step from the latest committed frame.
+
+Both native runs used the same 1,000-contact fixture with an empty QRZ
+selection and produced all 1,000 final absence classifications. The
+table isolates classification after source coverage.
+
+| Maximum steps per delivery | Durable steps | Deliveries | D1 calls | SQL statements | Rows written |
+| -------------------------- | ------------: | ---------: | -------: | -------------: | -----------: |
+| 1                          |           153 |        153 |    3,902 |          5,052 |       77,606 |
+| 4                          |           153 |         39 |    3,674 |          4,824 |       77,378 |
+
+The Queue fixture counts sends and deliveries without hosted Queue
+latency or Worker billing. Run with `--comparison-steps-per-wakeup 1`
+or `--comparison-steps-per-wakeup 4` to reproduce. Phase-specific
+counters apply to single-step deliveries. A repeat of the four-step
+run measured a peak of 120 D1 calls in one comparison delivery. The
+profile uses the [Workers Paid D1 invocation budget](https://developers.cloudflare.com/d1/platform/limits/).
+
 ## Recovery and boundedness
 
 Six new native cases cover complete replacement, a surviving old sibling cohort,

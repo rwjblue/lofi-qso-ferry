@@ -15,6 +15,8 @@ export interface ComparisonQueueMessage {
   workVersion: number;
 }
 type ComparisonQueue = Pick<Queue<ComparisonQueueMessage>, "sendBatch">;
+export const MAX_COMPARISON_STEPS_PER_WAKEUP = 4;
+const COMPARISON_WAKEUP_SLICE_MS = 5_000;
 const identifier = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 512;
 const positive = (value: unknown): value is number =>
@@ -129,13 +131,23 @@ export async function consumeComparisonWakeups(
   store: Store,
   batch: Pick<MessageBatch<unknown>, "messages">,
   queue: ComparisonQueue,
-  options: { maxTurns?: number; afterPublish?: () => Promise<void> } = {},
+  options: {
+    maxTurns?: number;
+    maxStepsPerWakeup?: number;
+    afterPublish?: () => Promise<void>;
+  } = {},
 ) {
   const maxTurns = options.maxTurns ?? 1;
-  if (!positive(maxTurns) || maxTurns > 4)
+  const maxStepsPerWakeup = options.maxStepsPerWakeup ?? 1;
+  if (
+    !positive(maxTurns) ||
+    !positive(maxStepsPerWakeup) ||
+    maxTurns * maxStepsPerWakeup > MAX_COMPARISON_STEPS_PER_WAKEUP
+  )
     throw new Error("invalid_comparison_queue_turn_limit");
   const report = {
     processed: 0,
+    steps: 0,
     acknowledged: 0,
     retried: 0,
     invalid: 0,
@@ -160,7 +172,18 @@ export async function consumeComparisonWakeups(
     }
     report.processed++;
     try {
-      const result = await stepComparisonWakeup(store, wakeup);
+      const deadline = Date.now() + COMPARISON_WAKEUP_SLICE_MS;
+      const stepLimit = message.attempts > 1 ? 1 : maxStepsPerWakeup;
+      let result: Awaited<ReturnType<typeof stepComparisonWakeup>>;
+      // Each step re-admits the original hint against the current durable
+      // frame. Publish the last frame once before acknowledging the message.
+      for (let step = 1; ; step++) {
+        result = await stepComparisonWakeup(store, wakeup);
+        if (result.kind !== "completed") break;
+        report.steps++;
+        if (!result.turn.more || step >= stepLimit || Date.now() >= deadline)
+          break;
+      }
       if (result.kind === "deferred") {
         message.retry({
           delaySeconds: Math.max(

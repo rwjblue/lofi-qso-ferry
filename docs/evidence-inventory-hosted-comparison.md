@@ -35,17 +35,24 @@ messages leave the coordinator unchanged. Early messages retry at the retained
 deadline, and failed sends leave durable work recoverable.
 
 [Hosted execution](../src/inventory-hosted.ts) publishes inventory and comparison
-outboxes from cron. A mixed batch advances at most one inventory turn and one
-comparison phase. Both continuation families publish before successful message
-acknowledgement. A failed comparison send retries the committed inventory message
-without repeating its provider read. Reports distinguish read and comparison
-turns and publication counts. Environment off still pauses both families after
-the one-way handoff.
+outboxes from cron. A mixed batch advances at most one inventory turn. A new
+comparison message can advance up to four steps before publishing its final
+frame. Each step rechecks the durable runtime and wakeup and uses its existing
+lease. The consumer stops starting new steps after five seconds of elapsed
+time and runs at most one step on redelivery. Both continuation families
+publish before successful acknowledgement. A failed comparison send retries
+the original message from the latest durable frame. Reports distinguish
+comparison messages, completed steps and publication counts. Environment off
+still pauses both families after the one-way handoff.
 
 The implementation uses Queue bindings and awaits publication, following the
 [Queue JavaScript API](https://developers.cloudflare.com/queues/configuration/javascript-apis/)
 and [retry/acknowledgement API](https://developers.cloudflare.com/queues/configuration/batching-retries/).
-The binding signatures were also checked against Workers types 5.20261108.1.
+The four-step profile uses the design's Workers Paid budget. D1 counts each
+binding call against the invocation limit, including each batch as one call.
+Hosted CPU and invocation latency still need measurement. See the
+[D1 invocation limits](https://developers.cloudflare.com/d1/platform/limits/)
+and [Queue consumer limits](https://developers.cloudflare.com/queues/platform/limits/).
 
 ## Read-only runtime admission
 

@@ -520,9 +520,17 @@ HTTP 200 and one matching confirmation at the inclusive timestamp. The
 The private copy retained its receipt coverage, checkpoints, stream jobs
 and linked credentials. The trial made zero uploads.
 
-This qualifies the bounded client read. Native confirmation scheduling,
-checkpoint persistence and correlation with receipt inventory remain open.
-[ARRL report documentation](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
+A second private copy used migration 0118 and the native D1 poll. One
+live request took 1.58 seconds and committed one encrypted confirmation
+and its stream watermark. Reopening the database returned the same
+receipt correlation and checkpoint and passed the foreign-key check.
+Receipt coverage, checkpoints, facets and credentials were unchanged.
+The native poll made zero uploads.
+
+Fixtures verify inclusive replay, separate selection cursors, empty
+reports, ambiguous receipts and confirmations, and rollback when a
+credential rotates or checkpoint publication fails. Scheduled enrollment
+and status-view integration remain open. [ARRL report documentation](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
 
 ## LoTW account receipt deltas
 

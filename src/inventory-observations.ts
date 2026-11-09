@@ -149,7 +149,11 @@ export async function qrzInventoryObservations(
   return observations;
 }
 
-/** Receipt observations only. No confirmation-patch correlation or merge. */
+export function lotwVariantPrefix(identityHash: string) {
+  return `lotw-variant-v1:${identityHash}:`;
+}
+
+/** Receipt observations keep their own body and variant identity. */
 export async function lotwInventoryObservations(
   records: AdifRecord[],
 ): Promise<InventoryObservation[]> {
@@ -179,7 +183,7 @@ export async function lotwInventoryObservations(
       family: "qso",
       // LoTW supplies no stable record ID. This is explicitly a local variant
       // key; distinct bodies sharing an exact identity remain distinct evidence.
-      key: `lotw-variant-v1:${identityHash}:${revision}`,
+      key: lotwVariantPrefix(identityHash) + revision,
       subtype: "qso",
       status: "active",
       revision,

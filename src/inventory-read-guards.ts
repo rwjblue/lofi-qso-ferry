@@ -1,3 +1,4 @@
+import type { InventoryStream } from "./inventory-ingestion.ts";
 import type { InventoryRunContext } from "./inventory-runs.ts";
 import { canonical, randomToken } from "./security.ts";
 import type { Lease, Store } from "./store.ts";
@@ -5,6 +6,51 @@ import type { VendorAdmission } from "./vendor-requests.ts";
 
 function requireValue(value: unknown): asserts value {
   if (!value) throw new Error("invalid_inventory_read_context");
+}
+
+/** A zero-row page lets other inventory reads share the native authority fence. */
+export function inventoryStreamReadGuard(
+  store: Store,
+  stream: InventoryStream,
+  lease: Lease,
+  now: number,
+) {
+  const pageId = `read:${randomToken()}`;
+  const bound = (sql: string) => store.statement(sql, stream.tenant, pageId);
+  const calendar = stream.sourceCalendarFormat === 1;
+  return {
+    pageId,
+    prepare: store.statement(
+      `INSERT INTO ingestion_pages(tenant,page_id,scope_id,stream_id,input_digest,manifest_digest,adapter_binding,query_binding,expected_config_version,expected_sequence,expected_stream_version,credential_version,connection_config,remote_identity,lease_scope,lease_token,lease_fence,request_started_at,prepared_at,raw_count,distinct_count,accepted_count,changed_count,next_resume,next_checkpoint,origin${calendar ? ",lotw_calendar_months" : ""}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,0,0,?,NULL,'historical'${calendar ? ",'[]'" : ""})`,
+      stream.tenant,
+      pageId,
+      stream.scope,
+      stream.stream,
+      pageId,
+      pageId,
+      stream.adapterBinding,
+      stream.queryBinding,
+      stream.configVersion,
+      stream.sequence,
+      stream.version,
+      stream.credentialVersion,
+      stream.connectionConfig,
+      stream.remoteIdentity,
+      lease.scope,
+      lease.token,
+      lease.fence,
+      now,
+      now,
+      canonical(stream.resume),
+    ),
+    verify: bound(
+      "INSERT INTO ingestion_page_guards(tenant,page_id) VALUES(?,?)",
+    ),
+    release: bound(
+      "DELETE FROM ingestion_page_guards WHERE tenant=? AND page_id=?",
+    ),
+    remove: bound("DELETE FROM ingestion_pages WHERE tenant=? AND page_id=?"),
+  };
 }
 
 /** Compose with one request reservation in the same native transaction. */
@@ -33,37 +79,14 @@ export function inventoryReadGuardStatements(
   const requestBinding =
     run.phase === "collecting" ? run.collectionBinding : run.catchupBinding;
   requireValue(typeof requestBinding === "string" && requestBinding.length > 0);
-  const pageId = `read:${randomToken()}`;
+  const guard = inventoryStreamReadGuard(store, stream, lease, now);
+  const { pageId } = guard;
   const statement = (sql: string, ...params: (string | number | null)[]) =>
     store.statement(sql, ...params);
   const bound = (sql: string) => statement(sql, stream.tenant, pageId);
-  // The transient admission page has no observations or calendar demand.
-  const calendar = stream.sourceCalendarFormat === 1;
   return {
     before: [
-      statement(
-        `INSERT INTO ingestion_pages(tenant,page_id,scope_id,stream_id,input_digest,manifest_digest,adapter_binding,query_binding,expected_config_version,expected_sequence,expected_stream_version,credential_version,connection_config,remote_identity,lease_scope,lease_token,lease_fence,request_started_at,prepared_at,raw_count,distinct_count,accepted_count,changed_count,next_resume,next_checkpoint,origin${calendar ? ",lotw_calendar_months" : ""}) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,0,0,0,?,NULL,'historical'${calendar ? ",'[]'" : ""})`,
-        stream.tenant,
-        pageId,
-        stream.scope,
-        stream.stream,
-        pageId,
-        pageId,
-        stream.adapterBinding,
-        stream.queryBinding,
-        stream.configVersion,
-        stream.sequence,
-        stream.version,
-        stream.credentialVersion,
-        stream.connectionConfig,
-        stream.remoteIdentity,
-        lease.scope,
-        lease.token,
-        lease.fence,
-        now,
-        now,
-        canonical(stream.resume),
-      ),
+      guard.prepare,
       statement(
         `INSERT INTO ingestion_run_pages(tenant,page_id,run_id,action,expected_run_version,expected_job_version,expected_phase,request_binding,observed_complete,completed_streams,next_due_at) VALUES(?,?,?,'admit',?,?,?,?,0,'[]',?)`,
         stream.tenant,
@@ -75,12 +98,12 @@ export function inventoryReadGuardStatements(
         requestBinding,
         now,
       ),
-      bound("INSERT INTO ingestion_page_guards(tenant,page_id) VALUES(?,?)"),
+      guard.verify,
     ],
     after: [
-      bound("DELETE FROM ingestion_page_guards WHERE tenant=? AND page_id=?"),
+      guard.release,
       bound("DELETE FROM ingestion_run_pages WHERE tenant=? AND page_id=?"),
-      bound("DELETE FROM ingestion_pages WHERE tenant=? AND page_id=?"),
+      guard.remove,
     ],
   };
 }

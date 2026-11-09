@@ -592,11 +592,15 @@ Track confirmation updates separately using the QSL stream. The client can
 read a bounded contact-date selection with `qso_qsl=yes` and an explicit
 inclusive `qso_qslsince` timestamp. A nonempty report returns a separate
 `APP_LoTW_LASTQSL` watermark, and an empty report leaves the cursor in place.
-Native confirmation scheduling, checkpoint persistence and correlation with
-receipt records remain open. Confirmation observations can enrich existing
-matches after correlation, while receipt reports continue to establish
-destination coverage. See the [LoTW query API](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
-and [bounded confirmation read](evidence-inventory-fresh-start.md#lotw-confirmation-read).
+A scoped native poll stores encrypted QSL observations and advances the
+confirmation stream checkpoint together. Correlation reads the current
+LoTW receipt variants and exposes the latest confirmation separately when
+the exact identity selects one variant and its newest confirmation is
+unambiguous. Unresolved observations stay available for a later receipt
+read. Receipt reports continue to establish destination coverage.
+Automatic enrollment, polling and use of this evidence in delivery or
+status views remain open. [LoTW query API](https://lotw.arrl.org/lotw-help/developer-query-qsos-qsls/)
+[Native confirmation rehearsal](evidence-inventory-fresh-start.md#lotw-confirmation-read)
 
 ### Commit and recovery
 

@@ -165,6 +165,16 @@ function requireDatedScope(records: AdifRecord[], selection: LotwQuery) {
     throw new Error("LoTW report does not match the requested scope");
 }
 
+export function lotwConfirmationFilters(selection: LotwConfirmationQuery) {
+  if (!validLotwReceiveTime(selection.confirmedSince))
+    throw new Error("Invalid LoTW confirmation checkpoint");
+  return {
+    ...datedReportFilters(selection),
+    qso_qsl: "yes",
+    qso_qslsince: selection.confirmedSince,
+  };
+}
+
 function validReportIdentity(record: AdifRecord): boolean {
   const date = record.QSO_DATE ?? "";
   const mode = record.APP_LOTW_MODE || record.MODE || "";
@@ -321,14 +331,8 @@ export class LotwClient {
   ): Promise<LotwConfirmationReport> {
     selection = { ...selection };
     const { confirmedSince } = selection;
-    if (!validLotwReceiveTime(confirmedSince))
-      throw new Error("Invalid LoTW confirmation checkpoint");
     const { header, records } = parseReportDocument(
-      await this.readReport({
-        ...datedReportFilters(selection),
-        qso_qsl: "yes",
-        qso_qslsince: confirmedSince,
-      }),
+      await this.readReport(lotwConfirmationFilters(selection)),
       MAX_RESPONSE,
     );
     requireDatedScope(records, selection);

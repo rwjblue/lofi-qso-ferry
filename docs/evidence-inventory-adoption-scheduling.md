@@ -164,6 +164,28 @@ The 1,000-contact matched profile, including one domain initialization,
 used 3,079 D1 calls and 5,637 statements during classification and
 adoption, down from 3,128 and 5,684. All 1,000 matches were verified.
 
+### Warm matching and adoption together
+
+A native fixture through migration 0123 published coverage and
+projections for 20 source contacts and 20 unique matching QRZ
+receipts. It initialized the ownership domain and queued matching
+before measuring the two workers. Each measured turn includes its
+own work selection, lease acquisition and release, preparation, and
+guarded publication.
+
+| Worker turn | D1 calls | SQL statements | Rows read | Rows written |
+| --- | ---: | ---: | ---: | ---: |
+| Matching | 9 | 25 | 13,661 | 1,807 |
+| Historical adoption | 12 | 21 | 5,791 | 448 |
+| Total | 21 | 46 | 19,452 | 2,255 |
+
+All 20 results were current matches, with 20 durable associations and
+20 ownership records. Both work queues drained. The fixture made zero
+provider requests and created zero attempts or dispatches. These 21
+calls exclude enrollment, coordinator turns, Queue transport and the
+final audit. They exceed the proposed six-call full-cohort target by
+15, with adoption accounting for more than half of the calls.
+
 ### Coalesced idle coordinator phases
 
 The coordinator now checks consecutive idle phases under one lease and

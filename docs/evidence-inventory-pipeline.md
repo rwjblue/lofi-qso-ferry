@@ -150,6 +150,36 @@ mise run benchmark-inventory-pipeline --contacts 1000 --remote empty \
   --source-comparison after-coverage
 ```
 
+### Automatic deferral for the first LoFi scan
+
+The native projection selectors now leave ordinary LoFi work and
+operation fan-out queued until the first full source run publishes
+coverage. The publication signals the comparison coordinator through
+its existing durable wakeup. Destination projections and work for a
+source with already published coverage remain eligible.
+
+Both arms used the schema through migration 0117, the same 1,000-contact
+fixture with an empty QRZ selection, and a Queue drain after every
+source page. Both published 1,000 current absence classifications.
+
+| Native work                      | Before | With deferral |
+| -------------------------------- | -----: | ------------: |
+| Source backfill D1 calls         |  2,628 |            94 |
+| Source backfill SQL statements   |  3,748 |           164 |
+| Source backfill Queue turns      |    103 |             4 |
+| Total D1 calls                   |  8,112 |         4,279 |
+| Total SQL statements             | 11,052 |         5,684 |
+| Total Queue turns                |    364 |           165 |
+| Encrypted projection payloads    |  2,000 |         1,000 |
+| Match sets                       |    100 |            50 |
+| Allocated growth                 | 18,280,448 bytes | 15,376,384 bytes |
+
+Deferral delays provisional source results during the first scan.
+The local benchmark counts database and Queue work and excludes vendor
+requests and pacing. A separate 200-contact matched fixture passed two
+rounds of empty and stable deltas, contact and operation edits,
+retirement, and restoration with the same selectors.
+
 ### Operation pages without indexed contacts
 
 During the 200,000-contact interleaved run, the first two source pages

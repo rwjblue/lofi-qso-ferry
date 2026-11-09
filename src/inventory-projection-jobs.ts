@@ -35,6 +35,17 @@ const leaseScope = (
 const identifier = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0 && value.length <= 512;
 
+// Keep first-scan source work queued until the full run publishes coverage.
+// Completing the run wakes comparison through its ingestion receipt.
+const readyBuilds = `SELECT b.* FROM inventory_comparison_ready_builds b
+WHERE b.tenant=?1 AND (b.provider!='lofi' OR NOT EXISTS(
+  SELECT 1 FROM inventory_coverage c JOIN inventory_runs r
+    ON (r.tenant,r.run_id)=(c.tenant,c.building_run_id)
+  WHERE (c.tenant,c.scope_id)=(b.tenant,b.scope_id) AND c.facet='source'
+    AND c.state IN('collecting','held') AND c.published_run_id IS NULL
+    AND r.config_version=b.config_version AND r.mode='full'
+))`;
+
 /** Bounded context fan-out and ordinary projection selection. No vendor I/O or
  * observation renewal. Matching/coverage recovery have separate work domains. */
 export class InventoryProjectionJobs {
@@ -210,7 +221,7 @@ ON CONFLICT(tenant,generation_id,scope_id,record_key,facet) DO UPDATE SET work_v
     // pending-work walk would revisit retained retired/disabled history.
     const job = await this.store
       .statement(
-        `WITH live AS MATERIALIZED(SELECT * FROM inventory_comparison_ready_builds WHERE tenant=?1 AND provider='lofi'),
+        `WITH live AS MATERIALIZED(${readyBuilds} AND b.provider='lofi'),
 heads AS MATERIALIZED(SELECT s.*,(SELECT j.rowid FROM inventory_projection_jobs j INDEXED BY inventory_projection_job_scope_pending WHERE j.tenant=s.tenant AND j.generation_id=s.generation_id AND j.scope_id=s.scope_id AND j.config_version=s.config_version AND j.completed_version<j.work_version AND j.due_at<=?2 ORDER BY j.due_at,j.operation_key LIMIT 1) AS head FROM live s)
 SELECT j.* FROM heads h CROSS JOIN inventory_projection_jobs j WHERE j.rowid=h.head ORDER BY j.due_at,j.generation_id,j.scope_id,j.operation_key LIMIT 1`,
         tenant,
@@ -247,7 +258,7 @@ SELECT j.* FROM heads h CROSS JOIN inventory_projection_jobs j WHERE j.rowid=h.h
     // The scope tuple lets the outer query stop at the ordered index limit.
     const rows = await this.store
       .statement(
-        `WITH live AS MATERIALIZED(SELECT * FROM inventory_comparison_ready_builds WHERE tenant=?1),
+        `WITH live AS MATERIALIZED(${readyBuilds}),
 heads AS MATERIALIZED(SELECT s.*,(SELECT w.rowid FROM comparison_work w INDEXED BY comparison_work_pending_scope WHERE w.tenant=s.tenant AND w.generation_id=s.generation_id AND w.scope_id=s.scope_id AND w.facet=CASE s.provider WHEN 'lofi' THEN 'source' ELSE 'receipt' END AND w.completed_version<w.work_version AND w.due_at<=?2 ORDER BY w.due_at,w.record_key,w.facet LIMIT 1) AS head FROM live s)
 SELECT w.generation_id,w.scope_id,w.record_key
 FROM comparison_work w INDEXED BY comparison_work_pending_scope

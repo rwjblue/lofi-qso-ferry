@@ -19,7 +19,11 @@ import { sourceContact } from "./inventory-matching-fixtures.ts";
 
 async function fixture(
   count = 3,
-  options: { missingOperation?: boolean; complete?: boolean } = {},
+  options: {
+    missingOperation?: boolean;
+    complete?: boolean;
+    projectBeforeCoverage?: boolean;
+  } = {},
 ) {
   const runtime = await database();
   try {
@@ -51,7 +55,11 @@ async function fixture(
       assert.ok(i < 999);
     }
     const projections = new InventoryProjections(f.store);
-    for (let i = 0; i < sources.length; i += 20) {
+    for (
+      let i = 0;
+      options.projectBeforeCoverage !== false && i < sources.length;
+      i += 20
+    ) {
       const result = await projections.project(
         "a",
         f.generation,
@@ -136,6 +144,35 @@ async function resign(page: PreparedCoverageRecovery) {
   const { digest: _digest, ...manifest } = page;
   page.digest = await sha256(canonical(manifest));
 }
+
+test("automatic source projection waits for first full coverage and leaves queued work intact", async (t) => {
+  const f = await fixture(3, { projectBeforeCoverage: false });
+  t.after(() => f.mf.dispose());
+  const queued = () =>
+    f.db
+      .prepare(
+        "SELECT count(*) AS n FROM comparison_work WHERE scope_id='source' AND completed_version<work_version",
+      )
+      .first("n");
+  const queuedOperations = () =>
+    f.db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_projection_jobs WHERE scope_id='source' AND completed_version<work_version",
+      )
+      .first("n");
+  assert.equal(await queued(), 3);
+  assert.equal(await queuedOperations(), 1);
+  assert.deepEqual(await f.jobs.expandNext("a"), { kind: "idle" });
+  assert.deepEqual(await f.jobs.projectNext("a"), { kind: "idle" });
+  assert.equal(await queued(), 3);
+  assert.equal(await queuedOperations(), 1);
+  await f.finish();
+  assert.equal((await f.jobs.expandNext("a")).kind, "expanded");
+  const projected = await f.jobs.projectNext("a");
+  assert.ok("ready" in projected);
+  assert.equal(projected.ready, 3);
+  assert.equal(await queued(), 0);
+});
 
 test("full source completion recovers coverage-held contacts in bounded pages without contact fan-out during ingestion", async (t) => {
   const f = await fixture(205);

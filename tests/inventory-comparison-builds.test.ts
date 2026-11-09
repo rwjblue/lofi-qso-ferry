@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { measureD1 } from "../scripts/inventory-benchmark-metrics.ts";
 import { InventoryComparisonBuilds } from "../src/inventory-comparison-builds.ts";
 import { InventoryComparisonGenerations } from "../src/inventory-comparison-generations.ts";
 import { InventoryComparisonLookup } from "../src/inventory-comparison-lookup.ts";
@@ -128,12 +129,20 @@ test("bounded backfill resumes across instances and publishes a generation witho
       )
       .first();
     await assert.rejects(f.builds.activate("a", f.generation), /incomplete/);
-    const first = await f.builds.step("a", f.generation, "source");
+    const meter = measureD1(f.db);
+    const measured = new InventoryComparisonBuilds(
+      new Store(meter.database, f.store.keys),
+    );
+    const first = await measured.step("a", f.generation, "source");
     assert.ok("records" in first);
     assert.equal(first.records, 200);
     assert.equal(first.complete, false);
     t.diagnostic(
-      `200 backfill records: ${first.statements} statements, ${first.rowsRead} rows read, ${first.rowsWritten} rows written`,
+      `200 backfill records: ${first.statements} publication statements, ${meter.totals.rowsRead} total rows read, ${first.rowsWritten} rows written`,
+    );
+    assert.ok(
+      meter.totals.rowsRead < 12_000,
+      `200-record backfill read ${meter.totals.rowsRead} rows including preparation`,
     );
     const resumed = new InventoryComparisonBuilds(f.store);
     const second = await resumed.step("a", f.generation, "source");

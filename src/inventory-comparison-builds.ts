@@ -144,7 +144,7 @@ export class InventoryComparisonBuilds {
     for (const chunk of inventoryJsonChunks(needed)) {
       const rows = await this.store
         .statement(
-          `SELECT p.payload_id,p.envelope FROM json_each(?) j JOIN inventory_payloads p ON p.tenant=? AND p.scope_id=? AND p.payload_id=j.value`,
+          `SELECT p.payload_id,p.envelope FROM json_each(?) j CROSS JOIN inventory_payloads p WHERE p.tenant=? AND p.scope_id=? AND p.payload_id=j.value`,
           chunk,
           tenant,
           scope,

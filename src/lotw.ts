@@ -40,6 +40,26 @@ export interface LotwQuery {
   receivedSince?: string;
   workedCallsign?: string;
 }
+export interface LotwAccountReceiptSelection {
+  kind: "account_received";
+  initialReceivedSince: string;
+}
+export interface LotwAccountReceiptQuery extends LotwAccountReceiptSelection {
+  receivedSince: string;
+}
+
+export function validLotwReceiveTime(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+  )
+    return false;
+  const at = Date.parse(`${value.replace(" ", "T")}Z`);
+  return (
+    Number.isFinite(at) &&
+    new Date(at).toISOString().slice(0, 19).replace("T", " ") === value
+  );
+}
 
 /** Split an inclusive range into two disjoint selections with the same filters. */
 export function splitLotwQuery(
@@ -211,8 +231,6 @@ export class LotwClient {
     }
   }
   async query(partition: LotwQuery): Promise<LotwReport> {
-    if (!this.credentials)
-      throw new Error("LoTW query credentials are not configured");
     if (
       !validDate(partition.startDate) ||
       !validDate(partition.endDate) ||
@@ -237,25 +255,72 @@ export class LotwClient {
       )
     )
       throw new Error("Invalid LoTW query callsign");
+    const filters = {
+      qso_qsorxsince: partition.receivedSince ?? "1900-01-01",
+      qso_startdate: partition.startDate,
+      qso_enddate: partition.endDate,
+      ...(partition.stationCallsign && {
+        qso_owncall: partition.stationCallsign,
+      }),
+      ...(partition.workedCallsign && {
+        qso_callsign: partition.workedCallsign,
+      }),
+    };
+    const startDate = partition.startDate.replaceAll("-", "");
+    const endDate = partition.endDate.replaceAll("-", "");
+    const stationCallsign = partition.stationCallsign?.toUpperCase();
+    const workedCallsign = partition.workedCallsign?.toUpperCase();
+    const report = await this.readReport(filters);
+    // A contradictory row makes the entire report unavailable.
+    if (
+      report.records.some(
+        (record) =>
+          record.QSO_DATE < startDate ||
+          record.QSO_DATE > endDate ||
+          (stationCallsign &&
+            record.STATION_CALLSIGN.toUpperCase() !== stationCallsign) ||
+          (workedCallsign && record.CALL.toUpperCase() !== workedCallsign),
+      )
+    )
+      throw new Error("LoTW report does not match the requested scope");
+    return report;
+  }
+
+  /** Account receipt deltas require a receive timestamp and carry no date coverage. */
+  async queryReceivedSince(receivedSince: string): Promise<LotwReport> {
+    if (!validLotwReceiveTime(receivedSince))
+      throw new Error("Invalid LoTW receive checkpoint");
+    const report = await this.readReport({ qso_qsorxsince: receivedSince });
+    const through = report.receivedThrough;
+    if (
+      report.records.length &&
+      (!validLotwReceiveTime(through) ||
+        report.records[0].APP_LOTW_RXQSO !== through ||
+        report.records.some(
+          ({ APP_LOTW_RXQSO: received }) =>
+            !validLotwReceiveTime(received) ||
+            received < receivedSince ||
+            received > through,
+        ))
+    )
+      throw new Error("Invalid LoTW receive checkpoint");
+    return report;
+  }
+
+  private async readReport(
+    filters: Record<string, string>,
+  ): Promise<LotwReport> {
+    if (!this.credentials)
+      throw new Error("LoTW query credentials are not configured");
     const parameters = new URLSearchParams({
       login: this.credentials.username,
       password: this.credentials.password,
       qso_query: "1",
       qso_qsl: "no",
-      qso_qsorxsince: partition.receivedSince ?? "1900-01-01",
       qso_mydetail: "yes",
       qso_withown: "yes",
-      qso_startdate: partition.startDate,
-      qso_enddate: partition.endDate,
+      ...filters,
     });
-    if (partition.stationCallsign)
-      parameters.set("qso_owncall", partition.stationCallsign);
-    if (partition.workedCallsign)
-      parameters.set("qso_callsign", partition.workedCallsign);
-    const startDate = partition.startDate.replaceAll("-", "");
-    const endDate = partition.endDate.replaceAll("-", "");
-    const stationCallsign = partition.stationCallsign?.toUpperCase();
-    const workedCallsign = partition.workedCallsign?.toUpperCase();
     let response: Response;
     try {
       response = await this.request.call(
@@ -289,21 +354,7 @@ export class LotwClient {
       )
     )
       throw new LotwLoginError("credentials");
-    const report = parseLotwReport(body);
-    // The query contract promises these filters. A contradictory row makes the
-    // whole response unavailable; filtering it out must never establish absence.
-    if (
-      report.records.some(
-        (record) =>
-          record.QSO_DATE < startDate ||
-          record.QSO_DATE > endDate ||
-          (stationCallsign &&
-            record.STATION_CALLSIGN.toUpperCase() !== stationCallsign) ||
-          (workedCallsign && record.CALL.toUpperCase() !== workedCallsign),
-      )
-    )
-      throw new Error("LoTW report does not match the requested scope");
-    return report;
+    return parseLotwReport(body);
   }
   async certificateStatus(serial: string): Promise<CertificateStatus> {
     if (!/^\d{1,50}$/.test(serial)) return "unknown";

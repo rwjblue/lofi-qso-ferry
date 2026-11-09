@@ -14,10 +14,12 @@ import {
   type SyncState,
 } from "./lofi.ts";
 import {
+  type LotwAccountReceiptQuery,
   LotwClient,
   LotwLoginError,
   type LotwQuery,
   splitLotwQuery,
+  validLotwReceiveTime,
 } from "./lotw.ts";
 import { type QrzBook, QrzClient, QrzError, type QrzPage } from "./qrz.ts";
 import { canonical } from "./security.ts";
@@ -77,7 +79,8 @@ export interface InventoryCoverageClaim {
     | "all_client_sync_window"
     | "book_date_selection"
     | "book_modified_selection"
-    | "station_date_receipt_selection";
+    | "station_date_receipt_selection"
+    | "account_receipt_delta";
   /** Scope/query binding applies to this selection, never the entire account. */
   binding: InventoryQueryBinding;
   immutableSnapshot: false;
@@ -171,7 +174,7 @@ export interface QrzInventoryRequest {
 }
 export interface LotwInventoryRequest {
   binding: InventoryQueryBinding;
-  query: LotwQuery;
+  query: LotwQuery | LotwAccountReceiptQuery;
   purpose?: "receipt" | "confirmation";
 }
 
@@ -202,14 +205,6 @@ function validDate(value: string): boolean {
     /^\d{4}-\d{2}-\d{2}$/.test(value) &&
     Number.isFinite(Date.parse(`${value}T00:00:00Z`)) &&
     new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
-  );
-}
-function validReceiveTime(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) return false;
-  const at = Date.parse(`${value.replace(" ", "T")}Z`);
-  return (
-    Number.isFinite(at) &&
-    new Date(at).toISOString().slice(0, 19).replace("T", " ") === value
   );
 }
 function validBinding(binding: InventoryQueryBinding) {
@@ -1051,10 +1046,10 @@ export function createQrzInventoryAdapter(
 }
 
 function splitLotw(
-  query: LotwQuery,
+  query: LotwQuery | LotwAccountReceiptQuery,
   code: "response_budget" | "record_budget" | "deadline" = "response_budget",
 ): ReadOutcome {
-  const partitions = splitLotwQuery(query);
+  const partitions = "kind" in query ? null : splitLotwQuery(query);
   return partitions
     ? { kind: "split", partitions }
     : { kind: "blocked", code, recovery: "review" };
@@ -1085,39 +1080,54 @@ export function createLotwInventoryAdapter(credentials: {
           requireValue(
             input.purpose === undefined || input.purpose === "receipt",
           );
-          requireValue(
-            validDate(input.query.startDate) &&
-              validDate(input.query.endDate) &&
-              input.query.startDate <= input.query.endDate,
-          );
-          requireValue(
-            input.query.receivedSince === undefined ||
-              validDate(input.query.receivedSince) ||
-              validReceiveTime(input.query.receivedSince),
-          );
+          const query = input.query;
+          const accountDelta = "kind" in query;
+          if (accountDelta) {
+            requireValue(
+              query.kind === "account_received" &&
+                Object.keys(query).length === 3 &&
+                validLotwReceiveTime(query.initialReceivedSince) &&
+                validLotwReceiveTime(query.receivedSince) &&
+                query.receivedSince >= query.initialReceivedSince,
+            );
+          } else {
+            requireValue(
+              validDate(query.startDate) &&
+                validDate(query.endDate) &&
+                query.startDate <= query.endDate &&
+                (query.receivedSince === undefined ||
+                  validDate(query.receivedSince) ||
+                  validLotwReceiveTime(query.receivedSince)),
+            );
+            if (
+              Date.parse(query.endDate) - Date.parse(query.startDate) >
+              31 * 86400000
+            )
+              return splitLotw(query);
+          }
+          const client = new LotwClient(saved, { fetcher: budget.fetch });
+          const report = accountDelta
+            ? await client.queryReceivedSince(query.receivedSince)
+            : await client.query(query);
           if (
-            Date.parse(input.query.endDate) -
-              Date.parse(input.query.startDate) >
-            31 * 86400000
-          )
-            return splitLotw(input.query);
-          const report = await new LotwClient(saved, {
-            fetcher: budget.fetch,
-          }).query(input.query);
-          if (
+            !accountDelta &&
             report.records.length > 0 &&
             report.receivedThrough !== null &&
-            (!validReceiveTime(report.receivedThrough) ||
-              (input.query.receivedSince !== undefined &&
+            (!validLotwReceiveTime(report.receivedThrough) ||
+              (query.receivedSince !== undefined &&
                 Date.parse(`${report.receivedThrough.replace(" ", "T")}Z`) <
                   Date.parse(
-                    input.query.receivedSince.length === 10
-                      ? `${input.query.receivedSince}T00:00:00Z`
-                      : `${input.query.receivedSince.replace(" ", "T")}Z`,
+                    query.receivedSince.length === 10
+                      ? `${query.receivedSince}T00:00:00Z`
+                      : `${query.receivedSince.replace(" ", "T")}Z`,
                   )))
           )
             throw new ReadStopped("invalid_response");
-          if (report.records.length > 0 && report.receivedThrough !== null) {
+          if (
+            !accountDelta &&
+            report.records.length > 0 &&
+            report.receivedThrough !== null
+          ) {
             // ARRL binds LASTQSORX to the newest QSO in this report, normally
             // the first row's RXQSO. Missing legacy row fields supply no extra
             // assertion, and no returned RX timestamp may exceed the header.
@@ -1134,7 +1144,7 @@ export function createLotwInventoryAdapter(credentials: {
               report.records.some(
                 (row) =>
                   row.APP_LOTW_RXQSO !== undefined &&
-                  (!validReceiveTime(row.APP_LOTW_RXQSO) ||
+                  (!validLotwReceiveTime(row.APP_LOTW_RXQSO) ||
                     Date.parse(`${row.APP_LOTW_RXQSO.replace(" ", "T")}Z`) >
                       through),
               )
@@ -1143,14 +1153,14 @@ export function createLotwInventoryAdapter(credentials: {
           }
           budget.records(report.records.length);
           const observations = await lotwInventoryObservations(report.records);
-          const { receivedSince: _lower, ...selection } = input.query;
+          const { receivedSince: _lower, ...selection } = query;
           return {
             kind: "page",
             observations,
             completedStreams: ["selection"],
             progress: {
               kind: "observed_complete",
-              resume: { query: input.query },
+              resume: { query },
               proposedCheckpoint:
                 report.records.length === 0 || report.receivedThrough === null
                   ? null
@@ -1158,7 +1168,9 @@ export function createLotwInventoryAdapter(credentials: {
               coverage: coverage(
                 "lotw",
                 input.binding,
-                "station_date_receipt_selection",
+                accountDelta
+                  ? "account_receipt_delta"
+                  : "station_date_receipt_selection",
               ),
             },
           };

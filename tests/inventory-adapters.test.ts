@@ -620,6 +620,67 @@ test("LoTW receipt checkpoints remain restricted to their original static query 
   assert.equal(adapter.capabilities.confirmation, "unsupported");
 });
 
+test("LoTW account deltas accept cross-date receipts and require bounded receive stamps", async () => {
+  const adapter = createLotwInventoryAdapter({
+    username: "user",
+    password: "password",
+  });
+  const lower = "2026-11-06 12:00:00";
+  const through = "2026-11-07 13:10:00";
+  const accountQuery = {
+    kind: "account_received",
+    initialReceivedSince: lower,
+    receivedSince: lower,
+  } as const;
+  const records = [
+    { ...adif, APP_LOTW_RXQSO: through },
+    { ...adif, QSO_DATE: "20240101", APP_LOTW_RXQSO: lower },
+  ];
+  const read = (rows: AdifRecord[], header: string | null = through) =>
+    adapter.readStep(
+      context(async (input) => {
+        const params = new URL(String(input)).searchParams;
+        assert.equal(params.get("qso_qsorxsince"), lower);
+        assert.equal(params.get("qso_qsl"), "no");
+        assert.ok(!params.has("qso_startdate") && !params.has("qso_enddate"));
+        return lotwResponse(rows, header);
+      }),
+      { binding, query: accountQuery },
+    );
+  const page = await read(records);
+  if (page.kind !== "page" || page.progress.kind !== "observed_complete")
+    assert.fail(JSON.stringify(page));
+  assert.equal(page.observations.length, 2);
+  assert.equal(page.progress.coverage.selection, "account_receipt_delta");
+  assert.equal(page.progress.coverage.absenceAuthority, false);
+  assert.deepEqual(page.progress.proposedCheckpoint, {
+    selection: { kind: "account_received", initialReceivedSince: lower },
+    receivedThrough: through,
+  });
+  const empty = await read([]);
+  assert.ok(
+    empty.kind === "page" && empty.progress.kind === "observed_complete",
+  );
+  assert.equal(empty.progress.proposedCheckpoint, null);
+  const overflow = await adapter.readStep(
+    context(async () => lotwResponse(records, through), { maxRecords: 1 }),
+    { binding, query: accountQuery },
+  );
+  assert.ok(overflow.kind === "blocked" && overflow.code === "record_budget");
+  for (const result of [
+    await read(records, null),
+    await read([records[0], adif]),
+    await read([
+      records[0],
+      { ...records[1], APP_LOTW_RXQSO: "2026-11-06 11:59:59" },
+    ]),
+  ]) {
+    assert.equal(result.kind, "blocked");
+    if (result.kind === "blocked")
+      assert.equal(result.code, "invalid_response");
+  }
+});
+
 test("LoTW confirmation support is explicit and empty reports do not fabricate wall-clock checkpoints", async () => {
   let calls = 0;
   const ctx = context(async () => {

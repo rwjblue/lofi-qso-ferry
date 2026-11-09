@@ -360,23 +360,14 @@ LoFi's inbound sync is read-only at the QSO/operation level in Ferry, even thoug
 
 ## Bulk ingestion and atomic checkpoints
 
-### Current statement amplification
+### Set-based publication
 
-The current writer builds a per-record recipe in [sourceStatements](../src/intake.ts) and combines the recipes into one `Store.checkpoint` batch. The [100-operation/100-event baseline fixture](../tests/source-baseline-pages.test.ts) asserts 1,708 explicit statements; the [100-operation/100-ordinary-contact forward fixture](../tests/intake.test.ts) has the same total through a different final work category.
-
-| Work in the 200-record fixtures                                                 | Explicit statements |
-| ------------------------------------------------------------------------------- | ------------------: |
-| Insert/delete per-record compare-and-set guard rows                             |                 400 |
-| Insert new payload and delete previous payload separately                       |                 400 |
-| Upsert current source rows                                                      |                 200 |
-| Update positive-presence metadata separately                                    |                 200 |
-| Insert first-seen/birth facts for QSO-stream records                            |                 100 |
-| Invalidate source/ledger context for the 100 operations                         |                 200 |
-| Invalidate context for 100 events, or publish indexes for 100 ordinary contacts |                 200 |
-| Page-level source/policy/context/cursor guards and updates                      |                   8 |
-| Total                                                                           |               1,708 |
-
-This is one native checkpoint call, not 1,708 network round trips. Trigger bodies add SQL and row work beyond that explicit statement-array count. Ordinary-contact publication also attempts tenant index-key activation once per contact. Operation/event handling can revisit the same dependent contacts repeatedly within a page. The 1,800-statement application cap protects this implementation; it is not the target shape for larger pages.
+The [native writer](../src/inventory-ingestion.ts) publishes each
+bounded page in one guarded transaction. The ordinary-contact fixture
+used 17 publication statements for 1,000 records. A comparison-indexed
+profile used 22. The database writes accepted records, bodies and work
+in sets and advances the committed cursor in the same transaction.
+[Native ingestion measurements](evidence-inventory-ingestion.md)
 
 ### Prepared page representation
 
@@ -921,21 +912,21 @@ These targets require native D1/workerd workloads and sustained observations. An
 | Q5  | Are half-hour buckets economical for dense calls and unknown records?                         | Benchmark against minute buckets using complete candidate/dependency and decryption costs; keep bucket format versioned                                                                                           |
 | Q6  | How do source additions, partial-key records and reverse uniqueness invalidate older results? | Explicit source visibility/fallback barriers and all forward/reverse bucket dependencies; no silent candidate truncation                                                                                          |
 | Q7  | What planner freshness and verification cadence fit each service's budget?                    | LoFi separates server-guided backlog pacing from idle polling; benchmark the proposed bootstrap allocation; scale polling and verification cadence remain open                                                    |
-| Q8  | Can LoFi use larger pages or reliable selective UUID reads?                                   | Target adaptive 500–1,000-row reads with 200 as an intermediate; upstream client requests 5,201, while Ferry's native byte/checkpoint profile still needs validation; UUID lookup remains optional                |
+| Q8 | Can LoFi selectively reread a UUID? | Tested general routes returned 404 and the operation listing ignored the UUID filter. Use paced isolated replay for a missing body. |
 | Q9  | What is the final adapter API and its coverage/result algebra?                                | Refine the interface sketch into finite core types; page resume versus committed checkpoints, vector progress, bounded outcomes, facet merge and provider-specific ordering are phase C prerequisites             |
 | Q10 | Can ownership and adoption commits meet the proposed six-RPC cohort budget?                   | Automatic personal-log replay: 2,917 new associations in 211 positive turns; shared proof cost and complete-cohort six-RPC target remain open                                                                     |
 | Q11 | What evidence permits LoTW member retry after partial/uncertain processing?                   | No automatic whole-file replay; define bounded observation and proven-rejection behavior before phase F                                                                                                           |
 | Q12 | How are shared batch artifacts and events represented in the fresh schema?                    | Native batch ownership/state guards and normalized file/member references; no legacy trigger compatibility required                                                                                               |
 | Q13 | Does QRZ offer a suitable supported multi-record upload contract?                             | Individual INSERTs until a separate contract evaluation establishes otherwise                                                                                                                                     |
 | Q14 | What storage and monthly cost does durable source retention add?                              | Personal-first workload confirmed; measure encrypted row/index size, write amplification, CPU and backups; keep scale estimates separate from the personal budget                                                 |
-| Q15 | Can the existing global vendor admission policies meet the target workload?                   | LoFi bootstrap may use up to 20 of the existing 24 requests/five minutes, with foreground reserve; QRZ/LoTW stay unchanged; broader total/scale-policy changes remain open                                        |
+| Q15 | What admission budgets does the Worker use? | LoFi retains its separate native pacing. QRZ and LoTW share 60 requests per minute each across accounts. |
 | Q16 | When should durable queue continuations replace cron-only resumption?                         | Promote delayed bootstrap continuations to phase C for the hours target; transactional wakeup outbox and cron recovery are prerequisites; other queue use remains optional                                        |
-| Q17 | How can a batch fit current source-proof limits and singleton fresh-insert authorization?     | Batch size follows jointly valid proofs; introduce and verify a distinct multi-member authorization contract before activation                                                                                    |
+| Q17 | How do upload cohorts fit source proofs and receipt recovery? | Native tests cover compatible 100-contact LoTW files and bounded partial readback. Live batch fit and pacing remain to be measured. |
 | Q18 | Which restore protections must precede retention and batch activation?                        | Fresh source collection and dispatch guards plus both new-format quarantine paths; no legacy purge isolation or data import required                                                                              |
-| Q19 | How does indefinite source retention fit the database size horizon?                           | D1 first with a later R2 payload path is confirmed; actual density, migration trigger and metadata growth remain open                                                                                             |
+| Q19 | How does settled retention fit D1? | The admin policy defaults to 90 days. Keep compact D1 replay markers with optional cold object storage. Measure settled density after aging. |
 | Q20 | Can the QRZ preparation read be removed or merged without weakening its current contract?     | Retain and budget it initially; treat two requests/contact as a conditional lower bound                                                                                                                           |
 | Q21 | Must existing database contents or old binaries be supported?                                 | Settled: preserve accounts, authentication and linked credentials; rebuild contact/reconciliation state; no old-writer compatibility or dual materialization; future rollback uses new-format-compatible releases |
-| Q22 | How do source proofs and native adoption guards consume durable inventory?                    | Automatically scheduled read-only adoption uses native inventory/dependency guards; export source proofs and delivery ownership remain unfinished; no legacy source_work bridge                                   |
+| Q22 | How do source proofs consume inventory? | Native source proofs, ownership, guarded sends and receipt recovery use current inventory and projection bindings. |
 | Q23 | How long must partially resolved batch artifacts remain, and how is partial status shown?     | Preserve shared bytes until every unresolved/recovery reference releases them; define operator-visible partial state and terminal retention before F2                                                             |
 | Q24 | What LoFi pacing and page-size values does Ferry's account actually support?                  | Read validated server hints and profile native 200/500/1,000-row ingestion in a separately authorized validation phase; do not treat upstream client constants as a verified quota                                |
 | Q25 | Can page-wide relational guards preserve all current merge/provenance/checkpoint semantics?   | Native assertions must reject any raced/omitted row; preserve same-page duplicate/timestamp conflicts, first-seen facts, exact observation times and lost-ack recovery                                            |

@@ -206,8 +206,8 @@ No matching rule, stored association or export permission was changed.
 
 ## Remaining QRZ scheduled acceptance
 
-Use the [restricted QRZ pilot checklist](qrz-pilot.md) for the concrete packet
-and the separate authorization/acceptance boundary.
+The earlier selected runs are historical provider observations. Use the
+[native rollout checklist](rollout-checklist.md) for current acceptance.
 
 The singleton and checked pairs C/D2 exercise current source proofs, absence,
 delivery, readback at observed precision and populated recovery. Each next batch
@@ -573,7 +573,7 @@ Worker configuration gates and an explicit rollout source-UUID allowlist are che
 
 LoTW signed artifacts persist exact contact membership, source generations, certificate and configuration versions. Upload acknowledgement is `submitted`; exact supported projection readback changes it to `observed`. QSL confirmation is separate metadata. The observed checkpoint atomically retains a compact encrypted identity before purging the signed artifact. Bounded daily confirmation refreshes perform read-only queries and update the badge only when the complete observed projection still agrees with the current sent hash. An old identity, differing location, or expired unresolved artifact never authorizes a blind resend.
 
-Reproduce integration with `npx tsx --test tests/reconcile.test.ts tests/delivery.test.ts tests/store-reconcile.test.ts`. These tests use real local D1/workerd storage and generated-key signing with synthetic vendor transport. They prove local state transitions, tenant and lease fencing, safe retries, rollout scope, zero-write adoption, narrative retention and the submission/observation/confirmation distinction; they do not prove QRZ replacement semantics or ARRL acceptance. Production QRZ replacement remains contract-gated, automatic old-identity deletion remains unavailable, and no-query LoTW live classification remains blocked pending an evidenced LoFi replay/cutover contract.
+The earlier integration fixtures are preserved in repository history. Current preparation and recovery are covered by the [native Worker fixture](../tests/inventory-hosted-worker.test.ts). These tests use real local D1/workerd storage and generated-key signing with synthetic vendor transport. They prove local state transitions, tenant and lease fencing, safe retries, rollout scope, zero-write adoption, narrative retention and the submission/observation/confirmation distinction; they do not prove QRZ replacement semantics or ARRL acceptance. Production QRZ replacement remains contract-gated, automatic old-identity deletion remains unavailable, and no-query LoTW live classification remains blocked pending an evidenced LoFi replay/cutover contract.
 
 ## No-query live cutover
 

@@ -170,7 +170,7 @@ interface LotwCredential {
   signingCredentials?: SigningCredential[];
   query?: { username: string; password: string };
 }
-interface QrzConfig {
+export interface QrzConfig {
   bookId?: string;
   stationCallsign: string;
   startDate: string;
@@ -824,7 +824,7 @@ function qrzClient(
     neighborhoodFallback,
   });
 }
-function routedQrz(config: QrzConfig, contact: Contact): boolean {
+export function routedQrz(config: QrzConfig, contact: Contact): boolean {
   const date = new Date(contact.startAtMillis).toISOString().slice(0, 10);
   return (
     config.stationCallsign?.toUpperCase() === contact.stationCall &&
@@ -850,7 +850,10 @@ async function activeTemplate(
   if (!row) throw new Error("No immutable QRZ template profile is configured");
   return decodeTemplate(row);
 }
-function decodeTemplate(row: { id: string; config: string }): TemplateVersion {
+export function decodeTemplate(row: {
+  id: string;
+  config: string;
+}): TemplateVersion {
   const config = JSON.parse(row.config) as TemplateVersion;
   return { ...config, id: row.id, profile: config.profile ?? TEMPLATE_PROFILE };
 }

@@ -7,6 +7,7 @@ import { serializeAdifRecord } from "../src/adif.ts";
 import { InventoryDeliveryWorkspace } from "../src/inventory-delivery-workspace.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
+import { InventoryQrzPreparation } from "../src/inventory-qrz-preparation.ts";
 import { InventoryRuns } from "../src/inventory-runs.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
 import { registerInventorySelection } from "../src/inventory-scheduler.ts";
@@ -14,6 +15,7 @@ import { InventorySourceProofDrain } from "../src/inventory-source-proof-drain.t
 import { InventorySourceProofJobs } from "../src/inventory-source-proof-jobs.ts";
 import { InventorySourceProofWorkspace } from "../src/inventory-source-proof-workspace.ts";
 import { Store } from "../src/store.ts";
+import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import { keys, seed } from "./helpers.ts";
 import { applyAdditionalMigrations } from "./runtime-fixtures.ts";
 
@@ -182,7 +184,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     .run();
   await store
     .statement(
-      'UPDATE connections SET config=\'{"bookId":"7","stationCallsign":"N1RWJ","startDate":"2025-01-01","endDate":"2027-12-31"}\' WHERE id=\'destination\'',
+      'UPDATE connections SET remote_identity=\'7\',config=\'{"bookId":"7","stationCallsign":"N1RWJ","startDate":"2025-01-01","endDate":"2027-12-31"}\' WHERE id=\'destination\'',
     )
     .run();
   await store
@@ -561,6 +563,120 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       reason: "contact_outside_source_proof",
     },
   );
+  await db.batch([
+    store.statement(
+      "INSERT INTO templates VALUES('a','destination',?,?,1),('a','destination',?,?,1)",
+      "original",
+      JSON.stringify({
+        profile: TEMPLATE_PROFILE,
+        fields: { COMMENT: "{{ op.station }} to {{ qso.call }} at {{ now }}" },
+        fallbackNotes: false,
+      }),
+      "changed",
+      JSON.stringify({
+        profile: TEMPLATE_PROFILE,
+        fields: { COMMENT: "Changed template" },
+        fallbackNotes: false,
+      }),
+    ),
+    store.statement(
+      "INSERT INTO active_templates VALUES('a','destination','original')",
+    ),
+  ]);
+  const qrz = new InventoryQrzPreparation(store);
+  const stageArgs = ["a", queuedProof.id, qrzScope, ["q2"]] as const;
+  // A late template rebind during publication must roll back every insert.
+  await db
+    .prepare(
+      `CREATE TRIGGER fixture_qrz_rebind AFTER INSERT ON inventory_qrz_attempts
+       BEGIN UPDATE active_templates SET version='changed' WHERE tenant='a' AND destination='destination'; END;`,
+    )
+    .run();
+  assert.deepEqual(await qrz.prepare(...stageArgs, "lost-fence"), {
+    kind: "held",
+    reason: "qrz_preparation_changed",
+  });
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM inventory_qrz_preparations")
+      .first("n"),
+    0,
+  );
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM inventory_qrz_attempts")
+      .first("n"),
+    0,
+  );
+  await db.prepare("DROP TRIGGER fixture_qrz_rebind").run();
+  const staged = await qrz.prepare(...stageArgs, "stable-stage");
+  if (staged.kind !== "prepared") assert.fail(staged.reason);
+  const [attempt] = staged.attempts;
+  const recovered = new InventoryQrzPreparation(new Store(db, keys));
+  assert.deepEqual(
+    await recovered.prepare(...stageArgs, "stable-stage"),
+    staged,
+  );
+  const artifact = await recovered.artifact("a", attempt.attempt_id);
+  assert.ok(artifact);
+  assert.equal(artifact.hash, attempt.request_hash);
+  assert.equal(artifact.record.CALL, "W2AW");
+  assert.match(artifact.record.COMMENT, /^N1RWJ to W2AW at /);
+  await assert.rejects(
+    qrz.prepare(...stageArgs, "overlap"),
+    /UNIQUE constraint/,
+  );
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM inventory_qrz_preparations")
+      .first("n"),
+    1,
+  );
+  assert.equal(await qrz.current("a", attempt.attempt_id), true);
+  assert.equal(await qrz.cancelStale("a", attempt.attempt_id), false);
+  await db.prepare("UPDATE active_templates SET version='changed'").run();
+  assert.equal(await qrz.current("a", attempt.attempt_id), false);
+  assert.deepEqual(await recovered.artifact("a", attempt.attempt_id), artifact);
+  await db.prepare("UPDATE active_templates SET version='original'").run();
+  assert.equal(await qrz.current("a", attempt.attempt_id), true);
+  // Read the native fence after the route edit, then roll back the fixture edit.
+  await db
+    .prepare(
+      `CREATE TRIGGER fixture_qrz_route_check AFTER UPDATE OF config ON connections
+       WHEN NEW.tenant='a' AND NEW.id='destination' BEGIN
+        SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM inventory_qrz_attempt_current WHERE tenant=NEW.tenant)
+         THEN RAISE(ABORT,'fixture QRZ route fenced') END;
+       END;`,
+    )
+    .run();
+  await assert.rejects(
+    db
+      .prepare(
+        "UPDATE connections SET config=json_set(config,'$.endDate','2025-01-01') WHERE id='destination'",
+      )
+      .run(),
+    /fixture QRZ route fenced/,
+  );
+  await db.prepare("DROP TRIGGER fixture_qrz_route_check").run();
+  await db
+    .prepare(
+      `CREATE TRIGGER fixture_qrz_source_check AFTER UPDATE OF semantic_version ON inventory_record_facets
+       WHEN NEW.tenant='a' AND NEW.record_key='q2' BEGIN
+        SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM inventory_qrz_attempt_current WHERE tenant=NEW.tenant)
+         THEN RAISE(ABORT,'fixture QRZ source fenced') END;
+       END;`,
+    )
+    .run();
+  await assert.rejects(
+    db
+      .prepare(
+        "UPDATE inventory_record_facets SET semantic_version=semantic_version+1 WHERE tenant='a' AND record_key='q2' AND facet='source'",
+      )
+      .run(),
+    /fixture QRZ source fenced/,
+  );
+  await db.prepare("DROP TRIGGER fixture_qrz_source_check").run();
+  assert.equal(await qrz.current("a", attempt.attempt_id), true);
   assert.deepEqual(
     await db
       .prepare(
@@ -688,6 +804,10 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       reason: "destination_review_stale",
     },
   );
+  assert.equal(await qrz.current("a", attempt.attempt_id), false);
+  assert.equal(await qrz.cancelStale("a", attempt.attempt_id), true);
+  assert.equal(await qrz.cancelStale("a", attempt.attempt_id), false);
+  assert.deepEqual(await recovered.artifact("a", attempt.attempt_id), artifact);
   await db.prepare("UPDATE accounts SET quiet_minutes=31 WHERE id='a'").run();
   assert.equal(await reloaded.current("a", queuedProof.id), null);
   assert.deepEqual(

@@ -5,6 +5,7 @@ import {
 import type { InventoryRuns } from "./inventory-runs.ts";
 import type { InventorySourceProofScope } from "./inventory-source-proof-workspace.ts";
 import { SOURCE_PRESENCE_MAX_AGE_MS } from "./source-presence-collector.ts";
+import type { Lease } from "./store.ts";
 
 export interface InventorySourceDrainReceipt {
   run_id: string;
@@ -18,8 +19,13 @@ export interface InventorySourceDrainReceipt {
 export class InventorySourceProofDrain {
   constructor(readonly runs: InventoryRuns) {}
 
-  async start(source: InventorySourceProofScope, collectionFinishedAt: number) {
+  async start(
+    source: InventorySourceProofScope,
+    collectionFinishedAt: number,
+    options: { runId?: string; lease?: Lease } = {},
+  ) {
     source = structuredClone(source);
+    options = structuredClone(options);
     const now = Date.now();
     if (
       !Number.isSafeInteger(collectionFinishedAt) ||
@@ -28,13 +34,12 @@ export class InventorySourceProofDrain {
     )
       throw new Error("invalid_inventory_source_drain_time");
     const store = this.runs.inventory.store;
-    const lease = await store.claim(
-      source.tenant,
-      `inventory:${source.scope_id}`,
-      now,
-      60_000,
-    );
+    const scope = `inventory:${source.scope_id}`;
+    const lease =
+      options.lease ?? (await store.claim(source.tenant, scope, now, 60_000));
     if (!lease) return { kind: "busy" as const };
+    if (lease.tenant !== source.tenant || lease.scope !== scope)
+      throw new Error("invalid_inventory_source_drain_lease");
     try {
       const current = await store
         .statement(
@@ -73,7 +78,7 @@ export class InventorySourceProofDrain {
       const definition = await planInventoryRun(
         stream,
         JSON.parse(current.plan) as InventoryScanPlan,
-        { mode: "delta" },
+        { mode: "delta", id: options.runId },
       );
       const run = await this.runs.begin({
         stream,
@@ -87,7 +92,7 @@ export class InventorySourceProofDrain {
         nextDueAt: run.nextDueAt,
       };
     } finally {
-      await store.release(lease);
+      if (!options.lease) await store.release(lease);
     }
   }
 

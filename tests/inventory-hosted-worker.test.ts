@@ -567,37 +567,18 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   );
   assert.equal(lotwReads.length, 3);
 
-  await new InventoryOwnership(store).hold(
-    "a",
-    "qrz",
-    "fixture-inflight",
-    "unresolved_delivery",
-  );
-  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
-  let decision: string | null = null;
-  for (let i = 0; i < 120; i++) {
-    decision = await db
-      .prepare(
-        "SELECT decision FROM inventory_delivery_review_current WHERE provider='qrz' AND record_key='q2'",
-      )
-      .first<string>("decision");
-    if (decision === "ownership_incomplete") break;
-    await delay(50);
-  }
-  assert.equal(decision, "ownership_incomplete");
-  assert.deepEqual([reads, qrzReads, lotwReads.length], [2, 2, 3]);
-
   const drain = new InventorySourceProofDrain(
     new InventoryRuns(new InventoryIngestion(store)),
   );
-  const collectedAt = Date.now();
+  const collectedAt = collected.collection_finished_at;
+  assert.ok(collectedAt);
   assert.equal(
     await drain.observed(captured.snapshot.source, collectedAt),
     null,
   );
-  const started = await drain.start(captured.snapshot.source, collectedAt);
-  assert.equal(started.kind, "started");
-  if (started.kind !== "started") assert.fail(JSON.stringify(started));
+  const started = await resumedJobs.step("a", sourceScope, queuedProof.id);
+  assert.equal(started.kind, "deferred", JSON.stringify(started));
+  assert.equal(await resumedJobs.current("a", queuedProof.id), null);
   await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
   let receipt: Awaited<ReturnType<typeof drain.observed>> = null;
   for (let i = 0; i < 500; i++) {
@@ -605,7 +586,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     if (receipt) break;
     await delay(100);
   }
-  assert.equal(receipt?.run_id, started.run);
+  assert.equal(receipt?.run_id, collected.drain_run);
   assert.ok(receipt && receipt.request_started_at >= collectedAt);
   assert.deepEqual(
     await db
@@ -624,4 +605,50 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     null,
   );
   assert.deepEqual([reads, qrzReads, lotwReads.length], [3, 2, 3]);
+
+  const reloaded = new InventorySourceProofJobs(jobs.runs, jobs.fetcher);
+  const proof = await reloaded.step("a", sourceScope, queuedProof.id);
+  assert.equal(proof.kind, "complete", JSON.stringify(proof));
+  assert.equal(
+    (await reloaded.current("a", queuedProof.id))?.expires_at,
+    collected.expires_at,
+  );
+  assert.equal((await reloaded.load("a", sourceScope))?.attempts, 1);
+  assert.equal(
+    (await reloaded.step("a", sourceScope, queuedProof.id)).kind,
+    "complete",
+  );
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM inventory_source_proofs")
+      .first("n"),
+    1,
+  );
+
+  await new InventoryOwnership(store).hold(
+    "a",
+    "qrz",
+    "fixture-inflight",
+    "unresolved_delivery",
+  );
+  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  let decision: string | null = null;
+  for (let i = 0; i < 120; i++) {
+    decision = await db
+      .prepare(
+        "SELECT decision FROM inventory_delivery_review_current WHERE provider='qrz' AND record_key='q2'",
+      )
+      .first<string>("decision");
+    if (decision === "ownership_incomplete") break;
+    await delay(50);
+  }
+  assert.equal(decision, "ownership_incomplete");
+  assert.deepEqual([reads, qrzReads, lotwReads.length], [3, 2, 3]);
+
+  assert.ok(
+    await reloaded.current("a", queuedProof.id),
+    "destination ownership does not change source evidence",
+  );
+  await db.prepare("UPDATE accounts SET quiet_minutes=31 WHERE id='a'").run();
+  assert.equal(await reloaded.current("a", queuedProof.id), null);
 });

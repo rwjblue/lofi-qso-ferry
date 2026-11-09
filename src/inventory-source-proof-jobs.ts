@@ -1,4 +1,5 @@
 import type { InventoryRuns } from "./inventory-runs.ts";
+import { InventorySourceProofDrain } from "./inventory-source-proof-drain.ts";
 import {
   type InventorySourceProofScope,
   type InventorySourceProofSnapshot,
@@ -43,7 +44,7 @@ const leaseSql = `EXISTS(SELECT 1 FROM leases l WHERE l.tenant=? AND l.scope=? A
 const leaseArgs = ({ tenant, scope, token, fence }: Lease) =>
   [tenant, scope, token, fence] as const;
 
-/** Durable positive collection. A complete collection still needs its drain. */
+/** Durable collection, canonical drain, and proof publication. */
 export class InventorySourceProofJobs {
   constructor(
     readonly runs: InventoryRuns,
@@ -85,6 +86,22 @@ export class InventorySourceProofJobs {
         scope,
       )
       .first<Job>();
+  }
+
+  current(tenant: string, id: string) {
+    return this.store
+      .statement(
+        "SELECT proof_id,scope_id,drain_run,drain_started_at,expires_at FROM inventory_source_proof_current WHERE tenant=? AND proof_id=?",
+        tenant,
+        id,
+      )
+      .first<{
+        proof_id: string;
+        scope_id: string;
+        drain_run: string;
+        drain_started_at: number;
+        expires_at: number;
+      }>();
   }
 
   async enqueue(tenant: string, scope: string, keys: readonly string[]) {
@@ -158,7 +175,8 @@ export class InventorySourceProofJobs {
       if (job.due_at > now)
         return { kind: "deferred" as const, retryAt: job.due_at };
       const snapshot = JSON.parse(job.snapshot) as InventorySourceProofSnapshot;
-      if (job.phase === "draining") return { kind: "draining" as const };
+      if (job.phase === "draining")
+        return await this.drain(job, snapshot, lease, now);
       return await this.collect(job, snapshot, lease, now);
     } finally {
       await this.store.release(lease);
@@ -300,6 +318,124 @@ export class InventorySourceProofJobs {
         : { kind: "stale" as const };
     }
     return this.hold(job, lease, result.reason ?? "read_failed");
+  }
+
+  private async drain(
+    job: Job,
+    snapshot: InventorySourceProofSnapshot,
+    lease: Lease,
+    now: number,
+  ) {
+    const {
+      drain_run: runId,
+      collection_finished_at: finishedAt,
+      expires_at: expiry,
+    } = job;
+    if (!runId || !finishedAt || !expiry || expiry <= now)
+      return this.hold(job, lease, "witness_expired");
+    const drain = new InventorySourceProofDrain(this.runs);
+    const run = await this.runs.load(job.tenant, runId);
+    if (!run) {
+      const started = await drain.start(snapshot.source, finishedAt, {
+        runId,
+        lease,
+      });
+      if (started.kind !== "started")
+        return this.hold(job, lease, started.kind);
+      return this.waitForDrain(job, lease, started.nextDueAt);
+    }
+    if (run.phase === "held") return this.hold(job, lease, "drain_held");
+    if (run.phase !== "complete")
+      return this.waitForDrain(job, lease, run.nextDueAt);
+    const receipt = await drain.observed(snapshot.source, finishedAt);
+    if (!receipt || receipt.run_id !== runId)
+      return this.hold(job, lease, "drain_unqualified");
+    const refreshed = await new InventorySourceProofWorkspace(
+      this.store,
+    ).capture(
+      job.tenant,
+      job.scope_id,
+      snapshot.contacts.map(({ key }) => key),
+    );
+    if (
+      refreshed.kind !== "captured" ||
+      canonical(refreshed.snapshot.dependencies) !==
+        canonical(snapshot.dependencies) ||
+      snapshot.contacts.some((original, i) => {
+        const current = refreshed.snapshot.contacts[i];
+        return (
+          !current ||
+          original.key !== current.key ||
+          original.operation !== current.operation ||
+          original.projectionVersion !== current.projectionVersion ||
+          original.projectionPayload !== current.projectionPayload ||
+          original.topologyVersion !== current.topologyVersion ||
+          !original.routes.some((route) =>
+            current.routes.some(
+              (value) =>
+                route.provider === value.provider &&
+                route.destination === value.destination,
+            ),
+          )
+        );
+      })
+    )
+      return this.hold(job, lease, "dependencies_changed");
+    try {
+      const saved = await this.store
+        .statement(
+          `INSERT INTO inventory_source_proofs(tenant,proof_id,scope_id,snapshot,witnesses,drain_run,drain_page,collection_finished_at,drain_started_at,created_at,expires_at,lease_token,lease_fence)
+           SELECT tenant,job_id,scope_id,snapshot,witnesses,drain_run,?,collection_finished_at,?,CAST(unixepoch('subsec')*1000 AS INTEGER),expires_at,?,?
+           FROM inventory_source_proof_jobs WHERE (tenant,scope_id,job_id,version,phase)=(?,?,?,?,'draining')`,
+          receipt.page_id,
+          receipt.request_started_at,
+          lease.token,
+          lease.fence,
+          job.tenant,
+          job.scope_id,
+          job.job_id,
+          job.version,
+        )
+        .run();
+      if (saved.meta.changes)
+        return { kind: "complete" as const, expiresAt: expiry };
+      return { kind: "stale" as const };
+    } catch (error) {
+      if (await this.current(job.tenant, job.job_id))
+        return { kind: "complete" as const, expiresAt: expiry };
+      if (
+        error instanceof Error &&
+        /inventory source proof (inputs|witnesses)/.test(error.message)
+      )
+        return this.hold(
+          job,
+          lease,
+          expiry <= Date.now() ? "witness_expired" : "dependencies_changed",
+        );
+      throw error;
+    }
+  }
+
+  private async waitForDrain(job: Job, lease: Lease, dueAt: number) {
+    const retryAt = Math.min(
+      job.expires_at ?? dueAt,
+      Math.max(Date.now() + 1000, dueAt),
+    );
+    const saved = await this.store
+      .statement(
+        `UPDATE inventory_source_proof_jobs SET version=version+1,due_at=?
+         WHERE (tenant,scope_id,job_id,version,phase)=(?,?,?,?,'draining') AND ${leaseSql}`,
+        retryAt,
+        job.tenant,
+        job.scope_id,
+        job.job_id,
+        job.version,
+        ...leaseArgs(lease),
+      )
+      .run();
+    return saved.meta.changes
+      ? { kind: "deferred" as const, retryAt }
+      : { kind: "stale" as const };
   }
 
   private async hold(job: Job, lease: Lease, reason: string) {

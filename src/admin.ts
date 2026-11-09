@@ -1,18 +1,22 @@
 import { isAdmin } from "./admin-access.ts";
-import { getAdminOverview } from "./admin-metrics.ts";
 import type {
   AdminAuditEntry,
   AdminInvitation,
   AdminInvitationResult,
   AdminInvitations,
 } from "./admin-invitation-types.ts";
+import { getAdminOverview } from "./admin-metrics.ts";
 import {
   AuthError,
   normalizeEmail,
   requireRecent,
-  sendEmail,
   type SessionIdentity,
+  sendEmail,
 } from "./auth.ts";
+import {
+  updateInventoryRetentionPolicy,
+  validSettledRetentionDays,
+} from "./inventory-retention-policy.ts";
 import { invitationEmail } from "./mail.ts";
 import { boundedJson } from "./security.ts";
 
@@ -303,6 +307,18 @@ export async function adminRoute(
     throw new AuthError(403, "Administrator access required");
   if (request.method === "GET" && path === "/api/admin/overview")
     return json(await getAdminOverview(env));
+  if (request.method === "POST" && path === "/api/admin/retention") {
+    requireRecent(identity);
+    let days: unknown;
+    try {
+      days = (await boundedJson(request, 1024)).settledRetentionDays;
+    } catch {
+      throw new AuthError(400, "Enter a whole number of retention days.");
+    }
+    if (!validSettledRetentionDays(days))
+      throw new AuthError(400, "Choose between 1 and 3650 retention days.");
+    return json(await updateInventoryRetentionPolicy(env.DB, days));
+  }
   if (request.method === "GET" && path === "/api/admin/invitations")
     return json(await listInvitations(env));
   if (

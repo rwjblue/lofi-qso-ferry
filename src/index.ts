@@ -3,19 +3,23 @@ import { isAdmin } from "./admin-access.ts";
 import { AuthError, authRoute, checkCsrf, session } from "./auth.ts";
 import { connectionRoute } from "./connections.ts";
 import {
-  runHostedInventoryQueue,
-  runHostedScheduled,
-} from "./inventory-hosted.ts";
-import { inventoryLotwActivity } from "./inventory-lotw-activity.ts";
-import { lofiAccountLabel } from "./lofi-identity.ts";
-import { lotwVerification } from "./lotw-verification.ts";
-import { reviewRoute } from "./review.ts";
-import { boundedJson, keyring } from "./security.ts";
-import {
   deliveryGates,
   exportAuthorizationMode,
   exportsEffective,
-} from "./service.ts";
+} from "./delivery-gates.ts";
+import {
+  inventoryDashboardActivity,
+  inventoryDashboardSummary,
+  inventoryDashboardWindows,
+} from "./inventory-dashboard.ts";
+import {
+  runHostedInventoryQueue,
+  runHostedScheduled,
+} from "./inventory-hosted.ts";
+import { inventorySyncScopeRoute } from "./inventory-sync-scope.ts";
+import { lofiAccountLabel } from "./lofi-identity.ts";
+import { lotwVerification } from "./lotw-verification.ts";
+import { boundedJson, keyring } from "./security.ts";
 import {
   defaultTemplate,
   destinationTemplates,
@@ -80,9 +84,13 @@ export default {
       if (admin) return secured(admin);
       const connection = await connectionRoute(request, env, identity);
       if (connection) return secured(connection);
+      const syncScope = await inventorySyncScopeRoute(
+        request,
+        env.DB,
+        identity.tenant,
+      );
+      if (syncScope) return secured(syncScope);
       const store = new Store(env.DB, keyring(env));
-      const review = await reviewRoute(request, store, identity.tenant);
-      if (review) return secured(review);
       if (request.method === "GET" && url.pathname === "/api/dashboard") {
         const account = await store
           .statement(
@@ -90,30 +98,6 @@ export default {
             identity.tenant,
           )
           .first<{ email: string; quiet_minutes: number }>();
-        const counts = (
-          await store
-            .statement(
-              "SELECT state,count(*) AS count FROM ledger WHERE tenant=? GROUP BY state",
-              identity.tenant,
-            )
-            .all<{ state: string; count: number }>()
-        ).results;
-        const activityRows = (
-          await store
-            .statement(
-              "SELECT source,qso,destination,state,reason,confirmed,updated_at FROM ledger WHERE tenant=? ORDER BY updated_at DESC LIMIT 50",
-              identity.tenant,
-            )
-            .all<{
-              source: string;
-              qso: string;
-              destination: string;
-              state: string;
-              reason: string | null;
-              confirmed: number;
-              updated_at: number;
-            }>()
-        ).results;
         const connections = (
           await store
             .statement(
@@ -149,73 +133,11 @@ export default {
               : {}),
           };
         });
-        const lotwDestinations = new Set(
-          connections
-            .filter((connection) => connection.kind === "lotw")
-            .map((connection) => connection.id),
-        );
-        const native = lotwDestinations.size
-          ? await inventoryLotwActivity(store, identity.tenant)
-          : { activity: [], counts: [] };
-        for (const incoming of native.counts) {
-          const count = counts.find(({ state }) => state === incoming.state);
-          if (count) count.count += incoming.count;
-          else counts.push(incoming);
-        }
-        const recent = [
-          ...activityRows.map((row) => ({ ...row, priorIdentityCount: null })),
-          ...native.activity,
-        ]
-          .sort((a, b) => b.updated_at - a.updated_at)
-          .slice(0, 50);
-        const activity: {
-          qso: string;
-          destination: string;
-          state: string;
-          reason: string | null;
-          confirmed: number;
-          priorIdentityCount?: number;
-        }[] = await Promise.all(
-          recent.map(
-            async ({
-              source,
-              updated_at: _updatedAt,
-              priorIdentityCount,
-              ...row
-            }) => ({
-              ...row,
-              priorIdentityCount:
-                priorIdentityCount ??
-                (lotwDestinations.has(row.destination)
-                  ? await store.lotwPriorIdentityCount({
-                      tenant: identity.tenant,
-                      source,
-                      qso: row.qso,
-                      destination: row.destination,
-                    })
-                  : 0),
-            }),
-          ),
-        );
-        const sourceErrors = (
-          await store
-            .statement(
-              "SELECT id AS qso,source AS destination,'source_blocked' AS state,reason,0 AS confirmed FROM source_work WHERE tenant=? AND state!='context' AND reason IS NOT NULL ORDER BY processed_at DESC LIMIT 20",
-              identity.tenant,
-            )
-            .all()
-        ).results;
-        activity.push(
-          ...sourceErrors.map((row) => ({
-            qso: String(row.qso),
-            destination: String(row.destination),
-            state: String(row.state),
-            reason: row.reason === null ? null : String(row.reason),
-            confirmed: 0,
-          })),
-        );
-        if (sourceErrors.length)
-          counts.push({ state: "source_blocked", count: sourceErrors.length });
+        const [providers, windows, activity] = await Promise.all([
+          inventoryDashboardSummary(env.DB, identity.tenant),
+          inventoryDashboardWindows(env.DB, identity.tenant),
+          inventoryDashboardActivity(store, identity.tenant),
+        ]);
         const passkeys = (
           await store
             .statement(
@@ -240,7 +162,8 @@ export default {
             email: account?.email,
             admin: await isAdmin(env, identity.tenant),
             quietMinutes: account?.quiet_minutes,
-            counts: Object.fromEntries(counts.map((c) => [c.state, c.count])),
+            providers,
+            windows,
             activity,
             connections,
             passkeys,

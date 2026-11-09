@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { type AdifRecord, serializeAdifRecord } from "../src/adif.ts";
 import worker from "../src/index.ts";
 import { InventoryAssociations } from "../src/inventory-associations.ts";
+import type { InventoryProviderDashboard } from "../src/inventory-dashboard-types.ts";
 import { pollInventoryLotwConfirmations } from "../src/inventory-lotw-confirmations.ts";
 import { InventoryMatchingResults } from "../src/inventory-matching-results.ts";
 import { lotwInventoryObservations } from "../src/inventory-observations.ts";
@@ -128,14 +129,27 @@ test("the authenticated dashboard shows unambiguous native LoTW confirmations wi
       }),
       env,
     );
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, await response.clone().text());
     return response.json() as Promise<{
-      counts: Record<string, number>;
+      providers: InventoryProviderDashboard[];
       activity: { qso: string; state: string; confirmed: number }[];
     }>;
   };
   const initial = await dashboard("a");
-  assert.deepEqual(initial.counts, { adopted_existing: 2 });
+  const lotw = initial.providers.find(
+    (provider) => provider.provider === "lotw",
+  );
+  assert.ok(lotw);
+  assert.equal(lotw.adopted, 2);
+  assert.equal(lotw.contacts, 2);
+  assert.deepEqual(
+    lotw.matches.map(({ state, count }) => ({ state, count })),
+    [{ state: "matched_existing", count: 2 }],
+  );
+  assert.deepEqual(
+    lotw.coverage.map(({ state, count }) => ({ state, count })),
+    [{ state: "ready", count: 1 }],
+  );
   assert.deepEqual(
     initial.activity
       .map(({ qso, state, confirmed }) => ({ qso, state, confirmed }))
@@ -166,12 +180,5 @@ test("the authenticated dashboard shows unambiguous native LoTW confirmations wi
     .bind(Date.now())
     .run();
   const overlapped = await dashboard("a");
-  assert.deepEqual(overlapped.counts, { adopted_existing: 1, changed: 1 });
-  assert.deepEqual(
-    overlapped.activity.map(({ qso, state }) => ({ qso, state })),
-    [
-      { qso: "q2", state: "changed" },
-      { qso: "q1", state: "adopted_existing" },
-    ],
-  );
+  assert.deepEqual(overlapped, initial);
 });

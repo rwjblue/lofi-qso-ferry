@@ -6,18 +6,17 @@ import type {
   AdminInvitationResult,
   AdminInvitations,
 } from "./admin-invitation-types.ts";
-import type { AdminOverview, AdminPriority } from "./admin-types.ts";
-import {
-  trendSegments,
-  workloadChange,
-  workloadStatus,
-} from "./browser-admin-workload.ts";
+import type { AdminOverview } from "./admin-types.ts";
 import {
   ApiError,
   type BrowserSession,
   createApiClient,
 } from "./browser-api.ts";
-import { connectionStatus, vendorName } from "./browser-dashboard.ts";
+import {
+  connectionStatus,
+  inventoryStatusLabel,
+  vendorName,
+} from "./browser-dashboard.ts";
 import { exportPresentation } from "./browser-export-mode.ts";
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
@@ -54,8 +53,6 @@ function age(value: number | null, now: number) {
   return `${Math.floor(minutes / 1440)}d ago`;
 }
 const readable = (value: string) => value.replaceAll("_", " ");
-const priorityName = (value: string) =>
-  value === "live" ? "Live sync" : "Background imports";
 function pill(text: string, warning = false, muted = false) {
   return node(
     "span",
@@ -107,244 +104,8 @@ function table(
   target.replaceChildren(wrap);
 }
 
-function svgNode<K extends keyof SVGElementTagNameMap>(
-  tag: K,
-  attributes: Record<string, string | number> = {},
-  text = "",
-) {
-  const value = document.createElementNS("http://www.w3.org/2000/svg", tag);
-  for (const [name, attribute] of Object.entries(attributes))
-    value.setAttribute(name, String(attribute));
-  value.textContent = text;
-  return value;
-}
-
-function renderTrend(data: AdminOverview, priority: AdminPriority) {
-  const trend = data.workload.trend;
-  const target = element(`trend-${priority}`);
-  target.replaceChildren(node("h3", priorityName(priority)));
-  const change = workloadChange(trend, priority);
-  if (change) {
-    const direction =
-      change.ready === 0
-        ? "unchanged"
-        : `${count(Math.abs(change.ready))} ${change.ready > 0 ? "more" : "fewer"}`;
-    target.append(
-      node(
-        "p",
-        `Ready: ${count(change.first.ready)} → ${count(change.last.ready)} (${direction}). Held: ${count(change.first.held)} → ${count(change.last.held)}. Blocked: ${count(change.first.blocked)} → ${count(change.last.blocked)}.`,
-        "small",
-      ),
-    );
-  }
-  const segments = trendSegments(trend, priority);
-  const samples = segments.flat();
-  if (!samples.length) {
-    target.append(
-      node(
-        "p",
-        "No classified backlog samples yet. New scheduler runs will record ready, held and blocked counts.",
-        "admin-note",
-      ),
-    );
-    return;
-  }
-  if (samples.length === 1)
-    target.append(
-      node("p", "One sample recorded; a trend needs at least two.", "small"),
-    );
-  const first = trend.points[0].at;
-  const last = trend.points.at(-1)?.at ?? first;
-  const maximum = Math.max(
-    1,
-    ...samples.flatMap(({ counts }) => [
-      counts.ready,
-      counts.held,
-      counts.blocked,
-    ]),
-  );
-  const x = (at: number) =>
-    54 + ((at - first) / Math.max(1, last - first)) * 476;
-  const y = (value: number) => 168 - (value / maximum) * 140;
-  const chart = svgNode("svg", {
-    viewBox: "0 0 550 205",
-    role: "img",
-    "aria-labelledby": `trend-title-${priority} trend-description-${priority}`,
-    class: "admin-trend-chart",
-  });
-  chart.append(
-    svgNode(
-      "title",
-      { id: `trend-title-${priority}` },
-      `${priorityName(priority)} backlog`,
-    ),
-    svgNode(
-      "desc",
-      { id: `trend-description-${priority}` },
-      "Source records ready, held and blocked in the sampled period. Gaps indicate missing samples. Exact counts and timestamps are in the backlog samples table below.",
-    ),
-  );
-  for (const value of [0, maximum / 2, maximum]) {
-    const position = y(value);
-    chart.append(
-      svgNode("line", {
-        x1: 54,
-        x2: 530,
-        y1: position,
-        y2: position,
-        class: "trend-grid",
-      }),
-      svgNode(
-        "text",
-        { x: 44, y: position + 4, "text-anchor": "end", class: "trend-label" },
-        count(Math.round(value)),
-      ),
-    );
-  }
-  for (const key of ["ready", "held", "blocked"] as const) {
-    for (const segment of segments) {
-      chart.append(
-        svgNode("polyline", {
-          points: segment
-            .map((point) => `${x(point.at)},${y(point.counts[key])}`)
-            .join(" "),
-          class: `trend-line trend-${key}`,
-        }),
-      );
-      for (const point of segment)
-        chart.append(
-          svgNode("circle", {
-            cx: x(point.at),
-            cy: y(point.counts[key]),
-            r: 2.5,
-            class: `trend-dot trend-${key}`,
-          }),
-        );
-    }
-  }
-  const time = (at: number) =>
-    new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  chart.append(
-    svgNode("text", { x: 54, y: 196, class: "trend-label" }, time(first)),
-    svgNode(
-      "text",
-      { x: 530, y: 196, "text-anchor": "end", class: "trend-label" },
-      time(last),
-    ),
-  );
-  target.append(chart);
-}
-
-function renderWorkload(data: AdminOverview) {
-  const { workload } = data;
-  const status = workloadStatus(data);
-  element("workload-title").textContent = status.title;
-  element("workload-detail").textContent = status.detail;
-  element("workload-status").classList.toggle("admin-warning", status.warning);
-  table(
-    "source-backlog",
-    ["Traffic", "Ready", "Held", "Blocked", "Expired"],
-    workload.source.map((row) => [
-      cell(
-        priorityName(row.priority),
-        row.oldestRetainedAt === null
-          ? "No retained input"
-          : `Oldest retained input: ${age(row.oldestRetainedAt, data.generatedAt)}`,
-      ),
-      count(row.ready),
-      count(row.held),
-      count(row.blocked),
-      count(row.expired),
-    ]),
-    "No outstanding source work.",
-  );
-  element("source-retention").textContent =
-    `${count(data.backlog.source.reduce((total, row) => total + row.expiring24h, 0))} source records expire within the next 24 hours. Retained input age measures time since the buffered input was stored, not how long a contact has been stuck. Expired records need fresh source data before processing.`;
-  for (const [id, reasons, empty] of [
-    ["held-reasons", workload.heldReasons, "No held source work."],
-    ["blocked-reasons", workload.blockedReasons, "No blocked source work."],
-  ] as const)
-    table(
-      id,
-      ["Reason", "Traffic", "Source records"],
-      reasons.map((row) => [
-        row.label,
-        priorityName(row.priority),
-        count(row.count),
-      ]),
-      empty,
-    );
-  const { trend, deliveries } = workload;
-  const coverage = `${count(trend.sampleCount)} of ${count(trend.expectedSamples)} expected scheduler snapshots available`;
-  element("trend-coverage").textContent =
-    `${coverage}.${trend.lastAt === null ? "" : ` Latest sample: ${age(trend.lastAt, data.generatedAt)} (${date(trend.lastAt)}).`}${trend.stale ? " Recent sampling is incomplete or out of date." : ""}${trend.truncated ? " Only the newest 2,000 scheduler records are included; older samples in this window may be missing." : ""}${trend.maxGapMs === null ? "" : ` Largest sampling gap: ${Math.round(trend.maxGapMs / 60_000)} minutes.`}`;
-  for (const priority of ["live", "background"] as const)
-    renderTrend(data, priority);
-  table(
-    "backlog-samples",
-    [
-      "Sampled",
-      "Live: ready / held / blocked",
-      "Imports: ready / held / blocked",
-    ],
-    trend.points.map((point) => [
-      date(point.at),
-      ...(["live", "background"] as const).map((priority) => {
-        const counts = point[priority];
-        return counts === null
-          ? "No classified sample"
-          : `${count(counts.ready)} / ${count(counts.held)} / ${count(counts.blocked)}`;
-      }),
-    ]),
-    "No backlog samples available.",
-  );
-  const hours = deliveries.windowMs / 3_600_000;
-  element("delivery-window").textContent = `Last ${hours} hours`;
-  table(
-    "delivery-throughput",
-    ["Destination", "Completed deliveries", "Average / hour"],
-    [
-      [
-        "QRZ accepted",
-        count(deliveries.qrz),
-        (deliveries.qrz / hours).toLocaleString(undefined, {
-          maximumFractionDigits: 1,
-        }),
-      ],
-      [
-        "LoTW confirmed by readback",
-        count(deliveries.lotw),
-        (deliveries.lotw / hours).toLocaleString(undefined, {
-          maximumFractionDigits: 1,
-        }),
-      ],
-      [
-        "Total",
-        count(deliveries.total),
-        (deliveries.total / hours).toLocaleString(undefined, {
-          maximumFractionDigits: 1,
-        }),
-      ],
-    ],
-    "No completed deliveries in this period.",
-  );
-  element("delivery-context").textContent =
-    `Last completed delivery in this period: ${age(deliveries.lastCompletedAt, data.generatedAt)}. ${count(deliveries.submittedOutstanding)} LoTW submissions await readback. ${count(deliveries.adoptedExisting)} existing destination records are currently adopted; these are not new deliveries.`;
-  table(
-    "delivery-buckets",
-    ["Hour ending", "QRZ accepted", "LoTW readback", "Total completed"],
-    deliveries.buckets.map((bucket) => [
-      date(bucket.at),
-      count(bucket.qrz),
-      count(bucket.lotw),
-      count(bucket.total),
-    ]),
-    "No completed deliveries in this period.",
-  );
-}
-
 const { request: api } = createApiClient(async () => {
-  message("Verify your passkey to change invitations.");
+  message("Verify your passkey to make this change.");
   const begin = await api<{
     ceremonyId: string;
     options: PublicKeyCredentialRequestOptionsJSON;
@@ -378,108 +139,137 @@ window.addEventListener("hashchange", selectPage);
 
 function renderOverview(data: AdminOverview) {
   const now = data.generatedAt;
+  element<HTMLInputElement>("settled-retention-days").value = String(
+    data.retention.settledRetentionDays,
+  );
+  element("inventory-runtime").textContent =
+    `Inventory runtime · ${inventoryStatusLabel(data.inventoryRuntime)}`;
   const metrics = element("admin-metrics");
   metrics.replaceChildren();
-  const sourceCount = (key: "ready" | "held" | "blocked") =>
-    data.workload.source.reduce((total, row) => total + row[key], 0);
-  for (const [label, value, detail] of [
-    [
-      "Ready source records",
-      count(sourceCount("ready")),
-      "No known hold · worker validation still applies",
-    ],
-    [
-      "Held source records",
-      count(sourceCount("held")),
-      "Waiting on a prerequisite, quiet time or review",
-    ],
-    [
-      "Blocked source records",
-      count(sourceCount("blocked")),
-      "Source data needs review",
-    ],
-    [
-      "Completed deliveries · 24h",
-      count(data.workload.deliveries.total),
-      "Confirmed destination contacts · excludes submissions",
-    ],
-  ]) {
-    const metric = node("div", "", "admin-metric");
+  for (const provider of data.providers) {
+    const metric = node("article", "", "admin-metric");
     metric.append(
-      node("p", label),
-      node("strong", value),
-      node("p", detail, "small"),
+      node("h3", vendorName(provider.provider)),
+      node("strong", count(provider.contacts)),
+      node("p", "Active inventory records", "small"),
+      node(
+        "p",
+        `Last observed ${age(provider.lastProgressAt, now).toLowerCase()}`,
+        "small",
+      ),
     );
     metrics.append(metric);
   }
-  const notices = element("health-notices");
-  notices.replaceChildren();
-  if (data.scheduler.stale)
-    notices.append(
-      node(
-        "p",
-        data.scheduler.lastStartedAt === null
-          ? "No scheduler heartbeat yet. Health is unknown until a scheduled run is recorded."
-          : `No completed scheduler run in the last ${Math.round(data.scheduler.staleAfterMs / 60_000)} minutes. The most recent start was ${date(data.scheduler.lastStartedAt)}; check the deployed cron and run outcomes.`,
-        "admin-notice admin-warning",
-      ),
-    );
-  if (data.scheduler.running)
-    notices.append(
-      node(
-        "p",
-        `${count(data.scheduler.running)} run(s) have no completion record. They may be running or may have been interrupted.`,
-        "admin-notice",
-      ),
-    );
-  if (data.scheduler.totals24h.deadlineRuns)
-    notices.append(
-      node(
-        "p",
-        `${count(data.scheduler.totals24h.deadlineRuns)} runs reached the scheduler time budget in the last 24 hours. Compare backlog samples and source freshness to see whether work is falling behind.`,
-        "admin-notice admin-warning",
-      ),
-    );
-  if (!data.gates.effective && data.scheduler.stale)
-    notices.append(
-      node(
-        "p",
-        "Exports are disabled by rollout gates. Read-only imports and reviews can continue; a delivery backlog is expected.",
-        "admin-notice",
-      ),
-    );
-  renderWorkload(data);
-  element("scheduler-freshness").textContent =
-    `Last start: ${age(data.scheduler.lastStartedAt, now)}. Last completed: ${age(data.scheduler.lastCompletedAt, now)}. ${count(data.scheduler.totals24h.deadlineRuns)} time-budget stops in the last 24 hours.`;
-  const candidates = data.backlog.deliveryCandidates;
-  element("delivery-candidates").textContent =
-    `${count(candidates.due)} delivery candidates past quiet time · ${count(candidates.quiet)} still settling.${candidates.oldestDueAt === null ? "" : ` Oldest due: ${age(candidates.oldestDueAt, now)}.`} Other eligibility and rollout gates still apply.`;
   table(
-    "attempt-backlog",
-    ["Traffic / state", "Unresolved", "Due", "Oldest created"],
-    data.backlog.attempts.map((row) => [
-      cell(priorityName(row.priority), readable(row.state)),
-      count(row.count),
-      count(row.due),
-      age(row.oldestCreatedAt, now),
-    ]),
-    "No unresolved delivery attempts.",
+    "inventory-coverage",
+    ["Service", "Coverage", "Windows", "Last completion"],
+    data.providers.flatMap((provider) =>
+      provider.coverage.map((row) => [
+        vendorName(provider.provider),
+        inventoryStatusLabel(row.state),
+        count(row.count),
+        date(row.since),
+      ]),
+    ),
+    "No inventory coverage recorded yet.",
+  );
+  table(
+    "inventory-queues",
+    ["Service", "Work", "State", "Count", "Oldest recorded", "Next due"],
+    data.providers.flatMap((provider) =>
+      (
+        [
+          ["Scan", provider.scans],
+          ["Comparison", provider.matching],
+          ["Delivery review", provider.review],
+          [
+            "Send and receipt",
+            provider.deliveries.filter(
+              (row) =>
+                !["observed", "delivered", "cancelled"].includes(row.state),
+            ),
+          ],
+        ] as const
+      ).flatMap(([kind, items]) =>
+        items.map((row) => [
+          vendorName(provider.provider),
+          kind,
+          cell(
+            inventoryStatusLabel(row.state),
+            row.reason ? inventoryStatusLabel(row.reason) : undefined,
+          ),
+          count(row.count),
+          age(row.since, now),
+          date(row.dueAt),
+        ]),
+      ),
+    ),
+    "No pending inventory or delivery work in this snapshot.",
+  );
+  table(
+    "inventory-outcomes",
+    ["Service", "Current comparison", "Contacts"],
+    data.providers.flatMap((provider) =>
+      provider.matches.map((row) => [
+        vendorName(provider.provider),
+        cell(
+          inventoryStatusLabel(row.state),
+          row.reason ? inventoryStatusLabel(row.reason) : undefined,
+        ),
+        count(row.count),
+      ]),
+    ),
+    "No current comparisons yet.",
+  );
+  table(
+    "inventory-deliveries",
+    [
+      "Service",
+      "Adopted history",
+      "Accepted by QRZ",
+      "Receipt verified",
+      "Cancelled before send",
+    ],
+    data.providers
+      .filter((provider) => provider.provider !== "lofi")
+      .map((provider) => {
+        const deliveries = (state: string) =>
+          provider.deliveries
+            .filter((row) => row.state === state)
+            .reduce((sum, row) => sum + row.count, 0);
+        return [
+          vendorName(provider.provider),
+          count(provider.adopted),
+          count(deliveries("delivered")),
+          count(deliveries("observed")),
+          count(deliveries("cancelled")),
+        ];
+      }),
+    "No delivery outcomes yet.",
   );
   const vendors = element("vendor-budgets");
   vendors.replaceChildren();
   for (const vendor of data.vendors) {
     const wrap = node("div", "", "admin-vendor");
     const heading = node("div", "", "admin-section-heading");
+    const totalUsed = vendor.requests >= vendor.totalLimit;
+    const backgroundUsed = vendor.backgroundRequests >= vendor.backgroundLimit;
     heading.append(
       node("h3", vendorName(vendor.vendor)),
-      pill(
-        vendor.cooldownUntil
-          ? "Cooling down"
-          : vendor.requests >= vendor.totalLimit
-            ? "Budget used"
-            : "Available",
-        Boolean(vendor.cooldownUntil) || vendor.requests >= vendor.totalLimit,
-      ),
+      ...(vendor.cooldownUntil ? [pill("Provider cooldown", true)] : []),
+      ...(totalUsed || backgroundUsed
+        ? [
+            pill(
+              totalUsed
+                ? "Ferry total budget used"
+                : "Ferry background budget used",
+              true,
+            ),
+          ]
+        : []),
+      ...(!vendor.cooldownUntil && !totalUsed && !backgroundUsed
+        ? [pill("Capacity available")]
+        : []),
     );
     const meter = node("meter");
     meter.min = 0;
@@ -497,28 +287,18 @@ function renderOverview(data: AdminOverview) {
         `${count(vendor.requests)} / ${count(vendor.totalLimit)} total · ${count(vendor.backgroundRequests)} / ${count(vendor.backgroundLimit)} background`,
         "small",
       ),
-      node(
-        "p",
-        vendor.cooldownUntil
-          ? `Cooldown until ${date(vendor.cooldownUntil)}`
-          : `Window ends ${new Date(vendor.windowEndsAt).toLocaleTimeString()}`,
-        "small",
-      ),
+      node("p", `Ferry budget resets ${date(vendor.windowEndsAt)}`, "small"),
     );
+    if (vendor.cooldownUntil)
+      wrap.append(
+        node(
+          "p",
+          `Provider cooldown until ${date(vendor.cooldownUntil)}`,
+          "small",
+        ),
+      );
     vendors.append(wrap);
   }
-  table(
-    "attention",
-    ["Area", "State", "Count"],
-    data.attention
-      .filter((row) => row.area !== "source")
-      .map((row) => [
-        readable(row.area),
-        readable(row.state),
-        count(row.count),
-      ]),
-    "No destination or delivery-attempt attention states in this snapshot.",
-  );
   const exportState = exportPresentation(
     data.gates.effective,
     data.gates.exportMode,
@@ -527,7 +307,6 @@ function renderOverview(data: AdminOverview) {
     pill(exportState.label, false, !data.gates.effective),
     node("p", exportState.message, "small"),
   );
-  element("export-state").className = "";
   const gates = element("export-gates");
   gates.replaceChildren();
   for (const [label, passed] of [
@@ -538,11 +317,11 @@ function renderOverview(data: AdminOverview) {
     ["QRZ first inserts enabled", data.gates.qrzFreshInsertsEnabled],
     ["LoTW first inserts enabled", data.gates.lotwFreshInsertsEnabled],
     [
-      `Contact scope: ${data.gates.rolloutScope}`,
+      `Contact scope · ${data.gates.rolloutScope}`,
       data.gates.rolloutScopeConfigured,
     ],
     [
-      `Destination scope: ${data.gates.destinationScope}`,
+      `Destination scope · ${data.gates.destinationScope}`,
       data.gates.destinationScopeConfigured,
     ],
     ["Configuration valid", data.gates.configurationValid],
@@ -554,43 +333,6 @@ function renderOverview(data: AdminOverview) {
     );
     gates.append(row);
   }
-  const totals = data.scheduler.totals24h;
-  element("run-summary").textContent =
-    `${count(totals.runs)} runs · ${count(totals.failed)} failed · ${count(totals.deadlineRuns)} reached the time budget · ${count(totals.sourcePages)} source pages · ${count(totals.contactTurns)} contact turns · ${count(totals.attemptTurns)} attempt turns · ${count(totals.errors)} processing errors · ${count(totals.deferred)} deferrals. Most recent runs below.`;
-  table(
-    "scheduler-runs",
-    [
-      "Started",
-      "Outcome",
-      "Elapsed",
-      "Work processed",
-      "Errors / deferred",
-      "Stored pending source rows: live / import",
-      "Due attempts: live / import",
-    ],
-    data.scheduler.recentRuns.map((run) => [
-      date(run.startedAt),
-      cell(
-        run.status,
-        run.stopReason === null
-          ? "Stop reason not recorded"
-          : `${run.rounds} rounds · ${run.stopReason === "deadline" ? "time budget reached" : run.stopReason === "database_budget" ? "database budget reached" : "idle"}`,
-      ),
-      run.durationMs === null ? "—" : `${(run.durationMs / 1000).toFixed(1)}s`,
-      cell(
-        `${run.sourcePages} source pages`,
-        `${run.contactTurns} contact / ${run.attemptTurns} attempt turns`,
-      ),
-      `${run.errors} / ${run.deferred}`,
-      run.backlog
-        ? `${count(run.backlog.sourceLive)} / ${count(run.backlog.sourceBackground)}`
-        : "Not sampled",
-      run.backlog
-        ? `${count(run.backlog.attemptsDueLive)} / ${count(run.backlog.attemptsDueBackground)}`
-        : "Not sampled",
-    ]),
-    "No scheduled runs have been recorded yet.",
-  );
 }
 
 function renderPeople(data: AdminOverview) {
@@ -625,7 +367,7 @@ function renderPeople(data: AdminOverview) {
       "State",
       "Last success",
       "Last attempt",
-      "Source progress",
+      "Verified windows",
     ],
     data.connections.items
       .filter((row) =>
@@ -645,16 +387,7 @@ function renderPeople(data: AdminOverview) {
           row.lastSuccessAt === null ? undefined : date(row.lastSuccessAt),
         ),
         age(row.lastAttemptAt, data.generatedAt),
-        row.kind === "lofi"
-          ? cell(
-              row.syncMode === "forward"
-                ? "Forward sync"
-                : row.syncMode === "backfill"
-                  ? "Initial import"
-                  : "Not recorded",
-              row.contextComplete ? "Context complete" : "Context incomplete",
-            )
-          : "—",
+        `${count(row.coverageReady)} / ${count(row.coverageTotal)}`,
       ]),
     "No connections match this view.",
   );
@@ -800,6 +533,40 @@ async function mutate(action: () => Promise<AdminInvitationResult>) {
 element("refresh-admin").addEventListener("click", () => {
   void refresh();
 });
+element<HTMLFormElement>("retention-form").addEventListener(
+  "submit",
+  (event) => {
+    event.preventDefault();
+    if (refreshing || mutating) return;
+    const input = element<HTMLInputElement>("settled-retention-days");
+    const button = element<HTMLButtonElement>("save-retention");
+    const days = input.valueAsNumber;
+    void (async () => {
+      mutating = true;
+      button.disabled = true;
+      input.disabled = true;
+      try {
+        const retention = await api<AdminOverview["retention"]>(
+          "/api/admin/retention",
+          {
+            settledRetentionDays: days,
+          },
+        );
+        if (overview) overview = { ...overview, retention };
+        input.value = String(retention.settledRetentionDays);
+        message(
+          `Settled contact retention saved at ${retention.settledRetentionDays} days.`,
+        );
+      } catch (error) {
+        handleError(error);
+      } finally {
+        input.disabled = false;
+        button.disabled = false;
+        mutating = false;
+      }
+    })();
+  },
+);
 element("people-filter").addEventListener("input", () => {
   if (overview) renderPeople(overview);
 });

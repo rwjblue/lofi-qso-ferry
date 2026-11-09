@@ -1,9 +1,9 @@
+import { lotwRemoteIdentity } from "./destination-receipts.ts";
 import { inventoryLotwConfirmationEvidence } from "./inventory-lotw-confirmations.ts";
 import {
   type InventoryOwnershipBody,
   inventoryOwnershipIdentity,
 } from "./inventory-ownership.ts";
-import { lotwRemoteIdentity } from "./reconcile.ts";
 import { open } from "./security.ts";
 import type { Store } from "./store.ts";
 
@@ -44,28 +44,31 @@ async function confirmationIdentity(
 }
 
 export async function inventoryLotwActivity(store: Store, tenant: string) {
-  const [recent, counts] = await Promise.all([
-    store
-      .statement(
-        `SELECT * FROM (
-           SELECT * FROM inventory_lotw_adopted_activity WHERE tenant=?1 ORDER BY updated_at DESC,activity_id LIMIT 50
-         )
-         UNION ALL SELECT * FROM (
-           SELECT * FROM inventory_lotw_observed_activity WHERE tenant=?1 ORDER BY updated_at DESC,activity_id LIMIT 50
-         )
-         ORDER BY updated_at DESC,activity_id LIMIT 50`,
-        tenant,
-      )
-      .all<ActivityRow>(),
-    store
-      .statement(
-        `SELECT 'adopted_existing' AS state,count(*) AS count FROM inventory_lotw_adopted_activity WHERE tenant=?1 HAVING count(*)>0
-         UNION ALL
-         SELECT 'observed',count(*) FROM inventory_lotw_observed_activity WHERE tenant=?1 HAVING count(*)>0`,
-        tenant,
-      )
-      .all<{ state: string; count: number }>(),
-  ]);
+  const recent = await store
+    .statement(
+      `SELECT * FROM (
+       SELECT src.id AS source,h.record_key AS qso,dst.id AS destination,h.destination_scope AS scope,
+         h.created_at AS updated_at,h.id AS activity_id,'adopted_existing' AS state,0 AS confirmed,
+         h.remote_record_key AS receipt_key,NULL AS evidence_id,NULL AS envelope
+       FROM inventory_historical_associations h INDEXED BY inventory_lotw_association_activity
+       CROSS JOIN connections src ON (src.tenant,src.kind,src.remote_identity)=(h.tenant,'lofi',h.source_identity)
+       CROSS JOIN connections dst ON (dst.tenant,dst.kind,dst.remote_identity)=(h.tenant,'lotw',h.book_identity)
+       WHERE h.tenant=?1 AND h.provider='lotw' ORDER BY updated_at DESC,activity_id LIMIT 50
+     )
+     UNION ALL SELECT * FROM (
+       SELECT src.id AS source,e.record_key AS qso,dst.id AS destination,e.destination_scope AS scope,
+         r.received_at AS updated_at,r.attempt_id AS activity_id,'observed' AS state,r.confirmed,
+         NULL AS receipt_key,e.id AS evidence_id,CASE WHEN r.confirmed=0 THEN e.envelope END AS envelope
+       FROM inventory_lotw_member_receipts r INDEXED BY inventory_lotw_receipt_activity
+       CROSS JOIN inventory_ownership_evidence e ON (e.tenant,e.id)=(r.tenant,r.evidence_id) AND e.provider='lotw'
+       CROSS JOIN connections src ON (src.tenant,src.kind,src.remote_identity)=(e.tenant,'lofi',e.source_identity)
+       CROSS JOIN connections dst ON (dst.tenant,dst.kind,dst.remote_identity)=(e.tenant,'lotw',e.book_identity)
+       WHERE r.tenant=?1 ORDER BY updated_at DESC,activity_id LIMIT 50
+     )
+     ORDER BY updated_at DESC,activity_id LIMIT 50`,
+      tenant,
+    )
+    .all<ActivityRow>();
   const identities = await Promise.all(
     recent.results.map(async (row, position) => {
       if (row.confirmed) return [];
@@ -89,22 +92,18 @@ export async function inventoryLotwActivity(store: Store, tenant: string) {
         : [];
     }),
   );
-  return {
-    counts: counts.results,
-    activity: recent.results.map(
-      (
-        { source, qso, destination, state, updated_at, confirmed: observed },
-        position,
-      ) => ({
-        source,
-        qso,
-        destination,
-        state,
-        updated_at,
-        confirmed: Number(observed !== 0 || confirmed.has(position)),
-        reason: null,
-        priorIdentityCount: 0,
-      }),
-    ),
-  };
+  const activity = recent.results.map(
+    (
+      { qso, destination, state, updated_at, confirmed: observed },
+      position,
+    ) => ({
+      qso,
+      destination,
+      state,
+      updated_at,
+      confirmed: Number(observed !== 0 || confirmed.has(position)),
+      reason: null,
+    }),
+  );
+  return { activity };
 }

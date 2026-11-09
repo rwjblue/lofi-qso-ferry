@@ -22,6 +22,42 @@ export function vendorName(kind: string): string {
   return { lofi: "LoFi", qrz: "QRZ Logbook", lotw: "LoTW" }[kind] ?? kind;
 }
 
+const inventoryLabels: Record<string, string> = {
+  adopted_existing: "Adopted history",
+  absent_at_inventory: "Missing in scanned history",
+  ambiguous: "Multiple possible matches",
+  awaiting_readback: "Awaiting receipt verification",
+  awaiting_review: "Waiting for delivery review",
+  cancelled: "Cancelled before send",
+  catchup: "Checking for changes",
+  collecting: "Reading contacts",
+  delivered: "Accepted by QRZ",
+  excluded: "Excluded",
+  held: "On hold",
+  incomplete: "Waiting for comparison evidence",
+  matched_existing: "Matched existing",
+  observed: "Receipt verified",
+  out_of_scope: "Outside sync scope",
+  partial: "Partial coverage",
+  prepared: "Prepared",
+  projection_mismatch: "Operating details differ",
+  publishing: "Publishing coverage",
+  quarantining: "Checking scan membership",
+  queued: "Queued",
+  readback_held: "Receipt verification needs attention",
+  ready: "Verified coverage",
+  rejected: "Provider rejected submission",
+  send_held: "Send on hold",
+  source_proof_required: "Waiting for fresh source verification",
+  stale: "Coverage needs refresh",
+  submitted: "Submitted to LoTW",
+  waiting: "Waiting",
+};
+
+export function inventoryStatusLabel(state: string): string {
+  return inventoryLabels[state] ?? state.replaceAll("_", " ");
+}
+
 export function connectionGroups(connections: ConnectionSummary[]) {
   return vendorKinds.map((kind) => ({
     kind,
@@ -46,27 +82,5 @@ export function connectionStatus(status: string): string {
       revoked: "Credentials removed",
       needs_verification: "Verification needed",
     }[status] ?? status.replaceAll("_", " ")
-  );
-}
-
-export function ledgerEmptyMessage(connections: ConnectionSummary[]): string {
-  const current = connections.filter(
-    (connection) => connection.status !== "revoked",
-  );
-  if (!current.some((connection) => connection.kind === "lofi"))
-    return "No delivery activity yet. Connect LoFi to review your source contacts.";
-  if (!current.some((connection) => connection.kind !== "lofi"))
-    return "No delivery activity yet. Your LoFi contacts appear in read-only review; connect QRZ or LoTW to begin destination history adoption.";
-  return "No delivery activity yet. Check source progress and destination readiness in read-only review. Delivery counts begin when contacts are reconciled with a destination.";
-}
-
-export function previewStatus(status: string): string {
-  return (
-    {
-      current_preview: "Current template preview",
-      pinned: "Current preview · export uses pinned version",
-      remote_preserved: "Current preview · existing QRZ text preserved",
-      unavailable: "Preview unavailable",
-    }[status] ?? "Preview unavailable"
   );
 }

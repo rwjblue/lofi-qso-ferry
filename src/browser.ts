@@ -15,16 +15,20 @@ import {
   type ConnectionSummary,
   connectionGroups,
   connectionStatus,
-  ledgerEmptyMessage,
-  previewStatus,
+  inventoryStatusLabel,
   vendorName,
 } from "./browser-dashboard.ts";
 import {
   type BrowserExportMode,
   exportPresentation,
 } from "./browser-export-mode.ts";
+import type {
+  InventoryDashboardActivity,
+  InventoryDashboardWindow,
+  InventoryProviderDashboard,
+  InventoryStatusCount,
+} from "./inventory-dashboard-types.ts";
 import { LOFI_CLIENT_NAME, lofiAccountLabel } from "./lofi-identity.ts";
-import type { ReviewResponse } from "./review-types.ts";
 
 const element = <T extends HTMLElement = HTMLElement>(id: string): T => {
   const value = document.getElementById(id);
@@ -165,16 +169,10 @@ interface Dashboard {
   exportMode: BrowserExportMode;
   defaultTemplate?: NarrativeTemplate;
   destinationTemplates?: (NarrativeTemplate & { destination: string })[];
-  counts: Record<string, number>;
+  providers: InventoryProviderDashboard[];
+  windows: InventoryDashboardWindow[];
+  activity: InventoryDashboardActivity[];
   connections: ConnectionSummary[];
-  activity: {
-    qso: string;
-    destination: string;
-    state: string;
-    reason: string | null;
-    confirmed: number;
-    priorIdentityCount?: number;
-  }[];
   passkeys: { id: string; label: string; last_used_at: number | null }[];
   sessions: {
     token_hash?: string;
@@ -182,6 +180,11 @@ interface Dashboard {
     created_at: number;
     current?: boolean;
   }[];
+}
+interface SyncScope {
+  destination: string;
+  mode: "all" | "since" | "forward";
+  since: string | null;
 }
 function node<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -464,293 +467,172 @@ function renderConnections(data: Dashboard) {
   }
 }
 
-let reviewRequest = 0;
 let dashboardLoad = 0;
-function renderMetrics(
-  id: string,
-  values: readonly (readonly [string, number | string])[],
-) {
-  const metrics = element(id);
-  metrics.replaceChildren();
-  for (const [label, count] of values) {
-    const metric = node("div", "", "metric");
-    metric.append(node("b", String(count)), node("span", label));
-    metrics.append(metric);
+function statusList(label: string, rows: InventoryStatusCount[]) {
+  const section = node("section", "", "sync-status");
+  section.append(node("h4", label));
+  if (!rows.length) {
+    section.append(node("p", "No work recorded.", "small"));
+    return section;
   }
-}
-function clearReview() {
-  ++reviewRequest;
-  element<HTMLButtonElement>("review-refresh").disabled = false;
-  for (const id of ["readiness", "source-progress", "review-contacts"])
-    element(id).replaceChildren();
-  element("review-status").textContent = "Loading source progress…";
-  element("review-template-notice").textContent = "";
-  element("review-retention").textContent = "";
-  element("review-empty").hidden = true;
-  renderMetrics("metrics", [
-    ["Contacts seen", "—"],
-    ["Live operations", "—"],
-    ["Available details", "—"],
-    ["Services need attention", "—"],
-  ]);
-  element("source-metrics-explainer").textContent =
-    "Loading source scan progress…";
-}
-async function refreshReview() {
-  const request = ++reviewRequest;
-  const button = element<HTMLButtonElement>("review-refresh");
-  button.disabled = true;
-  element("review-status").textContent = "Loading retained source contacts…";
-  try {
-    const destination = element<HTMLSelectElement>("review-destination").value;
-    const query = destination
-      ? `?destination=${encodeURIComponent(destination)}`
-      : "";
-    const data = await api<ReviewResponse>(`/api/review${query}`);
-    if (request !== reviewRequest) return;
-    renderReview(data);
-  } catch (error) {
-    if (request !== reviewRequest) return;
-    element("review-status").textContent =
-      error instanceof Error
-        ? error.message
-        : "Read-only review is unavailable. Try again shortly.";
-  } finally {
-    if (request === reviewRequest) button.disabled = false;
+  const list = node("ul", "", "sync-counts");
+  for (const row of rows) {
+    const text = [
+      `${row.count.toLocaleString()} · ${inventoryStatusLabel(row.state)}`,
+      row.reason && inventoryStatusLabel(row.reason),
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    list.append(node("li", text));
   }
+  section.append(list);
+  return section;
 }
 
-function renderReview(data: ReviewResponse) {
-  renderMetrics("metrics", [
-    [
-      "Contacts seen",
-      data.sources.reduce((count, source) => count + source.counts.contacts, 0),
-    ],
-    [
-      "Live operations",
-      data.sources.reduce(
-        (count, source) => count + source.counts.operations,
-        0,
-      ),
-    ],
-    [
-      "Available details",
-      data.sources.reduce(
-        (count, source) => count + source.counts.reviewable,
-        0,
-      ),
-    ],
-    [
-      "Services need attention",
-      data.readiness.filter((item) => item.status === "attention").length,
-    ],
-  ]);
-  const scanning = data.sources.some(
-    (source) =>
-      !source.initialScanComplete ||
-      !source.contextComplete ||
-      source.counts.pendingOperations > 0,
-  );
-  element("source-metrics-explainer").textContent = !data.sources.length
-    ? "Connect LoFi to see source contacts here. Destination delivery activity is shown separately below."
-    : `${scanning ? "Source scan in progress. " : ""}Counts show live source records seen so far, excluding deleted records and non-contact events. Available details are limited by retention.${data.sourcesTruncated ? " Only the displayed source connections are counted." : ""}`;
-  element("review-status").textContent =
-    `Updated ${new Date(data.generatedAt).toLocaleString()}. This review reads retained data; it does not prepare or deliver contacts.`;
-  const readiness = element("readiness");
-  readiness.replaceChildren();
-  for (const item of data.readiness) {
-    const row = node("div", "", "readiness-item");
-    row.append(
-      node("b", vendorName(item.kind)),
-      node(
-        "span",
-        item.status.replaceAll("_", " "),
-        `badge status-${item.status}`,
-      ),
-      node("p", item.message, "small"),
-    );
-    readiness.append(row);
+function syncScopeForm(link: ConnectionSummary, scope?: SyncScope) {
+  const form = node("form", "", "sync-scope");
+  const modeLabel = node("label", `Sync scope for ${link.label}`);
+  const mode = node("select", "");
+  for (const [value, label] of [
+    ["all", "All LoFi history"],
+    ["since", "Since a date"],
+    ["forward", "From now on"],
+  ]) {
+    const option = node("option", label);
+    option.value = value;
+    mode.append(option);
   }
-  const sources = element("source-progress");
-  sources.replaceChildren();
-  for (const source of data.sources) {
-    const card = node("div", "", "source-progress");
-    card.append(
-      node("h3", `LoFi account · ${lofiAccountLabel(source.label)}`),
-      node("p", `Client: ${LOFI_CLIENT_NAME}`, "small"),
-      node("p", source.message, "small"),
+  mode.value = scope?.mode ?? "all";
+  modeLabel.append(mode);
+  const dateLabel = node("label", "First QSO date (UTC)");
+  const date = node("input", "");
+  date.type = "date";
+  date.value = scope?.since ?? "";
+  dateLabel.append(date);
+  const detail = node("p", "", "small");
+  const update = () => {
+    const since = mode.value === "since";
+    dateLabel.hidden = !since;
+    date.disabled = !since;
+    date.required = since;
+    detail.textContent =
+      mode.value === "forward"
+        ? "Ferry establishes a LoFi baseline for new contacts and skips historical destination scans."
+        : "Ferry scans the destination windows needed for eligible LoFi contacts.";
+  };
+  mode.addEventListener("change", update);
+  update();
+  const save = node("button", "Save sync scope", "secondary");
+  save.type = "submit";
+  form.append(modeLabel, dateLabel, detail, save);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    save.disabled = true;
+    void run(async () => {
+      try {
+        await api("/api/sync-scope", {
+          destination: link.id,
+          mode: mode.value,
+          ...(mode.value === "since" ? { since: date.value } : {}),
+        });
+        await load();
+        message("Sync scope saved.");
+      } finally {
+        save.disabled = false;
+      }
+    });
+  });
+  return form;
+}
+
+function renderSync(data: Dashboard, scopes: SyncScope[]) {
+  const cards = element("sync-providers");
+  cards.replaceChildren();
+  for (const provider of data.providers) {
+    const links = data.connections.filter(
+      (link) => link.kind === provider.provider && link.status !== "revoked",
     );
-    const counts = node("div", "", "source-counts");
-    for (const [label, value] of [
-      ["Live operations", source.counts.operations],
-      ["Contacts seen", source.counts.contacts],
-      ["Available for review", source.counts.reviewable],
-    ] as const) {
-      const count = node("div", "");
-      count.append(node("b", String(value)), node("span", label));
-      counts.append(count);
-    }
-    card.append(counts);
-    card.append(
-      node(
-        "p",
-        "Counts reflect the source index seen so far. Contacts exclude non-contact events and deleted records; available details are limited by retention.",
-        "small",
-      ),
-    );
-    card.append(
-      node(
-        "p",
-        `${source.initialScanComplete ? "Initial contact scan complete" : "Initial contact scan in progress"} · ${source.contextComplete && source.counts.pendingOperations === 0 ? "Operation and location context complete" : "Operation and location context still loading"}`,
-        "small",
-      ),
-    );
-    if (source.counts.pendingOperations || source.counts.operationReadFailures)
+    const title = vendorName(provider.provider);
+    const card = node("article", "", "sync-card");
+    card.append(node("h3", title));
+    if (!links.length) {
+      card.append(node("p", "Not connected", "small"));
+    } else {
       card.append(
         node(
           "p",
-          `${source.counts.pendingOperations} operation context reads pending · ${source.counts.operationReadFailures} reads need retry. Previews wait for complete contact context.`,
-          "small",
+          `${provider.contacts.toLocaleString()} ${provider.provider === "lofi" ? "active contacts observed" : "active receipt records"}`,
+          "sync-stat",
         ),
-      );
-    if (source.lastSuccessAt)
-      card.append(
         node(
           "p",
-          `Last successful source page ${new Date(source.lastSuccessAt).toLocaleString()}`,
+          provider.lastProgressAt
+            ? `Last observed ${new Date(provider.lastProgressAt).toLocaleString()}`
+            : "Waiting for the first inventory scan",
           "small",
         ),
+        statusList("Coverage windows", provider.coverage),
       );
-    const excluded = [
-      source.counts.events ? `${source.counts.events} non-contact events` : "",
-      source.counts.tombstones
-        ? `${source.counts.tombstones} deleted records`
-        : "",
-      source.counts.expired ? `${source.counts.expired} expired payloads` : "",
-    ].filter(Boolean);
-    if (excluded.length)
-      card.append(
-        node("p", `Shown separately: ${excluded.join(" · ")}.`, "small"),
-      );
-    sources.append(card);
-  }
-  if (!data.sources.length)
-    sources.append(
-      node(
-        "p",
-        "Connect LoFi to scan source contacts. Existing destination history is reviewed separately before any delivery.",
-        "small",
-      ),
-    );
-  if (data.sourcesTruncated)
-    sources.append(
-      node(
-        "p",
-        "This bounded review shows only the first source connections.",
-        "small",
-      ),
-    );
-  element("review-template-notice").textContent = data.template.notice;
-  const contacts = element("review-contacts");
-  contacts.replaceChildren();
-  for (const contact of data.recentContacts) {
-    const card = node("article", "", "contact-review");
-    const heading = node("div", "", "contact-heading");
-    heading.append(
-      node("h3", contact.call ?? "Contact details unavailable"),
-      node(
-        "span",
-        [contact.band, contact.mode].filter(Boolean).join(" · "),
-        "small",
-      ),
-    );
-    card.append(heading);
-    if (contact.at)
-      card.append(node("p", new Date(contact.at).toLocaleString(), "small"));
-    const context = [
-      contact.stationCall ? `Station ${contact.stationCall}` : "",
-      contact.grid,
-      contact.operationName ??
-        (contact.operationId ? "Operation context loading" : ""),
-    ].filter(Boolean);
-    if (context.length) card.append(node("p", context.join(" · "), "small"));
-    const references = [
-      ...(contact.ownParks ?? []).map((park) => `Own ${park}`),
-      ...(contact.workedParks ?? []).map((park) => `Worked ${park}`),
-    ];
-    if (references.length)
-      card.append(node("p", references.join(" · "), "small"));
-    card.append(
-      node(
-        "span",
-        contact.state === "test"
-          ? "Test — not exported"
-          : previewStatus(contact.templateStatus),
-        "badge",
-      ),
-      node("p", `Review state: ${contact.state.replaceAll("_", " ")}`, "small"),
-    );
-    if (contact.templateStatus === "remote_preserved")
-      card.append(
-        node(
-          "p",
-          "The existing QRZ narrative stays unchanged. Current templates do not rewrite adopted history.",
-          "small",
-        ),
-      );
-    if (contact.preview) {
-      if (contact.templateStatus === "pinned")
+      if (provider.scans.length)
+        card.append(statusList("Scan work", provider.scans));
+      if (provider.provider !== "lofi") {
+        card.append(statusList("Current comparisons", provider.matches));
+        if (provider.matching.length)
+          card.append(statusList("Comparison queue", provider.matching));
+        if (provider.review.length)
+          card.append(statusList("Delivery review", provider.review));
         card.append(
           node(
             "p",
-            "This hypothetical current template output does not replace the contact’s pinned version.",
+            `${provider.adopted.toLocaleString()} historical contacts adopted`,
             "small",
           ),
+          statusList("Upload and receipt status", provider.deliveries),
         );
-      const fields = node("dl", "", "preview-fields");
-      for (const [field, label] of [
-        ["COMMENT", "Comment"],
-        ["NOTES", "Notes"],
-        ["QSLMSG", "QSL message"],
-      ] as const) {
-        if (contact.preview[field] !== undefined)
-          fields.append(
-            node("dt", label),
-            node("dd", contact.preview[field] || "(empty)"),
+        for (const link of links.filter((row) => row.status === "active"))
+          card.append(
+            syncScopeForm(
+              link,
+              scopes.find((row) => row.destination === link.id),
+            ),
           );
       }
-      card.append(fields);
     }
-    if (contact.reason)
-      card.append(
-        node(
-          "p",
-          contact.reason === "test_operation_not_exported"
-            ? "Test contacts are retained here and excluded from external services."
-            : contact.reason.replaceAll("_", " "),
-          "small",
-        ),
-      );
-    if (contact.pinnedTemplateVersion)
-      card.append(
-        node("p", `Pinned version ${contact.pinnedTemplateVersion}`, "small"),
-      );
-    card.append(
+    cards.append(card);
+  }
+  const windows = element("sync-windows");
+  windows.replaceChildren();
+  for (const row of data.windows) {
+    const tr = node("tr", "");
+    tr.append(
+      node("td", vendorName(row.provider)),
       node(
-        "p",
-        `Source details retained until ${new Date(contact.retainedUntil).toLocaleString()}.`,
-        "small retention",
+        "td",
+        [row.from, row.through].filter(Boolean).join(" to ") ||
+          "Source or account feed",
+      ),
+      node(
+        "td",
+        [
+          inventoryStatusLabel(row.state),
+          row.phase && inventoryStatusLabel(row.phase),
+          row.reason && inventoryStatusLabel(row.reason),
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      ),
+      node(
+        "td",
+        row.nextDueAt ? new Date(row.nextDueAt).toLocaleString() : "—",
       ),
     );
-    contacts.append(card);
+    windows.append(tr);
   }
-  element("review-empty").hidden = data.recentContacts.length > 0;
-  element("review-retention").textContent =
-    `Recent source contact details expire after ${data.retention.contactsDays} days; operation context expires after ${data.retention.contextDays} days. This is a bounded review, not a full copy of your log.`;
+  element("sync-windows-empty").hidden = data.windows.length > 0;
 }
+
 async function load() {
   const request = ++dashboardLoad;
-  clearReview();
   const entering = !element("welcome").hidden;
   const session = await api<{
     authenticated: boolean;
@@ -763,7 +645,6 @@ async function load() {
   element("dashboard").hidden = !session.authenticated;
   element("admin-link").hidden = true;
   if (!session.authenticated) {
-    ++reviewRequest;
     element("account").textContent = "";
     const openSignup = session.signupAllowed === true;
     const joinPanel = element<HTMLDetailsElement>("join-panel");
@@ -782,7 +663,10 @@ async function load() {
     if (!joining) void autofill().catch(() => {});
     return;
   }
-  const data = await api<Dashboard>("/api/dashboard");
+  const [data, { scopes }] = await Promise.all([
+    api<Dashboard>("/api/dashboard"),
+    api<{ scopes: SyncScope[] }>("/api/sync-scope"),
+  ]);
   if (request !== dashboardLoad) return;
   element("account").textContent = data.email;
   element("admin-link").hidden = !data.admin;
@@ -791,38 +675,7 @@ async function load() {
     data.exportMode,
   ).message;
   if (entering) window.scrollTo({ top: 0 });
-  const counts = data.counts;
-  const metrics = element("delivery-metrics");
-  metrics.replaceChildren();
-  for (const [label, count] of [
-    ["History adopted", counts.adopted_existing ?? 0],
-    [
-      "Waiting / pending",
-      (counts.inventory_pending ?? 0) +
-        (counts.missing_current_identity ?? 0) +
-        (counts.changed ?? 0),
-    ],
-    [
-      "Submitted / observed",
-      (counts.submitted ?? 0) +
-        (counts.observed ?? 0) +
-        (counts.delivered ?? 0),
-    ],
-    [
-      "Needs attention",
-      Object.entries(counts)
-        .filter(([key]) =>
-          /ambiguous|mismatch|unverified|uncertain|reconciliation|blocked/.test(
-            key,
-          ),
-        )
-        .reduce((sum, [, value]) => sum + value, 0),
-    ],
-  ] as const) {
-    const metric = node("div", "", "metric");
-    metric.append(node("b", String(count)), node("span", label));
-    metrics.append(metric);
-  }
+  renderSync(data, scopes);
   renderConnections(data);
   const templateDestination = element<HTMLSelectElement>(
     "template-destination",
@@ -837,30 +690,12 @@ async function load() {
       (template) => [template.destination, template] as const,
     ),
   ]);
-  const reviewDestination = element<HTMLSelectElement>("review-destination");
-  const selectedReview = reviewDestination.value;
-  reviewDestination.replaceChildren();
-  for (const [value, label] of [
-    ["", "Automatic · connected QRZ or account default"],
-    ["account_default", "Saved account default"],
-  ]) {
-    const option = node("option", label ?? "");
-    option.value = value ?? "";
-    reviewDestination.append(option);
-  }
   for (const connection of data.connections) {
     if (connection.kind !== "qrz" || connection.status === "revoked") continue;
-    for (const select of [templateDestination, reviewDestination]) {
-      const option = node("option", connection.label);
-      option.value = connection.id;
-      select.append(option);
-    }
+    const option = node("option", connection.label);
+    option.value = connection.id;
+    templateDestination.append(option);
   }
-  reviewDestination.value = [...reviewDestination.options].some(
-    (option) => option.value === selectedReview,
-  )
-    ? selectedReview
-    : "";
   templateDestination.value = [...templateDestination.options].some(
     (option) => option.value === selectedDestination,
   )
@@ -871,32 +706,18 @@ async function load() {
   activity.replaceChildren();
   for (const row of data.activity) {
     const tr = document.createElement("tr");
-    const destinationKind = data.connections.find(
-      (connection) => connection.id === row.destination,
-    )?.kind;
     tr.append(
       node("td", row.qso.slice(0, 12)),
-      node("td", destinationKind ? vendorName(destinationKind) : "—"),
+      node("td", vendorName(row.provider)),
       node(
         "td",
-        row.state.replaceAll("_", " ") + (row.confirmed ? " · confirmed" : ""),
+        inventoryStatusLabel(row.state) + (row.confirmed ? " · confirmed" : ""),
       ),
-      node(
-        "td",
-        [
-          row.reason,
-          row.priorIdentityCount
-            ? `${row.priorIdentityCount} prior LoTW identity retained; remote record may remain`
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" · ") || "—",
-      ),
+      node("td", row.reason ? inventoryStatusLabel(row.reason) : "—"),
     );
     activity.append(tr);
   }
   element("empty").hidden = data.activity.length > 0;
-  element("empty").textContent = ledgerEmptyMessage(data.connections);
   const quietPeriod =
     element<HTMLFormElement>("settings").elements.namedItem("quietMinutes");
   if (quietPeriod instanceof HTMLSelectElement) {
@@ -908,7 +729,6 @@ async function load() {
     }
     quietPeriod.value = saved;
   }
-  void refreshReview();
   const keys = element("keys");
   keys.replaceChildren();
   for (const key of data.passkeys) {
@@ -969,10 +789,6 @@ form("verify", async (data) => {
   );
 });
 bind("refresh", load);
-bind("review-refresh", refreshReview);
-element("review-destination").addEventListener("change", () => {
-  void refreshReview();
-});
 bind("reauth", async () => {
   await ceremony("reauth");
   await load();
@@ -983,7 +799,6 @@ bind("add-key", async () => {
   await load();
 });
 bind("logout", async () => {
-  clearReview();
   ++dashboardLoad;
   await api("/api/auth/logout", {});
   await load();

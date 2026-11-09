@@ -208,7 +208,8 @@ test("actual Worker HTTP flow verifies passkeys, isolates tenants, preserves tem
   const a = new Client(mf);
   const b = new Client(mf);
   assert.equal((await a.request("/api/dashboard")).status, 401);
-  assert.equal((await a.request("/api/review")).status, 401);
+  const scopePath = "/api/sync-scope";
+  assert.equal((await a.request(scopePath)).status, 401);
   const identityA = await activate(a, "worker-a@example.test");
   const identityB = await activate(b, "worker-b@example.test");
   const accountA = (
@@ -238,20 +239,69 @@ test("actual Worker HTTP flow verifies passkeys, isolates tenants, preserves tem
     identityA.key.id,
   );
   assert.ok(!JSON.stringify(dashboard.body).includes(identityB.key.id));
-  const review = await a.request("/api/review");
-  assert.equal(review.status, 200);
-  assert.equal(review.body.readOnly, true);
-  assert.equal(review.headers.get("Cache-Control"), "no-store");
-  assert.deepEqual(review.body.sources, []);
-  assert.deepEqual(review.body.recentContacts, []);
-  assert.equal((await a.request("/api/review", {})).status, 405);
+  await db.batch([
+    db
+      .prepare(
+        "UPDATE connections SET status='active' WHERE tenant=? AND id='qrz'",
+      )
+      .bind(accountA),
+    db
+      .prepare(
+        "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,created_at) VALUES(?,'private-lotw','lotw','private-b','Other tenant LoTW','active',0)",
+      )
+      .bind(accountB),
+  ]);
+  const initialScope = await a.request(scopePath);
+  assert.equal(initialScope.status, 200);
+  assert.equal(initialScope.headers.get("Cache-Control"), "no-store");
+  assert.deepEqual(initialScope.body.scopes, [
+    { destination: "qrz", mode: "all", since: null },
+  ]);
+  assert.equal(
+    (
+      await a.request(scopePath, {
+        destination: "private-lotw",
+        mode: "forward",
+      })
+    ).status,
+    404,
+  );
+  const dated = { destination: "qrz", mode: "since", since: "2024-02-29" };
+  assert.equal(
+    (await a.request(scopePath, dated, { "X-CSRF-Token": "" })).status,
+    403,
+  );
+  assert.equal(
+    (await a.request(scopePath, { ...dated, since: "2025-02-29" })).status,
+    400,
+  );
+  assert.deepEqual((await a.request(scopePath, dated)).body, { scope: dated });
+  const savedPolicy = () =>
+    db
+      .prepare(
+        "SELECT version,changed_at FROM inventory_sync_scopes WHERE tenant=? AND destination='qrz'",
+      )
+      .bind(accountA)
+      .first<{ version: number; changed_at: number }>();
+  const firstPolicy = await savedPolicy();
+  assert.ok(firstPolicy);
+  assert.equal(firstPolicy.version, 1);
+  assert.equal((await a.request(scopePath, dated)).status, 200);
+  assert.deepEqual(await savedPolicy(), firstPolicy);
+  const forward = { destination: "qrz", mode: "forward" };
+  assert.deepEqual((await a.request(scopePath, forward)).body, {
+    scope: { ...forward, since: null },
+  });
+  assert.equal((await savedPolicy())?.version, 2);
+  assert.deepEqual((await b.request(scopePath)).body.scopes, [
+    { destination: "private-lotw", mode: "all", since: null },
+  ]);
   await db
     .prepare(
-      "INSERT INTO connections(tenant,id,kind,remote_identity,label,status,created_at) VALUES(?,'source-b','lofi','private-b','Other tenant source','disabled',0)",
+      "UPDATE connections SET status='disabled' WHERE tenant=? AND id='qrz'",
     )
-    .bind(accountB)
+    .bind(accountA)
     .run();
-  assert.equal((await a.request("/api/review?source=source-b")).status, 404);
   assert.equal(
     (await a.request("/api/settings", { quietMinutes: 45 })).status,
     200,
@@ -445,6 +495,12 @@ test("admin HTTP routes require the current owner account and fresh, CSRF-protec
     assert.equal((await anonymous.request(path)).status, 401);
   for (const path of mutations)
     assert.equal((await anonymous.request(path, invitation)).status, 401);
+  const retentionPath = "/api/admin/retention";
+  const retentionUpdate = { settledRetentionDays: 120 };
+  assert.equal(
+    (await anonymous.request(retentionPath, retentionUpdate)).status,
+    401,
+  );
 
   // The local part is case-sensitive: this verified account is not the owner.
   await activate(member, "Me@rwjblue.com");
@@ -457,6 +513,10 @@ test("admin HTTP routes require the current owner account and fresh, CSRF-protec
   assert.equal((await admin.request("/api/dashboard")).body.admin, true);
   for (const path of paths)
     assert.equal((await member.request(path)).status, 403);
+  assert.equal(
+    (await member.request(retentionPath, retentionUpdate)).status,
+    403,
+  );
   assert.equal(
     (
       await member.request(
@@ -502,6 +562,7 @@ test("admin HTTP routes require the current owner account and fresh, CSRF-protec
   assert.equal(overview.status, 200, JSON.stringify(overview.body));
   assert.equal(overview.headers.get("Cache-Control"), "no-store");
   assert.equal((overview.body.accounts as { total: number }).total, 2);
+  assert.deepEqual(overview.body.retention, { settledRetentionDays: 90 });
   assert.equal(
     (overview.body.gates as { effective: boolean }).effective,
     false,
@@ -517,6 +578,22 @@ test("admin HTTP routes require the current owner account and fresh, CSRF-protec
     { "X-CSRF-Token": "" },
     { Origin: "https://evil.example" },
   ];
+  for (const headers of invalidHeaders)
+    assert.equal(
+      (await admin.request(retentionPath, retentionUpdate, headers)).status,
+      403,
+    );
+  assert.equal(
+    (await admin.request(retentionPath, { settledRetentionDays: 0 })).status,
+    400,
+  );
+  const savedRetention = await admin.request(retentionPath, retentionUpdate);
+  assert.equal(savedRetention.status, 200);
+  assert.deepEqual(savedRetention.body, retentionUpdate);
+  assert.deepEqual(
+    (await admin.request("/api/admin/overview")).body.retention,
+    retentionUpdate,
+  );
   for (const path of mutations)
     for (const headers of invalidHeaders)
       assert.equal(
@@ -532,6 +609,9 @@ test("admin HTTP routes require the current owner account and fresh, CSRF-protec
     assert.equal(stale.status, 403);
     assert.equal(stale.body.code, "reauth_required");
   }
+  const staleRetention = await admin.request(retentionPath, retentionUpdate);
+  assert.equal(staleRetention.status, 403);
+  assert.equal(staleRetention.body.code, "reauth_required");
   assert.equal((await admin.request("/api/admin/overview")).status, 200);
 
   // Authorization follows the current account, even with an existing session.

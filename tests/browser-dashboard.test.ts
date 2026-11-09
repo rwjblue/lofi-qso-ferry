@@ -4,8 +4,7 @@ import {
   type ConnectionSummary,
   connectionGroups,
   connectionStatus,
-  ledgerEmptyMessage,
-  previewStatus,
+  inventoryStatusLabel,
   vendorName,
 } from "../src/browser-dashboard.ts";
 
@@ -17,7 +16,7 @@ function connection(
   return { id, kind, status, label: id, last_poll_at: null };
 }
 
-test("all current legacy connections remain visible and removed credentials permit a new link", () => {
+test("all current connections remain visible and removed credentials permit a new link", () => {
   const groups = connectionGroups([
     connection("old", "lofi", "revoked"),
     connection("pending", "lofi", "approval_pending"),
@@ -39,38 +38,16 @@ test("all current legacy connections remain visible and removed credentials perm
   assert.equal(removed[0]?.previous.length, 1);
 });
 
-test("source-only empty ledger explains review instead of implying zero imported contacts", () => {
-  assert.match(ledgerEmptyMessage([]), /Connect LoFi/);
-  assert.match(
-    ledgerEmptyMessage([connection("s", "lofi", "active")]),
-    /LoFi contacts appear in read-only review/,
-  );
-  assert.match(
-    ledgerEmptyMessage([
-      connection("s", "lofi", "active"),
-      connection("d", "qrz", "active"),
-    ]),
-    /reconciled with a destination/,
-  );
-  assert.match(
-    ledgerEmptyMessage([connection("s", "lofi", "revoked")]),
-    /Connect LoFi/,
-  );
-});
-
-test("friendly labels preserve distinctions between pending, paused and unverified connections and historical preview bindings", () => {
+test("friendly labels preserve distinctions between pending, paused and unverified connections and native delivery states", () => {
   assert.equal(vendorName("lofi"), "LoFi");
   assert.equal(vendorName("lotw"), "LoTW");
   assert.equal(connectionStatus("disabled"), "Paused");
   assert.equal(connectionStatus("approval_pending"), "Approval pending");
   assert.equal(connectionStatus("needs_verification"), "Verification needed");
   assert.equal(
-    previewStatus("remote_preserved"),
-    "Current preview · existing QRZ text preserved",
+    inventoryStatusLabel("projection_mismatch"),
+    "Operating details differ",
   );
-  assert.equal(
-    previewStatus("pinned"),
-    "Current preview · export uses pinned version",
-  );
-  assert.equal(previewStatus("current_preview"), "Current template preview");
+  assert.equal(inventoryStatusLabel("submitted"), "Submitted to LoTW");
+  assert.equal(inventoryStatusLabel("observed"), "Receipt verified");
 });

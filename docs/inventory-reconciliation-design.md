@@ -516,8 +516,11 @@ verification at its verification interval once a full scan starts at or
 after the account's lower bound and the account feed has completed a read
 within two polling periods. Empty account reports retain their watermark.
 If the feed is held or becomes stale, cron restores up to 16 idle dated
-polls per tick to their ordinary deadlines. Overflow preserves the held
-account cursor for review. [Live delta and dated fallback evidence](evidence-inventory-fresh-start.md#lotw-account-receipt-deltas)
+polls per tick to their ordinary deadlines. Overflow holds the account
+run at its saved cursor. A write-locked rehearsal can explicitly resume
+that run with a four-MiB report limit. Dated polling continues at its
+ordinary cadence until the account run publishes a successful read.
+[Live delta, dated fallback and rearm evidence](evidence-inventory-fresh-start.md#lotw-account-receipt-deltas)
 
 At 100 opted-in accounts, the default two-hour recurrence would use
 1,200 reports/day. Weekly verification of fourteen months per account

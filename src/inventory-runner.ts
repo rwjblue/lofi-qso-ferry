@@ -8,7 +8,10 @@ import {
   type InventoryReadUsage,
   type QrzInventoryResume,
 } from "./inventory-adapters.ts";
-import type { InventoryReceipt } from "./inventory-ingestion.ts";
+import {
+  InventoryIngestionError,
+  type InventoryReceipt,
+} from "./inventory-ingestion.ts";
 import {
   inventoryReadAdmission,
   inventoryReadGuardStatements,
@@ -328,8 +331,9 @@ export class InventoryRunner {
                 INVENTORY_DEFAULT_SOURCE_DELAY_MS,
             )
           : 0;
-      const receipt = await this.runs.inventory.publish(
-        await this.runs.preparePage(context, lease, {
+      let receipt: InventoryReceipt;
+      try {
+        const prepared = await this.runs.preparePage(context, lease, {
           observations: result.observations,
           requestStartedAt: result.requestStartedAt,
           requestBinding: result.binding.queryBinding,
@@ -352,8 +356,22 @@ export class InventoryRunner {
                 },
               }
             : {}),
-        }),
-      );
+        });
+        receipt = await this.runs.inventory.publish(prepared);
+      } catch (error) {
+        if (
+          query.provider === "lotw" &&
+          "kind" in query.query &&
+          error instanceof InventoryIngestionError &&
+          [
+            "inventory_page_too_large",
+            "inventory_row_too_large",
+            "inventory_transaction_too_large",
+          ].includes(error.code)
+        )
+          return await this.hold(context, lease, "overflow", result.usage);
+        throw error;
+      }
       return await this.published(context, receipt, "advanced", result.usage);
     } finally {
       await store.release(lease);
@@ -610,9 +628,27 @@ export class InventoryRunner {
         typeof credential.query.password === "string",
       "inventory_credential_unavailable",
     );
+    const largeAccountReport =
+      "kind" in query.query &&
+      (await store
+        .statement(
+          `SELECT 1 FROM inventory_fresh_start_lock f
+           CROSS JOIN inventory_lotw_account_rearms a
+           JOIN inventory_runs r ON (r.tenant,r.run_id)=(a.tenant,a.run_id)
+           WHERE f.id=1 AND a.tenant=?1 AND (a.run_id=?2 OR
+             (r.scope_id,r.stream_id,r.config_version)=(?3,?4,?5) AND r.phase='complete')
+           LIMIT 1`,
+          context.run.tenant,
+          context.run.id,
+          context.run.scope,
+          context.run.streamId,
+          context.run.configVersion,
+        )
+        .first());
     return createLotwInventoryAdapter(credential.query).readStep(readContext, {
       binding: requestBinding,
       query: query.query,
+      ...(largeAccountReport && { largeAccountReport: true as const }),
     });
   }
 }

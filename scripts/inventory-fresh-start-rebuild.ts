@@ -40,6 +40,7 @@ type Options = {
   rehearsal: string;
   selections?: readonly Selection[];
   resumeQrzCover?: string;
+  resumeLotwAccount?: string;
   pollDue?: boolean;
   maxRequests?: number;
   maxDurationMs?: number;
@@ -144,19 +145,21 @@ async function assertNoDispatch(store: Store) {
   if (results.length) throw new Error("inventory_fresh_start_dispatch_present");
 }
 
-/** Requeue a held covering delta without changing its cursor or checkpoint. */
-export async function resumeHeldQrzCover(
+/** Requeue a held run through its provider-specific native receipt. */
+async function resumeHeldRun(
   runs: InventoryRuns,
   tenant: string,
   runId: string,
+  kind: "qrz_cover" | "lotw_account",
 ) {
+  const table = `inventory_${kind}_rearms`;
   const run = await runs.load(tenant, runId);
   if (
     run?.phase !== "held" ||
     run.jobState !== "held" ||
     run.activeRun !== runId
   )
-    throw new Error("inventory_fresh_start_qrz_cover_not_held");
+    throw new Error(`inventory_fresh_start_${kind}_not_held`);
   const { store } = runs.inventory;
   const lease = await store.claim(
     tenant,
@@ -164,11 +167,11 @@ export async function resumeHeldQrzCover(
     Date.now(),
     90_000,
   );
-  if (!lease) throw new Error("inventory_fresh_start_qrz_cover_busy");
+  if (!lease) throw new Error(`inventory_fresh_start_${kind}_busy`);
   try {
     await store
       .statement(
-        `INSERT INTO inventory_qrz_cover_rearms(tenant,run_id,run_version,job_version,lease_token,lease_fence,requested_at) VALUES(?,?,?,?,?,?,?)`,
+        `INSERT INTO ${table}(tenant,run_id,run_version,job_version,lease_token,lease_fence,requested_at) VALUES(?,?,?,?,?,?,?)`,
         tenant,
         runId,
         run.version,
@@ -182,18 +185,33 @@ export async function resumeHeldQrzCover(
     // The receipt and outbox commit together, including on a lost response.
     const saved = await store
       .statement(
-        "SELECT 1 FROM inventory_qrz_cover_rearms WHERE (tenant,run_id,run_version)=(?,?,?)",
+        `SELECT 1 FROM ${table} WHERE (tenant,run_id,run_version)=(?,?,?)`,
         tenant,
         runId,
         run.version,
       )
       .first()
       .catch(() => null);
-    if (!saved)
-      throw new Error("inventory_fresh_start_qrz_cover_rearm_refused");
+    if (!saved) throw new Error(`inventory_fresh_start_${kind}_rearm_refused`);
   } finally {
     await store.release(lease);
   }
+}
+
+export function resumeHeldQrzCover(
+  runs: InventoryRuns,
+  tenant: string,
+  runId: string,
+) {
+  return resumeHeldRun(runs, tenant, runId, "qrz_cover");
+}
+
+export function resumeHeldLotwAccount(
+  runs: InventoryRuns,
+  tenant: string,
+  runId: string,
+) {
+  return resumeHeldRun(runs, tenant, runId, "lotw_account");
 }
 
 /** Enroll explicitly selected links or resume the rehearsal's existing baselines. */
@@ -271,6 +289,8 @@ export async function rebuildFreshStart(
     );
     if (options.resumeQrzCover !== undefined)
       await resumeHeldQrzCover(runs, tenant, options.resumeQrzCover);
+    if (options.resumeLotwAccount !== undefined)
+      await resumeHeldLotwAccount(runs, tenant, options.resumeLotwAccount);
     const driven = await driveInventoryTrial(runs, transport, {
       ...bounds,
       tenant,
@@ -366,6 +386,7 @@ if (
         rehearsal: { type: "string" },
         plan: { type: "string" },
         "resume-qrz-cover": { type: "string" },
+        "resume-lotw-account": { type: "string" },
         "poll-due": { type: "boolean" },
         "max-requests": { type: "string", default: "120" },
         "max-minutes": { type: "string", default: "20" },
@@ -380,6 +401,7 @@ if (
           ? JSON.parse(await readFile(values.plan, "utf8"))
           : undefined,
         resumeQrzCover: values["resume-qrz-cover"],
+        resumeLotwAccount: values["resume-lotw-account"],
         pollDue: values["poll-due"],
         maxRequests: Number(values["max-requests"]),
         maxDurationMs: Number(values["max-minutes"]) * 60_000,

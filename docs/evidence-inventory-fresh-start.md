@@ -444,3 +444,34 @@ dated coverage, the account watermark, other stream checkpoints and
 credential envelopes. The trial made zero uploads. The native fixture
 also exercises a late reschedule failure and verifies that the job
 and wakeup roll back together.
+
+### Resume a held LoTW account delta
+
+An overflowed account run can resume at its saved inclusive cursor in
+a closed, write-locked rehearsal. The rearm checks the held run,
+credential, selection, checkpoint and lease before it commits a new
+wakeup version. It allows intervening dated polls to advance the shared
+scope sequence and keeps dated fallback active until the account read
+completes and publishes.
+
+```sh
+mise run inventory-fresh-start-rebuild -- \
+  --rehearsal /path/to/closed-rehearsal \
+  --resume-lotw-account RUN_ID --max-requests 1
+```
+
+Ordinary reports retain the two-MiB limit. The rearmed run may download
+and parse up to four MiB. After completion, the same stream and
+configuration may use that bound for later inclusive polls inside the
+write-locked rehearsal. A report beyond the expanded byte or transaction
+budget holds the feed with its accepted checkpoint and restores dated
+polling.
+
+The native test ingested 2,200 synthetic receipts in a report above two
+MiB. The next inclusive poll accepted the same boundary receipts with
+zero changed bodies. The test also covers rearm rollback and rejection
+of the old wakeup. A private copy of the live fallback rehearsal
+completed the same held run in one real read at its saved receive
+timestamp. The report returned one unchanged receipt, retained
+positive-only coverage, and left the dated checkpoints, dated coverage
+and credential envelopes intact. The live trial made zero uploads.

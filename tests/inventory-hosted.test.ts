@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
+import { resumeHeldLotwAccount } from "../scripts/inventory-fresh-start-rebuild.ts";
 import { serializeAdifRecord } from "../src/adif.ts";
 import { isComparisonMessage } from "../src/inventory-comparison-continuations.ts";
 import {
@@ -684,7 +685,7 @@ test("scheduled recurrence respects poll policy and switches to full verificatio
   assert.equal((await runs.load("a", verification.run))?.mode, "full");
 });
 
-test("LoTW account deltas keep their checkpoint and fall back to dated polls on overflow", async (t) => {
+test("LoTW account deltas keep their checkpoint through overflow, dated fallback and rearm", async (t) => {
   const f = await fixture(t);
   await f.db
     .prepare(`INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at,config)
@@ -715,6 +716,7 @@ test("LoTW account deltas keep their checkpoint and fall back to dated polls on 
   const accountReads: string[] = [];
   const datedReads: string[] = [];
   let overflow = false;
+  let largerReport: string | undefined;
   const receipt = serializeAdifRecord({
     CALL: "W1AW",
     STATION_CALLSIGN: "N1RWJ",
@@ -733,6 +735,7 @@ test("LoTW account deltas keep their checkpoint and fall back to dated polls on 
       (isDated ? datedReads : accountReads).push(
         params.get("qso_qsorxsince") ?? "",
       );
+      if (!isDated && largerReport) return new Response(largerReport);
       if (!isDated && overflow)
         return new Response("x".repeat(2 * 1024 * 1024 + 1));
       const record = isDated || accountReads.length === 1 ? receipt : "";
@@ -947,6 +950,123 @@ test("LoTW account deltas keep their checkpoint and fall back to dated polls on 
       .first("n"),
     1,
   );
+
+  const held = await runs.load("a", attempt.run);
+  assert.ok(held);
+  await assert.rejects(
+    resumeHeldLotwAccount(runs, "a", held.id),
+    /lotw_account_rearm_refused/,
+  );
+  await f.db
+    .prepare(
+      "INSERT INTO inventory_fresh_start_lock(id,locked_at,prior_legacy_unsettled,prior_qrz_unsettled,prior_lotw_unsettled) VALUES(1,?,0,0,0)",
+    )
+    .bind(Date.now())
+    .run();
+  await f.db
+    .prepare(`CREATE TRIGGER fixture_rearm_fails BEFORE INSERT ON inventory_wakeups
+    WHEN NEW.wakeup_id LIKE 'lotw-account-rearm:%' BEGIN SELECT RAISE(ABORT,'fixture rearm failed'); END`)
+    .run();
+  await assert.rejects(
+    resumeHeldLotwAccount(runs, "a", held.id),
+    /lotw_account_rearm_refused/,
+  );
+  assert.deepEqual(await runs.load("a", held.id), held);
+  assert.equal(
+    await f.db
+      .prepare("SELECT count(*) AS n FROM inventory_lotw_account_rearms")
+      .first("n"),
+    0,
+  );
+  await f.db.prepare("DROP TRIGGER fixture_rearm_fails").run();
+
+  const heldStream = await snapshot();
+  await resumeHeldLotwAccount(runs, "a", held.id);
+  const reopened = await runs.load("a", held.id);
+  assert.ok(
+    reopened &&
+      reopened.phase === "collecting" &&
+      reopened.jobVersion === held.jobVersion + 1,
+  );
+  assert.deepEqual(await snapshot(), heldStream);
+  const health = () =>
+    f.db
+      .prepare(
+        "SELECT healthy_until FROM inventory_lotw_account_feed_status WHERE tenant='a'",
+      )
+      .first<number>("healthy_until");
+  assert.equal(await health(), null);
+  const heldWake = {
+    version: 1 as const,
+    tenant: "a",
+    scope: selected.scope,
+    stream: selected.stream,
+    run: held.id,
+    workVersion: held.jobVersion,
+  };
+  assert.deepEqual(await runner.step(heldWake), {
+    kind: "skipped",
+    reason: "stale",
+  });
+
+  const newest = "2026-11-07 13:11:00";
+  const count = 2_200;
+  const records = Array.from({ length: count }, (_, i) =>
+    serializeAdifRecord({
+      CALL: "W1AW",
+      STATION_CALLSIGN: "N1RWJ",
+      QSO_DATE: "20250101",
+      TIME_ON: new Date(Date.UTC(2025, 0, 1, 0, 0, i))
+        .toISOString()
+        .slice(11, 19)
+        .replaceAll(":", ""),
+      MODE: "CW",
+      BAND: "20M",
+      QSL_RCVD: "N",
+      APP_LOTW_RXQSO: newest,
+      APP_FERRY_FIXTURE_PADDING: "x".repeat(1024),
+    }),
+  );
+  largerReport = `<PROGRAMID:4>LoTW<APP_LOTW_NUMREC:4>${count}<APP_LOTW_LASTQSORX:19>${newest}<EOH>${records.join("")}<APP_LOTW_EOF>`;
+  assert.ok(
+    largerReport.length > 2 * 1024 * 1024 &&
+      largerReport.length <= 4 * 1024 * 1024,
+  );
+  const accepted = await runner.step({
+    ...heldWake,
+    workVersion: reopened.jobVersion,
+  });
+  assert.ok(accepted.kind === "advanced" && accepted.receipt.records === count);
+  assert.equal(await health(), null);
+  assert.deepEqual((await snapshot())?.checkpoint, checkpoint);
+  const complete = await runner.step({
+    ...heldWake,
+    workVersion: accepted.workVersion,
+  });
+  assert.equal(complete.kind, "complete");
+  assert.deepEqual((await snapshot())?.checkpoint, {
+    selection: plan.selection,
+    receivedThrough: newest,
+  });
+  assert.ok(await health());
+  assert.deepEqual(await coverage(dated.stream), verifiedCoverage);
+  assert.deepEqual(accountReads, [lower, through, through, through]);
+
+  // Advance the local admission window and repeat the inclusive large batch.
+  await f.db
+    .prepare("UPDATE vendor_requests SET window_start=0 WHERE vendor='lotw'")
+    .run();
+  const recurrence = await runner.step(await f.due(held.id));
+  assert.ok(recurrence.kind === "started");
+  const repeated = await runner.step(await f.due(recurrence.run));
+  assert.ok(repeated.kind === "advanced" && repeated.receipt.records === count);
+  assert.equal(repeated.receipt.changed, 0);
+  await finish(recurrence.run);
+  assert.deepEqual((await snapshot())?.checkpoint, {
+    selection: plan.selection,
+    receivedThrough: newest,
+  });
+  assert.equal(accountReads.at(-1), newest);
 });
 
 test("a scheduled run cannot substitute a different receipt selection", async (t) => {

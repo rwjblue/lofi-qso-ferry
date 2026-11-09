@@ -290,3 +290,27 @@ An offline migration of an isolated copy of the real fresh-start
 rehearsal preserved all four credential envelopes and the durable send
 lock. With the selected sender configured for one real contact, the
 copy created zero send jobs, dispatch claims or network requests.
+
+## LoTW signed batch preparation
+
+[Migration 0100](../migrations/0100_inventory_lotw_preparation.sql)
+stores one encrypted TQ8 and its ordered members. The
+[preparer](../src/inventory-lotw-preparation.ts) binds one current source
+proof, exact destination reviews, a shared station and certificate, and
+separate wire and member hashes. It checks the certificate once per
+compatible batch. The file and member reservations commit together.
+
+The Workerd fixture collected a LoTW-bound source proof and signed two
+contacts with one simulated certificate status read. It verified a
+revoked certificate holds preparation, a late station change rolls back
+both members, and a repeated batch ID returns the original receipt
+without another read. The reopened file contained both contacts and
+one station and certificate. Cancelling a stale unsent batch released
+both reservations while keeping the bytes. A restored prepared batch
+kept its reservations and exact bytes under quarantine.
+
+An offline upgrade of the real fresh-start rehearsal preserved four
+credential envelopes and its send lock. Its active LoTW credential has
+query access and zero signing certificates. The upgrade created no
+batches and made no requests. Hosted LoTW enrollment, batch submission
+and member-level readback remain to be implemented.

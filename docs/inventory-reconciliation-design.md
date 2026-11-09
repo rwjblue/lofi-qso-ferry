@@ -643,6 +643,8 @@ The documented [QRZ INSERT](https://www.qrz.com/docs/logbook/QRZLogbookAPI.html)
 
 Group members by tenant, logical destination, certificate version, full station configuration, signing policy, traffic class and authorization mode. Initially cap batches at 20 contacts, within the current signer's 100-contact maximum and the submitter's 512,000-byte bound. These are application bounds, not claimed vendor limits. See [signer](../src/signing.ts) and [submitter](../src/lotw.ts).
 
+The inventory preparation path accepts an explicit compatible selection under one current source proof and destination. It checks the shared certificate once and signs one TQ8. One transaction saves the encrypted file, its wire hash, the ordered member manifest, and one attempt identity per contact. Publication rechecks every member and the shared station route and credential. A stale unsent batch can release all its reservations together while retaining its exact bytes. Restore quarantine holds those reservations for review.
+
 Do not wait for a full batch. A sparse eligible cohort submits on its next fair scheduler turn. Share certificate checks only within their validated scope and lifetime.
 
 Twenty is an upper bound, not a requirement to combine every eligible contact. Members must fit the source-proof dependency/request/byte limits and have overlapping valid proof lifetimes at the shared dispatch boundary. Split or send smaller cohorts when those conditions cannot be met. The existing LoTW fresh-insert payload check explicitly permits one member, so multi-member authorization needs a distinct versioned contract and acceptance evidence; changing the signer call alone cannot enable it.

@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { gunzipSync } from "node:zlib";
 import { build } from "esbuild";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
+import forge from "node-forge";
 import { serializeAdifRecord } from "../src/adif.ts";
 import { InventoryDeliveryWorkspace } from "../src/inventory-delivery-workspace.ts";
 import {
@@ -11,6 +13,7 @@ import {
   runHostedScheduled,
 } from "../src/inventory-hosted.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
+import { InventoryLotwPreparation } from "../src/inventory-lotw-preparation.ts";
 import { InventoryOwnership } from "../src/inventory-ownership.ts";
 import { InventoryQrzDispatch } from "../src/inventory-qrz-dispatch.ts";
 import {
@@ -31,6 +34,7 @@ import { InventorySourceProofJobs } from "../src/inventory-source-proof-jobs.ts"
 import { InventorySourceProofWorkspace } from "../src/inventory-source-proof-workspace.ts";
 import { lockRestoredDatabase } from "../src/restore.ts";
 import { canonical, sha256 } from "../src/security.ts";
+import { importPkcs12 } from "../src/signing.ts";
 import { type Lease, Store } from "../src/store.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import { keys, seed } from "./helpers.ts";
@@ -512,7 +516,10 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   const ageQuietClocks = async () => {
     for (const [triggers, update] of [
       [
-        ["comparison_projection_version"],
+        [
+          "comparison_projection_version",
+          "inventory_matching_source_projection_update",
+        ],
         "UPDATE comparison_projections SET derived_at=? WHERE facet='source'",
       ],
       [
@@ -1386,15 +1393,50 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     credentials,
   );
 
+  const signingCert = forge.pki.certificateFromPem(
+    await readFile(
+      new URL("../fixtures/signing/certificate.pem", import.meta.url),
+      "utf8",
+    ),
+  );
+  const signingKey = forge.pki.privateKeyFromPem(
+    await readFile(
+      new URL("../fixtures/signing/key.pem", import.meta.url),
+      "utf8",
+    ),
+  );
+  signingCert.setSubject([
+    { name: "commonName", value: "Ferry synthetic batch fixture" },
+    { type: "1.3.6.1.4.1.12348.1.1", value: "N1RWJ" },
+  ]);
+  signingCert.validity.notBefore = new Date(Date.now() - 3_600_000);
+  signingCert.validity.notAfter = new Date(Date.now() + 86_400_000);
+  signingCert.sign(signingKey, forge.md.sha256.create());
+  const signing = await importPkcs12(
+    Buffer.from(
+      forge.asn1
+        .toDer(forge.pkcs12.toPkcs12Asn1(signingKey, [signingCert], ""))
+        .getBytes(),
+      "binary",
+    ),
+    "",
+    { version: "fixture-batch-certificate" },
+  );
+  const lotwConfig = JSON.stringify({
+    readAccess: true,
+    station: { callsign: "N1RWJ", dxcc: 291 },
+  });
   await store
     .statement(
       `INSERT INTO connections(tenant,id,kind,remote_identity,label,status,credential_version,created_at,config)
-       VALUES('a','lotw','lotw','fixture','LoTW','active','v1',1,'{"readAccess":true}')`,
+       VALUES('a','lotw','lotw','fixture','LoTW','active','v1',1,?)`,
+      lotwConfig,
     )
     .run();
   await (
     await store.putPrivate("a", "lotw", "v1", "credential", {
       query: { username: "fixture", password: "fixture" },
+      signing,
     })
   ).run();
   await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
@@ -1498,6 +1540,149 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   );
   await db.prepare("UPDATE accounts SET quiet_minutes=30 WHERE id='a'").run();
   assert.ok(await reloaded.current("a", queuedProof.id));
+
+  const lotwScope = await db
+    .prepare("SELECT scope_id FROM inventory_scopes WHERE provider='lotw'")
+    .first<string>("scope_id");
+  assert.ok(lotwScope);
+  const lotwKeys = ["q2", "q3"];
+  const lotwReviewCount = () =>
+    db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_delivery_review_current WHERE provider='lotw' AND decision='source_proof_required' AND record_key IN('q2','q3')",
+      )
+      .first<number>("n");
+  for (let i = 0; i < 120 && (await lotwReviewCount()) !== 2; i++)
+    await delay(50);
+  assert.equal(await lotwReviewCount(), 2);
+  await ageQuietClocks();
+  const lotwProof = await jobs.enqueue("a", sourceScope, lotwKeys, {
+    provider: "lotw",
+    destination: lotwScope,
+  });
+  if (lotwProof.kind !== "queued") assert.fail(JSON.stringify(lotwProof));
+  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  for (let i = 0; i < 500; i++) {
+    const job = await jobs.load("a", sourceScope);
+    if (job?.phase === "complete" || job?.phase === "held") break;
+    await delay(100);
+  }
+  assert.ok(
+    await jobs.current("a", lotwProof.id),
+    JSON.stringify(
+      await jobs
+        .load("a", sourceScope)
+        .then((job) => ({ phase: job?.phase, reason: job?.reason })),
+    ),
+  );
+  await ageQuietClocks();
+  let certificateChecks = 0;
+  let crlStatus = "Revoked";
+  const prepareLotw = new InventoryLotwPreparation(
+    store,
+    async (input, init) => {
+      assert.equal(
+        String(input),
+        `https://lotw.arrl.org/lotw/crl?serial=${signing.serial}`,
+      );
+      assert.equal(init?.method ?? "GET", "GET");
+      assert.equal(init?.redirect, "manual");
+      assert.equal(init?.body, undefined);
+      certificateChecks++;
+      return new Response(`<Status>${crlStatus}</Status>`);
+    },
+  );
+  const lotwBatchArgs = ["a", lotwProof.id, lotwScope, lotwKeys] as const;
+  assert.deepEqual(await prepareLotw.prepare(...lotwBatchArgs, "revoked"), {
+    kind: "held",
+    reason: "lotw_certificate_revoked",
+  });
+  crlStatus = "Unrevoked";
+  await db
+    .prepare(`CREATE TRIGGER fixture_lotw_rebind AFTER INSERT ON inventory_lotw_batch_members WHEN NEW.position=2
+    BEGIN UPDATE connections SET config=json_set(config,'$.station.dxcc',1) WHERE tenant='a' AND id='lotw'; END;`)
+    .run();
+  assert.deepEqual(await prepareLotw.prepare(...lotwBatchArgs, "rebound"), {
+    kind: "held",
+    reason: "lotw_preparation_changed",
+  });
+  assert.deepEqual(
+    await db
+      .prepare(
+        "SELECT (SELECT count(*) FROM inventory_lotw_batches) AS batches,(SELECT count(*) FROM inventory_lotw_batch_members) AS members",
+      )
+      .first(),
+    { batches: 0, members: 0 },
+  );
+  await db.prepare("DROP TRIGGER fixture_lotw_rebind").run();
+  const preparedLotw = await prepareLotw.prepare(
+    ...lotwBatchArgs,
+    "two-contacts",
+  );
+  if (preparedLotw.kind !== "prepared")
+    assert.fail(JSON.stringify(preparedLotw));
+  assert.equal(
+    certificateChecks,
+    3,
+    "one certificate read per attempted batch",
+  );
+  assert.deepEqual(
+    preparedLotw.members.map((member) => member.record_key),
+    lotwKeys,
+  );
+  const reopenedLotw = new InventoryLotwPreparation(
+    new Store(db, keys),
+    async () => assert.fail("reopening does not contact LoTW"),
+  );
+  assert.deepEqual(
+    await reopenedLotw.prepare(...lotwBatchArgs, "two-contacts"),
+    preparedLotw,
+  );
+  const lotwArtifact = await reopenedLotw.artifact("a", preparedLotw.batchId);
+  assert.ok(lotwArtifact);
+  assert.equal(lotwArtifact.hash, await sha256(lotwArtifact.bytes));
+  assert.equal(lotwArtifact.hash, preparedLotw.wireHash);
+  const tq8 = gunzipSync(lotwArtifact.bytes).toString();
+  assert.equal([...tq8.matchAll(/<REC_TYPE:8>tCONTACT/g)].length, 2);
+  assert.equal([...tq8.matchAll(/<REC_TYPE:8>tSTATION/g)].length, 1);
+  assert.equal([...tq8.matchAll(/<REC_TYPE:5>tCERT/g)].length, 1);
+  assert.deepEqual(
+    lotwArtifact.members.map((member) => member.qso.call),
+    ["W2AW", "W3AW"],
+  );
+  assert.equal(await reopenedLotw.current("a", preparedLotw.batchId), true);
+  assert.deepEqual(await reopenedLotw.prepare(...lotwBatchArgs, "overlap"), {
+    kind: "held",
+    reason: "lotw_member_reserved",
+  });
+  assert.equal(
+    await reopenedLotw.cancelStale("a", preparedLotw.batchId),
+    false,
+  );
+  await db.prepare("UPDATE accounts SET quiet_minutes=31 WHERE id='a'").run();
+  assert.equal(await reopenedLotw.current("a", preparedLotw.batchId), false);
+  assert.equal(await reopenedLotw.cancelStale("a", preparedLotw.batchId), true);
+  assert.equal(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_lotw_batch_members WHERE cancelled_at IS NULL",
+      )
+      .first("n"),
+    0,
+  );
+  assert.deepEqual(
+    await reopenedLotw.artifact("a", preparedLotw.batchId),
+    lotwArtifact,
+  );
+  await db.prepare("UPDATE accounts SET quiet_minutes=30 WHERE id='a'").run();
+  const replacement = await prepareLotw.prepare(
+    ...lotwBatchArgs,
+    "snapshot-batch",
+  );
+  if (replacement.kind !== "prepared") assert.fail(JSON.stringify(replacement));
+  const archivedLotw = await reopenedLotw.artifact("a", replacement.batchId);
+  assert.ok(archivedLotw);
+
   const scopeVersions = async () =>
     (
       await store
@@ -1517,6 +1702,12 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     ).results;
   const originalCiphertext = await ciphertext();
   assert.equal((await lockRestoredDatabase(db)).lockedAccounts, 1);
+  assert.equal(await reopenedLotw.current("a", replacement.batchId), false);
+  assert.equal(await reopenedLotw.cancelStale("a", replacement.batchId), false);
+  assert.deepEqual(
+    await reopenedLotw.artifact("a", replacement.batchId),
+    archivedLotw,
+  );
   assert.deepEqual(
     await scopeVersions(),
     beforeLock.map((row) => ({

@@ -1,4 +1,4 @@
-import { InventoryQrzDispatch } from "./inventory-qrz-dispatch.ts";
+import type { InventoryQrzDispatch } from "./inventory-qrz-dispatch.ts";
 import { inventoryQrzBookLeaseScope } from "./inventory-qrz-neighborhood.ts";
 import { canonical } from "./security.ts";
 import type { Store } from "./store.ts";

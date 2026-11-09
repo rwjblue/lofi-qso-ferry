@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
@@ -20,6 +21,7 @@ import { registerInventorySelection } from "../src/inventory-scheduler.ts";
 import { InventorySourceProofDrain } from "../src/inventory-source-proof-drain.ts";
 import { InventorySourceProofJobs } from "../src/inventory-source-proof-jobs.ts";
 import { InventorySourceProofWorkspace } from "../src/inventory-source-proof-workspace.ts";
+import { lockRestoredDatabase } from "../src/restore.ts";
 import { type Lease, Store } from "../src/store.ts";
 import { TEMPLATE_PROFILE } from "../src/templates.ts";
 import { keys, seed } from "./helpers.ts";
@@ -184,6 +186,26 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
                     band: "20m",
                     mode: "CW",
                   },
+                  {
+                    uuid: "q4",
+                    operation: "op",
+                    syncedAtMillis: 103,
+                    startAtMillis: Date.parse("2026-11-08T14:30:00Z"),
+                    their: { call: "W4AW" },
+                    our: { grid: "FN31" },
+                    band: "20m",
+                    mode: "CW",
+                  },
+                  {
+                    uuid: "q5",
+                    operation: "op",
+                    syncedAtMillis: 104,
+                    startAtMillis: Date.parse("2026-11-08T15:20:00Z"),
+                    their: { call: "W5AW" },
+                    our: { grid: "FN31" },
+                    band: "20m",
+                    mode: "CW",
+                  },
                 ]
               : [],
           meta: {
@@ -209,6 +231,11 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   await applyAdditionalMigrations(db);
   const store = new Store(db, keys);
   await seed(store);
+  await db
+    .prepare(
+      "INSERT INTO cursors VALUES('a','source','context','{\"complete\":true}',1,0)",
+    )
+    .run();
   await store
     .statement(
       "UPDATE connections SET config='{\"accountId\":\"source\"}' WHERE id='source'",
@@ -297,7 +324,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         )
         .first<{ n: number }>()
     )?.n,
-    4,
+    6,
   );
   assert.equal(
     (
@@ -307,7 +334,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         )
         .first<{ n: number }>()
     )?.n,
-    4,
+    6,
   );
   for (const table of [
     "source_work",
@@ -401,7 +428,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
         "SELECT count(*) AS n FROM match_results_current WHERE state='absent_at_inventory'",
       )
       .first(),
-    { n: 2 },
+    { n: 4 },
   );
   assert.deepEqual(
     (
@@ -414,6 +441,8 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     [
       { provider: "qrz", record_key: "q2", decision: "source_proof_required" },
       { provider: "qrz", record_key: "q3", decision: "source_proof_required" },
+      { provider: "qrz", record_key: "q4", decision: "source_proof_required" },
+      { provider: "qrz", record_key: "q5", decision: "source_proof_required" },
     ],
   );
   const sourceScope = await db
@@ -468,7 +497,7 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
           "inventory_match_result_update",
           "inventory_delivery_review_result_update",
         ],
-        "UPDATE match_results SET next_eligible_at=? WHERE record_key IN('q2','q3')",
+        "UPDATE match_results SET next_eligible_at=? WHERE state='absent_at_inventory'",
       ],
     ] as const) {
       const ddl = await Promise.all(
@@ -492,7 +521,12 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     }
   };
   await ageQuietClocks();
-  const queuedProof = await jobs.enqueue("a", sourceScope, ["q2", "q3"]);
+  const queuedProof = await jobs.enqueue("a", sourceScope, [
+    "q2",
+    "q3",
+    "q4",
+    "q5",
+  ]);
   assert.equal(queuedProof.kind, "queued", JSON.stringify(queuedProof));
   if (queuedProof.kind !== "queued") assert.fail();
   assert.deepEqual(await jobs.enqueue("a", sourceScope, ["q2"]), {
@@ -1098,6 +1132,41 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       { record_key: "q3", remote_id: "3" },
     ],
   );
+  const restoreStage = await qrz.prepare(
+    "a",
+    queuedProof.id,
+    qrzScope,
+    ["q4", "q5"],
+    "restore-fixture",
+  );
+  if (restoreStage.kind !== "prepared") assert.fail(restoreStage.reason);
+  const [mayHaveSent, preparedAtSnapshot] = restoreStage.attempts;
+  assert.deepEqual(
+    restoreStage.attempts.map((row) => row.record_key),
+    ["q4", "q5"],
+  );
+  const restoreArtifacts = await Promise.all(
+    restoreStage.attempts.map((row) => qrz.artifact("a", row.attempt_id)),
+  );
+  assert.ok(restoreArtifacts.every(Boolean));
+  const restoreWorker = new StoppedWorker(db, keys);
+  const restoreDispatch = new InventoryQrzDispatch(
+    restoreWorker,
+    async (_input, init) => {
+      const body = init?.body as URLSearchParams;
+      if (body.get("ACTION") === "FETCH")
+        return new Response("RESULT=OK&COUNT=0&ADIF=");
+      throw new Error("fixture interrupted after possible send");
+    },
+  );
+  assert.deepEqual(
+    await restoreDispatch.send("a", mayHaveSent.attempt_id, () => ({
+      ...writeGates(),
+      allowedQsoIds: ["q4"],
+    })),
+    { kind: "uncertain" },
+  );
+  assert.ok(restoreWorker.strandedLease);
   assert.deepEqual(
     await db
       .prepare(
@@ -1237,4 +1306,138 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
       reason: "source_proof_stale",
     },
   );
+  await db.prepare("UPDATE accounts SET quiet_minutes=30 WHERE id='a'").run();
+  assert.ok(await reloaded.current("a", queuedProof.id));
+  const scopeVersions = async () =>
+    (
+      await store
+        .statement(
+          "SELECT scope_id,config_version,state FROM inventory_scopes ORDER BY scope_id",
+        )
+        .all<{ scope_id: string; config_version: number; state: string }>()
+    ).results;
+  const beforeLock = await scopeVersions();
+  const ciphertext = async () =>
+    (
+      await db
+        .prepare(
+          "SELECT connection,id,envelope FROM private_data WHERE kind='credential' ORDER BY connection,id",
+        )
+        .all()
+    ).results;
+  const originalCiphertext = await ciphertext();
+  assert.equal((await lockRestoredDatabase(db)).lockedAccounts, 1);
+  assert.deepEqual(
+    await scopeVersions(),
+    beforeLock.map((row) => ({
+      ...row,
+      config_version: row.config_version + 1,
+      state: "held",
+    })),
+  );
+  assert.equal(await reloaded.current("a", queuedProof.id), null);
+  assert.equal(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM inventory_coverage WHERE state='ready'",
+      )
+      .first("n"),
+    0,
+  );
+  assert.deepEqual(
+    (
+      await db
+        .prepare(
+          "SELECT attempt_id,prior_state FROM inventory_qrz_restore_pending ORDER BY prior_state",
+        )
+        .all()
+    ).results,
+    [
+      { attempt_id: mayHaveSent.attempt_id, prior_state: "may_have_sent" },
+      {
+        attempt_id: preparedAtSnapshot.attempt_id,
+        prior_state: "prepared_at_snapshot",
+      },
+    ],
+  );
+  assert.equal(
+    await qrz.cancelStale("a", preparedAtSnapshot.attempt_id),
+    false,
+  );
+  assert.equal(await qrz.current("a", preparedAtSnapshot.attempt_id), false);
+  assert.deepEqual(
+    await Promise.all(
+      restoreStage.attempts.map((row) => qrz.artifact("a", row.attempt_id)),
+    ),
+    restoreArtifacts,
+  );
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM inventory_qrz_dispatch_receipts")
+      .first("n"),
+    2,
+  );
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM leases WHERE expires_at>0")
+      .first("n"),
+    0,
+  );
+  assert.deepEqual(await ciphertext(), originalCiphertext);
+  assert.equal(
+    await db
+      .prepare(
+        "SELECT count(*) AS n FROM private_data WHERE kind='credential' AND revoked_at IS NULL",
+      )
+      .first("n"),
+    0,
+  );
+  const restoreJob = () =>
+    db
+      .prepare(
+        "SELECT version,turns,published_version FROM inventory_qrz_recovery_jobs WHERE attempt_id=?",
+      )
+      .bind(mayHaveSent.attempt_id)
+      .first();
+  assert.deepEqual(await restoreJob(), {
+    version: 2,
+    turns: 0,
+    published_version: 0,
+  });
+  assert.equal(
+    await db
+      .prepare("SELECT count(*) AS n FROM inventory_qrz_recovery_available")
+      .first("n"),
+    0,
+  );
+  const cursor = () =>
+    db
+      .prepare("SELECT cursor,generation FROM cursors WHERE stream='context'")
+      .first();
+  assert.deepEqual(await cursor(), { cursor: '{"complete":0}', generation: 2 });
+  const operator = await readFile(
+    new URL("../ops/lock-restored.sql", import.meta.url),
+    "utf8",
+  );
+  await db.batch(
+    operator
+      .trim()
+      .split(/;\s*/)
+      .filter(Boolean)
+      .map((sql) => db.prepare(sql)),
+  );
+  assert.deepEqual(
+    await scopeVersions(),
+    beforeLock.map((row) => ({
+      ...row,
+      config_version: row.config_version + 1,
+      state: "held",
+    })),
+  );
+  assert.deepEqual(await restoreJob(), {
+    version: 2,
+    turns: 0,
+    published_version: 0,
+  });
+  assert.deepEqual(await cursor(), { cursor: '{"complete":0}', generation: 2 });
 });

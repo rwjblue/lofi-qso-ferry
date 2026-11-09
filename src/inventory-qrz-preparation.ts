@@ -226,6 +226,7 @@ export class InventoryQrzPreparation {
         .statement(
           `UPDATE inventory_qrz_attempts SET cancelled_at=CAST(unixepoch('subsec')*1000 AS INTEGER)
            WHERE tenant=?1 AND attempt_id=?2 AND cancelled_at IS NULL
+           AND NOT EXISTS(SELECT 1 FROM inventory_restore_locks l WHERE l.tenant=?1)
            AND NOT EXISTS(SELECT 1 FROM inventory_qrz_dispatches d WHERE d.tenant=?1 AND d.attempt_id=?2)
            AND NOT EXISTS(SELECT 1 FROM inventory_qrz_attempt_current a WHERE a.tenant=?1 AND a.attempt_id=?2)
            RETURNING attempt_id`,

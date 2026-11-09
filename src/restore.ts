@@ -1,5 +1,6 @@
 /** Apply only to an isolated restored database before binding a service to it.
  * This is a one-way quarantine, never an account-reset/reactivation path.
+ * The account status transition also triggers native inventory quarantine.
  * Keep ops/lock-restored.sql byte-equivalent; tests enforce the shared contract.
  */
 export const RESTORE_LOCK_SQL = `UPDATE accounts SET status='restore_locked' WHERE status='active';
@@ -11,7 +12,7 @@ UPDATE attempt_state SET state='reconciliation_required',reason='restored snapsh
 UPDATE leases SET expires_at=0;
 UPDATE ledger SET state='inventory_pending',reason='restore_locked_requires_reconciliation' WHERE state NOT IN('adopted_existing','delivered','observed','source_deleted');
 UPDATE partitions SET state='inventory_pending',evidence='{}';
-UPDATE cursors SET cursor=CASE WHEN json_valid(cursor) THEN json_set(cursor,'$.complete',0) ELSE '{"complete":false}' END,generation=generation+1 WHERE stream='context';
+UPDATE cursors SET cursor=CASE WHEN json_valid(cursor) THEN json_set(cursor,'$.complete',0) ELSE '{"complete":false}' END,generation=generation+1 WHERE stream='context' AND CASE WHEN json_valid(cursor) THEN json_extract(cursor,'$.complete') IS NOT 0 ELSE 1 END;
 DELETE FROM ceremonies;
 DELETE FROM signups;
 DELETE FROM invitations;

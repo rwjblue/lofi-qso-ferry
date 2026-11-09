@@ -243,6 +243,31 @@ destination on the migration 0115 pipeline. They exclude live reads and
 uploads. The source-coverage timing and the cost of classifying the full
 log are separate measurements.
 
+#### Completed interleaved comparison
+
+A separate migration 0115 run drained comparison between source pages.
+The backfill figures include provisional comparison work while source
+coverage was collecting. The completion stage includes verification
+and replacement of those provisional results.
+
+| Local stage | D1 calls | SQL statements | Rows read | Rows written | Queue turns | Elapsed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Source backfill with provisional comparison | 779,100 | 1,003,160 | 107,434,845 | 16,525,513 | 36,405 | 6,640.9 s |
+| Source completion and classification | 1,373,081 | 1,732,401 | 284,233,071 | 19,529,297 | 70,998 | 10,107.0 s |
+
+The completion stage drained before the original final query lost its
+D1 connection. A read-only audit of the closed 3.81 GB SQLite file
+checked 10,000 live match sets in 157 pages. It verified 200,000 distinct
+current absence classifications, ready source and receipt coverage,
+zero pending matching work, and zero attempts or dispatches. The audit
+took 21.4 seconds and returned at most 1,280 rows per page.
+
+Across the two listed stages, the interleaved run used 2.15 million D1
+calls. The corresponding deferred stages above used 1.06 million.
+Both runs used synthetic normalized pages and an empty destination.
+These are historical local measurements from before automatic source
+deferral and multi-step comparison delivery.
+
 #### Verification when every member is current
 
 [Migration 0116](../migrations/0116_inventory_current_source_quarantine.sql)

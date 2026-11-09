@@ -52,33 +52,51 @@ const transient = new Set<Decision>([
   "projection_unavailable",
 ]);
 
+const reviewHeads = `WITH routes AS MATERIALIZED(
+  SELECT r.*,coalesce(o.version,0) AS ownership_clock
+  FROM inventory_matching_coverage_live_routes r
+  JOIN inventory_scopes d ON d.tenant=r.tenant AND d.scope_id=r.destination
+  LEFT JOIN inventory_ownership_domains o ON o.tenant=r.tenant AND o.provider=d.provider
+  WHERE r.tenant=?1
+), heads AS MATERIALIZED(
+  SELECT
+    (SELECT w.rowid FROM inventory_delivery_review w INDEXED BY inventory_delivery_review_due
+     WHERE (w.tenant,w.generation_id,w.destination,w.source_scope,w.source_config_version,w.destination_config_version)=(r.tenant,r.generation_id,r.destination,r.source_scope,r.source_config_version,r.destination_config_version)
+       AND w.due_at<${WAIT_FOR_CHANGE} ORDER BY w.due_at,w.record_key LIMIT 1) AS scheduled,
+    (SELECT w.rowid FROM inventory_delivery_review w INDEXED BY inventory_delivery_review_clock
+     WHERE (w.tenant,w.generation_id,w.destination,w.source_scope,w.source_config_version,w.destination_config_version)=(r.tenant,r.generation_id,r.destination,r.source_scope,r.source_config_version,r.destination_config_version)
+       AND w.ownership_version>=0 AND w.ownership_version<r.ownership_clock ORDER BY w.ownership_version,w.record_key LIMIT 1) AS changed
+  FROM routes r
+)`;
+
 /** Rebuildable planning decisions. Even a clear review requires a fresh source proof. */
 export class InventoryDeliveryReview {
   constructor(readonly store: Store) {}
+
+  async nextDueAt(tenant: string) {
+    const row = await this.store
+      .statement(
+        `${reviewHeads}
+         SELECT min(CASE WHEN h.changed IS NOT NULL THEN min(coalesce(w.due_at,?2),?2) ELSE w.due_at END) AS due_at
+         FROM heads h LEFT JOIN inventory_delivery_review w ON w.rowid=h.scheduled`,
+        tenant,
+        Date.now(),
+      )
+      .first<{ due_at: number | null }>();
+    return row?.due_at ?? 0;
+  }
 
   async step(tenant: string) {
     if (typeof tenant !== "string" || !tenant.length || tenant.length > 512)
       throw new Error("invalid_inventory_delivery_review_tenant");
     const head = await this.store
       .statement(
-        `WITH routes AS MATERIALIZED(
-           SELECT r.*,coalesce(o.version,0) AS ownership_clock
-           FROM inventory_matching_coverage_live_routes r
-           JOIN inventory_scopes d ON d.tenant=r.tenant AND d.scope_id=r.destination
-           LEFT JOIN inventory_ownership_domains o ON o.tenant=r.tenant AND o.provider=d.provider
-           WHERE r.tenant=?1
-         ), heads AS MATERIALIZED(
-           SELECT coalesce(
-             (SELECT w.rowid FROM inventory_delivery_review w INDEXED BY inventory_delivery_review_due
-              WHERE (w.tenant,w.generation_id,w.destination,w.source_scope,w.source_config_version,w.destination_config_version)=(r.tenant,r.generation_id,r.destination,r.source_scope,r.source_config_version,r.destination_config_version)
-               AND w.due_at<=?2 ORDER BY w.due_at,w.record_key LIMIT 1),
-             (SELECT w.rowid FROM inventory_delivery_review w INDEXED BY inventory_delivery_review_clock
-              WHERE (w.tenant,w.generation_id,w.destination,w.source_scope,w.source_config_version,w.destination_config_version)=(r.tenant,r.generation_id,r.destination,r.source_scope,r.source_config_version,r.destination_config_version)
-               AND w.ownership_version>=0 AND w.ownership_version<r.ownership_clock ORDER BY w.ownership_version,w.record_key LIMIT 1)
-           ) AS work_id FROM routes r
-         )
+        `${reviewHeads}
          SELECT w.provider,w.result_set,w.source_scope,w.destination,w.generation_id
-         FROM heads h CROSS JOIN inventory_delivery_review w WHERE w.rowid=h.work_id ORDER BY w.due_at,w.destination,w.source_scope,w.record_key LIMIT 1`,
+         FROM heads h LEFT JOIN inventory_delivery_review scheduled ON scheduled.rowid=h.scheduled
+         CROSS JOIN inventory_delivery_review w
+         WHERE w.rowid=CASE WHEN scheduled.due_at<=?2 THEN scheduled.rowid ELSE h.changed END
+         ORDER BY w.due_at,w.destination,w.source_scope,w.record_key LIMIT 1`,
         tenant,
         Date.now(),
       )

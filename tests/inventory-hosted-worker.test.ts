@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { build } from "esbuild";
 import { convertV4MiniflareOptions, Miniflare } from "miniflare";
 import { serializeAdifRecord } from "../src/adif.ts";
+import { InventoryOwnership } from "../src/inventory-ownership.ts";
 import { inventoryRuntime } from "../src/inventory-runtime.ts";
 import { registerInventorySelection } from "../src/inventory-scheduler.ts";
 import { Store } from "../src/store.ts";
@@ -357,6 +358,16 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     { n: 1 },
   );
   assert.deepEqual(
+    (
+      await db
+        .prepare(
+          "SELECT provider,record_key,decision FROM inventory_delivery_review_current",
+        )
+        .all()
+    ).results,
+    [{ provider: "qrz", record_key: "q2", decision: "source_proof_required" }],
+  );
+  assert.deepEqual(
     await db.prepare("SELECT count(*) AS n FROM attempts").first(),
     { n: 0 },
   );
@@ -455,4 +466,24 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
     3,
   );
   assert.equal(lotwReads.length, 3);
+
+  await new InventoryOwnership(store).hold(
+    "a",
+    "qrz",
+    "fixture-inflight",
+    "unresolved_delivery",
+  );
+  await worker.scheduled({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
+  let decision: string | null = null;
+  for (let i = 0; i < 120; i++) {
+    decision = await db
+      .prepare(
+        "SELECT decision FROM inventory_delivery_review_current WHERE provider='qrz' AND record_key='q2'",
+      )
+      .first<string>("decision");
+    if (decision === "ownership_incomplete") break;
+    await delay(50);
+  }
+  assert.equal(decision, "ownership_incomplete");
+  assert.deepEqual([reads, qrzReads, lotwReads.length], [2, 2, 3]);
 });

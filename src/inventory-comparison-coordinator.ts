@@ -1,6 +1,7 @@
 import { InventoryAdoptionWork } from "./inventory-adoption-work.ts";
 import { InventoryComparisonBuilds } from "./inventory-comparison-builds.ts";
 import { InventoryComparisonGenerations } from "./inventory-comparison-generations.ts";
+import { InventoryDeliveryReview } from "./inventory-delivery-review.ts";
 import { InventoryMatchingCoverage } from "./inventory-matching-coverage.ts";
 import { InventoryMatchingCoverageEvents } from "./inventory-matching-coverage-events.ts";
 import { InventoryMatchingInvalidations } from "./inventory-matching-invalidations.ts";
@@ -23,6 +24,7 @@ interface Control {
   build_scope: string;
   // Older local captures and comparison benchmarks predate adoption work.
   match_activity?: 0 | 1;
+  review_activity?: 0 | 1 | 2;
 }
 const phases = [
   "build",
@@ -144,18 +146,19 @@ export class InventoryComparisonCoordinator {
     build?: { generation_id: string; scope_id: string },
     nextDueAt?: number,
   ) {
-    const activity = control.match_activity;
+    const { match_activity: activity, review_activity: review } = control;
+    const advanceActivity =
+      control.phase === matchPhase && nextPhase === matchPhase + 1;
     return this.store
       .statement(
-        `UPDATE inventory_comparison_coordinators SET ${activity === undefined ? "" : "match_activity=?,"}version=version+1,observed_version=work_version,phase=?,idle_turns=CASE WHEN ?=1 OR observed_version!=work_version THEN 0 ELSE min(phase_count,idle_turns+1) END,next_due_at=coalesce(?,next_due_at),build_generation=?,build_scope=?,updated_at=?
+        `UPDATE inventory_comparison_coordinators SET ${activity === undefined ? "" : "match_activity=?,"}${review === undefined ? "" : "review_activity=?,"}version=version+1,observed_version=work_version,phase=?,idle_turns=CASE WHEN ?=1 OR observed_version!=work_version THEN 0 ELSE min(phase_count,idle_turns+1) END,next_due_at=coalesce(?,next_due_at),build_generation=?,build_scope=?,updated_at=?
 WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a ON a.id=l.tenant AND a.status='active' WHERE l.tenant=? AND l.scope='inventory-comparison' AND l.token=? AND l.fence=? AND l.expires_at>unixepoch('subsec')*1000) RETURNING idle_turns,work_version,observed_version,next_due_at`,
         ...(activity === undefined
           ? []
-          : [
-              control.phase === matchPhase && nextPhase === matchPhase + 1
-                ? 1 - activity
-                : activity,
-            ]),
+          : [advanceActivity ? 1 - activity : activity]),
+        ...(review === undefined
+          ? []
+          : [advanceActivity ? (review + 1) % 3 : review]),
         nextPhase,
         Number(progress),
         nextDueAt ?? null,
@@ -245,7 +248,7 @@ WHERE tenant=? AND version=? AND EXISTS(SELECT 1 FROM leases l JOIN accounts a O
       let records = 0;
       let pageId: string | undefined;
       let nextDueAt: number | undefined;
-      let activity: "match" | "adopt" | undefined;
+      let activity: "match" | "adopt" | "review" | undefined;
       if (phase === "build") {
         const candidate = await this.store
           .statement(
@@ -298,23 +301,32 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
           control.match_activity === undefined
             ? null
             : new InventoryAdoptionWork(this.store);
-        const adoptionFirst = adoption && control.match_activity === 1;
-        let result = adoptionFirst
-          ? await adoption.step(tenant)
-          : await matching.step(tenant);
-        if (adoption) {
-          activity = adoptionFirst ? "adopt" : "match";
-          if (result.kind === "idle") {
-            activity = adoptionFirst ? "match" : "adopt";
-            result = adoptionFirst
-              ? await matching.step(tenant)
-              : await adoption.step(tenant);
-          }
+        const review =
+          control.review_activity === undefined
+            ? null
+            : new InventoryDeliveryReview(this.store);
+        const turns = [
+          { activity: "match", run: () => matching.step(tenant) },
+          ...(adoption
+            ? [{ activity: "adopt" as const, run: () => adoption.step(tenant) }]
+            : []),
+          ...(review
+            ? [{ activity: "review" as const, run: () => review.step(tenant) }]
+            : []),
+        ] as const;
+        const preferred =
+          control.review_activity ?? control.match_activity ?? 0;
+        for (let offset = 0; offset < turns.length; offset++) {
+          const turn = turns[(preferred + offset) % turns.length];
+          const result = await turn.run();
+          if (turns.length > 1) activity = turn.activity;
+          if (result.kind === "idle") continue;
+          deferred = result.kind === "deferred";
+          progress = !deferred;
+          records = "records" in result ? (result.records ?? 0) : 0;
+          pageId = "setId" in result ? result.setId : undefined;
+          break;
         }
-        progress = result.kind !== "idle" && result.kind !== "deferred";
-        deferred = result.kind === "deferred";
-        records = "records" in result ? result.records : 0;
-        pageId = "setId" in result ? result.setId : undefined;
         const retry = await this.store
           .statement(
             `WITH routes AS MATERIALIZED(SELECT * FROM inventory_matching_coverage_live_routes WHERE tenant=?1),heads AS MATERIALIZED(SELECT (SELECT w.due_at FROM matching_work w INDEXED BY matching_work_scope_pending WHERE w.tenant=r.tenant AND w.generation_id=r.generation_id AND w.destination=r.destination AND w.source_scope=r.source_scope AND w.source_config_version=r.source_config_version AND w.destination_config_version=r.destination_config_version AND w.completed_version<w.work_version ORDER BY w.due_at,w.record_key LIMIT 1) AS due_at${adoption ? ",(SELECT w.due_at FROM inventory_adoption_work w INDEXED BY inventory_adoption_work_due WHERE w.tenant=r.tenant AND w.generation_id=r.generation_id AND w.destination=r.destination AND w.source_scope=r.source_scope AND w.source_config_version=r.source_config_version AND w.destination_config_version=r.destination_config_version ORDER BY w.due_at,w.record_key LIMIT 1) AS adoption_due" : ""} FROM routes r) SELECT coalesce(min(due_at),0) AS due_at FROM (SELECT due_at FROM heads${adoption ? " UNION ALL SELECT adoption_due FROM heads" : ""})`,
@@ -322,6 +334,9 @@ ORDER BY (b.generation_id,b.scope_id)<=(?,?),b.generation_id,b.scope_id LIMIT 1`
           )
           .first<{ due_at: number }>();
         nextDueAt = retry?.due_at ?? 0;
+        const reviewDueAt = review ? await review.nextDueAt(tenant) : 0;
+        if (reviewDueAt)
+          nextDueAt = Math.min(nextDueAt || reviewDueAt, reviewDueAt);
       } else if (
         phase === "pair" ||
         phase === "bucket" ||

@@ -5,7 +5,7 @@ import {
   exportAuthorizationMode,
   exportsEffective,
   routeDeliveryMode,
-} from "../src/service.ts";
+} from "../src/delivery-gates.ts";
 
 function environment(overrides: Partial<Env> = {}): Env {
   return {

@@ -12,7 +12,7 @@ mise exec -- npm run dev -- --test-scheduled
 
 `setup` installs locked dependencies, creates independent local secrets with file mode 0600 when `.dev.vars` is absent, generates Worker types, bundles the browser and applies every migration to local D1. It preserves an existing `.dev.vars`; keep those KEKs while their encrypted local data remains useful. `.dev.vars`, `.wrangler`, build output and generated browser bundles are ignored by Git.
 
-`check` covers formatting, lint, TypeScript (server, browser and scripts), all tests, browser bundling and a dry-run Worker build. `demo` builds the application and runs the actual local Worker E2E plus source-intake/delivery scenarios with synthetic authenticators and vendor fixtures. It uses isolated test data and does not create a persistent dashboard account. Neither task deploys or writes to a live vendor. `mise run db-local` remains available to apply local migrations separately. Use `mise exec --` for manual Node/npm commands if your shell does not activate project tool versions.
+`check` covers formatting, lint, TypeScript (server, browser and scripts), all tests, browser bundling and a dry-run Worker build. `demo` builds the application and runs the actual local Worker E2E plus native inventory and delivery scenarios with synthetic authenticators and vendor fixtures. It uses isolated test data and does not create a persistent dashboard account. Neither task deploys or writes to a live vendor. `mise run db-local` remains available to apply local migrations separately. Use `mise exec --` for manual Node/npm commands if your shell does not activate project tool versions.
 
 Open `http://localhost:8787` exactly: the fixed local origin/RP configuration does not accept `127.0.0.1` or an alternate port. Start signup with a synthetic address. In local mode only, verification codes appear in the browser-bound local mailbox shown during signup. Complete registration with a real discoverable passkey; later sign-ins use passkeys. Keep the explicit sign-in button available and register a second independent passkey. Browser support for synced providers, phone transport, backup keys and conditional autofill still needs the manual matrix in [authentication](authentication.md). Automated authenticators do not prove hardware/provider behavior.
 
@@ -25,41 +25,24 @@ curl --fail http://localhost:8787/health
 curl --fail http://localhost:8787/__scheduled
 ```
 
-The health response reports the deployment export gate. The dashboard shows pending work and exceptions. Normal logging has no operation-release control; eligible changes settle for 30 minutes by default (configurable from 20 to 60). A cron tick polls bounded source pages and processes a bounded contact/attempt set.
-
-The dashboard's top counts describe the LoFi source index seen so far; destination adoption/delivery counts appear separately under Delivery activity. Read-only contact review works with no QRZ or LoTW connection, reads only retained encrypted source data, and previews the selected saved template without creating an attempt or retaining extra raw data. Refresh review preserves unsaved editor/settings values. Run its contained fixture checks without vendor credentials:
-
-```sh
-mise exec -- npx tsx --test tests/review.test.ts tests/browser-dashboard.test.ts
-```
-
-Those tests check segment-aware station/location/reference/comment projection, tenant boundaries, retention and byte-for-byte database equality across review calls. Full `mise run check` also exercises the actual Worker HTTP route, single-service connection races and operation-read fairness. Fixture success establishes local behavior; it does not establish live source replay or vendor-write acceptance.
+The health response reports the deployment export gate. A cron tick
+registers bounded inventory work and publishes Queue continuations.
+The dashboard shows coverage, current match outcomes and delivery
+activity per provider.
 
 ## Reproducible focused flows
 
-`mise run benchmark-qrz-upload` measures tick Store database calls and QRZ request
-amplification for direct, covering-fallback and idle workloads using local D1 and
-synthetic vendors. Use `mise run benchmark-qrz-upload fallback-six` for the
-six-contact request-budget case. It performs no live vendor requests; the local
-results and remaining limits are recorded in the [capacity plan](capacity-plan.md#qrz-upload-refactor--local-measurements-2026-10-28).
-The `direct-six` case isolates source-proof collection when QRZ reads return an
-unambiguous empty result. Output includes LoFi sync reads, native proof counts,
-fair rounds and metered database counters; the [cohort/idle follow-up](capacity-plan.md#source-proof-cohorts-and-idle-work--follow-up-2026-10-28)
-records the second refactor's same-work comparisons and counter boundaries.
-Use `mise run benchmark-qrz-upload queue-10 queue-20` for the bounded bulk
-preparation/dispatch phase. Its output reports planning separately and excludes
-source-proof setup; the [bulk-work measurements](capacity-plan.md#bulk-preparation-and-queued-dispatch--local-measurements-2026-10-30)
-distinguish those phase counters from the complete scheduler invocation.
+~~~sh
+mise exec -- npx tsx --test tests/worker-e2e.test.ts
+mise exec -- npx tsx --test tests/inventory-hosted-worker.test.ts
+mise exec -- npx tsx --test tests/inventory-lotw-batch.test.ts
+mise run benchmark-inventory-ingestion
+mise run benchmark-inventory-pipeline
+~~~
 
-```sh
-npx tsx --test tests/worker-e2e.test.ts
-npx tsx --test tests/signing-runtime.test.ts
-npx tsx --test tests/auth.test.ts tests/connections.test.ts
-npx tsx --test tests/lofi.test.ts tests/projection.test.ts tests/delivery.test.ts
-npx tsx --test tests/reconcile.test.ts tests/store-reconcile.test.ts tests/store.test.ts
-```
-
-The Worker E2E bundles the actual service, applies migrations to workerd-backed D1, performs email-confirmed passkey registration/login using a synthetic authenticator, exercises the dashboard and security gates, and blocks outbound vendor access. The signing-runtime test imports both generated legacy/current PKCS#12 fixtures in actual workerd, verifies certificate chains and RSA/SHA-1 signatures against OpenSSL, and emits gzip TQ8. Delivery tests inject realistic QRZ/LoTW responses for adoption, immutable outbox preparation, lost responses, corrections and separate submission/observation states. These are local contract checks; none proves live vendor acceptance.
+The Worker tests exercise the bundled handler, native D1 and local
+Queue delivery. Signing and readback tests use synthetic certificates
+and provider responses. [Measurement boundaries](capacity-plan.md)
 
 The public synthetic key material under `fixtures/signing/` is intentionally committed and has no ARRL authority. [Its README](../fixtures/signing/README.md) reproduces the containers and vector. Never submit those contacts or import these synthetic credentials into a live account.
 

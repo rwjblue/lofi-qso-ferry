@@ -855,93 +855,34 @@ Both the programmatic path and `ops/lock-restored.sql` lock native QRZ and LoTW 
 
 ## Cost and throughput model
 
-The proposed improvement is fewer external discovery requests and fewer database round trips per matched cohort. Coarser buckets also reduce token generation/index probes, while retrieving a wider candidate set. None of those changes remove source-proof, final write, signing or readback costs.
+Track provider reads, local classification, preparation, dispatch and
+readback separately. The local matcher processes changed candidates
+in bounded cohorts without a remote request per contact. Source proof,
+final destination checks and readback still consume provider slots.
+Use [current capacity profiles](capacity-plan.md) for measurements
+and the boundaries of each experiment.
 
-The [capacity plan](capacity-plan.md#bulk-preparation-and-queued-dispatch--local-measurements-2026-10-30) records local complete-scheduler measurements of 148 D1 RPCs for one direct-empty contact and 386 for six direct-empty contacts. Its isolated already-observed queue phase measures 3.3 RPCs per contact for 20 uploads, excluding inventory/planning/proof setup. The earlier warm matching fixture measures 118 cohort RPCs for 20 contacts across two destinations, or 40 routes. These are different measurement boundaries, not interchangeable estimates.
+QRZ and LoTW each use a shared 60-request-per-minute Ferry budget.
+QRZ inserts are individual operations. LoTW can sign 100 compatible
+members in a file and settle them in smaller readback transactions.
+LoFi keeps its independent bootstrap and recurring read admission.
+Provider cooldowns, proof fit and compatibility affect delivered
+contacts per hour.
 
-For N relevant contacts, page size P and changed records D, model baseline demand as paged inventory plus catch-up/verification, then incremental demand as changed pages plus necessary polling and verification sweeps. Bulk matching should scale with changed candidate groups and their dependencies. Cost estimates must count index writes, membership, invalidation fan-out, SQL rows, encryption/signing CPU, durable storage and backups alongside binding RPCs.
+The 200,000-contact synthetic run allocated 3.21 GB for source
+inventory, one empty destination and current absence results.
+Encrypted inventory and projection bodies accounted for 416.1 MB
+of serialized data. Relational proof detail and indexes need their
+own retention measurements. The administrator's 90-day threshold
+applies to settled-state collection. Uncertain or outstanding
+delivery retains the recovery evidence it requires.
 
-Under the current 100-row/four-background-request policy, 200,000 LoFi contacts require about 41.7 hours of request capacity before additional work. This is the legacy comparison, not the chosen bootstrap target. The proposed allocation/pacing and 500–1,000-row read profile are described in [LoFi bootstrap throughput](#lofi-bootstrap-throughput); their target is 2–4 hours under healthy service, subject to native ingestion and upstream pacing measurements.
-
-### Inventory and matching scenarios
-
-For the legacy inventory comparison, assume N relevant contacts at each destination, healthy already-covered matching inputs, no retries, 100 source QSOs/page, and 250 QRZ records/page. Matching totals below extrapolate the existing warm fixture and proposed target; they are not new benchmark results. Rate-equivalent time expresses consumed quota, not elapsed scheduling or vendor latency. Proposed LoFi bootstrap figures are in the separate pacing table above.
-
-| Work                                 |       4,000 contacts |    200,000 contacts | Boundary                                                                   |
-| ------------------------------------ | -------------------: | ------------------: | -------------------------------------------------------------------------- |
-| LoFi QSO baseline data pages         |                   40 |               2,000 | Excludes operation/events, completion/drain and authentication             |
-| LoFi background rate equivalent      |           50 minutes | 41 hours 40 minutes | Four global requests/five minutes                                          |
-| QRZ baseline data pages              |                   16 |                 800 | Excludes completion, catch-up and verification                             |
-| QRZ requests without STATUS reuse    |                   32 |               1,600 | One STATUS and one FETCH per data page                                     |
-| QRZ requests with full-page reuse    |                   24 |               1,200 | One STATUS and two FETCHes per eligible pair                               |
-| QRZ background rate with reuse       |            5 minutes |  4 hours 10 minutes | 24 global requests/five minutes, before terminal and catch-up checks       |
-| Current warm matching RPCs           |               23,600 |           1,180,000 | `118 * ceil(N / 20)` for both destinations                                 |
-| Proposed matching target RPCs        |                2,400 |             120,000 | `2 * 6 * ceil(N / 20)` for both destinations                               |
-| Added durable storage sensitivity    |             16–66 MB |        0.82–3.28 GB | Assumed 4–16 KiB/contact for new payload/index/dependency state            |
-
-The reuse estimate assumes each pair of full data pages fits within the
-30-second evidence window. Terminal checks, budget delays and recovery
-can add requests. These figures express consumed quota. See the
-[captured and live QRZ trials](evidence-inventory-fresh-start.md#qrz-status-reuse).
-
-The target implies about 90% fewer matching-phase binding calls if full guarded adoption and ownership work fit the proposed boundary. It does not imply the same complete-scheduler reduction. In the isolated queue workload, substituting six planning calls for the current 120 would give `(66 + 6) / 20 = 3.6` RPCs/contact, still excluding source-proof setup, ingestion and maintenance. That is a design bound for that one-destination workload.
-
-### QRZ request demand
-
-The current QRZ total policy is 120 requests/five minutes, or 34,560/day. Cached inventory negatives cannot supply the immediate fresh `QrzEmptyObservation` token consumed by current preparation. Retaining the preparation read, final read and INSERT therefore gives an expected direct-empty path of three requests/contact. Phase E and early phase F retain this singleton authorization behavior.
-
-| QRZ delivery scenario                               | Requests/day at 10,000 deliveries | Share of current daily allowance |
-| --------------------------------------------------- | --------------------------------: | -------------------------------: |
-| Retained direct-empty preparation/final/INSERT path |                            30,000 |                            86.8% |
-| Existing one-page fallback path                     |                            70,000 |                           202.5% |
-| Conditional final-read plus INSERT lower bound      |                            20,000 |                            57.9% |
-| Twice the target at that two-request lower bound    |                            40,000 |                           115.7% |
-
-The two-request case requires a separately established change that removes/merges the preparation read; the local matcher alone does not accomplish it. The current policy cannot provide 2x headroom through batching alone. These are application limits, not published upstream quotas. See [preparation](../src/delivery.ts), [request policy](../src/vendor-requests.ts) and the [request-demand measurements](capacity-plan.md).
-
-Historical uploads also share QRZ's smaller background allowance: 24 requests/five minutes is 6,912/day. At three requests/contact, an all-missing 200,000-contact import would need a rate-equivalent minimum of about 86.8 days for QRZ delivery, before competing background reads or retries. Fast inventory/classification and fast completion of missing historical uploads are separate acceptance targets.
-
-### Source proofs and LoTW batches
-
-Model LoFi demand as discovery polling not already supplied by drains, plus fresh witness collection, canonical drains, baseline/context/verification and authentication. Preserve sharing of source evidence across both destination projections. A 20-contact matcher does not increase the scheduler's existing six-live/two-background preparation turns or its proof request/dependency/lifetime limits.
-
-For illustration, packing 100 contacts/day/account into six-contact
-proof cohorts gives 1,700 cohorts/day across 100 accounts. At one
-collection and one drain each, that is 3,400 source requests against
-1,152 ordinary background slots per day. Cached witnesses and useful
-polling/drain overlap reduce demand. Sparse groups, dispersed
-dependencies and failures increase it. The 170-minute poll cycle uses
-about 847 of those slots for single-page reports, so the full delivery
-workload still needs substantially more sharing or a different
-admission policy.
-
-For LoTW, count inventory/confirmation reads, preparation/final history reads, certificate checks, upload batches, receipt reads and retries separately. Full 20-member groups would need 500 uploads/day at 10,000 contacts/day. An illustrative six-request cycle with all required reads/checks shared within valid scopes would consume 3,000 requests/day plus scanning. If two history checks remain individual, those checks alone consume 20,000/day and exceed the current 11,520/day total allowance. Batch activation therefore needs proof-fit, read-scope sharing and observed effective batch-size acceptance; sparse accounts cannot assume full batches. Signing still performs one signature per contact.
-
-### Storage horizon and monetary cost
-
-For personal use, the existing 4–16 KiB/contact sensitivity model implies approximately 16–66 MB for 4,000 contacts or 0.82–3.28 GB for a 200,000-contact log. These are assumptions about additional retained state, not measured payload sizes or complete database forecasts. Measure source bodies, comparison projections, indexes, dependency rows, history and artifacts separately before treating this range as a storage budget.
-
-The first [normalized pipeline storage measurements](evidence-inventory-pipeline.md) allocate 16.3 MB for 1,000 source contacts and 67.3 MB for 4,000, with an empty destination and before collection. Only 2.4 MB and 9.7 MB respectively are encrypted inventory/projection envelopes. A 200-contact fully matched destination is denser at 5.3 MB of growth. These include retained incomplete/ready comparison evidence and do not establish sustained incremental growth or a 200,000-contact capacity forecast. They make retention and relational/index density explicit prerequisites alongside any later R2 payload move.
-
-At an illustrative personal rate of 100 new contacts/day, that same assumption adds approximately 12–49 MB per 30 days, compared with 1.23–4.92 GB at the 100-account scale check. Personal use is not subject to the scale scenario's 61–244-day database horizon.
-
-The selected initial storage direction is to keep current payloads and matching state in D1, with a backend/version-aware payload reference that permits a later move to object storage. This preserves atomic payload/index/checkpoint commits and avoids adding object reads to each cohort immediately. Measure total database growth and forecast capacity runway before choosing an R2 migration trigger. Moving full bodies later does not remove D1's limit for metadata and comparison state.
-
-An alternative is D1 for indexed state and compact comparison projections, with encrypted full source bodies in R2 Standard. R2 includes 10 GB-month storage, one million write-class operations and ten million read-class operations monthly; storage overage is $0.015/GB-month. At a steady 50 GB, storage alone would be about $0.60/month with unused included storage, versus $33.75 in D1 across multiple databases. Operations, Worker usage, backups and metadata are separate. See [R2 pricing](https://developers.cloudflare.com/r2/pricing/).
-
-If payloads move to R2, keep matching inputs and due work in D1 so candidate discovery does not fetch a blob per row. Use immutable record versions or bounded chunks, not a mutable whole-log file. Persist and verify the object before atomically committing its D1 references and source checkpoint; a failed D1 commit may leave a collectable orphan, while a committed reference must never precede durable payload availability. Design input pins, orphan collection and coordinated restore before that backend activates. R2's strong consistency does not make its writes transactional with D1. See [R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/).
-
-At 10,000 new contacts/day, the assumed additional 4–16 KiB/contact adds 1.23–4.92 GB per 30 days. At that assumed density, an otherwise empty database reaches D1's current 10-GB database limit in roughly 61–244 days, before other application state and retained artifacts. This sensitivity estimate must be replaced by measured encrypted row/index/dependency sizes. Choose database partitioning, separate payload storage or an explicit source archival policy before accepting the sustained 100-account retention workload. See [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
-
-Collect completed scan membership epochs and runs after retaining active/published epochs and all required evidence references. Repeated verification must not append a permanent full membership copy each time. Version/dependency compaction must preserve the monotonic generation rules above.
-
-As checked for this review, paid [D1 pricing](https://developers.cloudflare.com/d1/platform/pricing/) includes 25 billion rows read/month, 50 million rows written/month and 5 GB storage. Overage rates are $0.001/million rows read, $1/million rows written and $0.75/GB-month. Secondary-index updates contribute billed writes. [Workers Standard pricing](https://developers.cloudflare.com/workers/platform/pricing/) has a $5 monthly minimum including 10 million requests and 30 million CPU-ms; additional CPU is $0.02/million CPU-ms. Allowances are shared account resources, not reserved to Ferry.
-
-For sensitivity only, 300,000 new contacts/month at an assumed 50–200 billable writes/contact means 15–60 million writes/month. If the entire included write allowance were otherwise unused, that component contributes $0–$10 in write overage. It excludes existing workload, requests, read/storage overage, CPU, external storage and backups; it is not a project bill. Recheck pricing when implementation estimates are accepted.
-
-Favor coalesced work and version bumps over eagerly updating every dependent result. An operation edit can still require O(affected contacts) reprojection; measure that fan-out, dense bucket expansion, dependency replacement and key rebuilds. Fewer binding RPCs may reduce latency while increasing billed row writes.
-
-Treat local admission policy as a design parameter, separately from vendor guidance and service behavior. LoFi's proposed bootstrap allocation uses unused capacity within its existing total. Any further increase needs an explicit policy choice, measured pacing and demand, rather than a benchmark that silently overrides admission. A monthly-dollar estimate requires current pricing plus observed row operations, storage and CPU; RPC count alone is insufficient.
+Keep the active indexes, ownership, delivery state and checkpoints in
+D1. Optional cold storage can retain encrypted bodies after cooling.
+The writer must verify a durable object before replacing the hot
+body, and restore must validate exact payload identity before the
+body is usable. An unavailable archived source body needs isolated
+source replay or a visible hold. [Storage observations](evidence-inventory-pipeline.md#deferred-comparison-through-migration-0123)
 
 ## Validation and acceptance
 

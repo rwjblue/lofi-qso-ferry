@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-#MISE description="Measure QRZ upload request amplification with synthetic vendors and local D1"
-#USAGE arg "[scenarios]" var=#true help="Run selected workloads; defaults to complete scheduler workloads" {
-#USAGE   choices "direct" "direct-six" "fallback" "fallback-six" "queue-10" "queue-20"
-#USAGE }
-set -euo pipefail
-npx tsx scripts/benchmark-qrz-upload.ts "$@"

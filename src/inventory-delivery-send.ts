@@ -1,13 +1,13 @@
 import {
+  deliveryGates,
+  routeDeliveryMode,
+  type ScheduledDeliveryGates,
+} from "./delivery-gates.ts";
+import {
   configuredInventoryShadow,
   type InventoryShadowEnvironment,
 } from "./inventory-preparation-shadow.ts";
 import { canonical } from "./security.ts";
-import {
-  deliveryGates,
-  routeDeliveryMode,
-  type ScheduledDeliveryGates,
-} from "./service.ts";
 import type { Store } from "./store.ts";
 
 type Provider = "qrz" | "lotw";

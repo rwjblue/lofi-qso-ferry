@@ -1,3 +1,7 @@
+import {
+  routeDeliveryMode,
+  type ScheduledDeliveryGates,
+} from "./delivery-gates.ts";
 import { historicalCandidates } from "./historical-matching.ts";
 import {
   inventoryLotwReadFetch,
@@ -7,12 +11,11 @@ import { InventoryLotwPreparation } from "./inventory-lotw-preparation.ts";
 import { LotwClient } from "./lotw.ts";
 import {
   certificateCurrentlyValid,
-  lotwAttemptIdentity,
   type LotwCredential,
+  lotwAttemptIdentity,
   lotwSigningCertificate,
 } from "./lotw-delivery-input.ts";
 import { canonical, sha256 } from "./security.ts";
-import { routeDeliveryMode, type ScheduledDeliveryGates } from "./service.ts";
 import { SIGNING_CONFIGURATION } from "./signing.ts";
 import type { Lease, Store } from "./store.ts";
 import {

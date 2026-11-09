@@ -1,16 +1,19 @@
 import {
-  contactIsTest as testContact,
   structuredContactAdif,
+  contactIsTest as testContact,
 } from "./contact-adif.ts";
+import { type DeliveryGates, deliveryMode } from "./delivery-gates.ts";
+
 export { contactAdif, contactReconciliationAdif } from "./contact-adif.ts";
+
 import {
   type AdifRecord,
   normalizeAdifValue,
   serializeAdifRecord,
 } from "./adif.ts";
 import {
-  deliveryWorkKey,
   type DispatchWork,
+  deliveryWorkKey,
   loadDispatchWork,
   loadPreparationWork,
   type PreparationWork,
@@ -26,9 +29,9 @@ import { type IntakeContact, pendingContacts } from "./intake.ts";
 import { LotwClient, observeLotwContact } from "./lotw.ts";
 import {
   certificateCurrentlyValid,
-  lotwAttemptIdentity,
   type LotwConfig,
   type LotwCredential,
+  lotwAttemptIdentity,
   lotwDeliveryInput,
   lotwProjectionHash,
   lotwSigningCertificate,
@@ -84,8 +87,8 @@ import {
   type LedgerKey,
   LOTW_PRIOR_IDENTITY_NOTICE,
   type LotwIdentityEvidence,
-  type Store,
   type StageInput,
+  type Store,
 } from "./store.ts";
 import {
   renderNarrative,
@@ -94,20 +97,13 @@ import {
   type TemplateVersion,
 } from "./templates.ts";
 import {
-  VendorDeferredError,
   type VendorAdmission,
+  VendorDeferredError,
   type VendorPriority,
   vendorFetch,
 } from "./vendor-requests.ts";
-export interface DeliveryGates {
-  exportsEnabled: boolean;
-  liveWriteAuthorized: boolean;
-  sourceBoundaryVerified: boolean;
-  qrzFreshInsertsEnabled?: boolean;
-  lotwFreshInsertsEnabled?: boolean;
-  allowedQsoIds?: string[] | null;
-  allowedDestinationIds?: string[] | null;
-}
+
+export { type DeliveryGates, deliveryMode } from "./delivery-gates.ts";
 export interface DeliveryDependencies {
   fetcher?: typeof fetch;
   now?: number;
@@ -201,19 +197,6 @@ export interface DeliveryResult {
     | "retry_scheduled";
   reason?: string;
   attemptId?: string;
-}
-/** Each fresh capability is vendor-specific and grants no source-wide authority. */
-export function deliveryMode(
-  gates: DeliveryGates,
-  kind: "qrz" | "lotw",
-): SourceExportAuthorizationMode | null {
-  if (!gates.exportsEnabled || !gates.liveWriteAuthorized) return null;
-  if (gates.sourceBoundaryVerified) return "source_boundary";
-  if (kind === "qrz" && gates.qrzFreshInsertsEnabled === true)
-    return "qrz_fresh_insert";
-  return kind === "lotw" && gates.lotwFreshInsertsEnabled === true
-    ? "lotw_fresh_insert"
-    : null;
 }
 function modeEnabled(
   gates: DeliveryGates,

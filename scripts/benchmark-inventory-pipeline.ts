@@ -33,6 +33,44 @@ type SyntheticObservation = InventoryObservation & {
   body: Record<string, unknown>;
 };
 
+interface BenchmarkMatch {
+  record_key: string;
+  version: number;
+  set_id: string;
+  state: string;
+  reason: string | null;
+}
+
+/** Check freshness once per retained set and keep the D1 audit bounded. */
+async function* currentMatchPages(db: D1Database) {
+  let after = "";
+  for (;;) {
+    const { results } = await db
+      .prepare(
+        `WITH next_sets AS MATERIALIZED (
+          SELECT DISTINCT set_id FROM match_results INDEXED BY match_result_set
+          WHERE tenant=?1 AND set_id>?2 ORDER BY set_id LIMIT 64
+        ), current_sets AS MATERIALIZED (
+          SELECT h.set_id FROM next_sets n CROSS JOIN inventory_match_sets h
+          WHERE (h.tenant,h.set_id)=(?1,n.set_id) AND h.state='committed'
+            AND NOT EXISTS(SELECT 1 FROM inventory_match_stale_sets x WHERE (x.tenant,x.set_id)=(h.tenant,h.set_id))
+        )
+        SELECT n.set_id,r.record_key,r.version,r.state,r.reason
+        FROM next_sets n LEFT JOIN current_sets c USING(set_id)
+        LEFT JOIN match_results r ON (r.tenant,r.set_id)=(?1,c.set_id)
+        ORDER BY n.set_id,r.record_key`,
+      )
+      .bind("a", after)
+      .all<BenchmarkMatch | { set_id: string; record_key: null }>();
+    const last = results.at(-1);
+    if (!last) return;
+    after = last.set_id;
+    yield results.filter(
+      (row): row is BenchmarkMatch => row.record_key !== null,
+    );
+  }
+}
+
 const { values } = parseArgs({
   options: {
     contacts: { type: "string", default: "200" },
@@ -498,12 +536,20 @@ try {
   );
   const expected =
     remote === "empty" ? "absent_at_inventory" : "matched_existing";
-  const current = await base.db
-    .prepare(
-      "SELECT state,count(*) AS records FROM match_results_current GROUP BY state",
-    )
-    .all();
-  assert.deepEqual(current.results, [{ state: expected, records: contacts }]);
+  const auditStarted = performance.now();
+  const classified = new Map<string, number>();
+  let auditPages = 0;
+  for await (const page of currentMatchPages(base.db)) {
+    auditPages++;
+    for (const { state } of page)
+      classified.set(state, (classified.get(state) ?? 0) + 1);
+  }
+  assert.deepEqual([...classified], [[expected, contacts]]);
+  const classificationAudit = {
+    pages: auditPages,
+    wallMs: performance.now() - auditStarted,
+    states: Object.fromEntries(classified),
+  };
   assert.deepEqual(
     (
       await base.db
@@ -559,6 +605,7 @@ try {
       schema: values.schema,
       sourceComparison,
       stages,
+      classificationAudit,
       database: meter.totals,
       queueSends,
       queueMessages,
@@ -590,19 +637,9 @@ try {
     const incrementalStarted = performance.now();
     const firstStage = stages.length;
     async function results() {
-      return (
-        await base.db
-          .prepare(
-            "SELECT record_key,version,set_id,state,reason FROM match_results_current ORDER BY record_key",
-          )
-          .all<{
-            record_key: string;
-            version: number;
-            set_id: string;
-            state: string;
-            reason: string | null;
-          }>()
-      ).results;
+      const rows: BenchmarkMatch[] = [];
+      for await (const page of currentMatchPages(base.db)) rows.push(...page);
+      return rows.sort((a, b) => a.record_key.localeCompare(b.record_key));
     }
     async function retained() {
       const row = await base.db

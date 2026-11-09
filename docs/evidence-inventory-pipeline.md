@@ -220,6 +220,29 @@ comparison began. This qualifies local source coverage on normalized
 synthetic pages. Classification was still in progress at the sample.
 The timing excludes adapter processing and live provider pacing.
 
+#### Completed deferred comparison
+
+The migration 0115 run finished verification and classification in
+8,521.9 seconds after collection. The stage used 50,004 Queue turns,
+1,058,170 D1 calls and 1,317,510 explicit statements. D1 recorded
+242,066,565 rows read and 16,227,737 rows written. The final SQLite
+file occupied 3.21 GB.
+
+The initial final-count query lost its D1 connection after the work
+drained. A read-only audit of the retained SQLite file checked freshness
+once per match set and confirmed all 200,000 classifications as current
+`absent_at_inventory`. Both source and receipt coverage were ready,
+and the run recorded zero dispatches. The benchmark now pages that
+audit in groups of up to 64 sets for baseline and incremental checks.
+The paged query verified the retained database in 157 pages and 22.6
+seconds. Its largest page returned 1,280 rows. A fresh 1,300-contact
+benchmark and a 100-contact incremental round also passed.
+
+These timings describe synthetic normalized pages and an empty
+destination on the migration 0115 pipeline. They exclude live reads and
+uploads. The source-coverage timing and the cost of classifying the full
+log are separate measurements.
+
 #### Verification when every member is current
 
 [Migration 0116](../migrations/0116_inventory_current_source_quarantine.sql)

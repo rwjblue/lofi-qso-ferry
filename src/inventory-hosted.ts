@@ -38,7 +38,7 @@ import {
   inventoryRuntime,
 } from "./inventory-runtime.ts";
 import {
-  registerKnownInventoryConnections,
+  registerInventorySources,
   registerLotwAccountFeeds,
   registerOverflowSelections,
   registerSourceCalendarSelections,
@@ -85,7 +85,7 @@ export async function runHostedScheduled(
   if (mode === "off") return { mode: "inventory_paused" as const, queued: 0 };
   const store = new Store(env.DB, keyring(env));
   const runtime = await activateInventoryRuntime(store);
-  const registration = await registerKnownInventoryConnections(store, runtime);
+  const registration = await registerInventorySources(store, runtime);
   const calendarRegistration = await registerSourceCalendarSelections(
     store,
     runtime,

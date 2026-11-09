@@ -33,7 +33,6 @@ import {
 import {
   lotwInventorySelections,
   registerInventorySelection,
-  registerKnownInventoryConnections,
   registerLotwAccountFeeds,
   registerSourceCalendarSelections,
   restoreLotwDatedPolls,
@@ -205,7 +204,7 @@ test("off pauses cron before and after the inventory database handoff", async (t
   );
 });
 
-test("cron registers source/book selections and publishes initial jobs without vendor reads", async (t) => {
+test("cron registers the source and waits for contact dates before scheduling destination reads", async (t) => {
   const f = await fixture(t);
   const credentials = (
     await f.db
@@ -217,12 +216,12 @@ test("cron registers source/book selections and publishes initial jobs without v
   const result = await runHostedScheduled(f.env);
   assert.equal(result.mode, "inventory_read_only");
   if (result.mode !== "inventory_read_only") assert.fail();
-  assert.equal(result.registration.registered, 2);
+  assert.equal(result.registration.registered, 1);
   assert.equal(result.rawPayloadsCollected, 0);
   assert.equal(result.rawPayloadCollectionFailed, 0);
-  assert.equal(result.starts.started, 2);
-  assert.equal(result.queued, 3);
-  assert.equal(result.inventoryQueued, 2);
+  assert.equal(result.starts.started, 1);
+  assert.equal(result.queued, 2);
+  assert.equal(result.inventoryQueued, 1);
   assert.equal(result.comparisonQueued, 1);
   assert.equal(result.qrzShadow, "off");
   assert.equal((await inventoryRuntime(f.store)).mode, "inventory_read_only");
@@ -232,7 +231,7 @@ test("cron registers source/book selections and publishes initial jobs without v
         .prepare("SELECT count(*) n FROM inventory_scheduled_selections")
         .first<{ n: number }>()
     )?.n,
-    2,
+    1,
   );
   const repeated = await runHostedScheduled({
     ...f.env,
@@ -459,20 +458,45 @@ test("a failed comparison continuation keeps the committed read message retryabl
   );
 });
 
-test("a malformed first account cannot starve the bounded registration roster", async (t) => {
+test("QRZ enrolls only source months that intersect the linked book", async (t) => {
   const f = await fixture(t);
   await f.store
-    .statement("UPDATE connections SET config='{}' WHERE id='destination'")
+    .statement(
+      "UPDATE connections SET config=? WHERE id='destination'",
+      JSON.stringify({
+        ...book,
+        startDate: "2025-01-15",
+        endDate: "2027-12-10",
+      }),
+    )
     .run();
-  const runtime = await activateInventoryRuntime(f.store);
-  assert.deepEqual(
-    await registerKnownInventoryConnections(f.store, runtime, 1),
-    { registered: 0, failed: 1 },
-  );
-  assert.deepEqual(
-    await registerKnownInventoryConnections(f.store, runtime, 1),
-    { registered: 1, failed: 0 },
-  );
+  await runHostedScheduled(f.env);
+  await f.store
+    .statement(
+      `INSERT INTO inventory_source_calendar_months(tenant,scope_id,month_start,first_sequence,first_observed_at)
+       SELECT s.tenant,s.scope_id,m.value,1,1 FROM inventory_scopes s CROSS JOIN json_each(?) m WHERE s.provider='lofi'`,
+      JSON.stringify(["2024-12-01", "2025-01-01", "2027-12-01", "2028-01-01"]),
+    )
+    .run();
+  const runtime = await inventoryRuntime(f.store);
+  assert.deepEqual(await registerSourceCalendarSelections(f.store, runtime), {
+    registered: 2,
+    failed: 0,
+  });
+  assert.deepEqual(await registerSourceCalendarSelections(f.store, runtime), {
+    registered: 0,
+    failed: 0,
+  });
+  const windows = await f.store
+    .statement(
+      `SELECT json_extract(plan,'$.between') AS dates FROM inventory_scheduled_selections
+       WHERE json_extract(plan,'$.provider')='qrz' ORDER BY dates`,
+    )
+    .all();
+  assert.deepEqual(windows.results, [
+    { dates: '["2025-01-15","2025-01-31"]' },
+    { dates: '["2027-12-01","2027-12-10"]' },
+  ]);
 });
 
 test("LoFi recurrence slots only established links and respects server check periods", async (t) => {

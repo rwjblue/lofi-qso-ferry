@@ -19,9 +19,9 @@ Managed inventory scopes bind the runtime generation before accepting pages. A s
 
 [Migration 0043](../migrations/0043_inventory_scheduling.sql) stores fixed provider selections and their polling/verification policy. A managed run must match its registered book/date/station selection; it cannot substitute a different query while retaining the same coverage identity.
 
-The [scheduler](../src/inventory-scheduler.ts) registers known LoFi accounts and QRZ books independently from contact matching. Registration uses a persisted bounded roster cursor so malformed metadata at the front cannot starve later accounts. Initial and query/client-reconfigured selections start full runs under their original job fence. Unchanged selections keep their active runs and cursors.
+The [scheduler](../src/inventory-scheduler.ts) registers LoFi sources first. Accepted source calendar hints enroll bounded QRZ and LoTW receipt windows. QRZ windows intersect the verified book dates, so a book's unrelated history does not get a new scheduled scan. Registration uses persisted bounded roster cursors. Initial and query/client-reconfigured selections start full runs under their original job fence. Unchanged selections keep their active runs and cursors.
 
-LoTW date/station selections can be registered explicitly. The date helper produces disjoint intervals of at most 32 inclusive days, preserving station/worked-call filters. Automatic derivation of the relevant date universe from source projections, and adaptive splitting of oversized reports, remain unfinished. A held overflow is not automatically restarted in a tight loop.
+LoTW date and station selections can also be registered explicitly. The date helper produces disjoint intervals of at most 32 inclusive days and preserves station and worked-call filters. The hosted scheduler splits oversized reports into smaller durable ranges.
 
 Default policy is five-minute source polling, fifteen-minute QRZ polling, fifteen-minute polling for recent LoTW selections and daily polling for older selections. Full verification is due after seven days for LoFi/LoTW and thirty days for QRZ. Policy is persisted and bounded; native vendor quotas/pacing still control actual requests. These are initial personal-use choices, not a demonstrated 100-account sustained request budget.
 

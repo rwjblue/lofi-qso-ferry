@@ -442,6 +442,8 @@ test("actual Worker cron drives paced inventory, comparison and historical adopt
   assert.ok(state.published_at);
   assert.ok(state.next_due_at >= readTimes[0] + 19000);
   assert.equal(reads, 1);
+  assert.equal(qrzReads, 0);
+  await scheduleTick({ scheduledTime: Date.now(), cron: "*/5 * * * *" });
   assert.equal(
     (
       await db

@@ -182,8 +182,8 @@ export function lotwInventorySelections(selection: {
   return plans;
 }
 
-/** Known account/book bounds can bootstrap independently from source matching. */
-export async function registerKnownInventoryConnections(
+/** Source enrollment runs before any destination windows are known. */
+export async function registerInventorySources(
   store: Store,
   runtime: InventoryRuntime,
   limit = 16,
@@ -199,7 +199,7 @@ export async function registerKnownInventoryConnections(
   const connections = (
     await store
       .statement(
-        `SELECT c.* FROM connections c JOIN accounts a ON a.id=c.tenant WHERE (c.tenant,c.id)>(?,?) AND c.status='active' AND a.status='active' AND c.kind IN('lofi','qrz') AND json_valid(c.config) AND (c.kind='qrz' OR json_extract(c.config,'$.accountId')=c.remote_identity) AND NOT EXISTS(SELECT 1 FROM inventory_scopes s JOIN inventory_scheduled_selections p ON p.tenant=s.tenant AND p.scope_id=s.scope_id WHERE s.tenant=c.tenant AND s.connection_id=c.id AND s.logical_identity=c.remote_identity AND s.runtime_version=? AND s.state='observing' AND p.config_version=s.config_version) ORDER BY c.tenant,c.id LIMIT ?`,
+        `SELECT c.* FROM connections c JOIN accounts a ON a.id=c.tenant WHERE (c.tenant,c.id)>(?,?) AND c.status='active' AND a.status='active' AND c.kind='lofi' AND json_valid(c.config) AND json_extract(c.config,'$.accountId')=c.remote_identity AND NOT EXISTS(SELECT 1 FROM inventory_scopes s JOIN inventory_scheduled_selections p ON p.tenant=s.tenant AND p.scope_id=s.scope_id WHERE s.tenant=c.tenant AND s.connection_id=c.id AND s.logical_identity=c.remote_identity AND s.runtime_version=? AND s.state='observing' AND p.config_version=s.config_version) ORDER BY c.tenant,c.id LIMIT ?`,
         progress.last_tenant,
         progress.last_connection,
         runtime.version,
@@ -210,25 +210,10 @@ export async function registerKnownInventoryConnections(
   const report = { registered: 0, failed: 0 };
   for (const connection of connections) {
     try {
-      const config = JSON.parse(connection.config) as Record<string, unknown>;
-      const plan: InventoryScanPlan =
-        connection.kind === "lofi"
-          ? { provider: "lofi", pageSize: 1000 }
-          : {
-              provider: "qrz",
-              book: {
-                bookId: String(config.bookId ?? ""),
-                stationCallsign: String(config.stationCallsign ?? ""),
-                startDate: String(config.startDate ?? ""),
-                endDate: String(config.endDate ?? ""),
-              },
-              between: [
-                String(config.startDate ?? ""),
-                String(config.endDate ?? ""),
-              ],
-              pageSize: 250,
-            };
-      await registerInventorySelection(store, runtime, connection, plan);
+      await registerInventorySelection(store, runtime, connection, {
+        provider: "lofi",
+        pageSize: 1000,
+      });
       report.registered++;
     } catch {
       report.failed++;
@@ -245,7 +230,7 @@ export async function registerKnownInventoryConnections(
   return report;
 }
 
-/** Enroll bounded unfiltered LoTW months discovered by managed source scans. */
+/** Enroll bounded receipt windows discovered by managed source scans. */
 export async function registerSourceCalendarSelections(
   store: Store,
   runtime: InventoryRuntime,
@@ -263,33 +248,36 @@ export async function registerSourceCalendarSelections(
       last_month: string;
     }>();
   if (!progress) throw new Error("inventory_calendar_registration_unavailable");
-  // The exact canonical plan is the durable acknowledgement. A filtered or
-  // partial read of the same month does not satisfy this unfiltered selection.
   const candidates = (
     await store
       .statement(
         `WITH months AS (
-          SELECT c.*,m.month_start,coalesce(date(m.month_start,'+1 month','-1 day'),'9999-12-31') AS month_end
+          SELECT c.*,m.month_start,coalesce(date(m.month_start,'+1 month','-1 day'),'9999-12-31') AS month_end,
+            json_extract(c.config,'$.startDate') AS book_start,json_extract(c.config,'$.endDate') AS book_end
           FROM connections c JOIN accounts a ON a.id=c.tenant
           JOIN private_data credential ON credential.tenant=c.tenant AND credential.connection=c.id AND credential.id=c.credential_version AND credential.kind='credential'
           JOIN inventory_source_calendar_months m ON m.tenant=c.tenant
           JOIN inventory_scopes source ON source.tenant=m.tenant AND source.scope_id=m.scope_id
           JOIN connections lofi ON lofi.tenant=source.tenant AND lofi.id=source.connection_id
           WHERE (c.tenant,c.id,m.month_start)>(?,?,?) AND a.status='active'
-            AND c.kind='lotw' AND c.status='active'
+            AND c.kind IN('qrz','lotw') AND c.status='active' AND json_valid(c.config)
             AND credential.revoked_at IS NULL AND (credential.expires_at IS NULL OR credential.expires_at>unixepoch('subsec')*1000)
-            AND json_extract(c.config,'$.readAccess')=1
+            AND (c.kind='qrz' OR json_extract(c.config,'$.readAccess')=1)
             AND source.provider='lofi' AND source.state='observing' AND source.runtime_version=?
             AND lofi.kind='lofi' AND lofi.status='active' AND lofi.remote_identity=source.logical_identity
+        ), windows AS (
+          SELECT months.*,CASE kind WHEN 'qrz' THEN max(month_start,book_start) ELSE month_start END AS period_start,
+            CASE kind WHEN 'qrz' THEN min(month_end,book_end) ELSE month_end END AS period_end
+          FROM months WHERE kind='lotw' OR (book_start=date(book_start) AND book_end=date(book_end) AND book_start<=month_end AND book_end>=month_start)
         )
-        SELECT months.* FROM months WHERE NOT EXISTS(
+        SELECT windows.* FROM windows WHERE period_start<=period_end AND NOT EXISTS(
           SELECT 1 FROM inventory_scopes target
           JOIN inventory_scheduled_selections p ON p.tenant=target.tenant AND p.scope_id=target.scope_id
-          WHERE target.tenant=months.tenant AND target.provider='lotw' AND target.logical_identity=months.remote_identity
-            AND target.connection_id=months.id AND target.state='observing'
+          WHERE target.tenant=windows.tenant AND target.provider=windows.kind AND target.logical_identity=windows.remote_identity
+            AND target.connection_id=windows.id AND target.state='observing'
             AND target.runtime_version=? AND p.runtime_version=target.runtime_version AND p.config_version=target.config_version
-            AND json_extract(p.plan,'$.provider')='lotw'
-            AND p.plan=json_object('provider','lotw','selection',json_object('endDate',months.month_end,'startDate',months.month_start))
+            AND (p.plan=json_object('provider','lotw','selection',json_object('endDate',windows.period_end,'startDate',windows.period_start))
+                 OR (windows.kind='qrz' AND json_extract(p.plan,'$.provider')='qrz' AND json_extract(p.plan,'$.between')=json_array(windows.period_start,windows.period_end)))
         )
         GROUP BY tenant,id,month_start ORDER BY tenant,id,month_start LIMIT ?`,
         progress.last_tenant,
@@ -299,15 +287,36 @@ export async function registerSourceCalendarSelections(
         runtime.version,
         limit,
       )
-      .all<Connection & { month_start: string; month_end: string }>()
+      .all<
+        Connection & {
+          month_start: string;
+          period_start: string;
+          period_end: string;
+        }
+      >()
   ).results;
   const report = { registered: 0, failed: 0 };
-  for (const { month_start, month_end, ...connection } of candidates) {
+  for (const { period_start, period_end, ...connection } of candidates) {
     try {
-      await registerInventorySelection(store, runtime, connection, {
-        provider: "lotw",
-        selection: { startDate: month_start, endDate: month_end },
-      });
+      const book = JSON.parse(connection.config);
+      const plan: InventoryScanPlan =
+        connection.kind === "qrz"
+          ? {
+              provider: "qrz",
+              book: {
+                bookId: book.bookId,
+                stationCallsign: book.stationCallsign,
+                startDate: book.startDate,
+                endDate: book.endDate,
+              },
+              between: [period_start, period_end],
+              pageSize: 250,
+            }
+          : {
+              provider: "lotw",
+              selection: { startDate: period_start, endDate: period_end },
+            };
+      await registerInventorySelection(store, runtime, connection, plan);
       report.registered++;
     } catch {
       report.failed++;

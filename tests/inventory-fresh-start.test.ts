@@ -15,6 +15,7 @@ import {
 import { openInventoryTrial } from "../scripts/inventory-run-trial.ts";
 import { createInventoryTrialTransport } from "../scripts/inventory-trial-transport.ts";
 import { serializeAdifRecord } from "../src/adif.ts";
+import { InventoryComparisonPages } from "../src/inventory-comparison-pages.ts";
 import { InventoryIngestion } from "../src/inventory-ingestion.ts";
 import { InventoryQrzDispatch } from "../src/inventory-qrz-dispatch.ts";
 import { planInventoryRun } from "../src/inventory-run-plans.ts";
@@ -799,7 +800,7 @@ test("a refused LoFi cursor can restart only its locked source selection", async
     await captured.mf.dispose();
   }
   const { directory } = await inventoryFreshStart(original, root);
-  const f = await openInventoryTrial(directory);
+  let f = await openInventoryTrial(directory);
   t.after(() => f.mf.dispose());
   const source = await f.store.connection("trial", "lofi");
   assert.ok(source);
@@ -814,7 +815,7 @@ test("a refused LoFi cursor can restart only its locked source selection", async
     .prepare("SELECT active_run_id FROM inventory_stream_jobs")
     .first<string>("active_run_id");
   assert.ok(priorId);
-  const runs = new InventoryRuns(new InventoryIngestion(f.store));
+  let runs = new InventoryRuns(new InventoryIngestion(f.store));
   const snapshot = () =>
     runs.inventory.snapshot("trial", registered.scope, registered.stream);
   const credentialEnvelopes = async () =>
@@ -902,6 +903,22 @@ test("a refused LoFi cursor can restart only its locked source selection", async
   const held = await snapshot();
   assert.match(JSON.stringify(held?.resume), /accepted-cursor/);
   assert.equal((await runs.load("trial", priorId))?.reason, "cursor_refused");
+
+  await f.mf.dispose();
+  try {
+    const report = await rebuildFreshStart(
+      { rehearsal: directory, lofiOnly: true, maxDurationMs: 1000 },
+      { fetcher: async () => assert.fail("a held LoFi run cannot read") },
+    );
+    assert.deepEqual(report.lofiCursorRefusedRuns, [priorId]);
+    assert.equal(report.nextLoFiPollAt, null);
+    assert.equal(report.requests.requests, 0);
+  } finally {
+    f = await openInventoryTrial(directory);
+    runs = new InventoryRuns(
+      new InventoryIngestion(f.store, new InventoryComparisonPages(f.store)),
+    );
+  }
 
   const session = await openSourceCredentials(f.store, source);
   await session.persistTokenState({ ...session.credentials, token: undefined });

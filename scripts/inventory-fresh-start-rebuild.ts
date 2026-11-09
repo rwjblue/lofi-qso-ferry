@@ -452,6 +452,21 @@ export async function rebuildFreshStart(
       )
       .all();
     const matches = await managedInventoryResultCounts(f.db, tenant);
+    const sourceJobs = (
+      await f.store
+        .statement(
+          `SELECT j.state,j.active_run_id AS runId,j.next_due_at AS dueAt
+           FROM inventory_stream_jobs j JOIN inventory_scopes s USING(tenant,scope_id)
+           WHERE j.tenant=? AND s.provider='lofi'
+            AND (j.state='held' AND j.reason='cursor_refused' OR j.state='idle' AND EXISTS(
+              SELECT 1 FROM inventory_wakeups w
+              WHERE (w.tenant,w.scope_id,w.stream_id,w.work_version)=(j.tenant,j.scope_id,j.stream_id,j.work_version)
+            ))
+           ORDER BY j.next_due_at,j.scope_id,j.stream_id`,
+          tenant,
+        )
+        .all<{ state: "idle" | "held"; runId: string | null; dueAt: number }>()
+    ).results;
     const report = {
       ...driven,
       stopReason:
@@ -466,6 +481,11 @@ export async function rebuildFreshStart(
           : driven.stopReason,
       requests: transport.metrics,
       readScope: options.lofiOnly ? "lofi" : "account",
+      nextLoFiPollAt:
+        sourceJobs.find((job) => job.state === "idle")?.dueAt ?? null,
+      lofiCursorRefusedRuns: sourceJobs.flatMap((job) =>
+        job.state === "held" && job.runId ? [job.runId] : [],
+      ),
       lotwDatedPollsRestored,
       coverage: coverage.results,
       records: records.results,

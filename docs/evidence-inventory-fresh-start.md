@@ -87,12 +87,31 @@ and write lock. The current resume command stopped at
 and zero provider requests. The original rehearsal retained the same
 saved state.
 
+A second private copy resumed that original run through migration
+0117 with simulated bearer verification and responses reconstructed
+from encrypted LoFi captures. The first of four source responses
+accepted the saved cursor. The same run published ready coverage for
+224 operations and 4,490 QSOs and events, with 4,341 active ordinary
+contacts. The committed checkpoint advanced and the next poll
+deadline matched the saved job. The read-only audit confirmed that the
+account bindings, destination credential envelopes and selections,
+and durable send lock matched the original. It also compared each of
+the 4,714 canonical LoFi bodies with the merged captures and found no
+missing, extra or changed bodies. At the saved poll deadline, one
+simulated forward response replayed an operation and a QSO at their
+respective watermark boundaries. The delta preserved the published
+coverage and active count, scheduled the next poll, and made no
+destination reads. Both steps made zero external requests and
+created zero dispatches. Live authentication and full live bootstrap
+timing are still open.
+
 ### Restart a refused LoFi cursor
 
 Restore the same-client bearer and resume the saved run first. If
 LoFi explicitly refuses the cursor, the runner holds that source run
-with reason `cursor_refused`. Use its run ID to restart the full
-source scan on the same linked selection.
+with reason `cursor_refused`. The continuation report lists the local
+run ID under `lofiCursorRefusedRuns`. Use it to restart the full source
+scan on the same linked selection.
 
 ```sh
 mise run inventory-fresh-start-rebuild -- \
@@ -169,7 +188,9 @@ mise run inventory-fresh-start-rebuild -- \
 This mode limits remote reads to LoFi and lets local comparison use
 the account's existing destination inventory. The report identifies
 the selected read scope and gives per-provider requests, coverage,
-comparison turns and elapsed time.
+comparison turns and elapsed time. `nextLoFiPollAt` gives the earliest
+idle LoFi job deadline in Unix milliseconds, or `null` when no LoFi
+poll is scheduled.
 
 In a private replay upgraded through migration 0114, one simulated
 LoFi response combined captured boundary records with newer records.

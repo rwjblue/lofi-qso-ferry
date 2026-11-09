@@ -1,6 +1,7 @@
 # Inventory pipeline cost evidence
 
-Status: local native D1 qualification through migration 0075, 2026-11-08.
+Initial native D1 qualification used migration 0075 on 2026-11-08.
+Follow-up comparisons used migrations 0114 and 0115.
 Repository configuration keeps runtime activation off and exports disabled.
 Isolated benchmarks/replays perform the read-only runtime handoff. No deployment,
 production reset or vendor upload was performed.
@@ -148,6 +149,30 @@ mise run benchmark-inventory-pipeline --contacts 1000 --remote empty \
 mise run benchmark-inventory-pipeline --contacts 1000 --remote empty \
   --source-comparison after-coverage
 ```
+
+### Operation pages without indexed contacts
+
+During the 200,000-contact interleaved run, the first two source pages
+created 2,000 operation jobs before the first QSO page. A live audit
+found 1,562 completed fan-out receipts with zero children and 438
+pending jobs. Each empty job took a lease, an indexed probe and a
+guarded receipt. The benchmark drained these jobs between pages.
+
+[Migration 0115](../migrations/0115_inventory_projection_childless_context.sql)
+checks for an indexed child in the corresponding generation before
+enqueuing an operation context change. Later children receive their own
+projection work and use current topology. A topology change still
+refreshes any pending operation job, including jobs retained across
+the migration.
+
+In the patched 200,000-contact run, the same two operation pages
+created zero fan-out jobs. The following audit found 33,000 QSOs
+already accepted while source coverage was still collecting. In
+the complete 1,000-contact interleaved replay, source backfill used
+155 Queue turns and 3,453 D1 calls, down from 185 and 3,951 before the
+migration. Both runs classified all 1,000 contacts as absent from
+inventory. The large-run observations cover operation enrollment and
+early ingestion.
 
 ## Recovery and boundedness
 

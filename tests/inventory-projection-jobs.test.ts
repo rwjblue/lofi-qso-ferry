@@ -33,6 +33,10 @@ async function fixture(count = 3) {
     );
     await applyMigration(f.db, "0052_inventory_projection_jobs.sql");
     await applyMigration(f.db, "0056_inventory_current_work_selection.sql");
+    await applyMigration(
+      f.db,
+      "0115_inventory_projection_childless_context.sql",
+    );
     const jobs = new InventoryProjectionJobs(f.store);
     async function edit(order = 2) {
       const op = observation("op", "operation", order);
@@ -113,6 +117,67 @@ async function resign(page: PreparedProjectionJob) {
   const { digest: _digest, ...manifest } = page;
   page.digest = await sha256(canonical(manifest));
 }
+
+test("childless context changes skip new fan-out and later children project the current topology", async () => {
+  const f = await fixture(0);
+  try {
+    // The migration keeps legacy pending jobs publishable across a later edit.
+    await f.edit();
+    const legacy = await f.jobs.expandNext("a");
+    assert.equal(legacy.kind, "expanded");
+    assert.ok("records" in legacy && legacy.records === 0);
+
+    const op = (order: number) => {
+      const row = observation("new-op", "operation", order);
+      row.body = {
+        ...(row.body as object),
+        stationCall: order % 2 ? "N1RWJ" : "K1ABC",
+      };
+      return row;
+    };
+    const child = sourceContact("new-qso");
+    child.parentKey = "new-op";
+    child.body = { ...(child.body as object), operation: "new-op" };
+    await f.full([op(1)]);
+    await f.full([op(2)]);
+    assert.equal((await f.jobs.expandNext("a")).kind, "idle");
+    assert.equal(
+      await f.db
+        .prepare(
+          "SELECT count(*) AS n FROM inventory_projection_jobs WHERE operation_key='new-op'",
+        )
+        .first("n"),
+      0,
+    );
+
+    const projection = () =>
+      f.db
+        .prepare(
+          `SELECT p.state,p.topology_version,d.topology_version AS current_version
+           FROM comparison_projections p JOIN projection_domains d
+            ON (p.tenant,p.scope_id,p.parent_key)=(d.tenant,d.scope_id,d.operation_key)
+           WHERE p.record_key='new-qso'`,
+        )
+        .first();
+    await f.full([op(2), child]);
+    assert.equal((await f.jobs.projectNext("a")).kind, "projected");
+    const current = await projection();
+    assert.equal(current?.state, "ready");
+    assert.equal(current?.topology_version, current?.current_version);
+
+    await f.full([op(3), child]);
+    const edited = await f.jobs.expandNext("a");
+    assert.equal(edited.kind, "expanded");
+    assert.ok("records" in edited && edited.records === 1);
+    assert.equal((await f.jobs.projectNext("a")).kind, "projected");
+    const updated = await projection();
+    assert.equal(updated?.state, "ready");
+    assert.equal(updated?.topology_version, updated?.current_version);
+    assert.notEqual(updated?.topology_version, current?.topology_version);
+  } finally {
+    await f.mf.dispose();
+  }
+});
 
 test("an operation edit queues one job and keyset pages dirty children before bounded projection", async (t) => {
   const f = await fixture(205);
